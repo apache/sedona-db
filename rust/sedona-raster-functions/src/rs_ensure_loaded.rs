@@ -26,6 +26,7 @@
 //! through unchanged. Other band/raster metadata is preserved verbatim.
 
 use std::any::Any;
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, RwLock};
 
@@ -40,12 +41,14 @@ use datafusion_expr::{
 };
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_raster::array::RasterStructArray;
-use sedona_raster::builder::{RasterBuilder, RasterOverrides, StartBandArgs};
+use sedona_raster::builder::{RasterBuilder, RasterOverrides};
 use sedona_raster::raster_loader::{
-    AsyncRasterLoader, RasterLoadRequest, RasterLoaderConfig, RasterLoaderRegistry,
+    AsyncRasterLoader, RasterLoadRequest, RasterLoadResult, RasterLoaderConfig,
+    RasterLoaderRegistry,
 };
-use sedona_raster::traits::RasterRef;
+use sedona_raster::traits::{BandOverrides, Override, RasterRef};
 use sedona_raster::view_entries::ViewEntries;
+use sedona_schema::raster::BandDataType;
 
 /// `SedonaScalarUDF` metadata key marking a UDF whose kernels read raster
 /// pixel bytes. A raster function sets it (value `"true"`) via
@@ -236,15 +239,80 @@ impl AsyncScalarUDFImpl for RsEnsureLoaded {
     }
 }
 
-/// Sequentially resolve OutDb bands in `input` and return a new raster
-/// StructArray with `data` populated.
+/// Where a band's bytes come from once the batch has been planned.
+enum BandBytes {
+    /// InDb: the input band is derived into the output as-is — metadata,
+    /// view, and a zero-copy share of its bytes — via [`BandRef::copy_into`].
+    InDb,
+    /// OutDb: result `pos` of the bundled `load()` issued for loader `group`.
+    OutDb { group: usize, pos: usize },
+}
+
+/// One OutDb band's load request, owned so it can be assembled before any
+/// `await` (keeping the future straightforwardly `Send`) and borrowed by
+/// the [`RasterLoadRequest`] slice for the duration of the loader call.
+struct LoadRequestPlan {
+    uri: String,
+    dim_names: Vec<String>,
+    source_shape: Vec<i64>,
+    view: ViewEntries,
+    data_type: BandDataType,
+}
+
+/// One bundled `load()` call: every OutDb band of the batch whose
+/// `outdb_format` resolved to `loader`, in `(raster_idx, band_idx)` order.
+struct LoaderGroup {
+    loader: Arc<dyn AsyncRasterLoader>,
+    requests: Vec<LoadRequestPlan>,
+}
+
+/// `RasterLoadRequest::dim_names` is parallel to the *source* shape, while
+/// [`BandRef::dim_names`] names the *visible* axes. The two only differ when
+/// the view permutes axes: map each visible name back to the source axis it
+/// reads from, falling back to visible order if the view is not a
+/// permutation of the source axes.
+fn source_order_dim_names(visible: &[&str], view: &ViewEntries) -> Vec<String> {
+    let visible_order = || visible.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    if view.len() != visible.len() {
+        return visible_order();
+    }
+    let mut by_source: Vec<Option<String>> = vec![None; visible.len()];
+    for (name, entry) in visible.iter().zip(view.iter()) {
+        let Some(slot) = usize::try_from(entry.source_axis)
+            .ok()
+            .and_then(|axis| by_source.get_mut(axis))
+        else {
+            return visible_order();
+        };
+        if slot.is_some() {
+            return visible_order();
+        }
+        *slot = Some(name.to_string());
+    }
+    by_source.into_iter().flatten().collect()
+}
+
+/// Resolve OutDb bands in `input` and return a new raster StructArray with
+/// `data` populated.
 ///
-/// Sequential rather than `buffer_unordered` for the first cut: holding
-/// borrows from the input across the `loader.load(...).await` point is
-/// tricky enough with one outstanding future that we'd rather extract
-/// owned metadata, dispatch, and move on. Parallel fan-out is a follow-up
-/// optimisation that doesn't change the trait surface or the registry
-/// contract.
+/// Three passes:
+///
+/// 1. **Plan.** Walk every raster/band and assign each OutDb band to a
+///    loader group — one group per distinct `outdb_format` (a batch can mix
+///    `None` → GDAL, `"zarr"`, and extension loaders). Each format is
+///    resolved through `lookup` once per call, not once per band.
+/// 2. **Load.** Issue **one** [`AsyncRasterLoader::load`] per group carrying
+///    every request for that loader. Backends that batch (one blocking
+///    hop, one store/array open, one Python call) only see the win when
+///    the caller hands them the whole batch, so this is where the
+///    bundling happens. Groups are awaited in turn; fan-out *within* a
+///    group is the loader's job.
+/// 3. **Build.** Walk the rasters again and assemble the output: InDb
+///    bands are derived as-is (zero-copy, view preserved); OutDb bands
+///    take the loaded bytes with the layout the loader reported.
+///
+/// Peak memory is unchanged from a per-band dispatch: the output column
+/// holds every loaded buffer at once either way.
 async fn ensure_loaded<F>(input_array: &ArrayRef, mut lookup: F) -> Result<ArrayRef>
 where
     F: FnMut(Option<&str>) -> Result<Arc<dyn AsyncRasterLoader>>,
@@ -260,16 +328,20 @@ where
         })?;
 
     let rasters = RasterStructArray::try_new(input_struct)?;
-    // Shared band `data` column of the input; addressed per band via
-    // `rasters.band_data_row(..)` for zero-copy InDb passthrough below.
-    let band_data_array = rasters.band_data_array();
-    let mut builder = RasterBuilder::new(rasters.len());
+
+    // ---- Pass 1: plan -------------------------------------------------
+    let mut bands_by_raster: Vec<Option<Vec<BandBytes>>> = Vec::with_capacity(rasters.len());
+    let mut groups: Vec<LoaderGroup> = Vec::new();
+    // Each distinct `outdb_format` is resolved through the registry once per
+    // call, and groups are keyed on the *resolved loader*: two formats that
+    // resolve to the same backend (e.g. `None` and "geotiff" both landing on
+    // the GDAL catch-all) share one `load()`.
+    let mut loader_by_format: HashMap<Option<String>, Arc<dyn AsyncRasterLoader>> = HashMap::new();
+    let mut group_by_loader: HashMap<usize, usize> = HashMap::new();
 
     for raster_idx in 0..rasters.len() {
         if rasters.is_null(raster_idx) {
-            builder.append_null().map_err(|e| {
-                sedona_internal_datafusion_err!("RS_EnsureLoaded: append_null failed: {e}")
-            })?;
+            bands_by_raster.push(None);
             continue;
         }
 
@@ -279,6 +351,123 @@ where
             )
         })?;
 
+        let mut bands = Vec::with_capacity(raster.num_bands());
+        for band_idx in 0..raster.num_bands() {
+            let band = raster.band(band_idx).map_err(|e| {
+                sedona_internal_datafusion_err!(
+                    "RS_EnsureLoaded: bad input band ({raster_idx},{band_idx}): {e}"
+                )
+            })?;
+            if band.is_indb() {
+                bands.push(BandBytes::InDb);
+                continue;
+            }
+
+            let uri = band.outdb_uri().ok_or_else(|| {
+                sedona_internal_datafusion_err!(
+                    "RS_EnsureLoaded: OutDb band ({raster_idx},{band_idx}) has empty data \
+                     but no outdb_uri set"
+                )
+            })?;
+            // `outdb_format` may be unset (None) — e.g. RS_FromPath emits
+            // null and relies on the catch-all GDAL loader. The registry
+            // resolves None against each loader's `supports_format`.
+            let outdb_format = band.outdb_format().map(str::to_string);
+            let loader = match loader_by_format.get(&outdb_format) {
+                Some(loader) => Arc::clone(loader),
+                None => {
+                    let loader = lookup(outdb_format.as_deref())?;
+                    loader_by_format.insert(outdb_format, Arc::clone(&loader));
+                    loader
+                }
+            };
+            let loader_id = Arc::as_ptr(&loader) as *const () as usize;
+            let group = *group_by_loader.entry(loader_id).or_insert_with(|| {
+                groups.push(LoaderGroup {
+                    loader,
+                    requests: Vec::new(),
+                });
+                groups.len() - 1
+            });
+            let requests = &mut groups[group].requests;
+            bands.push(BandBytes::OutDb {
+                group,
+                pos: requests.len(),
+            });
+            requests.push(LoadRequestPlan {
+                uri: uri.to_string(),
+                dim_names: source_order_dim_names(&band.dim_names(), band.view()),
+                // Raw source extent plus the band's view: a loader may honour
+                // the view and return only the visible region, or ignore it
+                // and return the full source. Its `RasterLoadResult` says
+                // which, and pass 3 builds the output band from that.
+                source_shape: band.raw_source_shape().to_vec(),
+                view: band.view().clone(),
+                data_type: band.data_type(),
+            });
+        }
+        bands_by_raster.push(Some(bands));
+    }
+
+    // ---- Pass 2: load, one call per loader -----------------------------
+    let mut group_results: Vec<Vec<RasterLoadResult>> = Vec::with_capacity(groups.len());
+    for group in &groups {
+        // `RasterLoadRequest` borrows; keep the borrowed `&str` dim names
+        // alive alongside the requests for the duration of the call.
+        let dim_name_refs: Vec<Vec<&str>> = group
+            .requests
+            .iter()
+            .map(|plan| plan.dim_names.iter().map(String::as_str).collect())
+            .collect();
+        let requests: Vec<RasterLoadRequest<'_>> = group
+            .requests
+            .iter()
+            .zip(&dim_name_refs)
+            .map(|(plan, dim_names)| RasterLoadRequest {
+                uri: &plan.uri,
+                dim_names,
+                source_shape: &plan.source_shape,
+                view: &plan.view,
+                data_type: plan.data_type,
+            })
+            .collect();
+        let request_refs: Vec<&RasterLoadRequest<'_>> = requests.iter().collect();
+
+        // `load` returns one result per request, in request order (every
+        // backend does; the count is checked below).
+        let results = group.loader.load(&request_refs).await.map_err(|e| {
+            sedona_internal_datafusion_err!(
+                "RS_EnsureLoaded: loader '{}' failed loading {} band(s): {e}",
+                group.loader.name(),
+                request_refs.len()
+            )
+        })?;
+        if results.len() != request_refs.len() {
+            return sedona_internal_err!(
+                "RS_EnsureLoaded: loader '{}' returned {} result(s) for {} request(s)",
+                group.loader.name(),
+                results.len(),
+                request_refs.len()
+            );
+        }
+        group_results.push(results);
+    }
+
+    // ---- Pass 3: build ------------------------------------------------
+    let mut builder = RasterBuilder::new(rasters.len());
+    for (raster_idx, bands) in bands_by_raster.iter().enumerate() {
+        let Some(bands) = bands else {
+            builder.append_null().map_err(|e| {
+                sedona_internal_datafusion_err!("RS_EnsureLoaded: append_null failed: {e}")
+            })?;
+            continue;
+        };
+
+        let raster = rasters.get(raster_idx).map_err(|e| {
+            sedona_internal_datafusion_err!(
+                "RS_EnsureLoaded: bad input raster row {raster_idx}: {e}"
+            )
+        })?;
         builder
             .start_raster_from(&raster, RasterOverrides::default())
             .map_err(|e| {
@@ -287,176 +476,80 @@ where
                 )
             })?;
 
-        let num_bands = raster.num_bands();
-        for band_idx in 0..num_bands {
-            // Extract everything we need from the band as owned data
-            // before any `await`, so the future is straightforwardly Send.
-            let band_name = raster.band_name(band_idx).map(|s| s.to_string());
-            let (
-                dim_names_owned,
-                source_shape,
-                view_owned,
-                data_type,
-                nodata,
-                outdb_uri,
-                outdb_format,
-                is_indb,
-            ) = {
-                let band = raster.band(band_idx).map_err(|e| {
-                    sedona_internal_datafusion_err!(
-                        "RS_EnsureLoaded: bad input band ({raster_idx},{band_idx}): {e}"
-                    )
-                })?;
-                let dim_names_owned: Vec<String> =
-                    band.dim_names().iter().map(|s| s.to_string()).collect();
-                let source_shape: Vec<i64> = band.raw_source_shape().to_vec();
-                // Passed to the loader so it can (eventually) prune I/O; today
-                // every loader ignores it and returns the full source.
-                let view_owned: ViewEntries = band.view().clone();
-                let data_type = band.data_type();
-                let nodata: Option<Vec<u8>> = band.nodata().map(|b| b.to_vec());
-                let outdb_uri: Option<String> = band.outdb_uri().map(|s| s.to_string());
-                let outdb_format: Option<String> = band.outdb_format().map(|s| s.to_string());
-                let is_indb = band.is_indb();
-                // A non-identity view can't be passed through yet: the rebuild
-                // via `start_band` below emits an identity band, so the view
-                // would be silently dropped — the zero-copy passthrough shares
-                // the source bytes but does not carry the view. Unreachable
-                // today (the read boundary rejects non-identity views), but
-                // guard it loudly so that when views land this surfaces as the
-                // internal gap it is. Fixed alongside the view-preserving
-                // passthrough
-                // https://github.com/apache/sedona-db/pull/897
-                if is_indb && !view_owned.is_identity(&source_shape) {
-                    return sedona_internal_err!(
-                        "RS_EnsureLoaded: InDb band ({raster_idx},{band_idx}) has a \
-                         non-identity view; view-preserving passthrough is not \
-                         implemented yet"
-                    );
-                }
-                (
-                    dim_names_owned,
-                    source_shape,
-                    view_owned,
-                    data_type,
-                    nodata,
-                    outdb_uri,
-                    outdb_format,
-                    is_indb,
+        for (band_idx, bytes) in bands.iter().enumerate() {
+            let band = raster.band(band_idx).map_err(|e| {
+                sedona_internal_datafusion_err!(
+                    "RS_EnsureLoaded: bad input band ({raster_idx},{band_idx}): {e}"
                 )
-            };
-
-            let dim_names: Vec<&str> = dim_names_owned.iter().map(String::as_str).collect();
-            builder
-                .start_band(StartBandArgs {
-                    name: band_name.as_deref(),
-                    nodata: nodata.as_deref(),
-                    outdb_uri: outdb_uri.as_deref(),
-                    outdb_format: outdb_format.as_deref(),
-                    ..StartBandArgs::new(&dim_names, &source_shape, data_type)
-                })
-                .map_err(|e| {
-                    sedona_internal_datafusion_err!(
-                        "RS_EnsureLoaded: start_band failed at ({raster_idx},{band_idx}): {e}"
+            })?;
+            match *bytes {
+                BandBytes::InDb => {
+                    band.copy_into(&mut builder, BandOverrides::default())
+                        .map_err(|e| {
+                            sedona_internal_datafusion_err!(
+                                "RS_EnsureLoaded: InDb passthrough failed at \
+                                 ({raster_idx},{band_idx}): {e}"
+                            )
+                        })?;
+                }
+                BandBytes::OutDb { group, pos } => {
+                    let result = &group_results[group][pos];
+                    // `result.source_shape` + `result.view` describe the bytes
+                    // the loader actually produced (full source with the
+                    // band's view echoed, or the visible region under an
+                    // identity view), so the output band carries exactly that
+                    // pair. Validate the byte count against it so an
+                    // under-sized loader output surfaces here, not as garbage
+                    // bytes downstream.
+                    let expected_bytes = result
+                        .source_shape
+                        .iter()
+                        .try_fold(1i64, |acc, &d| acc.checked_mul(d))
+                        .and_then(|elems| elems.checked_mul(band.data_type().byte_size() as i64))
+                        .ok_or_else(|| {
+                            sedona_internal_datafusion_err!(
+                                "RS_EnsureLoaded: band ({raster_idx},{band_idx}) byte count \
+                                 overflows i64"
+                            )
+                        })?;
+                    let got = result.bytes.len();
+                    if got as i64 != expected_bytes {
+                        return sedona_internal_err!(
+                            "RS_EnsureLoaded: band ({raster_idx},{band_idx}) expected \
+                             {expected_bytes} bytes but loader returned {got}"
+                        );
+                    }
+                    // Whichever layout the loader chose, it must not change
+                    // what the band exposes. `finish_raster` only validates
+                    // the spatial axes against the raster, so check the whole
+                    // visible shape here.
+                    let visible = result.view.visible_shape();
+                    if visible != band.shape() {
+                        return sedona_internal_err!(
+                            "RS_EnsureLoaded: band ({raster_idx},{band_idx}) loader returned \
+                             visible shape {visible:?}, expected {:?}",
+                            band.shape()
+                        );
+                    }
+                    // Derive the output band from the input band, swapping in
+                    // the layout the loader produced and its bytes (shared
+                    // zero-copy into the output `BinaryView` column).
+                    band.copy_into(
+                        &mut builder,
+                        BandOverrides {
+                            source_shape: Some(&result.source_shape),
+                            view: Override::Set(&result.view),
+                            data: Override::Set(&result.bytes),
+                            ..Default::default()
+                        },
                     )
-                })?;
-
-            // Resolve and append the bytes. Both paths are zero-copy: the
-            // source/loaded `Buffer` is shared into the output `BinaryView`
-            // column by block refcounting rather than re-copied.
-            if is_indb {
-                // InDb passthrough: share the input row's backing buffer. The
-                // view is identity (guarded above), so the rebuilt
-                // identity-view output band is byte- and semantics-equivalent.
-                let src_row = rasters.band_data_row(raster_idx, band_idx);
-                builder
-                    .append_band_data_from(band_data_array, src_row)
                     .map_err(|e| {
                         sedona_internal_datafusion_err!(
-                            "RS_EnsureLoaded: InDb passthrough failed at \
+                            "RS_EnsureLoaded: OutDb derive failed at \
                              ({raster_idx},{band_idx}): {e}"
                         )
                     })?;
-            } else {
-                // `outdb_format` may be unset (None) — e.g. RS_FromPath emits
-                // null and relies on the catch-all GDAL loader. The registry
-                // resolves None against each loader's `supports_format`.
-                let format = outdb_format.as_deref();
-                let uri = outdb_uri.as_deref().ok_or_else(|| {
-                    sedona_internal_datafusion_err!(
-                        "RS_EnsureLoaded: OutDb band ({raster_idx},{band_idx}) has empty data \
-                         but no outdb_uri set"
-                    )
-                })?;
-                let loader = lookup(format)?;
-                let req = RasterLoadRequest {
-                    uri,
-                    dim_names: &dim_names,
-                    source_shape: &source_shape,
-                    view: &view_owned,
-                    data_type,
-                };
-
-                // This is currently loading one request at a time; however, it is more efficient
-                // for some loaders to process more than one request at once.
-                let result = loader.load(&[&req]).await.map_err(|e| {
-                    sedona_internal_datafusion_err!(
-                        "RS_EnsureLoaded: loader '{}' failed on \
-                         band ({raster_idx},{band_idx}): {e}",
-                        loader.name()
-                    )
-                })?;
-
-                // Check that the loader returned the correct number of results
-                if result.len() != 1 {
-                    return sedona_internal_err!(
-                        "RS_EnsureLoaded: loader {} returned incorrect result count",
-                        loader.name()
-                    );
                 }
-
-                // We can only build identity-view output bands today
-                // (`start_band` with `view: None`). A loader that
-                // resolved/cropped the view — returning a different
-                // `source_shape` or a non-identity `view` — needs `start_band`
-                // with a `Some` view. Reserved for
-                // https://github.com/apache/sedona-db/issues/897.
-                let result = &result[0];
-                if result.source_shape != source_shape
-                    || !result.view.is_identity(&result.source_shape)
-                {
-                    return sedona_internal_err!(
-                        "RS_EnsureLoaded: band ({raster_idx},{band_idx}) loader returned a \
-                         resolved/non-identity view; lazy view resolution is not yet supported"
-                    );
-                }
-                // Validate the loaded length so an under-sized loader output
-                // surfaces here, not as garbage bytes downstream.
-                let expected_bytes = source_shape
-                    .iter()
-                    .try_fold(1i64, |acc, &d| acc.checked_mul(d))
-                    .and_then(|elems| elems.checked_mul(data_type.byte_size() as i64))
-                    .ok_or_else(|| {
-                        sedona_internal_datafusion_err!(
-                            "RS_EnsureLoaded: band ({raster_idx},{band_idx}) byte count \
-                             overflows i64"
-                        )
-                    })?;
-                let got = result.bytes.len();
-                if got as i64 != expected_bytes {
-                    return sedona_internal_err!(
-                        "RS_EnsureLoaded: band ({raster_idx},{band_idx}) expected \
-                         {expected_bytes} bytes but loader returned {got}"
-                    );
-                }
-                builder
-                    .append_band_data_buffer(&result.bytes, 0, got as u32)
-                    .map_err(|e| {
-                        sedona_internal_datafusion_err!(
-                            "RS_EnsureLoaded: OutDb append failed at \
-                             ({raster_idx},{band_idx}): {e}"
-                        )
-                    })?;
             }
             builder.finish_band().map_err(|e| {
                 sedona_internal_datafusion_err!(
@@ -492,10 +585,13 @@ mod tests {
     use sedona_raster::traits::RasterRef;
     use sedona_schema::raster::BandDataType;
 
+    /// `(uri, source_shape, data_type, dim_names)` of one recorded request.
+    type SeenRequest = (String, Vec<i64>, BandDataType, Vec<String>);
+
     /// Records load requests and returns a deterministic byte pattern.
     #[derive(Debug, Default)]
     struct RecordingLoader {
-        seen: Mutex<Vec<(String, Vec<i64>, BandDataType)>>,
+        seen: Mutex<Vec<SeenRequest>>,
     }
 
     #[async_trait]
@@ -516,6 +612,7 @@ mod tests {
                     req.uri.to_string(),
                     req.source_shape.to_vec(),
                     req.data_type,
+                    req.dim_names.iter().map(|s| s.to_string()).collect(),
                 ));
                 let elements: i64 = req.source_shape.iter().copied().product();
                 let len = elements as usize * req.data_type.byte_size();
@@ -841,20 +938,90 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn ensure_loaded_errors_when_loader_reports_non_identity_view() {
-        // A loader that reports a non-identity view exercises the deferred
-        // #897 path: we can't build a viewed output band yet, so the caller
-        // must surface a clear error rather than silently dropping the view.
-        let input_struct = build_outdb_input("file:///tmp/foo.tif", "mock", &[2, 3]);
-        let input: ArrayRef = Arc::new(input_struct);
+    /// `[4, 8]` source (32 bytes, so block-backed rather than inline) with
+    /// the view selecting only source row 1, so the band's visible shape is
+    /// `[1, 8]` and the raster's spatial shape matches it.
+    fn row1_view() -> ViewEntries {
+        ViewEntries::new(vec![
+            ViewEntry {
+                source_axis: 0,
+                start: 1,
+                step: 1,
+                steps: 1,
+            },
+            ViewEntry {
+                source_axis: 1,
+                start: 0,
+                step: 1,
+                steps: 8,
+            },
+        ])
+    }
 
-        #[derive(Debug, Default)]
-        struct ViewReportingLoader;
+    /// One-row raster whose single `[4, 8]` UInt8 band carries [`row1_view`].
+    /// `data` is `Some` for an InDb band, `None` for an OutDb one.
+    fn build_viewed_input(data: Option<&[u8]>) -> ArrayRef {
+        let view = row1_view();
+        let mut b = RasterBuilder::new(1);
+        b.start_raster_nd(&[0.0, 1.0, 0.0, 0.0, 0.0, -1.0], &["y", "x"], &[1, 8], None)
+            .unwrap();
+        b.start_band(StartBandArgs {
+            name: Some("band0"),
+            view: Some(&view),
+            outdb_uri: data.is_none().then_some("file:///tmp/foo.tif"),
+            outdb_format: data.is_none().then_some("mock"),
+            ..StartBandArgs::new(&["y", "x"], &[4, 8], BandDataType::UInt8)
+        })
+        .unwrap();
+        b.band_data_writer().append_value(data.unwrap_or(&[]));
+        b.finish_band().unwrap();
+        b.finish_raster().unwrap();
+        Arc::new(b.finish().unwrap())
+    }
+
+    #[tokio::test]
+    async fn ensure_loaded_keeps_view_when_loader_returns_full_source() {
+        // The loader ignores the view and returns the whole `[2, 3]` source
+        // (`RasterLoadResult::unresolved` echoes the request's view). The
+        // output band must keep the band's view over the full bytes.
+        let input = build_viewed_input(None);
+        let loader: Arc<RecordingLoader> = Arc::new(RecordingLoader::default());
+        let reg = registry_with(loader.clone());
+
+        let out = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt))
+            .await
+            .unwrap();
+
+        let out_struct = out.as_any().downcast_ref::<StructArray>().unwrap();
+        let out_rasters = RasterStructArray::try_new(out_struct).unwrap();
+        let r = out_rasters.get(0).unwrap();
+        let band = r.band(0).unwrap();
+        assert_eq!(band.shape(), &[1, 8]);
+        assert_eq!(band.raw_source_shape(), &[4, 8]);
+        assert_eq!(band.view(), &row1_view());
+        assert!(band.is_indb());
+        // Full source bytes were kept; the view selects row 1 of them.
+        let full: Vec<u8> = (0..32).collect();
+        assert_eq!(band.nd_buffer().unwrap().buffer, full.as_slice());
+        assert_eq!(
+            band.nd_buffer().unwrap().as_contiguous().unwrap(),
+            &full[8..16]
+        );
+        // The loader was asked for the raw source under the band's view.
+        let seen = loader.seen.lock().unwrap();
+        assert_eq!(seen[0].1, vec![4, 8]);
+    }
+
+    #[tokio::test]
+    async fn ensure_loaded_accepts_loader_resolved_view() {
+        // A loader that honours the view returns only the visible region with
+        // an identity view over it; the output band is then a plain `[1, 3]`.
+        #[derive(Debug)]
+        struct ResolvingLoader;
         #[async_trait]
-        impl AsyncRasterLoader for ViewReportingLoader {
+        impl AsyncRasterLoader for ResolvingLoader {
             fn name(&self) -> &str {
-                "view-reporting"
+                "resolving"
             }
             fn supports_format(&self, _format: Option<&str>) -> bool {
                 true
@@ -866,42 +1033,73 @@ mod tests {
                 Ok(reqs
                     .iter()
                     .map(|req| {
-                        let elements: i64 = req.source_shape.iter().product();
-                        let len = elements as usize * req.data_type.byte_size();
+                        let visible = req.view.visible_shape();
                         RasterLoadResult {
-                            bytes: Buffer::from_vec(vec![0u8; len]),
-                            source_shape: req.source_shape.to_vec(),
-                            // Non-identity: first axis sliced to a single step.
-                            view: ViewEntries::new(vec![
-                                ViewEntry {
-                                    source_axis: 0,
-                                    start: 0,
-                                    step: 1,
-                                    steps: 1,
-                                },
-                                ViewEntry {
-                                    source_axis: 1,
-                                    start: 0,
-                                    step: 1,
-                                    steps: 3,
-                                },
-                            ]),
+                            bytes: Buffer::from_vec((100u8..108).collect()),
+                            view: ViewEntries::identity_for_shape(&visible),
+                            source_shape: visible,
                         }
                     })
                     .collect())
             }
         }
 
-        let loader_dyn: Arc<dyn AsyncRasterLoader> = Arc::new(ViewReportingLoader);
-        let reg = registry_with(loader_dyn);
-        let err = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt))
+        let input = build_viewed_input(None);
+        let reg = registry_with(Arc::new(ResolvingLoader));
+        let out = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt))
             .await
-            .unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.contains("lazy view resolution is not yet supported"),
-            "expected the deferred view-resolution error, got: {msg}"
+            .unwrap();
+
+        let out_struct = out.as_any().downcast_ref::<StructArray>().unwrap();
+        let out_rasters = RasterStructArray::try_new(out_struct).unwrap();
+        let r = out_rasters.get(0).unwrap();
+        let band = r.band(0).unwrap();
+        assert_eq!(band.shape(), &[1, 8]);
+        assert_eq!(band.raw_source_shape(), &[1, 8]);
+        assert!(band.view().is_identity(&[1, 8]));
+        assert_eq!(
+            band.nd_buffer().unwrap().as_contiguous().unwrap(),
+            &(100u8..108).collect::<Vec<u8>>()[..]
         );
+    }
+
+    #[tokio::test]
+    async fn ensure_loaded_passes_through_indb_band_with_non_identity_view() {
+        // 32-byte source (block-backed, so sharing is observable); the view
+        // selects row 1 of the `[4, 8]` grid.
+        let source: Vec<u8> = (0..32).collect();
+        let input = build_viewed_input(Some(&source));
+        let in_ptr = {
+            let s = input.as_any().downcast_ref::<StructArray>().unwrap();
+            let rs = RasterStructArray::try_new(s).unwrap();
+            let r = rs.get(0).unwrap();
+            let band = r.band(0).unwrap();
+            band.nd_buffer().unwrap().buffer.as_ptr()
+        };
+        let loader: Arc<RecordingLoader> = Arc::new(RecordingLoader::default());
+        let reg = registry_with(loader.clone());
+
+        let out = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt))
+            .await
+            .unwrap();
+
+        let out_struct = out.as_any().downcast_ref::<StructArray>().unwrap();
+        let out_rasters = RasterStructArray::try_new(out_struct).unwrap();
+        let r = out_rasters.get(0).unwrap();
+        let band = r.band(0).unwrap();
+        assert_eq!(band.shape(), &[1, 8]);
+        assert_eq!(band.raw_source_shape(), &[4, 8]);
+        assert_eq!(band.view(), &row1_view());
+        assert_eq!(
+            band.nd_buffer().unwrap().as_contiguous().unwrap(),
+            &source[8..16]
+        );
+        assert_eq!(
+            band.nd_buffer().unwrap().buffer.as_ptr(),
+            in_ptr,
+            "viewed InDb passthrough must share the source buffer (zero-copy)"
+        );
+        assert!(loader.seen.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -934,5 +1132,495 @@ mod tests {
         assert_eq!(out.len(), 2);
         assert!(!out.is_null(0));
         assert!(out.is_null(1));
+    }
+
+    /// Records each `load` call's request URIs and fills every returned
+    /// buffer with a marker byte parsed from the URI's `#<n>` suffix, so a
+    /// test can verify both bundling (one call carrying every request) and
+    /// that results are scattered back to the right band.
+    #[derive(Debug)]
+    struct MarkerLoader {
+        name: String,
+        formats: Vec<String>,
+        calls: Mutex<Vec<Vec<String>>>,
+    }
+
+    impl MarkerLoader {
+        fn new(name: &str, formats: &[&str]) -> Self {
+            Self {
+                name: name.to_string(),
+                formats: formats.iter().map(|s| s.to_string()).collect(),
+                calls: Mutex::default(),
+            }
+        }
+
+        fn marker(uri: &str) -> u8 {
+            uri.rsplit('#').next().unwrap().parse().unwrap()
+        }
+    }
+
+    #[async_trait]
+    impl AsyncRasterLoader for MarkerLoader {
+        fn name(&self) -> &str {
+            &self.name
+        }
+        fn supports_format(&self, format: Option<&str>) -> bool {
+            format.is_some_and(|f| self.formats.iter().any(|x| x == f))
+        }
+        async fn load(
+            &self,
+            reqs: &[&RasterLoadRequest],
+        ) -> Result<Vec<RasterLoadResult>, arrow_schema::ArrowError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(reqs.iter().map(|r| r.uri.to_string()).collect());
+            Ok(reqs
+                .iter()
+                .map(|req| {
+                    let elements: i64 = req.source_shape.iter().product();
+                    let len = elements as usize * req.data_type.byte_size();
+                    RasterLoadResult::unresolved(
+                        Buffer::from_vec(vec![Self::marker(req.uri); len]),
+                        req,
+                    )
+                })
+                .collect())
+        }
+    }
+
+    enum BandSpec {
+        InDb(Vec<u8>),
+        OutDb { uri: String, format: String },
+    }
+
+    fn outdb(format: &str, marker: u8) -> BandSpec {
+        BandSpec::OutDb {
+            uri: format!("mock://{format}#{marker}"),
+            format: format.to_string(),
+        }
+    }
+
+    /// Build an N-row input of `[2, 3]` UInt8 bands; a `None` row is a null
+    /// raster.
+    fn build_rows(rows: &[Option<Vec<BandSpec>>]) -> ArrayRef {
+        let mut b = RasterBuilder::new(rows.len());
+        for row in rows {
+            let Some(bands) = row else {
+                b.append_null().unwrap();
+                continue;
+            };
+            b.start_raster_nd(&[0.0, 1.0, 0.0, 0.0, 0.0, -1.0], &["y", "x"], &[2, 3], None)
+                .unwrap();
+            for (i, spec) in bands.iter().enumerate() {
+                let name = format!("band{i}");
+                let base = StartBandArgs::new(&["y", "x"], &[2, 3], BandDataType::UInt8);
+                match spec {
+                    BandSpec::InDb(pixels) => {
+                        b.start_band(StartBandArgs {
+                            name: Some(&name),
+                            ..base
+                        })
+                        .unwrap();
+                        b.band_data_writer().append_value(pixels);
+                    }
+                    BandSpec::OutDb { uri, format } => {
+                        b.start_band(StartBandArgs {
+                            name: Some(&name),
+                            outdb_uri: Some(uri),
+                            outdb_format: Some(format),
+                            ..base
+                        })
+                        .unwrap();
+                        b.band_data_writer().append_value([0u8; 0]);
+                    }
+                }
+                b.finish_band().unwrap();
+            }
+            b.finish_raster().unwrap();
+        }
+        Arc::new(b.finish().unwrap())
+    }
+
+    fn band_bytes(out: &ArrayRef, raster_idx: usize, band_idx: usize) -> Vec<u8> {
+        let s = out.as_any().downcast_ref::<StructArray>().unwrap();
+        let rasters = RasterStructArray::try_new(s).unwrap();
+        let r = rasters.get(raster_idx).unwrap();
+        let band = r.band(band_idx).unwrap();
+        band.nd_buffer().unwrap().as_contiguous().unwrap().to_vec()
+    }
+
+    #[tokio::test]
+    async fn ensure_loaded_issues_one_load_per_loader_for_the_whole_batch() {
+        // 3 rows × 2 OutDb bands of one format → exactly one load() carrying
+        // all 6 requests in (row, band) order.
+        let input = build_rows(&[
+            Some(vec![outdb("mock", 1), outdb("mock", 2)]),
+            Some(vec![outdb("mock", 3), outdb("mock", 4)]),
+            Some(vec![outdb("mock", 5), outdb("mock", 6)]),
+        ]);
+        let loader = Arc::new(MarkerLoader::new("marker", &["mock"]));
+        let reg = registry_with(loader.clone());
+
+        let out = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt))
+            .await
+            .unwrap();
+
+        let calls = loader.calls.lock().unwrap();
+        assert_eq!(
+            calls.len(),
+            1,
+            "expected one bundled load(), got {}",
+            calls.len()
+        );
+        assert_eq!(
+            calls[0],
+            (1..=6)
+                .map(|m| format!("mock://mock#{m}"))
+                .collect::<Vec<_>>()
+        );
+        drop(calls);
+        for (r, b, m) in [
+            (0, 0, 1u8),
+            (0, 1, 2),
+            (1, 0, 3),
+            (1, 1, 4),
+            (2, 0, 5),
+            (2, 1, 6),
+        ] {
+            assert_eq!(band_bytes(&out, r, b), vec![m; 6], "raster {r} band {b}");
+        }
+    }
+
+    #[tokio::test]
+    async fn ensure_loaded_groups_by_loader_and_scatters_results_in_order() {
+        // Two loaders, three formats, interleaved across rows and bands, plus
+        // a null row. Each loader is called exactly once, each format is
+        // resolved through the registry exactly once, and every band gets
+        // its own loader's bytes back.
+        // `alpha` claims two formats: both must land in its single call.
+        let input = build_rows(&[
+            Some(vec![outdb("a", 1), outdb("b", 2)]),
+            None,
+            Some(vec![outdb("b", 3), outdb("a", 4)]),
+            Some(vec![outdb("c", 5)]),
+        ]);
+        let alpha = Arc::new(MarkerLoader::new("alpha", &["a", "c"]));
+        let beta = Arc::new(MarkerLoader::new("beta", &["b"]));
+        let mut reg = RasterLoaderRegistry::new();
+        reg.register(alpha.clone());
+        reg.register(beta.clone());
+
+        let mut lookups = 0usize;
+        let out = ensure_loaded(&input, |fmt| {
+            lookups += 1;
+            reg.get_or_error(fmt)
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(lookups, 3, "each distinct format resolves once per call");
+        assert_eq!(
+            *alpha.calls.lock().unwrap(),
+            vec![vec![
+                "mock://a#1".to_string(),
+                "mock://a#4".to_string(),
+                "mock://c#5".to_string()
+            ]],
+            "two formats resolving to one loader must share a single load()"
+        );
+        assert_eq!(
+            *beta.calls.lock().unwrap(),
+            vec![vec!["mock://b#2".to_string(), "mock://b#3".to_string()]]
+        );
+        assert!(out.is_null(1));
+        for (r, b, m) in [(0, 0, 1u8), (0, 1, 2), (2, 0, 3), (2, 1, 4), (3, 0, 5)] {
+            assert_eq!(band_bytes(&out, r, b), vec![m; 6], "raster {r} band {b}");
+        }
+    }
+
+    #[tokio::test]
+    async fn ensure_loaded_mixes_indb_and_outdb_bands_within_a_raster() {
+        let pixels: Vec<u8> = (10..16).collect();
+        let input = build_rows(&[Some(vec![
+            BandSpec::InDb(pixels.clone()),
+            outdb("mock", 9),
+            BandSpec::InDb(pixels.clone()),
+        ])]);
+        let loader = Arc::new(MarkerLoader::new("marker", &["mock"]));
+        let reg = registry_with(loader.clone());
+
+        let out = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            *loader.calls.lock().unwrap(),
+            vec![vec!["mock://mock#9".to_string()]]
+        );
+        assert_eq!(band_bytes(&out, 0, 0), pixels);
+        assert_eq!(band_bytes(&out, 0, 1), vec![9u8; 6]);
+        assert_eq!(band_bytes(&out, 0, 2), pixels);
+    }
+
+    #[tokio::test]
+    async fn ensure_loaded_rejects_loader_returning_wrong_result_count() {
+        #[derive(Debug)]
+        struct ExtraResultLoader;
+        #[async_trait]
+        impl AsyncRasterLoader for ExtraResultLoader {
+            fn name(&self) -> &str {
+                "extra"
+            }
+            fn supports_format(&self, _format: Option<&str>) -> bool {
+                true
+            }
+            async fn load(
+                &self,
+                reqs: &[&RasterLoadRequest],
+            ) -> Result<Vec<RasterLoadResult>, arrow_schema::ArrowError> {
+                // One result too many.
+                Ok(reqs
+                    .iter()
+                    .chain(reqs.iter().take(1))
+                    .map(|req| RasterLoadResult::unresolved(Buffer::from_vec(vec![0u8; 6]), req))
+                    .collect())
+            }
+        }
+
+        let input = build_rows(&[Some(vec![outdb("mock", 1)])]);
+        let reg = registry_with(Arc::new(ExtraResultLoader));
+        let err = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("returned 2 result(s) for 1 request(s)"),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn ensure_loaded_names_loader_and_request_count_on_load_failure() {
+        #[derive(Debug)]
+        struct FailingLoader;
+        #[async_trait]
+        impl AsyncRasterLoader for FailingLoader {
+            fn name(&self) -> &str {
+                "failing"
+            }
+            fn supports_format(&self, _format: Option<&str>) -> bool {
+                true
+            }
+            async fn load(
+                &self,
+                _reqs: &[&RasterLoadRequest],
+            ) -> Result<Vec<RasterLoadResult>, arrow_schema::ArrowError> {
+                Err(arrow_schema::ArrowError::ExternalError("boom".into()))
+            }
+        }
+
+        let input = build_rows(&[Some(vec![outdb("mock", 1)]), Some(vec![outdb("mock", 2)])]);
+        let reg = registry_with(Arc::new(FailingLoader));
+        let err = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("loader 'failing' failed loading 2 band(s)") && err.contains("boom"),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn ensure_loaded_rejects_loader_that_changes_a_non_spatial_visible_shape() {
+        // A ["t", "y", "x"] band, source [3, 1, 8], view slicing `t` to one
+        // step (visible [1, 1, 8]). `finish_raster` only checks y/x, so a
+        // loader that hands back the full source under an identity view would
+        // silently turn the band into [3, 1, 8] without this guard.
+        let view = ViewEntries::new(vec![
+            ViewEntry {
+                source_axis: 0,
+                start: 1,
+                step: 1,
+                steps: 1,
+            },
+            ViewEntry {
+                source_axis: 1,
+                start: 0,
+                step: 1,
+                steps: 1,
+            },
+            ViewEntry {
+                source_axis: 2,
+                start: 0,
+                step: 1,
+                steps: 8,
+            },
+        ]);
+        let mut b = RasterBuilder::new(1);
+        b.start_raster_nd(&[0.0, 1.0, 0.0, 0.0, 0.0, -1.0], &["y", "x"], &[1, 8], None)
+            .unwrap();
+        b.start_band(StartBandArgs {
+            view: Some(&view),
+            outdb_uri: Some("file:///tmp/cube.zarr"),
+            outdb_format: Some("mock"),
+            ..StartBandArgs::new(&["t", "y", "x"], &[3, 1, 8], BandDataType::UInt8)
+        })
+        .unwrap();
+        b.band_data_writer().append_value([0u8; 0]);
+        b.finish_band().unwrap();
+        b.finish_raster().unwrap();
+        let input: ArrayRef = Arc::new(b.finish().unwrap());
+
+        #[derive(Debug)]
+        struct IdentityViewLoader;
+        #[async_trait]
+        impl AsyncRasterLoader for IdentityViewLoader {
+            fn name(&self) -> &str {
+                "identity-view"
+            }
+            fn supports_format(&self, _format: Option<&str>) -> bool {
+                true
+            }
+            async fn load(
+                &self,
+                reqs: &[&RasterLoadRequest],
+            ) -> Result<Vec<RasterLoadResult>, arrow_schema::ArrowError> {
+                Ok(reqs
+                    .iter()
+                    .map(|req| RasterLoadResult {
+                        bytes: Buffer::from_vec(vec![0u8; 24]),
+                        source_shape: req.source_shape.to_vec(),
+                        view: ViewEntries::identity_for_shape(req.source_shape),
+                    })
+                    .collect())
+            }
+        }
+
+        let reg = registry_with(Arc::new(IdentityViewLoader));
+        let err = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("visible shape [3, 1, 8], expected [1, 1, 8]"),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn ensure_loaded_sends_source_order_dim_names_for_a_transposed_view() {
+        // Source axes are (y=4, x=8); the view transposes them so the band's
+        // visible axes are ["x", "y"] with shape [8, 4]. The request must
+        // name the axes in *source* order, parallel to `source_shape`.
+        let transposed = ViewEntries::new(vec![
+            ViewEntry {
+                source_axis: 1,
+                start: 0,
+                step: 1,
+                steps: 8,
+            },
+            ViewEntry {
+                source_axis: 0,
+                start: 0,
+                step: 1,
+                steps: 4,
+            },
+        ]);
+        let mut b = RasterBuilder::new(1);
+        b.start_raster_nd(&[0.0, 1.0, 0.0, 0.0, 0.0, -1.0], &["y", "x"], &[4, 8], None)
+            .unwrap();
+        b.start_band(StartBandArgs {
+            view: Some(&transposed),
+            outdb_uri: Some("file:///tmp/foo.tif"),
+            outdb_format: Some("mock"),
+            ..StartBandArgs::new(&["x", "y"], &[4, 8], BandDataType::UInt8)
+        })
+        .unwrap();
+        b.band_data_writer().append_value([0u8; 0]);
+        b.finish_band().unwrap();
+        b.finish_raster().unwrap();
+        let input: ArrayRef = Arc::new(b.finish().unwrap());
+
+        let loader: Arc<RecordingLoader> = Arc::new(RecordingLoader::default());
+        let reg = registry_with(loader.clone());
+        let out = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt))
+            .await
+            .unwrap();
+
+        let seen = loader.seen.lock().unwrap();
+        assert_eq!(seen[0].1, vec![4, 8]);
+        assert_eq!(seen[0].3, vec!["y".to_string(), "x".to_string()]);
+        drop(seen);
+        // The band itself is unchanged: still transposed, still [8, 4].
+        let out_struct = out.as_any().downcast_ref::<StructArray>().unwrap();
+        let out_rasters = RasterStructArray::try_new(out_struct).unwrap();
+        let r = out_rasters.get(0).unwrap();
+        let band = r.band(0).unwrap();
+        assert_eq!(band.dim_names(), vec!["x", "y"]);
+        assert_eq!(band.shape(), &[8, 4]);
+        assert_eq!(band.view(), &transposed);
+    }
+
+    #[test]
+    fn source_order_dim_names_falls_back_to_visible_order_for_non_permutations() {
+        // Identity view: unchanged.
+        let identity = ViewEntries::identity_for_shape(&[4, 8]);
+        assert_eq!(
+            source_order_dim_names(&["y", "x"], &identity),
+            vec!["y", "x"]
+        );
+        // Two visible axes reading the same source axis: not a permutation.
+        let doubled = ViewEntries::new(vec![
+            ViewEntry {
+                source_axis: 0,
+                start: 0,
+                step: 1,
+                steps: 4,
+            },
+            ViewEntry {
+                source_axis: 0,
+                start: 0,
+                step: 1,
+                steps: 4,
+            },
+        ]);
+        assert_eq!(
+            source_order_dim_names(&["a", "b"], &doubled),
+            vec!["a", "b"]
+        );
+    }
+
+    #[tokio::test]
+    async fn ensure_loaded_handles_an_empty_batch() {
+        let input: ArrayRef = Arc::new(RasterBuilder::new(0).finish().unwrap());
+        let loader: Arc<RecordingLoader> = Arc::new(RecordingLoader::default());
+        let reg = registry_with(loader.clone());
+        let out = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt))
+            .await
+            .unwrap();
+        assert_eq!(out.len(), 0);
+        assert!(loader.seen.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn ensure_loaded_handles_a_raster_with_no_bands() {
+        let mut b = RasterBuilder::new(1);
+        b.start_raster_nd(&[0.0, 1.0, 0.0, 0.0, 0.0, -1.0], &["y", "x"], &[2, 3], None)
+            .unwrap();
+        b.finish_raster().unwrap();
+        let input: ArrayRef = Arc::new(b.finish().unwrap());
+        let loader: Arc<RecordingLoader> = Arc::new(RecordingLoader::default());
+        let reg = registry_with(loader.clone());
+        let out = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt))
+            .await
+            .unwrap();
+        let out_struct = out.as_any().downcast_ref::<StructArray>().unwrap();
+        let out_rasters = RasterStructArray::try_new(out_struct).unwrap();
+        assert_eq!(out_rasters.len(), 1);
+        assert!(!out.is_null(0));
+        assert_eq!(out_rasters.get(0).unwrap().num_bands(), 0);
+        assert!(loader.seen.lock().unwrap().is_empty());
     }
 }
