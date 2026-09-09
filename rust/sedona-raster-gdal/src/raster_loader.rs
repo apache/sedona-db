@@ -647,4 +647,41 @@ mod tests {
         })
         .unwrap();
     }
+
+    #[tokio::test]
+    async fn gdal_loader_serves_a_batch_of_requests_in_request_order() {
+        // RS_EnsureLoaded issues every OutDb band of a batch in one call:
+        // results must come back one per request, in request order, and a
+        // file that appears twice is read twice without disturbing the
+        // others. Distinct shapes make any reordering observable.
+        let tmp = TempDir::new().unwrap();
+        let a = write_uint8_geotiff(&tmp, "a.tif"); // 2 × 3, pixels 0..6
+        let b = write_pattern_geotiff(&tmp, "b.tif", 4, 2); // 2 × 4, pixels 0..8
+        let a_uri = format!("{a}#band=1");
+        let b_uri = format!("{b}#band=1");
+        let view_a = ViewEntries::identity_for_shape(&[2, 3]);
+        let view_b = ViewEntries::identity_for_shape(&[2, 4]);
+        let req_a = RasterLoadRequest {
+            uri: &a_uri,
+            dim_names: &["y", "x"],
+            source_shape: &[2, 3],
+            view: &view_a,
+            data_type: BandDataType::UInt8,
+        };
+        let req_b = RasterLoadRequest {
+            uri: &b_uri,
+            dim_names: &["y", "x"],
+            source_shape: &[2, 4],
+            view: &view_b,
+            data_type: BandDataType::UInt8,
+        };
+
+        let loader = GdalLoader::new();
+        let results = loader.load(&[&req_a, &req_b, &req_a]).await.unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].bytes.as_slice(), &[0u8, 1, 2, 3, 4, 5]);
+        assert_eq!(results[1].bytes.as_slice(), &[0u8, 1, 2, 3, 4, 5, 6, 7]);
+        assert_eq!(results[2].bytes.as_slice(), &[0u8, 1, 2, 3, 4, 5]);
+        assert_eq!(results[1].source_shape, vec![2, 4]);
+    }
 }
