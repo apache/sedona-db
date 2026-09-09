@@ -280,7 +280,9 @@ class GeoDataFrame:
             self._ancestors = []
         else:
             self._ancestors.append(self._df)
-        self._df = self._df.mutate(**{key: expr})
+        # Positional alias rather than a keyword: a column named "self"
+        # would collide with mutate's own first parameter.
+        self._df = self._df.mutate(expr.alias(key))
 
         # Assignment can change whether the active geometry column is still a
         # geometry: replacing it with a number leaves nothing to be active, and
@@ -477,7 +479,7 @@ class GeoDataFrame:
         if self._geometry_name is None:
             raise ValueError("to_crs() requires an active geometry column")
         transformed = self._df[self._geometry_name].geo.transform(lit(crs))
-        new_df = self._df.mutate(**{self._geometry_name: transformed})
+        new_df = self._df.mutate(transformed.alias(self._geometry_name))
         return GeoDataFrame(new_df, self._geometry_name)
 
     def dissolve(self, by=None, aggfunc="first", dropna=True):
@@ -561,14 +563,21 @@ class GeoDataFrame:
         # missing key the way they do in pandas. The gate is null where the
         # key is NaN and zero elsewhere, and adding it keeps real values and
         # null keys unchanged.
-        floating = {
-            key: source[key]
-            + source[key].funcs.isnan().funcs.nullif(lit(True)).cast(pa.float64())
-            for key in keys
-            if _is_floating(source, key)
-        }
-        if floating:
-            source = source.mutate(**floating)
+        schema = pa.schema(source.schema)
+        normalized = []
+        for key in keys:
+            if _is_floating(source, key):
+                # The gate takes the key's own float type, so a Float32 key
+                # stays Float32 rather than being widened by the addition.
+                ktype = schema.field(key).type
+                if pa.types.is_dictionary(ktype):
+                    ktype = ktype.value_type
+                gate = source[key].funcs.isnan().funcs.nullif(lit(True)).cast(ktype)
+                normalized.append((source[key] + gate).alias(key))
+        if normalized:
+            # Positional aliases rather than keywords: a key named "self"
+            # would collide with mutate's own first parameter.
+            source = source.mutate(*normalized)
         if keys and dropna:
             # GeoPandas drops rows with a missing group key by default.
             for key in keys:
@@ -611,7 +620,7 @@ class GeoDataFrame:
         if crs is not None:
             geometry_expr = geometry_expr.funcs.st_setcrs(ctx.lit(crs.to_json()))
 
-        unioned = collected.mutate(**{self._geometry_name: geometry_expr})
+        unioned = collected.mutate(geometry_expr.alias(self._geometry_name))
         return GeoDataFrame(unioned, self._geometry_name)
 
     def to_geopandas(self):

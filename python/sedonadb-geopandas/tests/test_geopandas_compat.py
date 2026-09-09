@@ -1489,6 +1489,43 @@ def test_dissolve_groups_null_and_nan_keys_together():
     assert dropped["k"].tolist() == [1.0]
 
 
+def test_dissolve_float32_keys_keep_their_type():
+    # The NaN gate was built as Float64, so adding it widened every Float32
+    # key column, missing values or not; the gate now takes the key's type.
+    tbl = pa.table(
+        {
+            "k": pa.array([1.0, 1.0, float("nan")], pa.float32()),
+            "geometry": ga.as_wkb(["POINT (0 0)", "POINT (1 1)", "POINT (2 2)"]),
+        }
+    )
+    gdf = GeoDataFrame(sgpd.default_context().create_data_frame(tbl))
+    out = gdf.dissolve(by="k", dropna=False)
+    assert pa.schema(out._df.schema).field("k").type == pa.float32()
+    assert len(out.to_geopandas()) == 2
+
+
+def test_columns_named_self_work_everywhere():
+    # Keyword-form mutate(**{name: expr}) collides with mutate's own first
+    # parameter when the column is named "self"; every site now passes a
+    # positional alias. Covers assignment, reprojection, and dissolve keys.
+    tbl = pa.table(
+        {
+            "self": pa.array([1.0, 1.0], pa.float64()),
+            "geometry": ga.as_wkb(["POINT (0 0)", "POINT (1 1)"]),
+        }
+    )
+    gdf = GeoDataFrame(sgpd.default_context().create_data_frame(tbl))
+    gdf["self"] = gdf["self"]
+    assert len(gdf.dissolve(by="self").to_geopandas()) == 1
+    reproj = GeoDataFrame(
+        sgpd.default_context().sql(
+            "SELECT ST_SetSRID(ST_Point(0.0, 0.0), 4326) AS self"
+        ),
+        geometry="self",
+    ).to_crs("EPSG:3857")
+    assert "3857" in str(reproj.crs)
+
+
 def test_dissolve_by_nested_float_column():
     # _is_floating used to match the rendered type string, so `list<item: double>`
     # looked like a float column and dropna called isnan() on it, failing at
