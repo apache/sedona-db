@@ -44,6 +44,20 @@ When iterating on documentation, it is usually best to use the `mkdocs` commands
 * `mkdocs build` - Build the documentation site.
 * `mkdocs -h` - Print help message and exit.
 
+## Python API cross-references
+
+Python docstrings are rendered by mkdocstrings. Link to another documented Python
+object with an autorefs reference-style link whose target is the object's fully
+qualified name:
+
+```markdown
+[`DataFrame`][sedonadb.dataframe.DataFrame]
+```
+
+Backticks alone (for example, `` `DataFrame` ``) only format text as code and do
+not create a link. Sphinx roles such as `` :class:`DataFrame` `` are not supported
+by the Markdown docstring renderer.
+
 The official documentation is built using a script which may be useful when building the documentation
 locally for the first time:
 

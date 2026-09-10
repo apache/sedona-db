@@ -56,6 +56,8 @@ popd
 
 pushd "${SEDONADB_DIR}"
 if mkdocs build --strict ; then
+  python3 ci/scripts/check_python_doc_crossrefs.py \
+    site/reference/python/index.html || exit 1
   echo "Success!"
   exit 0
 else
