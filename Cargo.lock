@@ -6049,6 +6049,7 @@ name = "sedona-query-planner"
 version = "0.5.0"
 dependencies = [
  "arrow",
+ "arrow-array",
  "arrow-schema",
  "async-trait",
  "datafusion",
@@ -6058,8 +6059,10 @@ dependencies = [
  "datafusion-optimizer",
  "datafusion-physical-expr",
  "datafusion-physical-plan",
+ "futures",
  "sedona-common",
  "sedona-expr",
+ "sedona-raster",
  "sedona-schema",
  "tokio",
 ]
