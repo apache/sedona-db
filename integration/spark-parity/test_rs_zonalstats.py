@@ -34,7 +34,12 @@ y in (485, 497) selects the 4x4 block rows 1-4 x cols 1-4 of the standard
 import numpy as np
 import pytest
 
-from sedonadb.raster_testing import random_raster_data, write_random_geotiff
+from sedonadb.raster_testing import (
+    RANDOM_GRID_BBOX,
+    random_raster_data,
+    write_geotiff,
+    write_random_geotiff,
+)
 from sedonadb.testing import SedonaDB, compare
 from sedonadb.testing_spark import SedonaSpark
 
@@ -410,3 +415,57 @@ def test_rs_zonalstats_coastline_counts(tmp_path):
         spark,
         expected=1842,
     )
+
+
+# ---------------------------------------------------------------------------
+# NaN pixels. A float band can hold NaN as ordinary data (no nodata is
+# declared here, so nodata exclusion is not in play). SedonaDB deliberately
+# NaN-poisons every statistic — one NaN member makes every reduction NaN,
+# numpy semantics — where Sedona Spark varies per statistic. count and sum
+# agree today and are pinned as plain parity tests; the rest are the xfail
+# catalog.
+
+
+def _nan_engines(name, tmp_path):
+    """A float32 band with one NaN pixel inside RECT, no nodata declared."""
+    data = random_raster_data("float32", bands=1, height=6, width=7)
+    data[0, 2, 3] = np.nan
+    path = tmp_path / f"{name}.tif"
+    write_geotiff(path, data, bbox=RANDOM_GRID_BBOX)
+    sedona, spark = SedonaDB(), SedonaSpark()
+    for eng in (sedona, spark):
+        eng.create_raster_view(name, path)
+    return sedona, spark
+
+
+@pytest.mark.parametrize("stat", ["count", "sum"])
+def test_rs_zonalstats_nan_pixel_agreeing_stats(stat, tmp_path):
+    """Both engines count the NaN pixel as a zone member (16, not 15) and
+    let it poison the sum to NaN. Whether counting it is the right policy
+    is open — GDAL and rasterio treat any NaN as nodata — so this pins
+    parity, not correctness."""
+    sedona, spark = _nan_engines("zs_nan_src", tmp_path)
+    sql = (
+        f"SELECT RS_ZonalStats(rast, ST_GeomFromWKT('{RECT}'), 1, '{stat}') "
+        "FROM zs_nan_src"
+    )
+    compare(sql, sedona, spark)
+
+
+@pytest.mark.parametrize(
+    "stat", ["mean", "min", "max", "median", "mode", "stddev", "variance"]
+)
+@pytest.mark.xfail(
+    reason="a NaN pixel in the zone: SedonaDB reports NaN for every "
+    "statistic; Sedona Spark reports NULL for mean, stddev, and variance "
+    "and computes min, max, median, and mode over the 15 non-NaN pixels"
+)
+def test_rs_zonalstats_nan_pixel_diverging_stats(stat, tmp_path):
+    """Each statistic treats a NaN zone member the same way on both
+    engines."""
+    sedona, spark = _nan_engines("zs_nan_div_src", tmp_path)
+    sql = (
+        f"SELECT RS_ZonalStats(rast, ST_GeomFromWKT('{RECT}'), 1, '{stat}') "
+        "FROM zs_nan_div_src"
+    )
+    compare(sql, sedona, spark)

@@ -35,6 +35,11 @@ rejects unknown names. Even where both engines really interpolate (Bilinear,
 Bicubic) the kernels differ pixel-wise. All of that is `xfail`-cataloged, same
 policy as the other suites: the reason states both engines' observed behavior,
 and where one engine raises, that error is what trips the xfail.
+
+Skewed sources are their own divergence family (also `xfail`-cataloged):
+SedonaDB refuses a scale change or grid snap on a skewed raster outright,
+and even the extent-preserving dimension change both engines accept agrees
+only on the output geotransform, not the pixels.
 """
 
 import numpy as np
@@ -47,6 +52,7 @@ from sedonadb.raster_testing import (
     RANDOM_GRID_WIDTH as WIDTH,
     DecodedRaster,
     random_raster_data,
+    write_geotiff,
     write_grid_geotiff,
 )
 from sedonadb.testing import SedonaDB, compare
@@ -318,5 +324,63 @@ def test_rs_resample_grid_snap_edge_centres(tmp_path):
     sql = (
         "SELECT RS_Resample(rast, 2.0, -3.0, 99.0, 501.0, true, 'NearestNeighbor') "
         "FROM edge_src"
+    )
+    compare(sql, sedona, spark)
+
+
+# A skewed source for the skew divergence family: 4x3 pixels on transform
+# (100, 2, 0.5, 500, 0.3, -3).
+SKEW_TRANSFORM = (100.0, 2.0, 0.5, 500.0, 0.3, -3.0)
+
+
+def _register_skewed(name, tmp_path):
+    """Both engines with a skewed single-band raster registered as `name`."""
+    path = tmp_path / f"{name}.tif"
+    write_geotiff(
+        path,
+        random_raster_data("uint8", bands=1, height=3, width=4),
+        gdal_transform=SKEW_TRANSFORM,
+    )
+    sedona, spark = SedonaDB(), SedonaSpark()
+    for eng in (sedona, spark):
+        eng.create_raster_view(name, path)
+    return sedona, spark
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        pytest.param("1.0, -1.5, true", id="scale"),
+        pytest.param("1.0, -1.5, 99.0, 501.0, true", id="grid-snap"),
+    ],
+)
+@pytest.mark.xfail(
+    reason="a scale change or grid snap on a skewed raster is rejected by "
+    "SedonaDB ('not supported'); Sedona Spark silently regrids as if the "
+    "grid were north-up, keeping the skew terms in the output transform and "
+    "growing the canvas with zero fill"
+)
+def test_rs_resample_skewed_scale(args, tmp_path):
+    """A scale change (and a grid snap) on a skewed raster gets the same
+    treatment from both engines."""
+    sedona, spark = _register_skewed("skew_scale_src", tmp_path)
+    sql = f"SELECT RS_Resample(rast, {args}, 'NearestNeighbor') FROM skew_scale_src"
+    compare(sql, sedona, spark)
+
+
+@pytest.mark.xfail(
+    reason="dimension mode on a skewed raster: the engines agree on the "
+    "output geotransform (pixel size scaled from the skewed envelope, skew "
+    "carried through) but not the pixels — SedonaDB regrids in index space, "
+    "so a 2x upsample is block replication; Sedona Spark samples through "
+    "the envelope transform, shifting content and zero-filling the last "
+    "row and trailing columns"
+)
+def test_rs_resample_skewed_dimensions(tmp_path):
+    """An extent-preserving width/height change on a skewed raster produces
+    the same pixels from both engines."""
+    sedona, spark = _register_skewed("skew_dim_src", tmp_path)
+    sql = (
+        "SELECT RS_Resample(rast, 8.0, 6.0, false, 'NearestNeighbor') FROM skew_dim_src"
     )
     compare(sql, sedona, spark)

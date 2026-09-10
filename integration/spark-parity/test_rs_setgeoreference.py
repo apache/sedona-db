@@ -21,7 +21,8 @@ upperLeftY` (world-file order). Both engines parse the 2-argument form,
 the explicit GDAL format, and the ESRI format (which reads the origin as
 the centre of the upper-left pixel, shifting it by half a pixel)
 identically, and pixels pass through untouched — anchored with the full
-decoded raster.
+decoded raster. Sedona Spark's numeric 7-argument overload has no
+SedonaDB counterpart (xfail below).
 """
 
 import pytest
@@ -75,6 +76,29 @@ def test_rs_setgeoreference_skew(args, tmp_path):
     anchor = DecodedRaster(
         random_raster_data("uint8", bands=2, height=6, width=7),
         gdal_transform=(100.0, 2.0, 0.5, 500.0, 0.25, -3.0),
+        nodata=[None, None],
+    )
+    compare(sql, sedona, spark, expected=anchor)
+
+
+@pytest.mark.xfail(
+    reason="SedonaDB has no numeric 7-argument overload of RS_SetGeoReference "
+    "(it raises 'No kernel matching arguments'); Sedona Spark re-grids from "
+    "(upperLeftX, upperLeftY, scaleX, scaleY, skewX, skewY)"
+)
+def test_rs_setgeoreference_numeric_overload(tmp_path):
+    """The numeric argument form re-grids the raster identically on both
+    engines, pixels untouched."""
+    sedona, spark = SedonaDB(), SedonaSpark()
+    for eng in (sedona, spark):
+        eng.create_random_raster_view("geo_num_src", tmp_path / "geo_num_src.tif")
+    sql = (
+        "SELECT RS_SetGeoReference(rast, 10.0, 20.0, 2.0, -2.0, 0.1, 0.2) "
+        "FROM geo_num_src"
+    )
+    anchor = DecodedRaster(
+        random_raster_data("uint8", bands=2, height=6, width=7),
+        gdal_transform=(10.0, 2.0, 0.1, 20.0, 0.2, -2.0),
         nodata=[None, None],
     )
     compare(sql, sedona, spark, expected=anchor)

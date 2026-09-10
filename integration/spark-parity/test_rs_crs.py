@@ -18,9 +18,10 @@
 
 A pure divergence catalog: the engines serialize a CRS differently by
 design (SedonaDB emits PROJJSON, or a short authority code for an
-SRID-set raster; Sedona Spark emits GeoTools' JSON), and they disagree
-on the CRS-less answer, so every case is an xfail stating both observed
-behaviors.
+SRID-set raster; Sedona Spark emits GeoTools' JSON), they disagree on
+the CRS-less answer, and Sedona Spark's format-selecting 2-argument
+overload has no SedonaDB counterpart — so every case is an xfail
+stating both observed behaviors.
 """
 
 import pytest
@@ -73,3 +74,28 @@ def test_rs_crs_after_setsrid(tmp_path):
     for eng in (sedona, spark):
         eng.create_random_raster_view("crs_set_src", tmp_path / "crs_set_src.tif")
     compare("SELECT RS_CRS(RS_SetSRID(rast, 4326)) FROM crs_set_src", sedona, spark)
+
+
+@pytest.mark.parametrize("fmt", ["wkt", "projjson"])
+@pytest.mark.xfail(
+    reason="SedonaDB has no format overload of RS_CRS (it raises 'No kernel "
+    "matching arguments'); Sedona Spark serializes to the requested format "
+    "('wkt' emits WKT1, 'projjson' emits PROJJSON)"
+)
+def test_rs_crs_format_overload(fmt, tmp_path):
+    """RS_CRS(raster, format) serializes the CRS the same from both
+    engines."""
+    path = tmp_path / "crs_fmt_src.tif"
+    write_random_geotiff(
+        path,
+        "uint8",
+        bands=1,
+        height=6,
+        width=7,
+        bbox=(100.0, 482.0, 114.0, 500.0),
+        crs="EPSG:3857",
+    )
+    sedona, spark = SedonaDB(), SedonaSpark()
+    for eng in (sedona, spark):
+        eng.create_raster_view("crs_fmt_src", path)
+    compare(f"SELECT RS_CRS(rast, '{fmt}') FROM crs_fmt_src", sedona, spark)
