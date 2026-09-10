@@ -2381,6 +2381,24 @@ def test_st_linestringfromtext_alias(eng):
 
 @pytest.mark.parametrize("eng", [SedonaDB])
 @pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        (
+            "SELECT ST_AsWKB(ST_Point(1, 2)) = ST_AsBinary(ST_Point(1, 2))",
+            True,
+        ),
+        ("SELECT ST_AsWKT(ST_Point(1, 2))", "POINT(1 2)"),
+        ("SELECT ST_Force3DZ(ST_Point(1, 2), 3)", "POINT Z (1 2 3)"),
+        ("SELECT ST_GeometryFromText('POINT (1 2)')", "POINT (1 2)"),
+    ],
+)
+def test_function_aliases(eng, query, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(query, expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize(
     ("fn_name", "wkt", "wrong_empty"),
     [
         ("ST_PointFromText", "POINT (1 2)", "LINESTRING EMPTY"),
