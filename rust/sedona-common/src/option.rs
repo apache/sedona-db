@@ -48,6 +48,30 @@ config_namespace! {
 
         /// Options for configuring GDAL usage
         pub gdal: GdalOptions, default = GdalOptions::default()
+
+        /// Options for raster execution
+        pub raster: RasterOptions, default = RasterOptions::default()
+    }
+}
+
+/// Default byte budget for a batch of materialized rasters when no memory
+/// limit is configured. `SedonaContext` lowers it to a fraction of the
+/// per-partition memory limit when one is.
+pub const DEFAULT_RASTER_MAX_BATCH_BYTES: usize = 256 * 1024 * 1024;
+
+config_namespace! {
+    /// Configuration options for raster execution.
+    pub struct RasterOptions {
+        /// Byte budget for a batch of materialized rasters. `RS_EnsureLoaded`
+        /// slices each input batch so that the estimated bytes of the rasters it
+        /// materializes (sum over bands of source shape × pixel size, taken from
+        /// band metadata) stay within this budget, emitting each slice as its own
+        /// batch instead of trusting the row-count `datafusion.execution.batch_size`.
+        /// A single row larger than the budget is still processed, on its own.
+        /// `0` disables the slicing. When a memory limit is configured
+        /// `SedonaContext` lowers the default to a fraction of the per-partition
+        /// limit.
+        pub max_batch_bytes: usize, default = DEFAULT_RASTER_MAX_BATCH_BYTES
     }
 }
 
