@@ -167,7 +167,41 @@ class SedonaSpark(DBEngine):
     def result_to_table(self, result) -> pa.Table:
         # toArrow() preserves nulls Arrow-natively; toPandas() would turn a
         # nodata None into a float NaN and mask the value under test.
-        return result.toArrow()
+        #
+        # toArrow() ships a GeometryUDT column as the UDT's internal
+        # serialization bytes, not ISO WKB, so convert in the JVM first
+        # (transport-only, like decode_raster_result's RS_AsGeoTiff) and
+        # re-tag the bytes as geoarrow.wkb — geometry results then render
+        # WKT through the same geoarrow path as every other engine.
+        import geoarrow.pyarrow as ga
+        from sedona.spark.sql.st_functions import ST_AsBinary
+        from sedona.spark.sql.types import GeometryType
+
+        fields = result.schema.fields
+        geometry_indices = {
+            i for i, f in enumerate(fields) if isinstance(f.dataType, GeometryType)
+        }
+        if geometry_indices:
+            # Rename positionally first: the generated column names contain
+            # dots ("rs_worldtorastercoord(rast, 104.0, 494.0)"), which every
+            # name-based column lookup would re-parse as a nested path.
+            names = [f.name for f in fields]
+            renamed = result.toDF(*[f"c{i}" for i in range(len(fields))])
+            result = renamed.select(
+                *[
+                    ST_AsBinary(column).alias(f"c{i}")
+                    if i in geometry_indices
+                    else column
+                    for i, column in enumerate(renamed[c] for c in renamed.columns)
+                ]
+            )
+        table = result.toArrow()
+        if geometry_indices:
+            table = table.rename_columns(names)
+        for i in geometry_indices:
+            wkb = ga.wkb().wrap_array(table.column(i).combine_chunks())
+            table = table.set_column(i, pa.field(table.schema.names[i], wkb.type), wkb)
+        return table
 
     def result_has_raster(self, sql) -> bool:
         from sedona.spark.sql.types import RasterType
