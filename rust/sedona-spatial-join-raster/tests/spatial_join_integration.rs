@@ -128,6 +128,12 @@ fn register_geom_table(ctx: &SessionContext) -> Result<()> {
 /// `SpatialJoinExec`. Otherwise the join stays a `NestedLoopJoinExec`.
 fn build_context(optimized: bool) -> Result<SessionContext> {
     let mut session_config = SessionConfig::from_env()?.with_batch_size(16);
+    // Work around https://github.com/apache/datafusion/issues/24933:
+    // physical scalar subqueries discard Arrow field metadata.
+    session_config
+        .options_mut()
+        .optimizer
+        .enable_physical_uncorrelated_scalar_subquery = false;
     session_config = session_config.with_option_extension(SedonaOptions::default());
 
     // Install a real CRS engine, mirroring the engine a normal session
@@ -181,7 +187,7 @@ fn setup_context(optimized: bool) -> Result<SessionContext> {
 fn count_spatial_join_execs(plan: &Arc<dyn ExecutionPlan>) -> Result<usize> {
     let mut count = 0;
     plan.apply(|node| {
-        if node.as_any().downcast_ref::<SpatialJoinExec>().is_some() {
+        if node.downcast_ref::<SpatialJoinExec>().is_some() {
             count += 1;
         }
         Ok(TreeNodeRecursion::Continue)
@@ -203,7 +209,7 @@ fn schema_has_raster(schema: &Schema) -> bool {
 fn spatial_join_raster_sides(plan: &Arc<dyn ExecutionPlan>) -> Result<(bool, bool)> {
     let mut sides = None;
     plan.apply(|node| {
-        if let Some(sj) = node.as_any().downcast_ref::<SpatialJoinExec>() {
+        if let Some(sj) = node.downcast_ref::<SpatialJoinExec>() {
             sides = Some((
                 schema_has_raster(sj.left.schema().as_ref()),
                 schema_has_raster(sj.right.schema().as_ref()),

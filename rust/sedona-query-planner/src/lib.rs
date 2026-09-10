@@ -21,6 +21,9 @@ pub mod ensure_loaded;
 mod logical_plan_node;
 pub mod optimizer;
 pub mod probe_shuffle_exec;
+// DataFusion #22620 compatibility workaround; removal tracked at
+// https://github.com/apache/sedona-db/issues/1232.
+pub mod push_down_leaf_projections;
 pub mod query_planner;
 mod restore_metadata;
 mod spatial_expr_utils;

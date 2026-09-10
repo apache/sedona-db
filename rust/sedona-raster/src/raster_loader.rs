@@ -292,8 +292,8 @@ impl ConfigField for RasterLoaderRegistryOption {
 
 /// `ConfigExtension` that stashes the per-session
 /// [`RasterLoaderRegistry`] inside a `ConfigOptions`. Registered into
-/// the session's `ConfigOptions` at `SedonaContext::new_from_context`
-/// time; consumed by the `RS_EnsureLoaded` async UDF at dispatch time
+/// the session's `ConfigOptions` during `SedonaContext` construction;
+/// consumed by the `RS_EnsureLoaded` async UDF at dispatch time
 /// via `args.config_options.extensions.get::<RasterLoaderConfig>()`.
 ///
 /// The PREFIX namespace is `sedona.raster_loader` — kept separate from
@@ -308,10 +308,7 @@ pub struct RasterLoaderConfig {
 
 impl RasterLoaderConfig {
     /// Build a config extension that closes over an existing shared
-    /// registry handle. Use this rather than `default()` when wiring
-    /// from `SedonaContext::new_from_context` so the context's mutable
-    /// `register_raster_loader` API writes to the same `RwLock` the
-    /// config extension exposes for reads.
+    /// registry handle.
     pub fn from_handle(registry: Arc<RwLock<RasterLoaderRegistry>>) -> Self {
         Self {
             registry: RasterLoaderRegistryOption::new(registry),

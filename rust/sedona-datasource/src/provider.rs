@@ -15,7 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::any::Any;
 use std::sync::Arc;
 
 use arrow_schema::{DataType, SchemaRef};
@@ -35,7 +34,7 @@ use datafusion::{
     prelude::{SessionConfig, SessionContext},
 };
 use datafusion_catalog::{memory::DataSourceExec, Session};
-use datafusion_common::{exec_err, Result};
+use datafusion_common::{exec_err, extensions::Extensions, Result, TableReference};
 use datafusion_datasource::{
     file_groups::FileGroup, file_scan_config::FileScanConfigBuilder, table_schema::TableSchema,
     PartitionedFile,
@@ -248,10 +247,6 @@ impl SingleObjectExternalTable {
 
 #[async_trait]
 impl TableProvider for SingleObjectExternalTable {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }
@@ -288,9 +283,11 @@ impl TableProvider for SingleObjectExternalTable {
                     object_meta: synthetic_object_meta(location),
                     partition_values: vec![],
                     range: None,
-                    extensions: None,
+                    extensions: Extensions::default(),
                     statistics: None,
                     metadata_size_hint: None,
+                    ordering: None,
+                    table_reference: Some(TableReference::bare(location.to_string())),
                 }])
             })
             .collect();

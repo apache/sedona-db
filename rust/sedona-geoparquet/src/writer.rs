@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::{any::Any, collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use arrow_array::{
     builder::{Float32Builder, NullBufferBuilder},
@@ -239,10 +239,6 @@ impl DisplayAs for GeoParquetSink {
 
 #[async_trait]
 impl DataSink for GeoParquetSink {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn schema(&self) -> &SchemaRef {
         &self.sink_input_schema
     }
@@ -602,10 +598,6 @@ impl std::hash::Hash for NormalizeForGeoParquet {
 impl Eq for NormalizeForGeoParquet {}
 
 impl ScalarUDFImpl for NormalizeForGeoParquet {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         "normalize_for_geoparquet"
     }

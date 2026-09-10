@@ -45,7 +45,10 @@ test_that("basic literals can be converted to expressions", {
 test_that("literals can request a type", {
   expect_identical(
     as_sedonadb_literal(1.0, type = nanoarrow::na_float())$debug_string(),
-    "Cast(Cast { expr: Literal(Float64(1), None), data_type: Float32 })"
+    paste0(
+      "Cast(Cast { expr: Literal(Float64(1), None), ",
+      "field: Field { name: \"\", data_type: Float32, nullable: true } })"
+    )
   )
 })
 

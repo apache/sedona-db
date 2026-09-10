@@ -107,7 +107,7 @@ pub struct SpatialJoinExec {
     /// Information of index and left / right placement of columns
     column_indices: Vec<ColumnIndex>,
     /// Cache holding plan properties like equivalences, output partitioning etc.
-    cache: PlanProperties,
+    cache: Arc<PlanProperties>,
     /// Once future for creating the partitioned index provider shared by all probe partitions.
     /// This future runs only once before probing starts, and can be disposed by the last finished
     /// stream so the provider does not outlive the execution plan unnecessarily.
@@ -172,7 +172,7 @@ impl SpatialJoinExec {
             column_indices,
             projection,
             metrics: Default::default(),
-            cache,
+            cache: Arc::new(cache),
             once_async_spatial_join_components: Arc::new(Mutex::new(None)),
             seed,
             join_provider: Arc::new(DefaultSpatialJoinProvider),
@@ -214,7 +214,7 @@ impl SpatialJoinExec {
         let swapped_projection = swap_join_projection(
             left_schema.fields().len(),
             right_schema.fields().len(),
-            self.projection.as_ref(),
+            self.projection.as_deref(),
             &self.join_type,
         );
 
@@ -247,7 +247,7 @@ impl SpatialJoinExec {
 
     pub fn with_projection(&self, projection: Option<Vec<usize>>) -> Result<Self> {
         // check if the projection is valid
-        can_project(&self.schema(), projection.as_ref())?;
+        can_project(&self.schema(), projection.as_deref())?;
         let projection = match projection {
             Some(projection) => match &self.projection {
                 Some(p) => Some(projection.iter().map(|i| p[*i]).collect()),
@@ -364,11 +364,7 @@ impl ExecutionPlan for SpatialJoinExec {
         "SpatialJoinExec"
     }
 
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn properties(&self) -> &PlanProperties {
+    fn properties(&self) -> &Arc<PlanProperties> {
         &self.cache
     }
 
@@ -568,7 +564,7 @@ mod exec_transform_tests {
     fn collect_spatial_join_exec(plan: &Arc<dyn ExecutionPlan>) -> Result<Vec<&SpatialJoinExec>> {
         let mut spatial_join_execs = Vec::new();
         plan.apply(|node| {
-            if let Some(spatial_join_exec) = node.as_any().downcast_ref::<SpatialJoinExec>() {
+            if let Some(spatial_join_exec) = node.downcast_ref::<SpatialJoinExec>() {
                 spatial_join_execs.push(spatial_join_exec);
             }
             Ok(TreeNodeRecursion::Continue)
@@ -660,7 +656,6 @@ mod exec_transform_tests {
         };
 
         let new_exec = new_plan
-            .as_any()
             .downcast_ref::<SpatialJoinExec>()
             .expect("expected SpatialJoinExec");
 
@@ -669,7 +664,7 @@ mod exec_transform_tests {
         assert!(new_exec
             .children()
             .iter()
-            .all(|c| c.as_any().downcast_ref::<ProjectionExec>().is_some()));
+            .all(|c| c.downcast_ref::<ProjectionExec>().is_some()));
 
         // Predicate columns should be remapped to match the projected children (both become 0).
         let SpatialPredicate::Relation(new_on) = &new_exec.on else {
@@ -677,12 +672,10 @@ mod exec_transform_tests {
         };
         let new_left = new_on
             .left
-            .as_any()
             .downcast_ref::<Column>()
             .expect("expected Column expr");
         let new_right = new_on
             .right
-            .as_any()
             .downcast_ref::<Column>()
             .expect("expected Column expr");
         assert_eq!(new_left.index(), 0);
@@ -733,7 +726,6 @@ mod exec_transform_tests {
             return sedona_internal_err!("expected try_swapping_with_projection to succeed");
         };
         let new_exec = new_plan
-            .as_any()
             .downcast_ref::<SpatialJoinExec>()
             .expect("expected SpatialJoinExec");
 
@@ -744,12 +736,10 @@ mod exec_transform_tests {
         // Both sides should be remapped to 0 in their respective projected children.
         let new_probe = new_on
             .left
-            .as_any()
             .downcast_ref::<Column>()
             .expect("expected Column expr");
         let new_build = new_on
             .right
-            .as_any()
             .downcast_ref::<Column>()
             .expect("expected Column expr");
         assert_eq!(new_probe.index(), 0);
@@ -793,12 +783,10 @@ mod exec_transform_tests {
         assert_eq!(swapped_exec.join_type, JoinType::Right);
         let new_left = rel
             .left
-            .as_any()
             .downcast_ref::<Column>()
             .expect("expected Column expr");
         let new_right = rel
             .right
-            .as_any()
             .downcast_ref::<Column>()
             .expect("expected Column expr");
         assert_eq!(new_left.name(), "rgeom");
@@ -846,12 +834,10 @@ mod exec_transform_tests {
         // Expressions are not swapped (remain pointing at original table schemas).
         let probe_expr = knn
             .left
-            .as_any()
             .downcast_ref::<Column>()
             .expect("expected Column expr");
         let build_expr = knn
             .right
-            .as_any()
             .downcast_ref::<Column>()
             .expect("expected Column expr");
         assert_eq!(probe_expr.name(), "rgeom");

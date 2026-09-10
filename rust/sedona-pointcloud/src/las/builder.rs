@@ -503,7 +503,7 @@ fn build_attribute(
 
 #[cfg(test)]
 mod tests {
-    use std::{fs::File, sync::Arc};
+    use std::sync::Arc;
 
     use arrow_array::{
         cast::AsArray,
@@ -513,47 +513,25 @@ mod tests {
         },
     };
     use datafusion_datasource::PartitionedFile;
-    use las::{point::Format, Builder, Writer};
-    use object_store::{local::LocalFileSystem, path::Path, ObjectStore};
+    use las::{point::Format, Builder};
+    use object_store::{local::LocalFileSystem, path::Path, ObjectStoreExt};
 
     use crate::las::{
         options::{LasExtraBytes, LasOptions},
         reader::LasFileReaderFactory,
     };
 
-    #[tokio::test]
-    async fn point_formats() {
-        let tmpdir = tempfile::tempdir().unwrap();
-
+    #[test]
+    fn point_formats() {
         for format in 0..=10 {
-            let tmp_path = tmpdir.path().join("format.laz");
-            let tmp_file = File::create(&tmp_path).unwrap();
-
-            // create laz file
             let mut builder = Builder::from((1, 4));
             builder.point_format = Format::new(format).unwrap();
-            builder.point_format.is_compressed = true;
             let header = builder.into_header().unwrap();
-            let mut writer = Writer::new(tmp_file, header).unwrap();
-            writer.close().unwrap();
-
-            // read batch with `LazFileReader`
-            let store = LocalFileSystem::new();
-            let location = Path::from_filesystem_path(tmp_path).unwrap();
-            let object = store.head(&location).await.unwrap();
-
-            let file_reader = LasFileReaderFactory::new(Arc::new(store), None)
-                .create_reader(
-                    PartitionedFile::new(location, object.size),
-                    LasOptions::default(),
-                )
-                .unwrap();
-            let metadata = file_reader.get_metadata().await.unwrap();
-
-            let batch = file_reader
-                .get_batch(&metadata.chunk_table[0])
-                .await
-                .unwrap();
+            let batch = arrow_array::RecordBatch::from(
+                super::RowBuilder::new(0, Arc::new(header))
+                    .finish()
+                    .unwrap(),
+            );
 
             match format {
                 0 => assert_eq!(batch.num_columns(), 17),

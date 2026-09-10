@@ -907,6 +907,8 @@ pub(crate) fn try_pushdown_through_join(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
 
     use arrow::array::{UInt32Array, UInt64Array};
@@ -1086,7 +1088,6 @@ mod tests {
                 assert_eq!(exprs.len(), expected_indices.len());
                 for (expr, expected_idx) in exprs.iter().zip(expected_indices.iter()) {
                     let col = expr
-                        .as_any()
                         .downcast_ref::<Column>()
                         .expect("expected Column physical expr");
                     assert_eq!(col.index(), *expected_idx);
@@ -1141,10 +1142,7 @@ mod tests {
     }
 
     fn assert_is_column_expr(expr: &Arc<dyn PhysicalExpr>, name: &str, index: usize) {
-        let col = expr
-            .as_any()
-            .downcast_ref::<Column>()
-            .expect("expected Column");
+        let col = expr.downcast_ref::<Column>().expect("expected Column");
         assert_eq!(col.name(), name);
         assert_eq!(col.index(), index);
     }
@@ -1152,7 +1150,7 @@ mod tests {
     #[derive(Debug, Clone)]
     struct PropertiesOnlyExec {
         schema: SchemaRef,
-        properties: PlanProperties,
+        properties: Arc<PlanProperties>,
     }
 
     impl PropertiesOnlyExec {
@@ -1166,7 +1164,7 @@ mod tests {
             );
             Self {
                 schema: schema_ref,
-                properties,
+                properties: Arc::new(properties),
             }
         }
     }
@@ -1182,15 +1180,11 @@ mod tests {
             "PropertiesOnlyExec"
         }
 
-        fn as_any(&self) -> &dyn std::any::Any {
-            self
-        }
-
         fn schema(&self) -> SchemaRef {
             Arc::clone(&self.schema)
         }
 
-        fn properties(&self) -> &PlanProperties {
+        fn properties(&self) -> &Arc<PlanProperties> {
             &self.properties
         }
 
@@ -1213,19 +1207,13 @@ mod tests {
             unimplemented!("PropertiesOnlyExec is for properties tests only")
         }
 
-        fn statistics(&self) -> Result<datafusion_common::Statistics> {
-            Ok(datafusion_common::Statistics::new_unknown(
-                self.schema().as_ref(),
-            ))
-        }
-
         fn partition_statistics(
             &self,
             _partition: Option<usize>,
-        ) -> Result<datafusion_common::Statistics> {
-            Ok(datafusion_common::Statistics::new_unknown(
+        ) -> Result<Arc<datafusion_common::Statistics>> {
+            Ok(Arc::new(datafusion_common::Statistics::new_unknown(
                 self.schema().as_ref(),
-            ))
+            )))
         }
     }
 
@@ -1544,7 +1532,6 @@ mod tests {
         assert_eq!(left_proj.alias, "l1_out");
         let left_col = left_proj
             .expr
-            .as_any()
             .downcast_ref::<Column>()
             .expect("expected Column");
         assert_eq!(left_col.name(), "l1");
@@ -1555,7 +1542,6 @@ mod tests {
         assert_eq!(right_proj.alias, "r0_out");
         let right_col = right_proj
             .expr
-            .as_any()
             .downcast_ref::<Column>()
             .expect("expected Column");
         assert_eq!(right_col.name(), "r0");

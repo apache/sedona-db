@@ -54,7 +54,7 @@
 //! Registered against the per-session
 //! [`RasterLoaderRegistry`](sedona_raster::raster_loader::RasterLoaderRegistry)
 //! under the format key `"gdal"`. The `sedona` crate constructs a
-//! [`GdalLoader`] from `SedonaContext::new_from_context` and registers
+//! [`GdalLoader`] during `SedonaContext` construction and registers
 //! it during session bootstrap.
 
 use std::iter::zip;

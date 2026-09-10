@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::{any::Any, collections::HashMap, fmt, sync::Arc};
+use std::{collections::HashMap, fmt, sync::Arc};
 
 use arrow_schema::{Schema, SchemaRef};
 use datafusion_catalog::{memory::DataSourceExec, Session};
@@ -106,10 +106,6 @@ impl FileFormatFactory for LasFormatFactory {
     fn default(&self) -> Arc<dyn FileFormat> {
         Arc::new(LasFormat::new(self.extension))
     }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
 }
 
 impl GetExt for LasFormatFactory {
@@ -150,10 +146,6 @@ impl LasFormat {
 
 #[async_trait::async_trait]
 impl FileFormat for LasFormat {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn get_ext(&self) -> String {
         LasFormatFactory::new(self.extension).get_ext()
     }
@@ -235,7 +227,6 @@ impl FileFormat for LasFormat {
     ) -> Result<Arc<dyn ExecutionPlan>, DataFusionError> {
         let mut source = conf
             .file_source()
-            .as_any()
             .downcast_ref::<LasSource>()
             .cloned()
             .ok_or_else(|| DataFusionError::External("Expected LasSource".into()))?;
@@ -290,14 +281,14 @@ mod test {
         let dyn_format = format_factory
             .create(&ctx.state(), &HashMap::new())
             .unwrap();
-        assert!(dyn_format.as_any().downcast_ref::<LasFormat>().is_some());
+        assert!(dyn_format.downcast_ref::<LasFormat>().is_some());
 
         let ctx = SessionContext::new();
         let format_factory = Arc::new(LasFormatFactory::new(Extension::Laz));
         let dyn_format = format_factory
             .create(&ctx.state(), &HashMap::new())
             .unwrap();
-        assert!(dyn_format.as_any().downcast_ref::<LasFormat>().is_some());
+        assert!(dyn_format.downcast_ref::<LasFormat>().is_some());
     }
 
     #[tokio::test]

@@ -16,7 +16,6 @@
 // under the License.
 
 use std::{
-    any::Any,
     collections::{HashMap, HashSet},
     sync::Arc,
 };
@@ -43,6 +42,7 @@ use datafusion_common::{
     tree_node::{Transformed, TreeNode, TreeNodeRecursion},
     DataFusionError,
 };
+use datafusion_datasource::morsel::Morselizer;
 use datafusion_datasource_parquet::metadata::DFParquetMetadata;
 use datafusion_datasource_parquet::{CachedParquetFileReaderFactory, ParquetFileReaderFactory};
 use datafusion_execution::cache::cache_manager::FileMetadataCache;
@@ -62,7 +62,7 @@ use sedona_geometry::bounds::WkbBounder2DFactory;
 use sedona_schema::extension_type::ExtensionType;
 
 use crate::{
-    file_opener::{storage_schema_contains_geo, GeoParquetFileOpener, GeoParquetFileOpenerMetrics},
+    file_opener::{storage_schema_contains_geo, GeoParquetFileOpenerMetrics, GeoParquetMorselizer},
     metadata::{GeoParquetColumnEncoding, GeoParquetMetadata},
     options::TableGeoParquetOptions,
     writer::create_geoparquet_writer_physical_plan,
@@ -119,7 +119,7 @@ impl FileFormatFactory for GeoParquetFormatFactory {
         }
 
         let inner_format = self.inner.create(state, &format_options_mut)?;
-        if let Some(parquet_format) = inner_format.as_any().downcast_ref::<ParquetFormat>() {
+        if let Some(parquet_format) = inner_format.downcast_ref::<ParquetFormat>() {
             options_mut.inner = parquet_format.options().clone();
             Ok(Arc::new(GeoParquetFormat::new(options_mut)))
         } else {
@@ -132,10 +132,6 @@ impl FileFormatFactory for GeoParquetFormatFactory {
 
     fn default(&self) -> std::sync::Arc<dyn FileFormat> {
         Arc::new(ParquetFormat::default())
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
     }
 }
 
@@ -169,10 +165,6 @@ impl GeoParquetFormat {
 
 #[async_trait]
 impl FileFormat for GeoParquetFormat {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn get_ext(&self) -> String {
         ParquetFormatFactory::new().get_ext()
     }
@@ -333,7 +325,6 @@ impl FileFormat for GeoParquetFormat {
 
         let mut source = config
             .file_source()
-            .as_any()
             .downcast_ref::<GeoParquetFileSource>()
             .cloned()
             .ok_or_else(|| sedona_internal_datafusion_err!("Expected GeoParquetFileSource"))?;
@@ -430,7 +421,7 @@ impl FileFormat for GeoParquetFormat {
 ///
 /// The primary reason for this is to (1) ensure that the schema we pass
 /// to the Parquet file opener is the raw/unwrapped schema and (2) provide a
-/// custom [FileOpener] that implements pruning based on a predicate and
+/// custom [Morselizer] that implements pruning based on a predicate and
 /// column statistics. We have to keep a copy of `metadata_size_hint` and
 /// `predicate` because the [ParquetSource] marks these fields as private
 /// and we need them for our custom file opener.
@@ -507,7 +498,7 @@ impl GeoParquetFileSource {
         metadata_size_hint: Option<usize>,
         predicate: Option<Arc<dyn PhysicalExpr>>,
     ) -> Result<Self> {
-        if let Some(parquet_source) = inner.as_any().downcast_ref::<ParquetSource>() {
+        if let Some(parquet_source) = inner.downcast_ref::<ParquetSource>() {
             let parquet_source = parquet_source.clone();
             // Extract the predicate from the existing source if it exists so we can keep a copy of it
             let new_predicate = match (parquet_source.filter(), predicate) {
@@ -596,16 +587,29 @@ impl FileSource for GeoParquetFileSource {
             return sedona_internal_err!("Error constructing GeoParquetFileSource: {err}");
         }
 
-        let inner_opener =
-            self.inner
-                .create_file_opener(object_store.clone(), base_config, partition)?;
+        let _ = (object_store, base_config, partition);
+        sedona_internal_err!("GeoParquetFileSource supports the Morsel API; use create_morselizer")
+    }
 
-        if !storage_schema_contains_geo(base_config.file_schema()) {
-            return Ok(inner_opener);
+    fn create_morselizer(
+        &self,
+        object_store: Arc<dyn ObjectStore>,
+        base_config: &FileScanConfig,
+        partition: usize,
+    ) -> Result<Box<dyn Morselizer>> {
+        if let Some(err) = &self.deferred_error {
+            return sedona_internal_err!("Error constructing GeoParquetFileSource: {err}");
         }
 
-        Ok(Arc::new(GeoParquetFileOpener {
-            inner: inner_opener,
+        let inner = self
+            .inner
+            .create_morselizer(object_store.clone(), base_config, partition)?;
+        if !storage_schema_contains_geo(base_config.file_schema()) {
+            return Ok(inner);
+        }
+
+        Ok(Box::new(GeoParquetMorselizer {
+            inner: Arc::from(inner),
             object_store,
             metadata_size_hint: self.metadata_size_hint,
             predicate: self.predicate.clone(),
@@ -645,10 +649,6 @@ impl FileSource for GeoParquetFileSource {
             }
             None => Ok(inner_result),
         }
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 
     fn with_batch_size(&self, batch_size: usize) -> Arc<dyn FileSource> {
@@ -729,7 +729,7 @@ fn wrap_expr_columns(
     file_schema: &Schema,
 ) -> Result<Arc<dyn PhysicalExpr>> {
     expr.transform_down(|node| {
-        if let Some(column) = node.as_any().downcast_ref::<Column>() {
+        if let Some(column) = node.downcast_ref::<Column>() {
             let index = column.index();
 
             if index >= file_schema.fields().len() {
@@ -1058,10 +1058,7 @@ mod test {
         let dyn_format = format_factory
             .create(&ctx.state(), &HashMap::new())
             .unwrap();
-        assert!(dyn_format
-            .as_any()
-            .downcast_ref::<GeoParquetFormat>()
-            .is_some());
+        assert!(dyn_format.downcast_ref::<GeoParquetFormat>().is_some());
     }
 
     #[tokio::test]
@@ -1086,17 +1083,14 @@ mod test {
             .unwrap();
 
         let data_source_exec = plan
-            .as_any()
             .downcast_ref::<DataSourceExec>()
             .expect("plan root should be DataSourceExec");
         let file_scan_conf = data_source_exec
             .data_source()
-            .as_any()
             .downcast_ref::<FileScanConfig>()
             .expect("data source should be FileScanConfig");
         let geo_source = file_scan_conf
             .file_source()
-            .as_any()
             .downcast_ref::<GeoParquetFileSource>()
             .expect("file source should be GeoParquetFileSource");
         assert!(geo_source.inner.parquet_file_reader_factory().is_some());
@@ -1147,10 +1141,7 @@ mod test {
         let result = wrap_expr_columns(geometry_column, &file_schema).unwrap();
 
         // The result should be wrapped in MetadataPreservingColumn
-        assert!(result
-            .as_any()
-            .downcast_ref::<MetadataPreservingColumn>()
-            .is_some());
+        assert!(result.downcast_ref::<MetadataPreservingColumn>().is_some());
     }
 
     /// Test that columns without extension metadata are not wrapped
@@ -1172,7 +1163,7 @@ mod test {
         let result = wrap_expr_columns(name_column, &file_schema).unwrap();
 
         // The result should NOT be wrapped (still a Column)
-        assert!(result.as_any().downcast_ref::<Column>().is_some());
+        assert!(result.downcast_ref::<Column>().is_some());
     }
 
     /// Test that column index out of file schema bounds returns an error

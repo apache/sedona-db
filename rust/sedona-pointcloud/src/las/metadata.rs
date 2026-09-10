@@ -25,16 +25,19 @@ use std::{
 };
 
 use arrow_schema::{DataType, Schema, SchemaRef};
+use bytes::Bytes;
 use datafusion_common::{
     error::DataFusionError, scalar::ScalarValue, stats::Precision, ColumnStatistics, Statistics,
 };
-use datafusion_execution::cache::cache_manager::{FileMetadata, FileMetadataCache};
+use datafusion_execution::cache::cache_manager::{
+    CachedFileMetadataEntry, FileMetadata, FileMetadataCache,
+};
 use las::{
     raw::{Header as RawHeader, Vlr as RawVlr},
     Builder, Header, Vlr,
 };
 use laz::laszip::ChunkTable;
-use object_store::{ObjectMeta, ObjectStore};
+use object_store::{ObjectMeta, ObjectStore, ObjectStoreExt};
 
 use crate::las::{
     options::LasOptions,
@@ -129,9 +132,11 @@ impl<'a> LasMetadataReader<'a> {
 
         if let Some(las_file_metadata) = file_metadata_cache
             .as_ref()
-            .and_then(|file_metadata_cache| file_metadata_cache.get(object_meta))
+            .and_then(|file_metadata_cache| file_metadata_cache.get(&object_meta.location))
+            .filter(|cached| cached.is_valid_for(object_meta))
             .and_then(|file_metadata| {
                 file_metadata
+                    .file_metadata
                     .as_any()
                     .downcast_ref::<LasMetadata>()
                     .map(|las_file_metadata| Arc::new(las_file_metadata.to_owned()))
@@ -143,7 +148,7 @@ impl<'a> LasMetadataReader<'a> {
         let header = fetch_header(*store, object_meta).await?;
         let extra_attributes = extra_bytes_attributes(&header)?;
         let chunk_table = fetch_chunk_table(*store, object_meta, &header).await?;
-        let statistics = if options.collect_statistics {
+        let statistics = if options.collect_statistics && header.number_of_points() > 0 {
             Some(
                 chunk_statistics(
                     *store,
@@ -167,7 +172,13 @@ impl<'a> LasMetadataReader<'a> {
         });
 
         if let Some(file_metadata_cache) = file_metadata_cache {
-            file_metadata_cache.put(object_meta, metadata.clone());
+            file_metadata_cache.put(
+                &object_meta.location,
+                CachedFileMetadataEntry::new(
+                    (*object_meta).clone(),
+                    metadata.clone() as Arc<dyn FileMetadata>,
+                ),
+            );
         }
 
         Ok(metadata)
@@ -249,9 +260,13 @@ pub async fn fetch_header(
     let mut builder = Builder::new(raw_header)?;
 
     // VLRs
-    let bytes = store
-        .get_range(location, header_size..offset_to_point_data)
-        .await?;
+    let bytes = if header_size == offset_to_point_data {
+        Bytes::new()
+    } else {
+        store
+            .get_range(location, header_size..offset_to_point_data)
+            .await?
+    };
     let mut reader = Cursor::new(bytes);
 
     for _ in 0..num_vlr {
@@ -379,18 +394,39 @@ async fn laz_chunk_table(
     let laz_vlr = header.laz_vlr()?;
 
     let num_points = header.number_of_points();
+    if num_points == 0 {
+        return Ok(Vec::new());
+    }
+
     let mut point_offset = 0;
     let mut byte_offset = offset_to_point_data(header);
 
-    let ranges = [
-        byte_offset..byte_offset + 8,
-        object_meta.size - 8..object_meta.size,
-    ];
+    let point_data_end = byte_offset.checked_add(8).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "LAZ point data offset overflow",
+        )
+    })?;
+    let trailer_start = object_meta.size.checked_sub(8).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "LAZ file is missing its trailer",
+        )
+    })?;
+    if point_data_end > object_meta.size {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "LAZ point data offset is outside the file",
+        )
+        .into());
+    }
+
+    let ranges = [byte_offset..point_data_end, trailer_start..object_meta.size];
     let bytes = store.get_ranges(&object_meta.location, &ranges).await?;
     let mut table_offset = None;
 
-    let table_offset1 = i64::from_le_bytes(bytes[0].to_vec().try_into().unwrap()) as u64;
-    let table_offset2 = i64::from_le_bytes(bytes[1].to_vec().try_into().unwrap()) as u64;
+    let table_offset1 = i64::from_le_bytes(bytes[0].as_ref().try_into()?) as u64;
+    let table_offset2 = i64::from_le_bytes(bytes[1].as_ref().try_into()?) as u64;
 
     if table_offset1 > byte_offset {
         table_offset = Some(table_offset1);
@@ -402,42 +438,120 @@ async fn laz_chunk_table(
         return Err("LAZ files without chunk table not supported (yet)".into());
     };
 
-    if table_offset > object_meta.size {
+    let table_header_end = table_offset.checked_add(8).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "LAZ chunk table offset overflow",
+        )
+    })?;
+    if table_header_end > object_meta.size {
         return Err("LAZ file chunk table position is missing/bad".into());
     }
 
     let bytes = store
-        .get_range(&object_meta.location, table_offset..table_offset + 8)
+        .get_range(&object_meta.location, table_offset..table_header_end)
         .await?;
 
-    let num_chunks = u32::from_le_bytes(bytes[4..].to_vec().try_into().unwrap()) as u64;
-    let range = table_offset..table_offset + 8 + 8 * num_chunks;
+    let num_chunks = u32::from_le_bytes(bytes[4..8].try_into()?) as u64;
+    let variable_size = laz_vlr.uses_variable_size_chunks();
+    let chunk_size = laz_vlr.chunk_size() as u64;
+
+    if !variable_size && chunk_size == 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "LAZ chunk size must be greater than zero",
+        )
+        .into());
+    }
+
+    if (!variable_size && num_chunks != num_points.div_ceil(chunk_size))
+        || (variable_size && num_chunks > num_points)
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "LAZ chunk table count is inconsistent with the point count",
+        )
+        .into());
+    }
+
+    let table_len = num_chunks
+        .checked_mul(8)
+        .and_then(|len| len.checked_add(8))
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "LAZ chunk table size overflow",
+            )
+        })?;
+    let table_end = table_offset
+        .checked_add(table_len)
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "LAZ chunk table range overflow",
+            )
+        })?
+        .min(object_meta.size);
+
+    let range = table_offset..table_end;
     let bytes = store.get_range(&object_meta.location, range).await?;
 
     let mut reader = Cursor::new(bytes);
-    let variable_size = laz_vlr.uses_variable_size_chunks();
     let chunk_table = ChunkTable::read(&mut reader, variable_size)?;
-    assert_eq!(chunk_table.len(), num_chunks as usize);
+    if chunk_table.len() as u64 != num_chunks {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "LAZ chunk table contains an unexpected number of entries",
+        )
+        .into());
+    }
 
     let mut chunks = Vec::with_capacity(num_chunks as usize);
-    let chunk_size = laz_vlr.chunk_size() as u64;
-    byte_offset += 8;
+    byte_offset = point_data_end;
 
     for chunk_table_entry in &chunk_table {
         let point_count = if variable_size {
             chunk_table_entry.point_count
         } else {
-            chunk_size.min(num_points - point_offset)
+            chunk_size.min(num_points.checked_sub(point_offset).ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "LAZ chunks contain more points than the header declares",
+                )
+            })?)
         };
+
+        let byte_end = byte_offset
+            .checked_add(chunk_table_entry.byte_count)
+            .ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "LAZ chunk range overflow")
+            })?;
+        if byte_end > table_offset {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "LAZ chunk overlaps the chunk table",
+            )
+            .into());
+        }
 
         let chunk = ChunkMeta {
             num_points: point_count,
             point_offset,
-            byte_range: byte_offset..byte_offset + chunk_table_entry.byte_count,
+            byte_range: byte_offset..byte_end,
         };
         chunks.push(chunk);
-        point_offset += point_count;
-        byte_offset += chunk_table_entry.byte_count;
+        point_offset = point_offset.checked_add(point_count).ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "LAZ point count overflow")
+        })?;
+        byte_offset = byte_end;
+    }
+
+    if point_offset != num_points {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "LAZ chunk point counts do not match the header",
+        )
+        .into());
     }
 
     Ok(chunks)
@@ -480,12 +594,18 @@ fn offset_to_point_data(header: &Header) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use std::fs::File;
+    use std::{
+        fs::{File, OpenOptions},
+        io::{Read, Seek, SeekFrom, Write},
+    };
 
     use las::{point::Format, Builder, Reader, Writer};
-    use object_store::{local::LocalFileSystem, path::Path, ObjectStore};
+    use object_store::{local::LocalFileSystem, path::Path, ObjectStoreExt};
 
-    use crate::las::metadata::fetch_header;
+    use crate::las::{
+        metadata::{fetch_chunk_table, fetch_header, LasMetadataReader},
+        options::LasOptions,
+    };
 
     #[tokio::test]
     async fn header_basic_e2e() {
@@ -514,5 +634,79 @@ mod tests {
             reader.header(),
             &fetch_header(&store, &object_meta).await.unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn empty_laz_skips_statistics_sidecar() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmp_path = tmpdir.path().join("empty.laz");
+
+        let mut builder = Builder::from((1, 4));
+        builder.point_format = Format::new(0).unwrap();
+        builder.point_format.is_compressed = true;
+        let mut writer = Writer::from_path(&tmp_path, builder.into_header().unwrap()).unwrap();
+        writer.close().unwrap();
+
+        // This would fail Arrow IPC parsing if the sidecar were read.
+        File::create(tmp_path.with_extension("laz.stats"))
+            .unwrap()
+            .write_all(b"invalid statistics")
+            .unwrap();
+
+        let store = LocalFileSystem::new();
+        let location = Path::from_filesystem_path(&tmp_path).unwrap();
+        let object_meta = store.head(&location).await.unwrap();
+        let metadata = LasMetadataReader::new(&store, &object_meta)
+            .with_options(LasOptions {
+                collect_statistics: true,
+                ..Default::default()
+            })
+            .fetch_metadata()
+            .await
+            .unwrap();
+
+        assert!(metadata.statistics.is_none());
+    }
+
+    #[tokio::test]
+    async fn invalid_laz_chunk_count_returns_error() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmp_path = tmpdir.path().join("invalid_chunk_count.laz");
+
+        let mut builder = Builder::from((1, 4));
+        builder.point_format = Format::new(0).unwrap();
+        builder.point_format.is_compressed = true;
+        let mut writer = Writer::from_path(&tmp_path, builder.into_header().unwrap()).unwrap();
+        writer.write_point(Default::default()).unwrap();
+        writer.close().unwrap();
+
+        let store = LocalFileSystem::new();
+        let location = Path::from_filesystem_path(&tmp_path).unwrap();
+        let object_meta = store.head(&location).await.unwrap();
+        let header = fetch_header(&store, &object_meta).await.unwrap();
+
+        // Make the table advertise two fixed-size chunks for a one-point file.
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&tmp_path)
+            .unwrap();
+        file.seek(SeekFrom::Start(super::offset_to_point_data(&header)))
+            .unwrap();
+        let mut offset = [0; 8];
+        file.read_exact(&mut offset).unwrap();
+        let table_offset = i64::from_le_bytes(offset);
+        file.seek(SeekFrom::Start(table_offset as u64 + 4)).unwrap();
+        file.write_all(&2_u32.to_le_bytes()).unwrap();
+        drop(file);
+
+        let object_meta = store.head(&location).await.unwrap();
+        let error = fetch_chunk_table(&store, &object_meta, &header)
+            .await
+            .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("chunk table count is inconsistent"));
     }
 }

@@ -42,4 +42,6 @@ sedona-schema = { workspace = true }
 
 [dev-dependencies]
 arrow = { workspace = true }
+datafusion = { workspace = true, features = ["nested_expressions", "sql"] }
 sedona-schema = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }

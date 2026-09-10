@@ -40,7 +40,7 @@ raster-returning module (e.g. test_rs_resample.py) rides on.
 
 import pytest
 
-from sedonadb.raster_testing import DecodedRaster
+from sedonadb.raster_testing import DecodedRaster, random_raster_data
 from sedonadb.testing import SedonaDB, compare
 from sedonadb.testing_spark import SedonaSpark
 
@@ -264,18 +264,63 @@ def test_rs_setbandnodata_null_raster(tmp_path):
     compare(sql, sedona, spark)
 
 
-def test_rs_setbandnodata_replace_flag_rejected(tmp_path):
-    """Sedona's Java layer ships a 4-argument overload (a replace flag), but at
-    1.9.1 the Spark SQL binding fails to evaluate it and SedonaDB has no such
-    kernel — both reject, so parity holds as parity on refusal. If Sedona Spark
-    wires the flag up, this starts failing and `replace` becomes a real parity
-    case."""
+# The 4-argument replace flag is doubly broken today, so both tests anchor
+# the CORRECT raster and xfail: they trip on SedonaDB's missing kernel (and,
+# with the 4.1 jars, on Sedona Spark's failing SQL binding), and once those
+# heal they keep tripping on apache/sedona#3330 until the multiband
+# corruption is fixed — flipping green only when both engines get it right.
+
+
+@pytest.mark.xfail(
+    reason="SedonaDB has no replace kernel ('No kernel matching arguments'); "
+    "Sedona Spark's flag is jar-dependent — the 4.1 binding fails to "
+    "evaluate it, and the 4.0 jar runs it but zeroes every band except the "
+    "target (apache/sedona#3330)"
+)
+def test_rs_setbandnodata_replace_multiband(tmp_path):
+    """replace=true rewrites the old nodata pixels in the target band and
+    leaves every other band untouched. Band 1's planted 200 becomes 99 and
+    its nodata moves to 99; band 2 keeps its pixels and its 200 nodata."""
+    plants = {(1, 1): 200.0}
     sedona, spark = SedonaDB(), SedonaSpark()
     for eng in (sedona, spark):
         eng.create_random_raster_view(
-            "replace_src", tmp_path / "replace_src.tif", bands=1
+            "replace_multi_src",
+            tmp_path / "replace_multi_src.tif",
+            nodata=200.0,
+            plants=plants,
         )
-    sql = "SELECT RS_SetBandNoDataValue(rast, 1, 5.0, true) FROM replace_src"
+    data = random_raster_data("uint8", bands=2, height=6, width=7, plants=plants)
+    pixels = data.copy()
+    pixels[0][pixels[0] == 200] = 99
+    anchor = DecodedRaster(
+        pixels, nodata=[99.0, 200.0], bbox=(100.0, 482.0, 114.0, 500.0)
+    )
+    sql = "SELECT RS_SetBandNoDataValue(rast, 1, 99.0, true) FROM replace_multi_src"
+    compare(sql, sedona, spark, expected=anchor)
+
+
+@pytest.mark.xfail(
+    reason="SedonaDB has no replace kernel ('No kernel matching arguments'); "
+    "Sedona Spark's flag is jar-dependent (the 4.1 binding fails to evaluate "
+    "it) though the 4.0 jar handles the single-band case correctly"
+)
+def test_rs_setbandnodata_replace_single_band(tmp_path):
+    """replace=true on a single-band raster rewrites the old nodata pixels
+    and moves the band nodata to the new value."""
+    plants = {(1, 1): 200.0}
+    sedona, spark = SedonaDB(), SedonaSpark()
     for eng in (sedona, spark):
-        with pytest.raises(Exception):
-            eng.decode_raster_result(sql)
+        eng.create_random_raster_view(
+            "replace_one_src",
+            tmp_path / "replace_one_src.tif",
+            bands=1,
+            nodata=200.0,
+            plants=plants,
+        )
+    data = random_raster_data("uint8", bands=1, height=6, width=7, plants=plants)
+    pixels = data.copy()
+    pixels[0][pixels[0] == 200] = 99
+    anchor = DecodedRaster(pixels, nodata=[99.0], bbox=(100.0, 482.0, 114.0, 500.0))
+    sql = "SELECT RS_SetBandNoDataValue(rast, 1, 99.0, true) FROM replace_one_src"
+    compare(sql, sedona, spark, expected=anchor)

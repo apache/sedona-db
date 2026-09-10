@@ -173,7 +173,7 @@ impl<T: std::fmt::Debug + WkbBounder2D + Default> BoundsAccumulator2D<T> {
     }
 }
 
-impl<T: std::fmt::Debug + WkbBounder2D + Default> Accumulator for BoundsAccumulator2D<T> {
+impl<T: std::fmt::Debug + WkbBounder2D + Default + 'static> Accumulator for BoundsAccumulator2D<T> {
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
         Self::check_update_input_len(values, 1, "update_batch")?;
         let arg_types = [self.input_type.clone()];
@@ -417,7 +417,7 @@ impl<T: WkbBounder2D + Default> BoundsGroupsAccumulator2D<T> {
     }
 }
 
-impl<T: WkbBounder2D + Default> GroupsAccumulator for BoundsGroupsAccumulator2D<T> {
+impl<T: WkbBounder2D + Default + 'static> GroupsAccumulator for BoundsGroupsAccumulator2D<T> {
     fn update_batch(
         &mut self,
         values: &[ArrayRef],

@@ -66,6 +66,17 @@ use sedona_datasource::{format::ExternalFormatFactory, provider::external_table}
 ///
 /// **Experimental.**
 pub fn enable_sedona_url_table(ctx: SessionContext) -> SessionContext {
+    install_sedona_url_table(&ctx);
+    ctx
+}
+
+/// Install SedonaDB's URL-as-table resolver on an existing context.
+///
+/// This reference-based form is useful when the context must remain owned by
+/// a wrapper. It must be called after any operation that rebuilds the
+/// [`SessionContext`], because the resolver stores a weak reference to its
+/// session state.
+pub fn install_sedona_url_table(ctx: &SessionContext) {
     let factory = Arc::new(SedonaUrlTableFactory::new());
     let current_catalog_list = ctx.state().catalog_list().clone();
     let catalog_list = Arc::new(DynamicFileCatalog::new(
@@ -74,7 +85,6 @@ pub fn enable_sedona_url_table(ctx: SessionContext) -> SessionContext {
     ));
     ctx.register_catalog_list(catalog_list);
     factory.session_store().with_state(ctx.state_weak_ref());
-    ctx
 }
 
 /// [`UrlTableFactory`] that pre-routes directory-shaped external formats to
@@ -139,7 +149,7 @@ impl SedonaUrlTableFactory {
         let Some(factory) = state.get_file_format_factory(&extension) else {
             return Ok(None);
         };
-        let Some(external) = factory.as_any().downcast_ref::<ExternalFormatFactory>() else {
+        let Some(external) = factory.downcast_ref::<ExternalFormatFactory>() else {
             return Ok(None);
         };
         if !external.spec().list_single_object() {

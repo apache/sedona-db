@@ -75,7 +75,7 @@ pub struct ParsedDistancePredicate {
 /// - `st_distance(geom_a, geom_b) <= 50.0`
 /// - `25.0 >= st_distance(geom_x, geom_y)`
 pub fn parse_distance_predicate(expr: &Arc<dyn PhysicalExpr>) -> Option<ParsedDistancePredicate> {
-    if let Some(binary_expr) = expr.as_any().downcast_ref::<BinaryExpr>() {
+    if let Some(binary_expr) = expr.downcast_ref::<BinaryExpr>() {
         let left = binary_expr.left();
         let right = binary_expr.right();
         let (st_distance_expr, distance_bound_expr) = match *binary_expr.op() {
@@ -84,10 +84,7 @@ pub fn parse_distance_predicate(expr: &Arc<dyn PhysicalExpr>) -> Option<ParsedDi
             _ => return None,
         };
 
-        if let Some(st_distance_expr) = st_distance_expr
-            .as_any()
-            .downcast_ref::<ScalarFunctionExpr>()
-        {
+        if let Some(st_distance_expr) = st_distance_expr.downcast_ref::<ScalarFunctionExpr>() {
             if st_distance_expr.fun().name() != "st_distance" {
                 return None;
             }
@@ -102,7 +99,7 @@ pub fn parse_distance_predicate(expr: &Arc<dyn PhysicalExpr>) -> Option<ParsedDi
         } else {
             None
         }
-    } else if let Some(st_dwithin_expr) = expr.as_any().downcast_ref::<ScalarFunctionExpr>() {
+    } else if let Some(st_dwithin_expr) = expr.downcast_ref::<ScalarFunctionExpr>() {
         if st_dwithin_expr.fun().name() != "st_dwithin" {
             return None;
         }

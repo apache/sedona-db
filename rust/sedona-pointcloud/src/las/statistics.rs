@@ -33,7 +33,7 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use datafusion_common::{arrow::compute::concat_batches, Column, DataFusionError, ScalarValue};
 use datafusion_pruning::PruningStatistics;
 use las::Header;
-use object_store::{path::Path, ObjectMeta, ObjectStore, PutPayload};
+use object_store::{path::Path, ObjectMeta, ObjectStore, ObjectStoreExt, PutPayload};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use sedona_geometry::bounding_box::BoundingBox;
 
@@ -128,7 +128,7 @@ impl PruningStatistics for LasStatistics {
         }
     }
 
-    fn row_counts(&self, _column: &Column) -> Option<ArrayRef> {
+    fn row_counts(&self) -> Option<ArrayRef> {
         self.values.column_by_name("row_counts").cloned()
     }
 
@@ -356,10 +356,9 @@ mod tests {
     use std::fs::File;
 
     use arrow_array::{cast::AsArray, types::UInt64Type};
-    use datafusion_common::Column;
     use datafusion_pruning::PruningStatistics;
     use las::{point::Format, Builder, Point, Writer};
-    use object_store::{local::LocalFileSystem, path::Path, ObjectStore};
+    use object_store::{local::LocalFileSystem, path::Path, ObjectStoreExt};
     use sedona_geometry::bounding_box::BoundingBox;
 
     use crate::las::{
@@ -389,7 +388,7 @@ mod tests {
             assert_eq!(statistics.num_containers(), 2);
             assert_eq!(
                 statistics
-                    .row_counts(&Column::from_name(""))
+                    .row_counts()
                     .unwrap()
                     .as_primitive::<UInt64Type>()
                     .value(0),
@@ -426,6 +425,38 @@ mod tests {
             .unwrap();
             assert_eq!(statistics, &par_stats);
         }
+    }
+
+    #[tokio::test]
+    async fn empty_laz_statistics() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("empty.laz");
+        let mut builder = Builder::from((1, 4));
+        builder.point_format = Format::new(6).unwrap();
+        builder.point_format.is_compressed = true;
+        let mut writer = Writer::from_path(&path, builder.into_header().unwrap()).unwrap();
+        writer.close().unwrap();
+
+        let store = LocalFileSystem::new();
+        let location = Path::from_filesystem_path(&path).unwrap();
+        let object = store.head(&location).await.unwrap();
+        let metadata = LasMetadataReader::new(&store, &object)
+            .fetch_metadata()
+            .await
+            .unwrap();
+        assert_eq!(metadata.header.number_of_points(), 0);
+
+        let options = LasOptions {
+            collect_statistics: true,
+            ..Default::default()
+        };
+        let metadata = LasMetadataReader::new(&store, &object)
+            .with_options(options)
+            .fetch_metadata()
+            .await
+            .unwrap();
+        assert!(metadata.chunk_table.is_empty());
+        assert!(metadata.statistics.is_none());
     }
 
     #[tokio::test]

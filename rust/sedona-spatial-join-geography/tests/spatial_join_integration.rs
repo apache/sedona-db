@@ -99,6 +99,12 @@ fn setup_context(options: Option<SpatialJoinOptions>, batch_size: usize) -> Resu
     let mut session_config = SessionConfig::from_env()?
         .with_information_schema(true)
         .with_batch_size(batch_size);
+    // Work around https://github.com/apache/datafusion/issues/24933:
+    // physical scalar subqueries discard Arrow field metadata.
+    session_config
+        .options_mut()
+        .optimizer
+        .enable_physical_uncorrelated_scalar_subquery = false;
     session_config = session_config.with_option_extension(SedonaOptions::default());
     let mut state_builder = SessionStateBuilder::new();
     if let Some(options) = options {
@@ -139,7 +145,7 @@ fn collect_spatial_join_exec(
 ) -> Result<Vec<&SpatialJoinExec>> {
     let mut spatial_join_execs = Vec::new();
     plan.apply(|node| {
-        if let Some(spatial_join_exec) = node.as_any().downcast_ref::<SpatialJoinExec>() {
+        if let Some(spatial_join_exec) = node.downcast_ref::<SpatialJoinExec>() {
             spatial_join_execs.push(spatial_join_exec);
         }
         Ok(TreeNodeRecursion::Continue)

@@ -33,8 +33,8 @@ import pandas as pd
 import pyarrow as pa
 import pytest
 import sedonadb
-from sedonadb.datasource import PyogrioFormatSpec
 import shapely
+from sedonadb.datasource import PyogrioFormatSpec
 
 
 def test_read_ogr_projection(con):
@@ -181,16 +181,14 @@ def test_read_ogr_path_suffix(con):
 
 
 def test_read_ogr_file_not_found(con):
-    with pytest.raises(
-        sedonadb._lib.SedonaError, match="Can't infer schema for zero objects"
-    ):
+    with pytest.raises(sedonadb._lib.SedonaError, match="No files found at"):
         con.read_pyogrio("this/is/not/a/directory")
 
-    with tempfile.TemporaryDirectory() as td:
-        with pytest.raises(
-            sedonadb._lib.SedonaError, match="Can't infer schema for zero objects"
-        ):
-            con.read_pyogrio(Path(td) / "file_does_not_exist")
+    with (
+        tempfile.TemporaryDirectory() as td,
+        pytest.raises(sedonadb._lib.SedonaError, match="No files found at"),
+    ):
+        con.read_pyogrio(Path(td) / "file_does_not_exist")
 
 
 def test_write_ogr(con):

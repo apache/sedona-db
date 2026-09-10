@@ -31,7 +31,6 @@
 //! file, its `mod` declaration, and revert the `DF-22662`-tagged
 //! touchpoints in optimizer rules. `grep DF-22662` finds every site.
 
-use std::any::Any;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -94,10 +93,6 @@ impl Hash for RestoreMetadata {
 }
 
 impl ScalarUDFImpl for RestoreMetadata {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         RESTORE_METADATA_NAME
     }
