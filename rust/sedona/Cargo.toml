@@ -64,7 +64,7 @@ comfy-table = { workspace = true }
 datafusion = { workspace = true, default_features = false, features = ["sql", "parquet", "nested_expressions"] }
 datafusion-catalog = { workspace = true }
 datafusion-common = { workspace = true }
-datafusion-expr = { workspace = true }
+datafusion-expr = { workspace = true, features = ["sql"] }
 datafusion-ffi = { workspace = true }
 datafusion-optimizer = { workspace = true }
 datafusion-session = { workspace = true }

@@ -73,7 +73,7 @@ log = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
-datafusion = { workspace = true, features = ["sql"] }
+datafusion = { workspace = true }
 rstest = { workspace = true }
 sedona-testing = { workspace = true }
 wkt = { workspace = true }
