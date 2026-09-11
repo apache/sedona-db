@@ -16,7 +16,7 @@
 // under the License.
 use std::{ffi::CStr, fmt::Display, mem::transmute, ptr};
 
-use arrow_array::{ffi::FFI_ArrowArray, make_array, ArrayRef};
+use arrow_array::{ArrayRef, ffi::FFI_ArrowArray, make_array};
 use arrow_schema::DataType;
 use sedona_schema::datatypes::SedonaType;
 
@@ -284,12 +284,12 @@ fn geoarrow_type_id(sedona_type: &SedonaType) -> Result<GeoArrowType, GeoArrowCE
         SedonaType::Raster => {
             return Err(GeoArrowCError::Invalid(
                 "GeoArrow does not support Raster types".to_string(),
-            ))
+            ));
         }
         SedonaType::UnrecognizedExtension(_) => {
             return Err(GeoArrowCError::Invalid(
                 "GeoArrow does not support user-defined extension types".to_string(),
-            ))
+            ));
         }
     };
 
@@ -307,7 +307,7 @@ fn arrow_storage_type(type_id: GeoArrowType) -> Result<DataType, GeoArrowCError>
         _ => {
             return Err(GeoArrowCError::Invalid(format!(
                 "Can't guess Arrow type from GeoArrowType with ID {type_id:?}"
-            )))
+            )));
         }
     })
 }
