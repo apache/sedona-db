@@ -22,10 +22,10 @@
 use core::borrow::Borrow;
 use std::cmp::Ordering;
 
+use crate::GeoNum;
 use crate::geometry::*;
 use crate::intersects::{point_in_rect, value_in_between};
 use crate::kernels::*;
-use crate::GeoNum;
 use crate::{BoundingRect, HasDimensions, Intersects};
 use sedona_geo_traits_ext::*;
 
@@ -149,10 +149,10 @@ where
         is_inside: &mut bool,
         _boundary_count: &mut usize,
     ) {
-        if let Some(point_coord) = self.geo_coord() {
-            if &point_coord == coord {
-                *is_inside = true;
-            }
+        if let Some(point_coord) = self.geo_coord()
+            && &point_coord == coord
+        {
+            *is_inside = true;
         }
     }
 }

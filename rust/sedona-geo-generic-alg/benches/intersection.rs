@@ -14,12 +14,12 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use geo::Triangle;
 use geo_traits::to_geo::ToGeoGeometry;
 use geo_types::Geometry;
 use sedona_geo_generic_alg::MultiPolygon;
-use sedona_geo_generic_alg::{intersects::Intersects, Centroid};
+use sedona_geo_generic_alg::{Centroid, intersects::Intersects};
 
 #[path = "utils/wkb_util.rs"]
 mod wkb_util;
@@ -320,8 +320,8 @@ fn point_polygon_intersection_wkb_conv(c: &mut Criterion) {
 }
 
 fn rect_intersection(c: &mut Criterion) {
-    use sedona_geo_generic_alg::algorithm::BoundingRect;
     use sedona_geo_generic_alg::Rect;
+    use sedona_geo_generic_alg::algorithm::BoundingRect;
     let plot_bbox: Vec<Rect> = sedona_testing::fixtures::nl_plots_wgs84()
         .iter()
         .map(|plot| plot.bounding_rect().unwrap())
@@ -437,7 +437,7 @@ fn point_triangle_intersection(c: &mut Criterion) {
 }
 
 fn linestring_polygon_intersection(c: &mut Criterion) {
-    use geo::{coord, line_string, LineString, Polygon, Rect};
+    use geo::{LineString, Polygon, Rect, coord, line_string};
     c.bench_function("LineString above Polygon", |bencher| {
         let ls = line_string![
             coord! {x:0., y:1.},

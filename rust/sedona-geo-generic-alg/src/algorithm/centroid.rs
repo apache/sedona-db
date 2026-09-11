@@ -24,12 +24,12 @@ use std::cmp::Ordering;
 
 use sedona_geo_traits_ext::*;
 
-use crate::area::{get_linestring_area, Area};
+use crate::GeoFloat;
+use crate::area::{Area, get_linestring_area};
 use crate::dimensions::{Dimensions, Dimensions::*, HasDimensions};
 use crate::geometry::*;
-use crate::line_measures::metric_spaces::euclidean::Euclidean;
 use crate::line_measures::LengthMeasurableExt;
-use crate::GeoFloat;
+use crate::line_measures::metric_spaces::euclidean::Euclidean;
 
 /// Calculation of the centroid.
 /// The centroid is the arithmetic mean position of all points in the shape.

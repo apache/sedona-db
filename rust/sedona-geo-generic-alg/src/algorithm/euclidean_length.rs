@@ -224,10 +224,10 @@ where
 
 #[cfg(test)]
 mod test {
-    use crate::line_string;
     #[allow(deprecated)]
     use crate::EuclideanLength;
-    use crate::{coord, Line, MultiLineString};
+    use crate::line_string;
+    use crate::{Line, MultiLineString, coord};
 
     #[allow(deprecated)]
     #[test]
@@ -285,7 +285,7 @@ mod test {
     #[allow(deprecated)]
     #[test]
     fn polygon_returns_zero_test() {
-        use crate::{polygon, Polygon};
+        use crate::{Polygon, polygon};
         let polygon: Polygon<f64> = polygon![
             (x: 0., y: 0.),
             (x: 4., y: 0.),
@@ -309,10 +309,10 @@ mod test {
     #[allow(deprecated)]
     #[test]
     fn comprehensive_test_scenarios() {
-        use crate::{line_string, polygon};
         use crate::{
             Geometry, GeometryCollection, MultiLineString, MultiPoint, MultiPolygon, Point,
         };
+        use crate::{line_string, polygon};
 
         // Test cases matching the Python pytest scenarios
 
@@ -486,7 +486,7 @@ mod test {
     #[test]
     fn test_multipolygon_double_unit_squares() {
         // MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)), ((0 0, 1 0, 1 1, 0 1, 0 0))) -> 0
-        use crate::{polygon, MultiPolygon};
+        use crate::{MultiPolygon, polygon};
         let multipolygon = MultiPolygon::new(vec![
             polygon![
                 (x: 0., y: 0.),
@@ -511,7 +511,7 @@ mod test {
     fn test_geometrycollection_mixed() {
         // GEOMETRYCOLLECTION (LINESTRING (0 0, 1 1), POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0)), LINESTRING (0 0, 1 1))
         // Expected: 2.8284271247461903 (only linestrings contribute)
-        use crate::{polygon, Geometry, GeometryCollection};
+        use crate::{Geometry, GeometryCollection, polygon};
         let collection = GeometryCollection::new_from(vec![
             Geometry::LineString(line_string![(x: 0., y: 0.), (x: 1., y: 1.)]), // sqrt(2) ≈ 1.4142135623730951
             Geometry::Polygon(polygon![
@@ -544,7 +544,7 @@ mod test {
         // Exact match for the Python pytest scenario:
         // GEOMETRYCOLLECTION (LINESTRING (0 0, 1 1), POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0)), LINESTRING (0 0, 1 1))
         // Expected: 2.8284271247461903
-        use crate::{polygon, Geometry, GeometryCollection};
+        use crate::{Geometry, GeometryCollection, polygon};
 
         let collection = GeometryCollection::new_from(vec![
             // LINESTRING (0 0, 1 1) - length = sqrt(2) ≈ 1.4142135623730951

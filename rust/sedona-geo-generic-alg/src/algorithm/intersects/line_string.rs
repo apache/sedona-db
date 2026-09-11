@@ -21,7 +21,7 @@
 //! Original code is dual-licensed under Apache-2.0 or MIT; used here under Apache-2.0.
 use sedona_geo_traits_ext::*;
 
-use super::{has_disjoint_bboxes, IntersectsTrait};
+use super::{IntersectsTrait, has_disjoint_bboxes};
 use crate::*;
 
 // Generate implementations for LineString<T> by delegating to Line<T>

@@ -14,10 +14,10 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use geo::{Distance as GeoDistance, Euclidean};
 use sedona_geo_generic_alg::algorithm::line_measures::DistanceExt;
-use sedona_geo_generic_alg::{coord, LineString, MultiPolygon, Point, Polygon};
+use sedona_geo_generic_alg::{LineString, MultiPolygon, Point, Polygon, coord};
 
 #[path = "utils/wkb_util.rs"]
 mod wkb_util;

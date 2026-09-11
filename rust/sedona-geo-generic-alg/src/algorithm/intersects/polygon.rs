@@ -19,10 +19,10 @@
 //! Ported (and contains copied code) from `geo::algorithm::intersects::polygon`:
 //! <https://github.com/georust/geo/blob/f2326a3dd1fa9ff39d3e65618eb7ca2bacad2c0c/geo/src/algorithm/intersects/polygon.rs>.
 //! Original code is dual-licensed under Apache-2.0 or MIT; used here under Apache-2.0.
-use super::{has_disjoint_bboxes, IntersectsTrait};
-use crate::coordinate_position::CoordPos;
+use super::{IntersectsTrait, has_disjoint_bboxes};
 use crate::CoordinatePosition;
 use crate::GeoNum;
+use crate::coordinate_position::CoordPos;
 use sedona_geo_traits_ext::*;
 
 impl<T, LHS, RHS> IntersectsTrait<PolygonTag, CoordTag, RHS> for LHS

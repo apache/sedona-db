@@ -20,7 +20,7 @@
 //! <https://github.com/georust/geo/blob/5d667f844716a3d0a17aa60bc0a58528cb5808c3/geo/src/algorithm/line_measures/metric_spaces/euclidean/utils.rs>.
 //! Original code is dual-licensed under Apache-2.0 or MIT; used here under Apache-2.0.
 use crate::algorithm::Intersects;
-use crate::coordinate_position::{coord_pos_relative_to_ring, CoordPos};
+use crate::coordinate_position::{CoordPos, coord_pos_relative_to_ring};
 use crate::geometry::*;
 use crate::{CoordFloat, GeoFloat, GeoNum};
 use geo_traits::{CoordTrait, LineStringTrait};
@@ -586,68 +586,64 @@ where
 
         // Symmetric containment logic matching concrete implementation exactly
         // Check if polygon_b is contained within polygon_a (has holes)
-        if has_interiors1 {
-            if let Some(first_coord_b) = ext2.coords_ext().next() {
-                let ext1_ls = LineString::from(
-                    ext1.coords_ext()
-                        .map(|c| (c.x(), c.y()))
-                        .collect::<Vec<_>>(),
-                );
+        if has_interiors1 && let Some(first_coord_b) = ext2.coords_ext().next() {
+            let ext1_ls = LineString::from(
+                ext1.coords_ext()
+                    .map(|c| (c.x(), c.y()))
+                    .collect::<Vec<_>>(),
+            );
 
-                let coord_b = Coord::from((first_coord_b.x(), first_coord_b.y()));
-                if ring_contains_coord(&ext1_ls, coord_b) {
-                    // polygon_b is inside polygon_a: check distance to polygon_a's holes
-                    let ext2_concrete = LineString::from(
-                        ext2.coords_ext()
-                            .map(|c| (c.x(), c.y()))
-                            .collect::<Vec<_>>(),
-                    );
-
-                    let mut mindist: F = Float::max_value();
-                    for ring in polygon1.interiors_ext() {
-                        let ring_concrete = LineString::from(
-                            ring.coords_ext()
-                                .map(|c| (c.x(), c.y()))
-                                .collect::<Vec<_>>(),
-                        );
-                        mindist =
-                            mindist.min(nearest_neighbour_distance(&ext2_concrete, &ring_concrete));
-                    }
-                    return mindist;
-                }
-            }
-        }
-
-        // Check if polygon_a is contained within polygon_b (has holes)
-        if has_interiors2 {
-            if let Some(first_coord_a) = ext1.coords_ext().next() {
-                let ext2_ls = LineString::from(
+            let coord_b = Coord::from((first_coord_b.x(), first_coord_b.y()));
+            if ring_contains_coord(&ext1_ls, coord_b) {
+                // polygon_b is inside polygon_a: check distance to polygon_a's holes
+                let ext2_concrete = LineString::from(
                     ext2.coords_ext()
                         .map(|c| (c.x(), c.y()))
                         .collect::<Vec<_>>(),
                 );
 
-                let coord_a = Coord::from((first_coord_a.x(), first_coord_a.y()));
-                if ring_contains_coord(&ext2_ls, coord_a) {
-                    // polygon_a is inside polygon_b: check distance to polygon_b's holes
-                    let ext1_concrete = LineString::from(
-                        ext1.coords_ext()
+                let mut mindist: F = Float::max_value();
+                for ring in polygon1.interiors_ext() {
+                    let ring_concrete = LineString::from(
+                        ring.coords_ext()
                             .map(|c| (c.x(), c.y()))
                             .collect::<Vec<_>>(),
                     );
-
-                    let mut mindist: F = Float::max_value();
-                    for ring in polygon2.interiors_ext() {
-                        let ring_concrete = LineString::from(
-                            ring.coords_ext()
-                                .map(|c| (c.x(), c.y()))
-                                .collect::<Vec<_>>(),
-                        );
-                        mindist =
-                            mindist.min(nearest_neighbour_distance(&ext1_concrete, &ring_concrete));
-                    }
-                    return mindist;
+                    mindist =
+                        mindist.min(nearest_neighbour_distance(&ext2_concrete, &ring_concrete));
                 }
+                return mindist;
+            }
+        }
+
+        // Check if polygon_a is contained within polygon_b (has holes)
+        if has_interiors2 && let Some(first_coord_a) = ext1.coords_ext().next() {
+            let ext2_ls = LineString::from(
+                ext2.coords_ext()
+                    .map(|c| (c.x(), c.y()))
+                    .collect::<Vec<_>>(),
+            );
+
+            let coord_a = Coord::from((first_coord_a.x(), first_coord_a.y()));
+            if ring_contains_coord(&ext2_ls, coord_a) {
+                // polygon_a is inside polygon_b: check distance to polygon_b's holes
+                let ext1_concrete = LineString::from(
+                    ext1.coords_ext()
+                        .map(|c| (c.x(), c.y()))
+                        .collect::<Vec<_>>(),
+                );
+
+                let mut mindist: F = Float::max_value();
+                for ring in polygon2.interiors_ext() {
+                    let ring_concrete = LineString::from(
+                        ring.coords_ext()
+                            .map(|c| (c.x(), c.y()))
+                            .collect::<Vec<_>>(),
+                    );
+                    mindist =
+                        mindist.min(nearest_neighbour_distance(&ext1_concrete, &ring_concrete));
+                }
+                return mindist;
             }
         }
 
@@ -737,7 +733,7 @@ symmetric_distance_generic_impl!(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{coord, Line, LineString, Point, Polygon, Triangle};
+    use crate::{Line, LineString, Point, Polygon, Triangle, coord};
     use approx::assert_relative_eq;
     use geo::algorithm::line_measures::{Distance, Euclidean};
 
@@ -2321,7 +2317,7 @@ mod tests {
     #[test]
     fn test_line_segment_distance_algorithm_equivalence() {
         // Test that the updated generic algorithm produces identical results to concrete
-        use geo_types::{coord, Line, Point};
+        use geo_types::{Line, Point, coord};
 
         // Test cases covering different scenarios
         let test_cases = vec![

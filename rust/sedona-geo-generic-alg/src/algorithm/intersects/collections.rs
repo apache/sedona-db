@@ -22,8 +22,8 @@
 use core::borrow::Borrow;
 use sedona_geo_traits_ext::*;
 
-use super::has_disjoint_bboxes;
 use super::IntersectsTrait;
+use super::has_disjoint_bboxes;
 use crate::GeoNum;
 
 macro_rules! impl_intersects_geometry {
