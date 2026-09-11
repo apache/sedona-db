@@ -78,6 +78,7 @@ use sedona_query_planner::{
         register_vendored_optimizer_rules,
     },
     query_planner::SedonaQueryPlanner,
+    raster_batch_budget::RasterBatchBudgetRule,
 };
 use sedona_raster::raster_loader::{AsyncRasterLoader, RasterLoaderConfig, RasterLoaderRegistry};
 
@@ -149,11 +150,20 @@ impl SedonaContext {
         // large spilled batches.
         const SPILLED_BATCH_THRESHOLD_PERCENT_DIVISOR: usize = 20; // 5% == 1 / 20
         const MIN_SPILLED_BATCH_IN_MEMORY_THRESHOLD_BYTES: usize = 10 * 1024 * 1024; // 10MB
+                                                                                     // Likewise scale the byte budget for materialized raster batches
+                                                                                     // (`sedona.raster.max_batch_bytes`) to 1/8 of the per-partition limit,
+                                                                                     // floored at 16MB and never above the unbounded default.
+        const RASTER_BATCH_BUDGET_DIVISOR: usize = 8;
+        const MIN_RASTER_MAX_BATCH_BYTES: usize = 16 * 1024 * 1024; // 16MB
         if let MemoryLimit::Finite(memory_limit) = runtime_env.memory_pool.memory_limit() {
             let per_partition_memory_limit = memory_limit.div_ceil(target_partitions);
             opts.spatial_join.spilled_batch_in_memory_size_threshold = per_partition_memory_limit
                 .div_ceil(SPILLED_BATCH_THRESHOLD_PERCENT_DIVISOR)
                 .max(MIN_SPILLED_BATCH_IN_MEMORY_THRESHOLD_BYTES);
+            opts.raster.max_batch_bytes = (per_partition_memory_limit
+                / RASTER_BATCH_BUDGET_DIVISOR)
+                .max(MIN_RASTER_MAX_BATCH_BYTES)
+                .min(opts.raster.max_batch_bytes);
         }
 
         // Register the spatial join planner extension
@@ -247,6 +257,9 @@ impl SedonaContext {
         state_builder = register_vendored_optimizer_rules(state_builder)?;
         state_builder = register_spatial_join_logical_optimizer(state_builder)?;
         state_builder = register_ensure_loaded_optimizer(state_builder)?;
+        // Re-batch raster materialization by estimated bytes rather than
+        // row count (see `sedona_query_planner::raster_batch_budget`).
+        state_builder = state_builder.with_physical_optimizer_rule(Arc::new(RasterBatchBudgetRule));
         state_builder = state_builder.with_query_planner(Arc::new(planner));
 
         let mut state = state_builder.build();
@@ -1137,6 +1150,124 @@ mod tests {
             udf.is_some(),
             "RS_EnsureLoaded should be registered by SedonaContext::new()"
         );
+    }
+
+    #[tokio::test]
+    async fn rs_ensureloaded_batches_are_bounded_by_raster_max_batch_bytes() {
+        use arrow_array::{ArrayRef, RecordBatch};
+        use arrow_buffer::Buffer;
+        use arrow_schema::{Field, Schema};
+        use datafusion::arrow::util::pretty::pretty_format_batches;
+        use sedona_raster::builder::{RasterBuilder, StartBandArgs};
+        use sedona_raster::raster_loader::{
+            AsyncRasterLoader, RasterLoadRequest, RasterLoadResult,
+        };
+        use sedona_schema::datatypes::SedonaType;
+        use sedona_schema::raster::BandDataType;
+        use std::sync::Mutex;
+
+        /// Records how many requests each `load()` carried and returns
+        /// correctly sized zero buffers.
+        #[derive(Debug, Default)]
+        struct CountingLoader {
+            calls: Mutex<Vec<usize>>,
+        }
+        #[async_trait]
+        impl AsyncRasterLoader for CountingLoader {
+            fn name(&self) -> &str {
+                "mock"
+            }
+            fn supports_format(&self, format: Option<&str>) -> bool {
+                format == Some("mock")
+            }
+            async fn load(
+                &self,
+                reqs: &[&RasterLoadRequest],
+            ) -> std::result::Result<Vec<RasterLoadResult>, arrow_schema::ArrowError> {
+                self.calls.lock().unwrap().push(reqs.len());
+                Ok(reqs
+                    .iter()
+                    .map(|req| {
+                        let elements: i64 = req.source_shape.iter().product();
+                        let len = elements as usize * req.data_type.byte_size();
+                        RasterLoadResult::unresolved(Buffer::from_vec(vec![0u8; len]), req)
+                    })
+                    .collect())
+            }
+        }
+
+        // The interactive constructor is the one that installs the planner
+        // rules (`new()` only wraps an existing SessionContext).
+        let ctx = SedonaContext::new_local_interactive().await.unwrap();
+        let loader = Arc::new(CountingLoader::default());
+        ctx.register_raster_loader(loader.clone());
+
+        // Six 16 × 16 UInt8 OutDb rasters: 256 bytes each once loaded.
+        let mut b = RasterBuilder::new(6);
+        for _ in 0..6 {
+            b.start_raster_nd(
+                &[0.0, 1.0, 0.0, 0.0, 0.0, -1.0],
+                &["y", "x"],
+                &[16, 16],
+                None,
+            )
+            .unwrap();
+            b.start_band(StartBandArgs {
+                outdb_uri: Some("mock://tile"),
+                outdb_format: Some("mock"),
+                ..StartBandArgs::new(&["y", "x"], &[16, 16], BandDataType::UInt8)
+            })
+            .unwrap();
+            b.band_data_writer().append_value([0u8; 0]);
+            b.finish_band().unwrap();
+            b.finish_raster().unwrap();
+        }
+        let rasters: ArrayRef = Arc::new(b.finish().unwrap());
+        let raster_field = SedonaType::Raster.to_storage_field("rast", true).unwrap();
+        let field = Field::new("rast", rasters.data_type().clone(), true)
+            .with_metadata(raster_field.metadata().clone());
+        let batch =
+            RecordBatch::try_new(Arc::new(Schema::new(vec![field])), vec![rasters]).unwrap();
+        ctx.ctx.register_batch("tiles", batch).unwrap();
+
+        // One partition so no RepartitionExec sits above the exec and re-batches
+        // its output; the projection preserves batch boundaries.
+        ctx.sql("SET datafusion.execution.target_partitions = 1")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        // A 600-byte budget fits two 256-byte rasters per slice.
+        ctx.sql("SET sedona.raster.max_batch_bytes = 600")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+
+        let explain = ctx
+            .sql("EXPLAIN SELECT RS_EnsureLoaded(rast) AS r FROM tiles")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        let plan = pretty_format_batches(&explain).unwrap().to_string();
+        assert!(plan.contains("EnsureLoadedExec"), "{plan}");
+        assert!(!plan.contains("AsyncFuncExec"), "{plan}");
+
+        let batches = ctx
+            .sql("SELECT RS_EnsureLoaded(rast) AS r FROM tiles")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        let rows: Vec<usize> = batches.iter().map(RecordBatch::num_rows).collect();
+        assert_eq!(rows, vec![2, 2, 2]);
+        // Each slice reaches the loader as one bundled call carrying its rows.
+        assert_eq!(*loader.calls.lock().unwrap(), vec![2, 2, 2]);
     }
 
     #[tokio::test]

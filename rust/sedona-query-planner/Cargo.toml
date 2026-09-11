@@ -27,6 +27,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+arrow-array = { workspace = true }
 arrow-schema = { workspace = true }
 async-trait = { workspace = true }
 datafusion = { workspace = true }
@@ -36,8 +37,10 @@ datafusion-expr = { workspace = true }
 datafusion-optimizer = { workspace = true }
 datafusion-physical-expr = { workspace = true }
 datafusion-physical-plan = { workspace = true }
+futures = { workspace = true }
 sedona-common = { workspace = true }
 sedona-expr = { workspace = true }
+sedona-raster = { workspace = true }
 sedona-schema = { workspace = true }
 
 [dev-dependencies]
