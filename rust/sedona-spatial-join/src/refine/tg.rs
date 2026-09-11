@@ -17,13 +17,13 @@
 use std::{
     marker::PhantomData,
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc, OnceLock,
+        atomic::{AtomicUsize, Ordering},
     },
 };
 
 use datafusion_common::Result;
-use sedona_common::{sedona_internal_err, ExecutionMode, SpatialJoinOptions, TgIndexType};
+use sedona_common::{ExecutionMode, SpatialJoinOptions, TgIndexType, sedona_internal_err};
 use sedona_expr::statistics::GeoStatistics;
 use sedona_tg::tg::{self, BinaryPredicate};
 use wkb::reader::Wkb;
@@ -31,8 +31,8 @@ use wkb::reader::Wkb;
 use crate::{
     index::IndexQueryResult,
     refine::{
-        exec_mode_selector::{get_or_update_execution_mode, ExecModeSelector, SelectOptimalMode},
         IndexQueryResultRefiner,
+        exec_mode_selector::{ExecModeSelector, SelectOptimalMode, get_or_update_execution_mode},
     },
     spatial_predicate::{RelationPredicate, SpatialPredicate, SpatialRelationType},
     utils::init_once_array::InitOnceArray,
@@ -322,10 +322,10 @@ impl<Op: BinaryPredicate + Send + Sync> TgPredicateEvaluator for TgPredicateEval
 fn create_evaluator(predicate: &SpatialPredicate) -> Result<Box<dyn TgPredicateEvaluator>> {
     let evaluator: Box<dyn TgPredicateEvaluator> = match predicate {
         SpatialPredicate::Distance(_) => {
-            return sedona_internal_err!("Distance predicate is not supported for TG")
+            return sedona_internal_err!("Distance predicate is not supported for TG");
         }
         SpatialPredicate::KNearestNeighbors(_) => {
-            return sedona_internal_err!("KNN predicate is not supported for TG")
+            return sedona_internal_err!("KNN predicate is not supported for TG");
         }
         SpatialPredicate::Relation(predicate) => match predicate.relation_type {
             SpatialRelationType::Intersects => {
@@ -355,8 +355,8 @@ mod tests {
     use crate::spatial_predicate::{DistancePredicate, RelationPredicate, SpatialRelationType};
     use datafusion_common::JoinSide;
     use datafusion_common::ScalarValue;
-    use datafusion_physical_expr::expressions::{Column, Literal};
     use datafusion_physical_expr::PhysicalExpr;
+    use datafusion_physical_expr::expressions::{Column, Literal};
     use sedona_common::DEFAULT_SPECULATIVE_THRESHOLD;
     use std::sync::Arc;
 

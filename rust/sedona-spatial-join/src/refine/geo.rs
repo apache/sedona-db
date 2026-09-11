@@ -18,17 +18,17 @@ use std::sync::{Arc, OnceLock};
 
 use datafusion_common::Result;
 use geo::{Contains, Relate, Within};
-use sedona_common::{sedona_internal_err, ExecutionMode, SpatialJoinOptions};
+use sedona_common::{ExecutionMode, SpatialJoinOptions, sedona_internal_err};
 use sedona_expr::statistics::GeoStatistics;
 use sedona_geo::to_geo::item_to_geometry;
-use sedona_geo_generic_alg::{line_measures::DistanceExt, Intersects};
+use sedona_geo_generic_alg::{Intersects, line_measures::DistanceExt};
 use wkb::reader::Wkb;
 
 use crate::{
     index::IndexQueryResult,
     refine::{
-        exec_mode_selector::{get_or_update_execution_mode, ExecModeSelector, SelectOptimalMode},
         IndexQueryResultRefiner,
+        exec_mode_selector::{ExecModeSelector, SelectOptimalMode, get_or_update_execution_mode},
     },
     spatial_predicate::{SpatialPredicate, SpatialRelationType},
 };
@@ -383,8 +383,8 @@ mod tests {
     use crate::spatial_predicate::{DistancePredicate, RelationPredicate, SpatialRelationType};
     use datafusion_common::JoinSide;
     use datafusion_common::ScalarValue;
-    use datafusion_physical_expr::expressions::{Column, Literal};
     use datafusion_physical_expr::PhysicalExpr;
+    use datafusion_physical_expr::expressions::{Column, Literal};
     use sedona_common::DEFAULT_SPECULATIVE_THRESHOLD;
     use std::sync::Arc;
 

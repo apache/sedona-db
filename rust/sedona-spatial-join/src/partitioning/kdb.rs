@@ -43,10 +43,10 @@
 use std::sync::Arc;
 
 use crate::partitioning::{
+    SpatialPartition, SpatialPartitioner,
     util::{
         bbox_to_geo_rect, make_rect, rect_contains_point, rect_intersection_area, rects_intersect,
     },
-    SpatialPartition, SpatialPartitioner,
 };
 use datafusion_common::Result;
 use geo::{Coord, Rect};
@@ -161,10 +161,10 @@ impl KDBTree {
 
     /// Insert a bounding box into the tree.
     pub fn insert(&mut self, bbox: BoundingBox) -> Result<()> {
-        if let Some(rect) = bbox_to_geo_rect(&bbox)? {
-            if rect_contains_point(&self.extent, &rect.min()) {
-                self.insert_rect(rect);
-            }
+        if let Some(rect) = bbox_to_geo_rect(&bbox)?
+            && rect_contains_point(&self.extent, &rect.min())
+        {
+            self.insert_rect(rect);
         }
         Ok(())
     }

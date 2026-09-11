@@ -17,20 +17,20 @@
 use std::{fmt::Formatter, sync::Arc};
 
 use arrow_schema::SchemaRef;
-use datafusion_common::{project_schema, JoinSide, Result};
+use datafusion_common::{JoinSide, Result, project_schema};
 use datafusion_execution::{SendableRecordBatchStream, TaskContext};
 use datafusion_expr::JoinType;
-use datafusion_physical_expr::equivalence::{join_equivalence_properties, ProjectionMapping};
+use datafusion_physical_expr::equivalence::{ProjectionMapping, join_equivalence_properties};
 use datafusion_physical_plan::{
+    DisplayAs, DisplayFormatType, ExecutionPlan, ExecutionPlanProperties, PlanProperties,
     common::can_project,
-    joins::utils::{build_join_schema, check_join_is_valid, ColumnIndex, JoinFilter},
+    joins::utils::{ColumnIndex, JoinFilter, build_join_schema, check_join_is_valid},
     joins::utils::{reorder_output_after_swap, swap_join_projection},
     metrics::{ExecutionPlanMetricsSet, MetricsSet},
-    projection::{try_embed_projection, EmbeddedProjection, ProjectionExec},
-    DisplayAs, DisplayFormatType, ExecutionPlan, ExecutionPlanProperties, PlanProperties,
+    projection::{EmbeddedProjection, ProjectionExec, try_embed_projection},
 };
 use parking_lot::Mutex;
-use sedona_common::{sedona_internal_err, SpatialJoinOptions};
+use sedona_common::{SpatialJoinOptions, sedona_internal_err};
 
 use crate::{
     join_provider::{DefaultSpatialJoinProvider, SpatialJoinProvider},
@@ -39,8 +39,8 @@ use crate::{
     stream::SpatialJoinStream,
     utils::{
         join_utils::{
-            asymmetric_join_output_partitioning, boundedness_from_children,
-            compute_join_emission_type, try_pushdown_through_join, JoinPushdownData,
+            JoinPushdownData, asymmetric_join_output_partitioning, boundedness_from_children,
+            compute_join_emission_type, try_pushdown_through_join,
         },
         once_fut::OnceAsync,
     },
@@ -535,11 +535,11 @@ mod exec_transform_tests {
     use datafusion_common::tree_node::{TreeNode, TreeNodeRecursion};
     use datafusion_expr::JoinType;
     use datafusion_physical_expr::expressions::Column;
+    use datafusion_physical_plan::ExecutionPlan;
     use datafusion_physical_plan::empty::EmptyExec;
     use datafusion_physical_plan::projection::{ProjectionExec, ProjectionExpr};
-    use datafusion_physical_plan::ExecutionPlan;
 
-    use sedona_common::{sedona_internal_err, SpatialJoinOptions};
+    use sedona_common::{SpatialJoinOptions, sedona_internal_err};
 
     use super::*;
     use crate::spatial_predicate::{RelationPredicate, SpatialRelationType};
@@ -661,10 +661,12 @@ mod exec_transform_tests {
 
         // Projection is pushed down into children; join has no embedded projection.
         assert!(!new_exec.contains_projection());
-        assert!(new_exec
-            .children()
-            .iter()
-            .all(|c| c.downcast_ref::<ProjectionExec>().is_some()));
+        assert!(
+            new_exec
+                .children()
+                .iter()
+                .all(|c| c.downcast_ref::<ProjectionExec>().is_some())
+        );
 
         // Predicate columns should be remapped to match the projected children (both become 0).
         let SpatialPredicate::Relation(new_on) = &new_exec.on else {
@@ -685,8 +687,8 @@ mod exec_transform_tests {
     }
 
     #[test]
-    fn test_try_swapping_with_projection_pushes_down_and_rewrites_knn_predicate_by_probe_side(
-    ) -> Result<()> {
+    fn test_try_swapping_with_projection_pushes_down_and_rewrites_knn_predicate_by_probe_side()
+    -> Result<()> {
         // left: [l0, lgeom], right: [r0, rgeom]
         let left_schema = make_schema(&[("l0", DataType::Int32), ("lgeom", DataType::Binary)]);
         let right_schema = make_schema(&[("r0", DataType::Int32), ("rgeom", DataType::Binary)]);

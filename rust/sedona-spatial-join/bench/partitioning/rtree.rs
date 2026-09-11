@@ -17,11 +17,11 @@
 
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use sedona_geometry::bounding_box::BoundingBox;
-use sedona_spatial_join::partitioning::{rtree::RTreePartitioner, SpatialPartitioner};
+use sedona_spatial_join::partitioning::{SpatialPartitioner, rtree::RTreePartitioner};
 use sedona_spatial_join::utils::internal_benchmark_util::{
-    default_extent, grid_partitions, sample_queries, GRID_DIM, QUERY_BATCH_SIZE,
+    GRID_DIM, QUERY_BATCH_SIZE, default_extent, grid_partitions, sample_queries,
 };
 const NODE_SIZES: [u16; 5] = [4, 8, 16, 32, 64]; // smaller node size => deeper tree
 

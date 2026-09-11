@@ -20,8 +20,8 @@
 use std::{ops::Range, sync::Arc};
 
 use arrow::array::{
-    downcast_array, new_null_array, Array, BooleanBufferBuilder, RecordBatch, RecordBatchOptions,
-    UInt32Builder, UInt64Builder,
+    Array, BooleanBufferBuilder, RecordBatch, RecordBatchOptions, UInt32Builder, UInt64Builder,
+    downcast_array, new_null_array,
 };
 use arrow::buffer::NullBuffer;
 use arrow::compute::{self, take};
@@ -34,16 +34,16 @@ use datafusion_expr::JoinType;
 use datafusion_physical_expr::Partitioning;
 use datafusion_physical_plan::execution_plan::{Boundedness, EmissionType};
 use datafusion_physical_plan::joins::utils::{
-    adjust_right_output_partitioning, ColumnIndex, JoinFilter,
+    ColumnIndex, JoinFilter, adjust_right_output_partitioning,
 };
 use datafusion_physical_plan::projection::{
-    join_allows_pushdown, join_table_borders, new_join_children, physical_to_column_exprs,
-    update_join_filter, ProjectionExec,
+    ProjectionExec, join_allows_pushdown, join_table_borders, new_join_children,
+    physical_to_column_exprs, update_join_filter,
 };
 use datafusion_physical_plan::{ExecutionPlan, ExecutionPlanProperties};
 
-use crate::spatial_predicate::SpatialPredicateTrait;
 use crate::SpatialPredicate;
+use crate::spatial_predicate::SpatialPredicateTrait;
 
 /// Some type `join_type` of join need to maintain the matched indices bit map for the left side, and
 /// use the bit map to generate the part of result of the join.
@@ -758,7 +758,7 @@ pub(crate) fn boundedness_from_children<'a>(
             } => {
                 return Boundedness::Unbounded {
                     requires_infinite_memory: true,
-                }
+                };
             }
             Boundedness::Unbounded {
                 requires_infinite_memory: false,
@@ -918,16 +918,16 @@ mod tests {
     use datafusion_common::ScalarValue;
     use datafusion_expr::JoinType;
     use datafusion_expr::Operator;
-    use datafusion_physical_expr::expressions::{BinaryExpr, Column, Literal};
     use datafusion_physical_expr::EquivalenceProperties;
     use datafusion_physical_expr::Partitioning;
     use datafusion_physical_expr::PhysicalExpr;
-    use datafusion_physical_plan::empty::EmptyExec;
-    use datafusion_physical_plan::projection::ProjectionExpr;
-    use datafusion_physical_plan::repartition::RepartitionExec;
+    use datafusion_physical_expr::expressions::{BinaryExpr, Column, Literal};
     use datafusion_physical_plan::DisplayAs;
     use datafusion_physical_plan::DisplayFormatType;
     use datafusion_physical_plan::PlanProperties;
+    use datafusion_physical_plan::empty::EmptyExec;
+    use datafusion_physical_plan::projection::ProjectionExpr;
+    use datafusion_physical_plan::repartition::RepartitionExec;
     use rstest::rstest;
 
     fn setup_and_run(

@@ -18,8 +18,8 @@
 use std::{
     ops::Range,
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicUsize, Ordering},
     },
 };
 
@@ -29,25 +29,25 @@ use datafusion_common::{DataFusionError, Result};
 use datafusion_common_runtime::JoinSet;
 use float_next_after::NextAfter;
 use geo::BoundingRect;
+use geo_index::IndexableNum;
+use geo_index::rtree::{RTree, RTreeBuilder, RTreeIndex, sort::HilbertSort};
 use geo_index::rtree::{
     distance::{DistanceMetric, GeometryAccessor},
     util::f64_box_to_f32,
 };
-use geo_index::rtree::{sort::HilbertSort, RTree, RTreeBuilder, RTreeIndex};
-use geo_index::IndexableNum;
 use parking_lot::Mutex;
 use sedona_expr::statistics::GeoStatistics;
 use sedona_geo::to_geo::item_to_geometry;
 use sedona_geometry::interval::Interval;
 use wkb::reader::Wkb;
 
-use crate::index::spatial_index::DISTANCE_TOLERANCE;
 use crate::index::SpatialIndex;
+use crate::index::spatial_index::DISTANCE_TOLERANCE;
 use crate::{
     evaluated_batch::EvaluatedBatch,
     index::{
-        knn_adapter::{KnnComponents, SedonaKnnAdapter},
         IndexQueryResult, QueryResultMetrics,
+        knn_adapter::{KnnComponents, SedonaKnnAdapter},
     },
     operand_evaluator::distance_value_at,
     refine::IndexQueryResultRefiner,
@@ -55,7 +55,7 @@ use crate::{
 };
 use arrow::array::BooleanBufferBuilder;
 use async_trait::async_trait;
-use sedona_common::{option::SpatialJoinOptions, sedona_internal_err, ExecutionMode};
+use sedona_common::{ExecutionMode, option::SpatialJoinOptions, sedona_internal_err};
 
 struct DefaultSpatialIndexInner {
     pub(crate) schema: SchemaRef,
@@ -381,12 +381,12 @@ impl SpatialIndex for DefaultSpatialIndex {
             let mut distances_with_indices: Vec<(f64, u32)> = Vec::new();
 
             for &result_idx in &final_results {
-                if (result_idx as usize) < self.inner.data_id_to_batch_pos.len() {
-                    if let Some(item_geom) = geometry_accessor.get_geometry(result_idx as usize) {
-                        let distance = distance_metric.distance_to_geometry(&probe_geom, item_geom);
-                        if let Some(distance_f64) = distance.to_f64() {
-                            distances_with_indices.push((distance_f64, result_idx));
-                        }
+                if (result_idx as usize) < self.inner.data_id_to_batch_pos.len()
+                    && let Some(item_geom) = geometry_accessor.get_geometry(result_idx as usize)
+                {
+                    let distance = distance_metric.distance_to_geometry(&probe_geom, item_geom);
+                    if let Some(distance_f64) = distance.to_f64() {
+                        distances_with_indices.push((distance_f64, result_idx));
                     }
                 }
             }
@@ -436,14 +436,12 @@ impl SpatialIndex for DefaultSpatialIndex {
                 let mut all_distances_with_indices: Vec<(f64, u32)> = Vec::new();
 
                 for &result_idx in &expanded_results {
-                    if (result_idx as usize) < self.inner.data_id_to_batch_pos.len() {
-                        if let Some(item_geom) = geometry_accessor.get_geometry(result_idx as usize)
-                        {
-                            let distance =
-                                distance_metric.distance_to_geometry(&probe_geom, item_geom);
-                            if let Some(distance_f64) = distance.to_f64() {
-                                all_distances_with_indices.push((distance_f64, result_idx));
-                            }
+                    if (result_idx as usize) < self.inner.data_id_to_batch_pos.len()
+                        && let Some(item_geom) = geometry_accessor.get_geometry(result_idx as usize)
+                    {
+                        let distance = distance_metric.distance_to_geometry(&probe_geom, item_geom);
+                        if let Some(distance_f64) = distance.to_f64() {
+                            all_distances_with_indices.push((distance_f64, result_idx));
                         }
                     }
                 }
@@ -678,9 +676,9 @@ mod tests {
     use crate::evaluated_batch::evaluated_batch_stream::{
         EvaluatedBatchStream, SendableEvaluatedBatchStream,
     };
+    use crate::index::DefaultSpatialIndexBuilder;
     use crate::index::spatial_index::SpatialIndexRef;
     use crate::index::spatial_index_builder::{SpatialIndexBuilder, SpatialJoinBuildMetrics};
-    use crate::index::DefaultSpatialIndexBuilder;
     use arrow_array::RecordBatch;
     use arrow_schema::{DataType, Field};
     use datafusion_common::JoinSide;

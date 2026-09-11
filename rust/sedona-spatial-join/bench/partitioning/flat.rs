@@ -17,10 +17,10 @@
 
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, Criterion, Throughput};
-use sedona_spatial_join::partitioning::{flat::FlatPartitioner, SpatialPartitioner};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
+use sedona_spatial_join::partitioning::{SpatialPartitioner, flat::FlatPartitioner};
 use sedona_spatial_join::utils::internal_benchmark_util::{
-    default_extent, grid_partitions, sample_queries, GRID_DIM, QUERY_BATCH_SIZE,
+    GRID_DIM, QUERY_BATCH_SIZE, default_extent, grid_partitions, sample_queries,
 };
 
 fn bench_flat_partition_queries(c: &mut Criterion) {

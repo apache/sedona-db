@@ -29,14 +29,14 @@ use sedona_common::sedona_internal_err;
 use crate::probe::ProbeStreamMetrics;
 use crate::{
     evaluated_batch::{
-        evaluated_batch_stream::{EvaluatedBatchStream, SendableEvaluatedBatchStream},
         EvaluatedBatch,
+        evaluated_batch_stream::{EvaluatedBatchStream, SendableEvaluatedBatchStream},
     },
     partitioning::{
-        stream_repartitioner::{
-            assign_rows, interleave_evaluated_batch, SpilledPartitions, StreamRepartitioner,
-        },
         PartitionedSide, SpatialPartition, SpatialPartitioner,
+        stream_repartitioner::{
+            SpilledPartitions, StreamRepartitioner, assign_rows, interleave_evaluated_batch,
+        },
     },
 };
 
@@ -100,13 +100,13 @@ impl<C: FirstPassStreamCallback> FirstPassStream<C> {
     fn transition_to_failed(&mut self, err: DataFusionError) -> DataFusionError {
         let err_arc = Arc::new(err);
         let callback_opt = self.callback.take();
-        if let Some(callback) = callback_opt {
-            if let Err(e) = callback.call(Err(DataFusionError::Shared(err_arc.clone()))) {
-                log::warn!(
-                    "Failed to invoke first pass stream callback on error: {}",
-                    e
-                );
-            }
+        if let Some(callback) = callback_opt
+            && let Err(e) = callback.call(Err(DataFusionError::Shared(err_arc.clone())))
+        {
+            log::warn!(
+                "Failed to invoke first pass stream callback on error: {}",
+                e
+            );
         }
         DataFusionError::Shared(err_arc)
     }
@@ -155,15 +155,13 @@ impl<C: FirstPassStreamCallback + Unpin> Stream for FirstPassStream<C> {
                         this.pending_output.push_back(Ok(batch));
                     }
 
-                    if let Some((spill_batch, assignments)) = split.spilled {
-                        if let Some(repartitioner) = this.repartitioner.as_mut() {
-                            if let Err(err) =
-                                repartitioner.insert_repartitioned_batch(spill_batch, &assignments)
-                            {
-                                let err = this.transition_to_failed(err);
-                                return Poll::Ready(Some(Err(err)));
-                            }
-                        }
+                    if let Some((spill_batch, assignments)) = split.spilled
+                        && let Some(repartitioner) = this.repartitioner.as_mut()
+                        && let Err(err) =
+                            repartitioner.insert_repartitioned_batch(spill_batch, &assignments)
+                    {
+                        let err = this.transition_to_failed(err);
+                        return Poll::Ready(Some(Err(err)));
                     }
                 }
                 Poll::Ready(Some(Err(e))) => {

@@ -25,16 +25,16 @@ use datafusion_execution::runtime_env::RuntimeEnv;
 use parking_lot::Mutex;
 use sedona_common::sedona_internal_err;
 
+use crate::probe::ProbeStreamMetrics;
 use crate::probe::first_pass_stream::FirstPassStream;
 use crate::probe::non_partitioned_stream::NonPartitionedStream;
-use crate::probe::ProbeStreamMetrics;
 use crate::{
     evaluated_batch::evaluated_batch_stream::{
-        external::ExternalEvaluatedBatchStream, SendableEvaluatedBatchStream,
+        SendableEvaluatedBatchStream, external::ExternalEvaluatedBatchStream,
     },
     partitioning::{
-        stream_repartitioner::{SpilledPartitions, StreamRepartitioner},
         PartitionedSide, SpatialPartition, SpatialPartitioner,
+        stream_repartitioner::{SpilledPartitions, StreamRepartitioner},
     },
 };
 
@@ -470,12 +470,16 @@ mod tests {
         let replay_batches = regular_one.try_collect::<Vec<_>>().await?;
         assert_eq!(ids_from_batches(&replay_batches), vec![vec![1, 2]]);
 
-        assert!(probe_stream
-            .stream_for(SpatialPartition::Regular(1))
-            .is_err());
-        assert!(probe_stream
-            .stream_for(SpatialPartition::Regular(0))
-            .is_err());
+        assert!(
+            probe_stream
+                .stream_for(SpatialPartition::Regular(1))
+                .is_err()
+        );
+        assert!(
+            probe_stream
+                .stream_for(SpatialPartition::Regular(0))
+                .is_err()
+        );
         Ok(())
     }
 
@@ -484,9 +488,11 @@ mod tests {
         let partitioner = sample_partitioner()?;
         let batch = sample_batch(&[0], vec![Some(wkb_point((60.0, 10.0)).unwrap())])?;
         let probe_stream = create_probe_stream(vec![batch], Some(partitioner));
-        assert!(probe_stream
-            .stream_for(SpatialPartition::Regular(1))
-            .is_err());
+        assert!(
+            probe_stream
+                .stream_for(SpatialPartition::Regular(1))
+                .is_err()
+        );
 
         // After running first pass, subsequent requests should succeed once.
         let first_pass = probe_stream.stream_for(SpatialPartition::Regular(0))?;
@@ -531,12 +537,16 @@ mod tests {
         let batches = first_pass.try_collect::<Vec<_>>().await?;
         assert_eq!(ids_from_batches(&batches), vec![vec![0, 1]]);
 
-        assert!(probe_stream
-            .stream_for(SpatialPartition::Regular(0))
-            .is_err());
-        assert!(probe_stream
-            .stream_for(SpatialPartition::Regular(1))
-            .is_err());
+        assert!(
+            probe_stream
+                .stream_for(SpatialPartition::Regular(0))
+                .is_err()
+        );
+        assert!(
+            probe_stream
+                .stream_for(SpatialPartition::Regular(1))
+                .is_err()
+        );
         assert!(probe_stream.stream_for(SpatialPartition::Multi).is_err());
         Ok(())
     }

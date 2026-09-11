@@ -26,8 +26,9 @@ use std::{
 
 use datafusion_common::{DataFusionError, Result, SharedResult};
 use futures::{
+    FutureExt,
     future::{BoxFuture, Shared},
-    ready, FutureExt,
+    ready,
 };
 use parking_lot::Mutex;
 

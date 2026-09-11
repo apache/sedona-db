@@ -20,17 +20,17 @@ use std::sync::Arc;
 
 use arrow_array::{Int32Array, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema, SchemaRef};
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use datafusion::config::SpillCompression;
 use datafusion_common::ScalarValue;
 use datafusion_execution::runtime_env::RuntimeEnv;
 use datafusion_expr::ColumnarValue;
 use datafusion_physical_plan::metrics::{ExecutionPlanMetricsSet, SpillMetrics};
 use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
+use sedona_spatial_join::evaluated_batch::EvaluatedBatch;
 use sedona_spatial_join::evaluated_batch::spill::{
     EvaluatedBatchSpillReader, EvaluatedBatchSpillWriter,
 };
-use sedona_spatial_join::evaluated_batch::EvaluatedBatch;
 use sedona_spatial_join::operand_evaluator::EvaluatedGeometryArray;
 use sedona_testing::create::create_array_storage;
 

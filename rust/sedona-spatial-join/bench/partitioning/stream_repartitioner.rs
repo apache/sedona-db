@@ -16,8 +16,8 @@
 // under the License.
 
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
     Arc,
+    atomic::{AtomicU64, Ordering},
 };
 use std::time::Duration;
 
@@ -26,22 +26,22 @@ use arrow_array::{
     TimestampMicrosecondArray,
 };
 use arrow_schema::{DataType, Field, Schema, TimeUnit};
-use criterion::{criterion_group, criterion_main, BatchSize, Criterion, Throughput};
+use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
 use datafusion::config::SpillCompression;
 use datafusion_execution::runtime_env::RuntimeEnv;
 use datafusion_physical_plan::metrics::{ExecutionPlanMetricsSet, SpillMetrics};
 use futures::executor::block_on;
-use rand::{rngs::StdRng, RngExt, SeedableRng};
+use rand::{RngExt, SeedableRng, rngs::StdRng};
 use sedona_geometry::{bounding_box::BoundingBox, interval::IntervalTrait, wkb_factory::wkb_point};
 use sedona_schema::datatypes::WKB_GEOMETRY;
 use sedona_spatial_join::evaluated_batch::{
-    evaluated_batch_stream::{in_mem::InMemoryEvaluatedBatchStream, SendableEvaluatedBatchStream},
     EvaluatedBatch,
+    evaluated_batch_stream::{SendableEvaluatedBatchStream, in_mem::InMemoryEvaluatedBatchStream},
 };
 use sedona_spatial_join::operand_evaluator::EvaluatedGeometryArray;
 use sedona_spatial_join::partitioning::PartitionedSide;
 use sedona_spatial_join::partitioning::{
-    kdb::KDBPartitioner, stream_repartitioner::StreamRepartitioner, SpatialPartitioner,
+    SpatialPartitioner, kdb::KDBPartitioner, stream_repartitioner::StreamRepartitioner,
 };
 
 const RNG_SEED: u64 = 0x05ED_04A5;

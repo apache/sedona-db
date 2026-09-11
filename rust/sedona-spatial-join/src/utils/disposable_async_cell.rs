@@ -140,7 +140,7 @@ mod tests {
     use super::{CellSetError, DisposableAsyncCell};
     use std::sync::Arc;
     use tokio::task;
-    use tokio::time::{sleep, Duration};
+    use tokio::time::{Duration, sleep};
 
     #[tokio::test]
     async fn get_returns_value_once_set() {

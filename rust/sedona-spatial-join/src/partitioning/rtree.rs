@@ -39,7 +39,7 @@ use std::sync::Arc;
 
 use datafusion_common::Result;
 use geo::Rect;
-use geo_index::rtree::{sort::HilbertSort, RTree, RTreeBuilder, RTreeIndex};
+use geo_index::rtree::{RTree, RTreeBuilder, RTreeIndex, sort::HilbertSort};
 use sedona_geometry::bounding_box::BoundingBox;
 
 use crate::partitioning::util::{

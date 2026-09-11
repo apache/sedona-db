@@ -21,13 +21,13 @@ use datafusion::config::SpillCompression;
 use datafusion_common::Result;
 use datafusion_common_runtime::JoinSet;
 use datafusion_execution::{
-    memory_pool::MemoryReservation, runtime_env::RuntimeEnv, SendableRecordBatchStream,
+    SendableRecordBatchStream, memory_pool::MemoryReservation, runtime_env::RuntimeEnv,
 };
 use datafusion_physical_plan::metrics::{
     self, ExecutionPlanMetricsSet, MetricBuilder, SpillMetrics,
 };
 use futures::StreamExt;
-use sedona_common::{sedona_internal_err, SpatialJoinOptions};
+use sedona_common::{SpatialJoinOptions, sedona_internal_err};
 use sedona_expr::statistics::GeoStatistics;
 use sedona_functions::st_analyze_agg::AnalyzeAccumulator;
 use sedona_geometry::bounds::WkbGeometryBounder;
@@ -35,12 +35,12 @@ use sedona_schema::datatypes::WKB_GEOMETRY;
 
 use crate::{
     evaluated_batch::{
+        EvaluatedBatch,
         evaluated_batch_stream::{
-            evaluate::create_evaluated_build_stream, external::ExternalEvaluatedBatchStream,
-            in_mem::InMemoryEvaluatedBatchStream, SendableEvaluatedBatchStream,
+            SendableEvaluatedBatchStream, evaluate::create_evaluated_build_stream,
+            external::ExternalEvaluatedBatchStream, in_mem::InMemoryEvaluatedBatchStream,
         },
         spill::EvaluatedBatchSpillWriter,
-        EvaluatedBatch,
     },
     join_provider::SpatialJoinProvider,
     operand_evaluator::create_operand_evaluator,

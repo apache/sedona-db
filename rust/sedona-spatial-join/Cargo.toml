@@ -24,7 +24,7 @@ homepage.workspace = true
 repository.workspace = true
 description.workspace = true
 readme.workspace = true
-edition.workspace = true
+edition = "2024"
 rust-version.workspace = true
 
 [lints.clippy]
@@ -38,7 +38,7 @@ async-trait = { workspace = true }
 arrow = { workspace = true }
 arrow-schema = { workspace = true }
 arrow-array = { workspace = true }
-datafusion = { workspace = true }
+datafusion = { workspace = true, features = ["sql"] }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
 datafusion-physical-expr = { workspace = true }

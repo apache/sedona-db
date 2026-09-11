@@ -25,7 +25,7 @@ use std::{
 use arrow_schema::SchemaRef;
 use datafusion_common::Result;
 
-use crate::evaluated_batch::{evaluated_batch_stream::EvaluatedBatchStream, EvaluatedBatch};
+use crate::evaluated_batch::{EvaluatedBatch, evaluated_batch_stream::EvaluatedBatchStream};
 
 pub struct InMemoryEvaluatedBatchStream {
     schema: SchemaRef,

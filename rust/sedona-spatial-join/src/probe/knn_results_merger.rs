@@ -1294,7 +1294,7 @@ fn truncate_row_selectors_to_top_k(
 mod test {
     use arrow::compute::take_record_batch;
     use datafusion_physical_plan::metrics::ExecutionPlanMetricsSet;
-    use rand::{rngs::StdRng, seq::SliceRandom, RngExt, SeedableRng};
+    use rand::{RngExt, SeedableRng, rngs::StdRng, seq::SliceRandom};
     use rstest::rstest;
 
     use super::*;
@@ -1667,9 +1667,11 @@ mod test {
 
         // Should keep all <= 3.0 + DISTANCE_TOLERANCE (i.e. not limited by k).
         assert!(row_dist_vec.len() > k);
-        assert!(row_dist_vec
-            .iter()
-            .all(|(_, d)| *d <= 3.0 + DISTANCE_TOLERANCE));
+        assert!(
+            row_dist_vec
+                .iter()
+                .all(|(_, d)| *d <= 3.0 + DISTANCE_TOLERANCE)
+        );
         assert_eq!(count_dist(&row_dist_vec, 1.0), 1);
         assert_eq!(count_dist(&row_dist_vec, 2.0), 1);
         assert_eq!(count_dist(&row_dist_vec, 3.0), 2);

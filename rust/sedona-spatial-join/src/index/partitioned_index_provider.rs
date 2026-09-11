@@ -15,14 +15,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use crate::evaluated_batch::EvaluatedBatch;
 use crate::evaluated_batch::evaluated_batch_stream::external::ExternalEvaluatedBatchStream;
 use crate::evaluated_batch::evaluated_batch_stream::{
     EvaluatedBatchStream, SendableEvaluatedBatchStream,
 };
-use crate::evaluated_batch::EvaluatedBatch;
+use crate::index::BuildPartition;
 use crate::index::spatial_index::SpatialIndexRef;
 use crate::index::spatial_index_builder::SpatialJoinBuildMetrics;
-use crate::index::BuildPartition;
 use crate::join_provider::SpatialJoinProvider;
 use crate::partitioning::stream_repartitioner::{SpilledPartition, SpilledPartitions};
 use crate::utils::disposable_async_cell::DisposableAsyncCell;
@@ -34,7 +34,7 @@ use datafusion_execution::memory_pool::MemoryReservation;
 use datafusion_expr::JoinType;
 use futures::{Stream, StreamExt};
 use parking_lot::Mutex;
-use sedona_common::{sedona_internal_err, SpatialJoinOptions};
+use sedona_common::{SpatialJoinOptions, sedona_internal_err};
 use std::ops::DerefMut;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -167,7 +167,7 @@ impl PartitionedIndexProvider {
                     "partition_id {} exceeds {} partitions",
                     partition_id,
                     self.index_cells.len()
-                ))
+                ));
             }
         };
         if !cell.is_empty() {
@@ -259,7 +259,7 @@ impl PartitionedIndexProvider {
                     "partition_id {} exceeds {} partitions",
                     partition_id,
                     self.index_cells.len()
-                ))
+                ));
             }
         };
 
@@ -410,10 +410,10 @@ mod tests {
     use crate::utils::bbox_sampler::BoundingBoxSamples;
     use crate::{
         evaluated_batch::{
-            evaluated_batch_stream::{
-                in_mem::InMemoryEvaluatedBatchStream, SendableEvaluatedBatchStream,
-            },
             EvaluatedBatch,
+            evaluated_batch_stream::{
+                SendableEvaluatedBatchStream, in_mem::InMemoryEvaluatedBatchStream,
+            },
         },
         index::CollectBuildSideMetrics,
     };
