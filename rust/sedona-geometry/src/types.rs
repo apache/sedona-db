@@ -191,7 +191,7 @@ impl GeometryTypeAndDimensions {
             _ => {
                 return Err(SedonaGeometryError::Invalid(
                     "Unsupported geometry type".to_string(),
-                ))
+                ));
             }
         };
 
@@ -218,7 +218,7 @@ impl GeometryTypeAndDimensions {
             _ => {
                 return Err(SedonaGeometryError::Invalid(format!(
                     "Unknown dimensions in ISO WKB geometry type: {wkb_id}"
-                )))
+                )));
             }
         };
 
@@ -291,7 +291,7 @@ impl FromStr for GeometryTypeAndDimensions {
             None => {
                 return Err(SedonaGeometryError::Invalid(format!(
                     "Invalid geometry type string: '{value}'"
-                )))
+                )));
             }
         };
 
@@ -303,7 +303,7 @@ impl FromStr for GeometryTypeAndDimensions {
                 _ => {
                     return Err(SedonaGeometryError::Invalid(format!(
                         "invalid geometry type string: '{value}'"
-                    )))
+                    )));
                 }
             },
             None => Dimensions::Xy,
@@ -575,9 +575,9 @@ mod test {
 
     use super::*;
 
-    use rstest::rstest;
     use Dimensions::*;
     use GeometryTypeId::*;
+    use rstest::rstest;
 
     #[rstest]
     fn geometry_type_wkb_id_roundtrip(

@@ -228,7 +228,7 @@ fn write_geometry_type_and_srid(
 mod test {
 
     use rstest::rstest;
-    use wkb::{writer::WriteOptions, Endianness};
+    use wkb::{Endianness, writer::WriteOptions};
 
     use super::*;
 

@@ -306,7 +306,7 @@ pub fn visit_xy_coords(
         _ => {
             return Err(SedonaGeometryError::Invalid(
                 "GeometryType not supported for coordinate visiting".to_string(),
-            ))
+            ));
         }
     }
 
@@ -375,7 +375,7 @@ pub fn geo_traits_update_dimension_bounds(
         _ => {
             return Err(SedonaGeometryError::Invalid(
                 "GeometryType not supported for dimension bounds".to_string(),
-            ))
+            ));
         }
     }
 
@@ -403,7 +403,7 @@ mod test {
     use super::*;
     use rstest::rstest;
     use std::{iter::zip, str::FromStr};
-    use wkb::{writer::WriteOptions, Endianness};
+    use wkb::{Endianness, writer::WriteOptions};
     use wkt::Wkt;
 
     pub fn wkt_bounds_xy(wkt_value: &str) -> Result<BoundingBox, SedonaGeometryError> {

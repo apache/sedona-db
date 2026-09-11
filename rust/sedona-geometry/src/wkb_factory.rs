@@ -531,9 +531,9 @@ fn count_to_u32(count: usize) -> Result<u32, SedonaGeometryError> {
 #[cfg(test)]
 mod test {
     use std::str::FromStr;
-    use wkb::reader::read_wkb;
-    use wkb::writer::{write_geometry, WriteOptions};
     use wkb::Endianness;
+    use wkb::reader::read_wkb;
+    use wkb::writer::{WriteOptions, write_geometry};
     use wkt::Wkt;
 
     use super::*;
