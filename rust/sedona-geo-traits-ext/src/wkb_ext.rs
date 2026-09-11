@@ -23,11 +23,11 @@ use geo_traits::{
     MultiPointTrait, MultiPolygonTrait, PointTrait, PolygonTrait,
 };
 use geo_types::{Coord as GeoCoord, Line};
+use wkb::Endianness;
 use wkb::reader::{
     Coord, Dimension, GeometryCollection, LineString, LinearRing, MultiLineString, MultiPoint,
     MultiPolygon, Point, Polygon, Wkb,
 };
-use wkb::Endianness;
 
 // ┌──────────────────────────────────────────────────────────┐
 // │ Coord                                                    │
@@ -323,10 +323,12 @@ impl<'a> GeometryTraitExt for Wkb<'a> {
 
     #[inline]
     unsafe fn geometry_unchecked_ext(&self, i: usize) -> Self::InnerGeometryRef<'_> {
-        let GeometryType::GeometryCollection(gc) = self.as_type() else {
-            panic!("Called geometry_unchecked_ext on a non-GeometryCollection geometry");
-        };
-        gc.geometry_unchecked(i)
+        unsafe {
+            let GeometryType::GeometryCollection(gc) = self.as_type() else {
+                panic!("Called geometry_unchecked_ext on a non-GeometryCollection geometry");
+            };
+            gc.geometry_unchecked(i)
+        }
     }
 
     #[inline]
@@ -356,7 +358,7 @@ where
 
     #[inline]
     unsafe fn geometry_unchecked_ext(&self, i: usize) -> Self::InnerGeometryRef<'_> {
-        (*self).geometry_unchecked_ext(i)
+        unsafe { (*self).geometry_unchecked_ext(i) }
     }
 
     #[inline]

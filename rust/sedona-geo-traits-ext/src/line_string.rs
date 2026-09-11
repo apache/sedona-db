@@ -51,7 +51,7 @@ where
     /// Otherwise, this function may cause undefined behavior.
     #[inline]
     unsafe fn geo_coord_unchecked(&self, i: usize) -> Coord<Self::T> {
-        self.coord_unchecked_ext(i).geo_coord()
+        unsafe { self.coord_unchecked_ext(i).geo_coord() }
     }
 
     /// Return an iterator yielding one [`Line`] for each line segment
@@ -136,7 +136,7 @@ macro_rules! forward_line_string_trait_ext_funcs {
 
         #[inline]
         unsafe fn coord_unchecked_ext(&self, i: usize) -> Self::CoordTypeExt<'_> {
-            <Self as LineStringTrait>::coord_unchecked(self, i)
+            unsafe { <Self as LineStringTrait>::coord_unchecked(self, i) }
         }
 
         #[inline]
@@ -153,7 +153,7 @@ where
     forward_line_string_trait_ext_funcs!();
 
     unsafe fn geo_coord_unchecked(&self, i: usize) -> Coord<Self::T> {
-        *self.0.get_unchecked(i)
+        unsafe { *self.0.get_unchecked(i) }
     }
 
     // Delegate to the `geo-types` implementation for less performance overhead
@@ -191,7 +191,7 @@ where
     forward_line_string_trait_ext_funcs!();
 
     unsafe fn geo_coord_unchecked(&self, i: usize) -> Coord<Self::T> {
-        *self.0.get_unchecked(i)
+        unsafe { *self.0.get_unchecked(i) }
     }
 
     // Delegate to the `geo-types` implementation for less performance overhead

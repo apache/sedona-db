@@ -21,7 +21,7 @@ use geo_traits::GeometryTrait;
 use rstest::rstest;
 use sedona_geo_traits_ext::*;
 use std::str::FromStr;
-use wkb::{reader::Wkb, Endianness};
+use wkb::{Endianness, reader::Wkb};
 use wkt::Wkt;
 
 /// Helper to create WKB from WKT string using the wkb writer

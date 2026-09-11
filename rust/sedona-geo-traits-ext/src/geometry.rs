@@ -283,10 +283,12 @@ where
     }
 
     unsafe fn geometry_unchecked_ext(&self, i: usize) -> &Geometry<T> {
-        let GeometryType::GeometryCollection(gc) = self.as_type() else {
-            panic!("Not a GeometryCollection");
-        };
-        gc.geometry_unchecked(i)
+        unsafe {
+            let GeometryType::GeometryCollection(gc) = self.as_type() else {
+                panic!("Not a GeometryCollection");
+            };
+            gc.geometry_unchecked(i)
+        }
     }
 
     fn geometries_ext(&self) -> impl Iterator<Item = &Geometry<T>> {
@@ -318,8 +320,10 @@ where
     }
 
     unsafe fn geometry_unchecked_ext(&self, i: usize) -> &'a Geometry<T> {
-        let g = *self;
-        g.geometry_unchecked_ext(i)
+        unsafe {
+            let g = *self;
+            g.geometry_unchecked_ext(i)
+        }
     }
 
     fn geometries_ext(&self) -> impl Iterator<Item = &'a Geometry<T>> {
