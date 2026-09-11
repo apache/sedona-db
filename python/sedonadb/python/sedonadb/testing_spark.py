@@ -169,39 +169,23 @@ class SedonaSpark(DBEngine):
         # nodata None into a float NaN and mask the value under test.
         #
         # toArrow() ships a GeometryUDT column as the UDT's internal
-        # serialization bytes, not ISO WKB, so convert in the JVM first
-        # (transport-only, like decode_raster_result's RS_AsGeoTiff) and
-        # re-tag the bytes as geoarrow.wkb — geometry results then render
-        # WKT through the same geoarrow path as every other engine.
-        import geoarrow.pyarrow as ga
-        from sedona.spark.sql.st_functions import ST_AsBinary
+        # serialization bytes, not WKB, so geometry results route through
+        # sedona's own dataframe_to_arrow, which converts to EWKB in the
+        # JVM and tags the columns as geoarrow extension types — they then
+        # render WKT through the same geoarrow path as every other engine.
+        # Columns are renamed positionally around the call because
+        # dataframe_to_arrow resolves them by name and the generated names
+        # ("rs_worldtorastercoord(rast, 104.0, 494.0)") contain dots that
+        # name resolution re-parses as nested paths (apache/sedona#3351).
+        from sedona.spark.geoarrow import dataframe_to_arrow
         from sedona.spark.sql.types import GeometryType
 
         fields = result.schema.fields
-        geometry_indices = {
-            i for i, f in enumerate(fields) if isinstance(f.dataType, GeometryType)
-        }
-        if geometry_indices:
-            # Rename positionally first: the generated column names contain
-            # dots ("rs_worldtorastercoord(rast, 104.0, 494.0)"), which every
-            # name-based column lookup would re-parse as a nested path.
-            names = [f.name for f in fields]
-            renamed = result.toDF(*[f"c{i}" for i in range(len(fields))])
-            result = renamed.select(
-                *[
-                    ST_AsBinary(column).alias(f"c{i}")
-                    if i in geometry_indices
-                    else column
-                    for i, column in enumerate(renamed[c] for c in renamed.columns)
-                ]
-            )
-        table = result.toArrow()
-        if geometry_indices:
-            table = table.rename_columns(names)
-        for i in geometry_indices:
-            wkb = ga.wkb().wrap_array(table.column(i).combine_chunks())
-            table = table.set_column(i, pa.field(table.schema.names[i], wkb.type), wkb)
-        return table
+        if not any(isinstance(f.dataType, GeometryType) for f in fields):
+            return result.toArrow()
+        names = [f.name for f in fields]
+        renamed = result.toDF(*[f"c{i}" for i in range(len(fields))])
+        return dataframe_to_arrow(renamed).rename_columns(names)
 
     def result_has_raster(self, sql) -> bool:
         from sedona.spark.sql.types import RasterType
