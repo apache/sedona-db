@@ -42,16 +42,16 @@
 
 use std::sync::Arc;
 
+use arrow_array::Array;
 use arrow_array::cast::AsArray;
 use arrow_array::types::{Float64Type, Int64Type};
-use arrow_array::Array;
 use arrow_schema::DataType;
 use datafusion_common::error::Result;
 use datafusion_common::exec_err;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_raster::builder::{RasterBuilder, RasterOverrides};
-use sedona_raster::traits::{nodata_f64_to_bytes, BandOverrides, Override, RasterRef};
+use sedona_raster::traits::{BandOverrides, Override, RasterRef, nodata_f64_to_bytes};
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;
 
@@ -170,7 +170,7 @@ fn set_band_nodata(
             return exec_err!(
                 "RS_SetBandNoDataValue: raster has {num_bands} bands; specify which band to set \
                  (the 2-argument form is only allowed for a single-band raster)"
-            )
+            );
         }
     };
     if band < 1 || band as usize > num_bands {
@@ -224,7 +224,7 @@ mod tests {
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use sedona_schema::datatypes::RASTER;
-    use sedona_testing::raster_spec::{assert_rasters_equal, RasterSpec};
+    use sedona_testing::raster_spec::{RasterSpec, assert_rasters_equal};
     use sedona_testing::rasters::generate_test_rasters;
     use sedona_testing::testers::ScalarUdfTester;
 

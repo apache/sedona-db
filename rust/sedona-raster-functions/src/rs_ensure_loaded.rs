@@ -33,7 +33,7 @@ use arrow_array::{Array, ArrayRef, StructArray};
 use arrow_schema::{DataType, FieldRef};
 use async_trait::async_trait;
 use datafusion_common::config::ConfigOptions;
-use datafusion_common::{plan_err, Result};
+use datafusion_common::{Result, plan_err};
 use datafusion_expr::async_udf::AsyncScalarUDFImpl;
 use datafusion_expr::{
     ColumnarValue, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility,

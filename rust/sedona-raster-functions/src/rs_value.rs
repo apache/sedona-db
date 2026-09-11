@@ -34,11 +34,11 @@
 
 use std::sync::Arc;
 
-use arrow_array::{builder::Float64Builder, Array, ArrayRef, Float64Array, StructArray};
+use arrow_array::{Array, ArrayRef, Float64Array, StructArray, builder::Float64Builder};
 use arrow_schema::DataType;
 use datafusion_common::cast::as_int32_array;
 use datafusion_common::config::ConfigOptions;
-use datafusion_common::{exec_err, Result, ScalarValue};
+use datafusion_common::{Result, ScalarValue, exec_err};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::transform::CrsTransform;
@@ -921,13 +921,10 @@ mod tests {
         let raster_crs = resolve_crs(rasters.get(0).unwrap().crs()).unwrap();
         let point_type = SedonaType::Wkb(Edges::Planar, lnglat());
         with_global_proj_engine(|engine| {
-            assert!(column_point_crs_transform(
-                "RS_Value",
-                &point_type,
-                raster_crs.as_deref(),
-                engine
-            )
-            .is_err());
+            assert!(
+                column_point_crs_transform("RS_Value", &point_type, raster_crs.as_deref(), engine)
+                    .is_err()
+            );
             Ok(())
         })
         .unwrap();

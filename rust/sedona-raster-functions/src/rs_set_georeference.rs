@@ -48,7 +48,7 @@ use datafusion_common::{exec_datafusion_err, exec_err};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
-use sedona_raster::array::{with_column_overrides, RasterColumnOverrides};
+use sedona_raster::array::{RasterColumnOverrides, with_column_overrides};
 use sedona_raster::traits::Override;
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;
@@ -215,7 +215,14 @@ fn parse_georeference(georef: &str, format: GeoReferenceFormat) -> Result<[f64; 
         );
     }
 
-    let [scale_x, skew_y, skew_x, scale_y, mut upper_left_x, mut upper_left_y] = [
+    let [
+        scale_x,
+        skew_y,
+        skew_x,
+        scale_y,
+        mut upper_left_x,
+        mut upper_left_y,
+    ] = [
         values[0], values[1], values[2], values[3], values[4], values[5],
     ];
 
@@ -238,7 +245,7 @@ mod tests {
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use sedona_schema::datatypes::RASTER;
-    use sedona_testing::raster_spec::{assert_rasters_equal, raster_array, RasterSpec};
+    use sedona_testing::raster_spec::{RasterSpec, assert_rasters_equal, raster_array};
     use sedona_testing::testers::ScalarUdfTester;
 
     /// A 2x2 raster with a CRS and a named band — so the comparisons confirm

@@ -17,12 +17,12 @@
 use std::{sync::Arc, vec};
 
 use crate::executor::RasterExecutor;
+use arrow_array::Array;
 use arrow_array::builder::StringBuilder;
 use arrow_array::cast::AsArray;
-use arrow_array::Array;
 use arrow_schema::DataType;
-use datafusion_common::error::Result;
 use datafusion_common::DataFusionError;
+use datafusion_common::error::Result;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_raster::geo_transform::GeoTransformEx;
@@ -234,9 +234,13 @@ mod tests {
         let result = tester.invoke_array(Arc::new(rasters.clone())).unwrap();
 
         let expected: Arc<dyn Array> = Arc::new(StringArray::from(vec![
-            Some("0.1000000000\n0.0000000000\n0.0000000000\n-0.2000000000\n1.0000000000\n2.0000000000"),
+            Some(
+                "0.1000000000\n0.0000000000\n0.0000000000\n-0.2000000000\n1.0000000000\n2.0000000000",
+            ),
             None,
-            Some("0.2000000000\n0.0800000000\n0.0600000000\n-0.4000000000\n3.0000000000\n4.0000000000"),
+            Some(
+                "0.2000000000\n0.0800000000\n0.0600000000\n-0.4000000000\n3.0000000000\n4.0000000000",
+            ),
         ]));
         assert_array_equal(&result, &expected);
 
@@ -260,9 +264,13 @@ mod tests {
         // its center shift includes the skew halves: dx = (0.2 + 0.06) * 0.5,
         // dy = (0.08 - 0.4) * 0.5.
         let expected: Arc<dyn Array> = Arc::new(StringArray::from(vec![
-            Some("0.1000000000\n0.0000000000\n0.0000000000\n-0.2000000000\n1.0500000000\n1.9000000000"),
+            Some(
+                "0.1000000000\n0.0000000000\n0.0000000000\n-0.2000000000\n1.0500000000\n1.9000000000",
+            ),
             None,
-            Some("0.2000000000\n0.0800000000\n0.0600000000\n-0.4000000000\n3.1300000000\n3.8400000000"),
+            Some(
+                "0.2000000000\n0.0800000000\n0.0600000000\n-0.4000000000\n3.1300000000\n3.8400000000",
+            ),
         ]));
 
         for format in ["ESRI", "esri", "NODE", "node"] {
@@ -301,15 +309,19 @@ mod tests {
             .invoke_arrays(vec![Arc::new(rasters), formats])
             .unwrap();
         let expected: Arc<dyn Array> = Arc::new(StringArray::from(vec![
-                // explicit GDAL
-                Some("0.1000000000\n0.0000000000\n0.0000000000\n-0.2000000000\n1.0000000000\n2.0000000000"),
-                // null raster
-                None,
-                // null format -> NULL output
-                None,
-                // explicit ESRI on a skewed raster: the center shift uses the
-                // full affine, dx = (0.3 + 0.09) * 0.5, dy = (0.12 - 0.6) * 0.5
-                Some("0.3000000000\n0.1200000000\n0.0900000000\n-0.6000000000\n4.1950000000\n4.7600000000"),
+            // explicit GDAL
+            Some(
+                "0.1000000000\n0.0000000000\n0.0000000000\n-0.2000000000\n1.0000000000\n2.0000000000",
+            ),
+            // null raster
+            None,
+            // null format -> NULL output
+            None,
+            // explicit ESRI on a skewed raster: the center shift uses the
+            // full affine, dx = (0.3 + 0.09) * 0.5, dy = (0.12 - 0.6) * 0.5
+            Some(
+                "0.3000000000\n0.1200000000\n0.0900000000\n-0.6000000000\n4.1950000000\n4.7600000000",
+            ),
         ]));
         assert_array_equal(&result, &expected);
     }

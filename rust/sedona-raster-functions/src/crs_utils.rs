@@ -18,10 +18,10 @@
 use std::borrow::Cow;
 
 use datafusion_common::config::ConfigOptions;
-use datafusion_common::{exec_err, DataFusionError, Result};
-use sedona_geometry::transform::{transform, CrsEngine};
+use datafusion_common::{DataFusionError, Result, exec_err};
+use sedona_geometry::transform::{CrsEngine, transform};
 use sedona_raster::error::RasterResultExt;
-use sedona_schema::crs::{deserialize_crs, CoordinateReferenceSystem, Crs, CrsRef};
+use sedona_schema::crs::{CoordinateReferenceSystem, Crs, CrsRef, deserialize_crs};
 use wkb::reader::read_wkb;
 
 /// Run `f` with the session's CRS engine: the `SedonaOptions` runtime engine
@@ -203,28 +203,32 @@ mod tests {
         let wkb = sample_wkb();
         with_global_proj_engine(|engine| {
             let crs = resolve_crs(Some("EPSG:4326")).unwrap();
-            assert!(align_wkb_to_crs(
-                &wkb,
-                crs.as_deref(),
-                None,
-                "geometry",
-                "reference raster",
-                engine,
-            )
-            .unwrap_err()
-            .to_string()
-            .contains("geometry has a CRS but the reference raster does not"));
-            assert!(align_wkb_to_crs(
-                &wkb,
-                None,
-                crs.as_deref(),
-                "geometry",
-                "reference raster",
-                engine,
-            )
-            .unwrap_err()
-            .to_string()
-            .contains("reference raster has a CRS but the geometry does not"));
+            assert!(
+                align_wkb_to_crs(
+                    &wkb,
+                    crs.as_deref(),
+                    None,
+                    "geometry",
+                    "reference raster",
+                    engine,
+                )
+                .unwrap_err()
+                .to_string()
+                .contains("geometry has a CRS but the reference raster does not")
+            );
+            assert!(
+                align_wkb_to_crs(
+                    &wkb,
+                    None,
+                    crs.as_deref(),
+                    "geometry",
+                    "reference raster",
+                    engine,
+                )
+                .unwrap_err()
+                .to_string()
+                .contains("reference raster has a CRS but the geometry does not")
+            );
             Ok(())
         })
         .unwrap();

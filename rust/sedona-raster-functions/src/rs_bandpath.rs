@@ -151,13 +151,13 @@ fn get_band_path(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::{create_array, Array, ArrayRef, Int32Array, Int64Array, StringArray};
+    use arrow_array::{Array, ArrayRef, Int32Array, Int64Array, StringArray, create_array};
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use sedona_schema::datatypes::RASTER;
     use sedona_schema::raster::BandDataType;
     use sedona_testing::compare::assert_array_equal;
-    use sedona_testing::raster_spec::{raster_array, RasterSpec};
+    use sedona_testing::raster_spec::{RasterSpec, raster_array};
     use sedona_testing::rasters::generate_test_rasters;
     use sedona_testing::testers::ScalarUdfTester;
 

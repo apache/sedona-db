@@ -16,15 +16,15 @@
 // under the License.
 use std::sync::Arc;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use datafusion_common::error::Result;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_schema::{
-    crs::{lnglat, Crs},
+    crs::{Crs, lnglat},
     datatypes::SedonaType,
 };
-use sedona_testing::benchmark_util::{benchmark, BenchmarkArgSpec::*, BenchmarkArgs};
+use sedona_testing::benchmark_util::{BenchmarkArgSpec::*, BenchmarkArgs, benchmark};
 
 fn sd_apply_default_crs_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
