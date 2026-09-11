@@ -133,6 +133,7 @@ impl SedonaScalarKernel for STGeomFromWKB {
                 SedonaType::Arrow(data_type) => match data_type {
                     DataType::Binary => WKB_GEOMETRY,
                     DataType::BinaryView => WKB_VIEW_GEOGRAPHY,
+                    DataType::Null => WKB_VIEW_GEOMETRY,
                     _ => unreachable!(),
                 },
                 _ => {
@@ -260,6 +261,19 @@ mod tests {
                 &[Some("LINESTRING (0 0, 1 1)"), None, None],
                 &WKB_VIEW_GEOMETRY,
             ),
+        );
+    }
+
+    #[rstest]
+    #[case(st_geomfromwkb_udf())]
+    #[case(st_linestringfromwkb_udf())]
+    #[case(st_pointfromwkb_udf())]
+    fn udf_untyped_null(#[case] udf: SedonaScalarUDF) {
+        let tester = ScalarUdfTester::new(udf.into(), vec![SedonaType::Arrow(DataType::Null)]);
+
+        assert_scalar_equal(
+            &tester.invoke_scalar(ScalarValue::Null).unwrap(),
+            &create_scalar(None, &WKB_VIEW_GEOMETRY),
         );
     }
 
