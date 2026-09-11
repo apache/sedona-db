@@ -57,19 +57,19 @@ use sedona_raster::array::RasterRefImpl;
 use sedona_raster::builder::RasterBuilder;
 use sedona_raster::geo_transform::{GeoTransform, GeoTransformEx};
 use sedona_raster::traits::RasterRef;
+use sedona_raster_functions::RasterExecutor;
 use sedona_raster_functions::crs_utils::{crs_transform_required, resolve_crs};
 use sedona_raster_functions::rs_ensure_loaded::{
     NEEDS_PIXELS_METADATA_KEY, RETURNS_BYTES_METADATA_KEY,
 };
-use sedona_raster_functions::RasterExecutor;
-use sedona_schema::datatypes::{SedonaType, RASTER};
+use sedona_schema::datatypes::{RASTER, SedonaType};
 use sedona_schema::matchers::ArgMatcher;
 
-use crate::gdal_common::{raster_ref_to_gdal_mem, with_gdal, GdalBandLayout};
+use crate::gdal_common::{GdalBandLayout, raster_ref_to_gdal_mem, with_gdal};
 use crate::gdal_dataset_provider::configure_thread_local_options;
 use crate::utils::{
-    append_resampled_nd_from_dataset, append_warped_nd_from_dataset, parse_resample_algorithm,
-    reject_lossy_resample_dtypes, Grid, OutputGrid,
+    Grid, OutputGrid, append_resampled_nd_from_dataset, append_warped_nd_from_dataset,
+    parse_resample_algorithm, reject_lossy_resample_dtypes,
 };
 
 /// RS_Resample() scalar UDF implementation.
@@ -670,7 +670,7 @@ mod tests {
     use datafusion_common::ScalarValue;
     use sedona_raster::array::RasterStructArray;
     use sedona_testing::raster_spec::{
-        assert_raster_scalar_equals, assert_rasters_equal, raster_array, RasterSpec,
+        RasterSpec, assert_raster_scalar_equals, assert_rasters_equal, raster_array,
     };
     use sedona_testing::testers::ScalarUdfTester;
 

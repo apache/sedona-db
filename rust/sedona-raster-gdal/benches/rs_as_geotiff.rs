@@ -25,10 +25,10 @@ use std::sync::Arc;
 
 use arrow_array::ArrayRef;
 use arrow_schema::DataType;
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use datafusion_common::ScalarValue;
 use datafusion_expr::{ColumnarValue, ScalarUDF};
-use sedona_schema::datatypes::{SedonaType, RASTER};
+use sedona_schema::datatypes::{RASTER, SedonaType};
 use sedona_schema::raster::BandDataType;
 use sedona_testing::raster_spec::RasterSpec;
 use sedona_testing::testers::ScalarUdfTester;

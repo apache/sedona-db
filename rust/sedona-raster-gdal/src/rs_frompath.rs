@@ -29,7 +29,7 @@ use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_functions::executor::WkbBytesExecutor;
 use sedona_raster::builder::RasterBuilder;
-use sedona_schema::datatypes::{SedonaType, RASTER};
+use sedona_schema::datatypes::{RASTER, SedonaType};
 use sedona_schema::matchers::ArgMatcher;
 
 use crate::gdal_common::with_gdal;
@@ -96,8 +96,8 @@ impl SedonaScalarKernel for RsFromPath {
 mod tests {
     use super::*;
     use arrow_array::{StringArray, StructArray};
-    use datafusion_common::cast::as_struct_array;
     use datafusion_common::ScalarValue;
+    use datafusion_common::cast::as_struct_array;
     use datafusion_expr::ScalarUDFImpl;
     use sedona_raster::array::RasterStructArray;
     use sedona_raster::traits::RasterRef;

@@ -17,10 +17,10 @@
 
 use std::sync::Arc;
 
+use arrow_array::StructArray;
 use arrow_array::builder::{
     Float64Builder, Int32Builder, Int64Builder, UInt32Builder, UInt64Builder,
 };
-use arrow_array::StructArray;
 use arrow_buffer::NullBufferBuilder;
 use arrow_schema::{DataType, Field, Fields};
 use datafusion_common::config::ConfigOptions;
@@ -205,8 +205,8 @@ impl SedonaScalarKernel for RsMetaData {
 mod tests {
     use super::*;
     use arrow_array::{
-        cast::AsArray, types::Float64Type, types::Int32Type, types::Int64Type, types::UInt32Type,
-        types::UInt64Type, Array,
+        Array, cast::AsArray, types::Float64Type, types::Int32Type, types::Int64Type,
+        types::UInt32Type, types::UInt64Type,
     };
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
@@ -215,7 +215,7 @@ mod tests {
     use sedona_schema::datatypes::RASTER;
     use sedona_schema::raster::BandDataType;
     use sedona_testing::{
-        rasters::{build_in_db_raster, generate_multi_band_raster, InDbTestBand},
+        rasters::{InDbTestBand, build_in_db_raster, generate_multi_band_raster},
         testers::ScalarUdfTester,
     };
     use tempfile::TempDir;

@@ -43,9 +43,9 @@
 use std::sync::Arc;
 
 use arrow_array::{ArrayRef, BinaryArray, BooleanArray, Int64Array, StringArray};
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use datafusion_expr::ScalarUDF;
-use sedona_schema::datatypes::{SedonaType, RASTER, WKB_GEOMETRY};
+use sedona_schema::datatypes::{RASTER, SedonaType, WKB_GEOMETRY};
 use sedona_testing::{
     benchmark_util::BenchmarkArgSpec, create::make_wkb, raster_spec::RasterSpec,
     testers::ScalarUdfTester,

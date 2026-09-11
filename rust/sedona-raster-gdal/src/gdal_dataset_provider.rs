@@ -19,7 +19,7 @@ use std::convert::TryInto;
 use std::{cell::RefCell, marker::PhantomData, num::NonZeroUsize, rc::Rc};
 
 use datafusion_common::config::ConfigOptions;
-use datafusion_common::{exec_datafusion_err, exec_err, DataFusionError, Result};
+use datafusion_common::{DataFusionError, Result, exec_datafusion_err, exec_err};
 
 use sedona_gdal::dataset::Dataset;
 use sedona_gdal::gdal::Gdal;
@@ -28,7 +28,7 @@ use sedona_raster::error::RasterResultExt;
 use sedona_raster::geo_transform::{GeoTransform, GeoTransformEx};
 
 use sedona_common::SedonaOptions;
-use sedona_raster::traits::{split_outdb_band_fragment, RasterRef};
+use sedona_raster::traits::{RasterRef, split_outdb_band_fragment};
 use sedona_schema::raster::BandDataType;
 
 use crate::gdal_common::{
@@ -556,7 +556,8 @@ fn compute_vrt_simple_source_windows(
     {
         return exec_err!(
             "Out-db raster is not aligned with target raster (geotransform mismatch): dst={:?} src={:?}",
-            dst_gt, src_gt
+            dst_gt,
+            src_gt
         );
     }
 
@@ -613,7 +614,7 @@ mod tests {
     use sedona_raster::array::RasterStructArray;
     use sedona_raster::builder::{RasterBuilder, StartBandArgs};
     use sedona_schema::raster::BandDataType;
-    use sedona_testing::rasters::{build_in_db_raster, InDbTestBand};
+    use sedona_testing::rasters::{InDbTestBand, build_in_db_raster};
     use tempfile::TempDir;
 
     use crate::gdal_common::with_gdal;

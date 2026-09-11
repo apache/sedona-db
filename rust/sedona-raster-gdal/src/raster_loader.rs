@@ -58,8 +58,8 @@
 //! it during session bootstrap.
 
 use std::iter::zip;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use arrow_buffer::Buffer;
 use arrow_schema::ArrowError;

@@ -25,10 +25,10 @@ use sedona_gdal::raster::types::DatasetOptions;
 use sedona_gdal::raster::types::GdalDataType;
 use sedona_raster::geo_transform::GeoTransform;
 
-use sedona_raster::traits::{is_spatial_dim_pair, RasterRef};
+use sedona_raster::traits::{RasterRef, is_spatial_dim_pair};
 use sedona_schema::raster::BandDataType;
 
-use datafusion_common::{exec_datafusion_err, exec_err, DataFusionError, Result};
+use datafusion_common::{DataFusionError, Result, exec_datafusion_err, exec_err};
 
 /// Execute a closure with a reference to the global [`Gdal`] handle,
 /// converting initialization errors to [`DataFusionError`].
@@ -583,7 +583,7 @@ mod tests {
     use crate::utils::Grid;
     use sedona_raster::array::RasterStructArray;
     use sedona_raster::builder::{RasterBuilder, StartBandArgs};
-    use sedona_testing::rasters::{build_in_db_raster, InDbTestBand};
+    use sedona_testing::rasters::{InDbTestBand, build_in_db_raster};
 
     fn single_raster<'a>(
         raster_array: &'a arrow_array::StructArray,
@@ -607,9 +607,11 @@ mod tests {
     }
 
     fn assert_wgs84_projection(dataset: &Dataset) {
-        assert!(dataset
-            .projection()
-            .contains("AUTHORITY[\"EPSG\",\"4326\"]"));
+        assert!(
+            dataset
+                .projection()
+                .contains("AUTHORITY[\"EPSG\",\"4326\"]")
+        );
     }
 
     #[test]
@@ -711,9 +713,11 @@ mod tests {
         let err = bytes_to_f64(&val.to_le_bytes(), &BandDataType::Int64)
             .err()
             .unwrap();
-        assert!(err
-            .to_string()
-            .contains("Cannot convert Int64 nodata value to f64 without potential precision loss"));
+        assert!(
+            err.to_string().contains(
+                "Cannot convert Int64 nodata value to f64 without potential precision loss"
+            )
+        );
 
         // Float32
         let val: f32 = -9999.0;

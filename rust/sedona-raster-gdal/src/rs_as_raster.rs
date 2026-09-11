@@ -24,7 +24,7 @@ use arrow_schema::DataType;
 use datafusion_common::cast::{as_boolean_array, as_float64_array, as_string_array};
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::error::Result;
-use datafusion_common::{exec_datafusion_err, exec_err, ScalarValue};
+use datafusion_common::{ScalarValue, exec_datafusion_err, exec_err};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::SedonaOptions;
 use sedona_expr::{
@@ -40,10 +40,10 @@ use sedona_raster::builder::RasterBuilder;
 use sedona_raster::error::RasterResultExt;
 use sedona_raster::traits::RasterRef;
 use sedona_raster_functions::{
-    crs_utils::{align_wkb_to_crs, resolve_crs},
     RasterExecutor,
+    crs_utils::{align_wkb_to_crs, resolve_crs},
 };
-use sedona_schema::datatypes::{SedonaType, RASTER};
+use sedona_schema::datatypes::{RASTER, SedonaType};
 use sedona_schema::matchers::ArgMatcher;
 use sedona_schema::raster::BandDataType;
 
@@ -638,7 +638,7 @@ mod tests {
     use sedona_schema::datatypes::RASTER;
     use sedona_schema::datatypes::WKB_GEOMETRY;
     use sedona_schema::raster::BandDataType;
-    use sedona_testing::raster_spec::{assert_rasters_equal, RasterSpec};
+    use sedona_testing::raster_spec::{RasterSpec, assert_rasters_equal};
     use sedona_testing::{
         create::{create_array, create_array_item_crs, make_wkb},
         testers::ScalarUdfTester,

@@ -25,11 +25,11 @@
 use std::sync::Arc;
 
 use arrow_array::ArrayRef;
+use datafusion_common::ScalarValue;
 use datafusion_common::cast::{as_boolean_array, as_float64_array, as_int32_array};
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::error::Result;
 use datafusion_common::exec_err;
-use datafusion_common::ScalarValue;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::sedona_internal_err;
 use sedona_gdal::gdal::Gdal;
@@ -39,20 +39,20 @@ use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_raster::array::RasterRefImpl;
 use sedona_raster::builder::RasterBuilder;
 use sedona_raster::error::RasterResultExt;
-use sedona_raster::traits::{is_spatial_dim_pair, RasterRef};
+use sedona_raster::traits::{RasterRef, is_spatial_dim_pair};
+use sedona_raster_functions::RasterExecutor;
 use sedona_raster_functions::crs_utils::{crs_transform_wkb, resolve_crs, with_crs_engine};
 use sedona_raster_functions::rs_ensure_loaded::{
     NEEDS_PIXELS_METADATA_KEY, RETURNS_BYTES_METADATA_KEY,
 };
-use sedona_raster_functions::RasterExecutor;
-use sedona_schema::datatypes::{SedonaType, RASTER};
+use sedona_schema::datatypes::{RASTER, SedonaType};
 use sedona_schema::matchers::ArgMatcher;
 use sedona_schema::raster::BandDataType;
 
 use crate::gdal_common::{raster_geo_transform, with_gdal};
 use crate::gdal_dataset_provider::configure_thread_local_options;
-use crate::mask::{envelope_window, rasterize_geometry_mask, PixelWindow};
-use crate::utils::{append_band_from_buffer, BandHeader};
+use crate::mask::{PixelWindow, envelope_window, rasterize_geometry_mask};
+use crate::utils::{BandHeader, append_band_from_buffer};
 use sedona_raster::traits::nodata_f64_to_bytes;
 
 /// RS_Clip() scalar UDF implementation
@@ -747,16 +747,16 @@ fn build_clipped_raster(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::{cast::AsArray, StructArray};
+    use arrow_array::{StructArray, cast::AsArray};
     use sedona_expr::scalar_udf::SedonaScalarKernel;
     use sedona_proj::error::SedonaProjError;
-    use sedona_proj::transform::{with_global_proj_engine, LazyProjEngine};
+    use sedona_proj::transform::{LazyProjEngine, with_global_proj_engine};
     use sedona_raster::array::RasterStructArray;
     use sedona_schema::crs::deserialize_crs;
     use sedona_schema::datatypes::Edges;
     use sedona_testing::create::make_wkb;
     use sedona_testing::raster_spec::{
-        assert_raster_scalar_equals, assert_rasters_equal, raster_array, RasterSpec,
+        RasterSpec, assert_raster_scalar_equals, assert_rasters_equal, raster_array,
     };
     use sedona_testing::testers::ScalarUdfTester;
 

@@ -36,7 +36,7 @@ use arrow_schema::{DataType, Field, Fields};
 use datafusion_common::cast::{as_boolean_array, as_float64_array, as_int64_array, as_list_array};
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::error::Result;
-use datafusion_common::{exec_datafusion_err, exec_err, ScalarValue};
+use datafusion_common::{ScalarValue, exec_datafusion_err, exec_err};
 use datafusion_expr::{ColumnarValue, Volatility};
 
 use sedona_common::sedona_internal_err;
@@ -45,12 +45,12 @@ use sedona_raster::array::RasterRefImpl;
 use sedona_raster::builder::RasterBuilder;
 use sedona_raster::error::RasterResultExt;
 use sedona_raster::geo_transform::{GeoTransform, GeoTransformEx};
-use sedona_raster::traits::{is_spatial_dim_pair, nodata_f64_to_bytes, RasterRef};
-use sedona_raster_functions::rs_ensure_loaded::NEEDS_PIXELS_METADATA_KEY;
+use sedona_raster::traits::{RasterRef, is_spatial_dim_pair, nodata_f64_to_bytes};
 use sedona_raster_functions::RasterExecutor;
+use sedona_raster_functions::rs_ensure_loaded::NEEDS_PIXELS_METADATA_KEY;
 
-use crate::utils::{append_stacked_band, BandHeader};
-use sedona_schema::datatypes::{SedonaType, RASTER};
+use crate::utils::{BandHeader, append_stacked_band};
+use sedona_schema::datatypes::{RASTER, SedonaType};
 use sedona_schema::matchers::{ArgMatcher, TypeMatcher};
 
 /// RS_Tile() scalar UDF implementation.
@@ -779,7 +779,7 @@ mod tests {
     use datafusion_expr::ScalarUDF;
     use sedona_raster::array::RasterStructArray;
     use sedona_schema::datatypes::RASTER;
-    use sedona_testing::raster_spec::{assert_rasters_equal, raster_array, RasterSpec};
+    use sedona_testing::raster_spec::{RasterSpec, assert_rasters_equal, raster_array};
     use sedona_testing::testers::ScalarUdfTester;
 
     /// The optional tiling parameters for the core-tiling helper tests.

@@ -39,8 +39,8 @@ use sedona_raster::traits::RasterRef;
 use sedona_schema::raster::BandDataType;
 
 use crate::gdal_common::{
-    add_layout_datapointer_bands, band_nodata_to_bytes, convert_gdal_err, gdal_to_band_data_type,
-    normalize_outdb_source_path, set_band_nodata_from_bytes, GdalBandLayout,
+    GdalBandLayout, add_layout_datapointer_bands, band_nodata_to_bytes, convert_gdal_err,
+    gdal_to_band_data_type, normalize_outdb_source_path, set_band_nodata_from_bytes,
 };
 
 /// Append a GDAL dataset as a single in-db raster to the provided [`RasterBuilder`].
@@ -737,8 +737,8 @@ pub fn gdal_dataset_to_nd_raster(
 #[cfg(test)]
 mod tests {
     use super::{
-        append_as_indb_raster, append_as_outdb_raster, append_stacked_band, dataset_to_indb_raster,
-        BandHeader,
+        BandHeader, append_as_indb_raster, append_as_outdb_raster, append_stacked_band,
+        dataset_to_indb_raster,
     };
 
     use arrow_array::StructArray;
