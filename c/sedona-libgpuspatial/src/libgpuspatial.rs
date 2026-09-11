@@ -20,11 +20,11 @@ use crate::error::GpuSpatialError;
 use crate::libgpuspatial_glue_bindgen::*;
 use crate::predicate::GpuSpatialRelationPredicate;
 use arrow_array::{Array, ArrayRef};
-use arrow_schema::ffi::FFI_ArrowSchema;
 use arrow_schema::DataType;
+use arrow_schema::ffi::FFI_ArrowSchema;
 use std::cell::UnsafeCell;
 use std::convert::TryFrom;
-use std::ffi::{c_void, CStr, CString};
+use std::ffi::{CStr, CString, c_void};
 use std::os::raw::c_char;
 use std::sync::Arc;
 

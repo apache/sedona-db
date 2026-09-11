@@ -122,8 +122,12 @@ fn main() {
     // Check if libgpuspatial submodule exists
     let libgpuspatial_path = std::path::Path::new("./libgpuspatial/CMakeLists.txt");
     if !libgpuspatial_path.exists() {
-        println!("cargo:warning=libgpuspatial submodule not found. GPU functionality will not be available.");
-        println!("cargo:warning=To enable GPU support, initialize the submodule: git submodule update --init --recursive");
+        println!(
+            "cargo:warning=libgpuspatial submodule not found. GPU functionality will not be available."
+        );
+        println!(
+            "cargo:warning=To enable GPU support, initialize the submodule: git submodule update --init --recursive"
+        );
 
         // Create empty bindings file so the build doesn't fail
         let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
@@ -236,7 +240,9 @@ fn main() {
                 driver_lib_path.display()
             ); // CUDA driver
         } else {
-            panic!("CUDA libcuda.so is not found. Please ensure NVIDIA drivers are installed and in a standard location, or set LD_LIBRARY_PATH or CUDA_HOME.");
+            panic!(
+                "CUDA libcuda.so is not found. Please ensure NVIDIA drivers are installed and in a standard location, or set LD_LIBRARY_PATH or CUDA_HOME."
+            );
         }
 
         println!("cargo:rustc-link-lib=static=gpuspatial_c");

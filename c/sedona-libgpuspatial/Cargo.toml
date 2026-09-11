@@ -23,7 +23,7 @@ homepage.workspace = true
 repository.workspace = true
 description = "GPU spatial operations wrapper for libgpuspatial"
 readme.workspace = true
-edition.workspace = true
+edition = "2024"
 rust-version.workspace = true
 
 [features]
