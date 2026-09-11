@@ -22,18 +22,18 @@ use std::{
 };
 
 use arrow_array::{
+    ArrayRef, BooleanArray, Float64Array, Int32Array, RecordBatch, UInt64Array,
     builder::PrimitiveBuilder,
     cast::AsArray,
     types::{Float64Type, UInt64Type},
-    ArrayRef, BooleanArray, Float64Array, Int32Array, RecordBatch, UInt64Array,
 };
 use arrow_ipc::{reader::FileReader, writer::FileWriter};
 use arrow_schema::{DataType, Field, Schema};
 use byteorder::{LittleEndian, ReadBytesExt};
-use datafusion_common::{arrow::compute::concat_batches, Column, DataFusionError, ScalarValue};
+use datafusion_common::{Column, DataFusionError, ScalarValue, arrow::compute::concat_batches};
 use datafusion_pruning::PruningStatistics;
 use las::Header;
-use object_store::{path::Path, ObjectMeta, ObjectStore, ObjectStoreExt, PutPayload};
+use object_store::{ObjectMeta, ObjectStore, ObjectStoreExt, PutPayload, path::Path};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use sedona_geometry::bounding_box::BoundingBox;
 
@@ -357,8 +357,8 @@ mod tests {
 
     use arrow_array::{cast::AsArray, types::UInt64Type};
     use datafusion_pruning::PruningStatistics;
-    use las::{point::Format, Builder, Point, Writer};
-    use object_store::{local::LocalFileSystem, path::Path, ObjectStoreExt};
+    use las::{Builder, Point, Writer, point::Format};
+    use object_store::{ObjectStoreExt, local::LocalFileSystem, path::Path};
     use sedona_geometry::bounding_box::BoundingBox;
 
     use crate::las::{

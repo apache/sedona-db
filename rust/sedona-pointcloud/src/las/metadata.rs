@@ -27,14 +27,14 @@ use std::{
 use arrow_schema::{DataType, Schema, SchemaRef};
 use bytes::Bytes;
 use datafusion_common::{
-    error::DataFusionError, scalar::ScalarValue, stats::Precision, ColumnStatistics, Statistics,
+    ColumnStatistics, Statistics, error::DataFusionError, scalar::ScalarValue, stats::Precision,
 };
 use datafusion_execution::cache::cache_manager::{
     CachedFileMetadataEntry, FileMetadata, FileMetadataCache,
 };
 use las::{
-    raw::{Header as RawHeader, Vlr as RawVlr},
     Builder, Header, Vlr,
+    raw::{Header as RawHeader, Vlr as RawVlr},
 };
 use laz::laszip::ChunkTable;
 use object_store::{ObjectMeta, ObjectStore, ObjectStoreExt};
@@ -42,7 +42,7 @@ use object_store::{ObjectMeta, ObjectStore, ObjectStoreExt};
 use crate::las::{
     options::LasOptions,
     schema::try_schema_from_header,
-    statistics::{chunk_statistics, LasStatistics},
+    statistics::{LasStatistics, chunk_statistics},
 };
 
 /// LAS/LAZ chunk metadata
@@ -599,11 +599,11 @@ mod tests {
         io::{Read, Seek, SeekFrom, Write},
     };
 
-    use las::{point::Format, Builder, Reader, Writer};
-    use object_store::{local::LocalFileSystem, path::Path, ObjectStoreExt};
+    use las::{Builder, Reader, Writer, point::Format};
+    use object_store::{ObjectStoreExt, local::LocalFileSystem, path::Path};
 
     use crate::las::{
-        metadata::{fetch_chunk_table, fetch_header, LasMetadataReader},
+        metadata::{LasMetadataReader, fetch_chunk_table, fetch_header},
         options::LasOptions,
     };
 
@@ -705,8 +705,10 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(error
-            .to_string()
-            .contains("chunk table count is inconsistent"));
+        assert!(
+            error
+                .to_string()
+                .contains("chunk table count is inconsistent")
+        );
     }
 }

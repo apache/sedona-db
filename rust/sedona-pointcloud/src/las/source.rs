@@ -19,16 +19,16 @@ use std::{iter, sync::Arc};
 
 use datafusion_common::{config::ConfigOptions, error::DataFusionError};
 use datafusion_datasource::{
+    TableSchema,
     file::FileSource,
     file_groups::FileGroupPartitioner,
     file_scan_config::FileScanConfig,
     file_stream::FileOpener,
     projection::{ProjectionOpener, SplitProjection},
     source::DataSource,
-    TableSchema,
 };
 use datafusion_physical_expr::{
-    conjunction, projection::ProjectionExprs, LexOrdering, PhysicalExpr,
+    LexOrdering, PhysicalExpr, conjunction, projection::ProjectionExprs,
 };
 use datafusion_physical_plan::{
     filter_pushdown::{FilterPushdownPropagation, PushedDown},
