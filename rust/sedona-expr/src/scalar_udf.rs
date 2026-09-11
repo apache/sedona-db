@@ -18,7 +18,7 @@ use std::{collections::HashMap, fmt::Debug, sync::Arc};
 
 use arrow_schema::{DataType, FieldRef};
 use datafusion_common::config::ConfigOptions;
-use datafusion_common::{not_impl_err, Result, ScalarValue};
+use datafusion_common::{Result, ScalarValue, not_impl_err};
 use datafusion_expr::{
     ColumnarValue, Documentation, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDFImpl, Signature,
     Volatility,
@@ -357,10 +357,10 @@ impl ScalarUDFImpl for SedonaScalarUDF {
 #[cfg(test)]
 mod tests {
 
-    use datafusion_common::{scalar::ScalarValue, DFSchema};
+    use datafusion_common::{DFSchema, scalar::ScalarValue};
     use sedona_testing::testers::ScalarUdfTester;
 
-    use datafusion_expr::{lit, ExprSchemable, ScalarUDF};
+    use datafusion_expr::{ExprSchemable, ScalarUDF, lit};
     use sedona_geometry::types::Edges;
     use sedona_schema::{crs::lnglat, datatypes::WKB_GEOMETRY};
 

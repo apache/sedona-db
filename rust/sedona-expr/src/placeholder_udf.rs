@@ -30,16 +30,16 @@ use std::{
 
 use arrow_schema::{DataType, Field};
 use datafusion_common::{
-    tree_node::{Transformed, TreeNode, TreeNodeRecursion},
     Result,
+    tree_node::{Transformed, TreeNode, TreeNodeRecursion},
 };
 use datafusion_execution::FunctionRegistry;
 use datafusion_expr::{
-    expr::ScalarFunction,
-    function::{AccumulatorArgs, PartitionEvaluatorArgs, WindowUDFFieldArgs},
     Accumulator, AggregateUDF, AggregateUDFImpl, Expr, HigherOrderUDF, PartitionEvaluator,
     ScalarUDF, ScalarUDFImpl, Signature, Volatility, WindowFunctionDefinition, WindowUDF,
     WindowUDFImpl,
+    expr::ScalarFunction,
+    function::{AccumulatorArgs, PartitionEvaluatorArgs, WindowUDFFieldArgs},
 };
 use sedona_common::sedona_internal_err;
 
@@ -55,11 +55,11 @@ impl PlaceholderRegistry {
     pub fn expr_contains_placeholder(expr: &Expr) -> bool {
         let mut found = false;
         expr.apply(|e| {
-            if let Expr::ScalarFunction(func) = e {
-                if func.func.inner().downcast_ref::<PlaceholderUDF>().is_some() {
-                    found = true;
-                    return Ok(TreeNodeRecursion::Stop);
-                }
+            if let Expr::ScalarFunction(func) = e
+                && func.func.inner().downcast_ref::<PlaceholderUDF>().is_some()
+            {
+                found = true;
+                return Ok(TreeNodeRecursion::Stop);
             }
             Ok(TreeNodeRecursion::Continue)
         })
@@ -90,11 +90,11 @@ impl PlaceholderRegistry {
                     }
                 }
                 Expr::WindowFunction(func) => {
-                    if let WindowFunctionDefinition::WindowUDF(ref udf) = func.fun {
-                        if udf.inner().downcast_ref::<PlaceholderUDWF>().is_some() {
-                            found = true;
-                            return Ok(TreeNodeRecursion::Stop);
-                        }
+                    if let WindowFunctionDefinition::WindowUDF(ref udf) = func.fun
+                        && udf.inner().downcast_ref::<PlaceholderUDWF>().is_some()
+                    {
+                        found = true;
+                        return Ok(TreeNodeRecursion::Stop);
                     }
                 }
                 _ => {}
@@ -143,17 +143,16 @@ impl PlaceholderRegistry {
                     }
                 }
                 Expr::WindowFunction(func) => {
-                    if let WindowFunctionDefinition::WindowUDF(ref udf) = func.fun {
-                        if udf.inner().downcast_ref::<PlaceholderUDWF>().is_some() {
-                            let real_udwf = registry.udwf(udf.name())?;
-                            let replaced = Expr::WindowFunction(Box::new(
-                                datafusion_expr::expr::WindowFunction {
-                                    fun: WindowFunctionDefinition::WindowUDF(real_udwf),
-                                    params: func.params.clone(),
-                                },
-                            ));
-                            return Ok(Transformed::yes(replaced));
-                        }
+                    if let WindowFunctionDefinition::WindowUDF(ref udf) = func.fun
+                        && udf.inner().downcast_ref::<PlaceholderUDWF>().is_some()
+                    {
+                        let real_udwf = registry.udwf(udf.name())?;
+                        let replaced =
+                            Expr::WindowFunction(Box::new(datafusion_expr::expr::WindowFunction {
+                                fun: WindowFunctionDefinition::WindowUDF(real_udwf),
+                                params: func.params.clone(),
+                            }));
+                        return Ok(Transformed::yes(replaced));
                     }
                 }
                 _ => {}
@@ -350,7 +349,7 @@ impl WindowUDFImpl for PlaceholderUDWF {
 mod tests {
     use super::*;
     use datafusion_common::ScalarValue;
-    use datafusion_expr::{col, lit, SimpleScalarUDF};
+    use datafusion_expr::{SimpleScalarUDF, col, lit};
 
     #[test]
     fn test_placeholder_registry_returns_empty_function_sets() {

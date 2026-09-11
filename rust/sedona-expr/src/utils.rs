@@ -18,7 +18,7 @@
 use std::sync::Arc;
 
 use datafusion_expr::Operator;
-use datafusion_physical_expr::{expressions::BinaryExpr, PhysicalExpr, ScalarFunctionExpr};
+use datafusion_physical_expr::{PhysicalExpr, ScalarFunctionExpr, expressions::BinaryExpr};
 
 /// Represents a parsed distance predicate with its constituent parts.
 ///

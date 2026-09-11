@@ -16,7 +16,7 @@
 // under the License.
 use std::str::FromStr;
 
-use datafusion_common::{stats::Precision, ColumnStatistics, DataFusionError, Result, ScalarValue};
+use datafusion_common::{ColumnStatistics, DataFusionError, Result, ScalarValue, stats::Precision};
 use sedona_common::sedona_internal_datafusion_err;
 use sedona_geometry::interval::{Interval, IntervalTrait};
 use sedona_geometry::{
@@ -526,16 +526,20 @@ mod test {
     fn from_non_geometry_stats() {
         // Can't make geo stats from unknown
         let stats = ColumnStatistics::new_unknown();
-        assert!(GeoStatistics::try_from_column_statistics(&stats)
-            .unwrap()
-            .is_none());
+        assert!(
+            GeoStatistics::try_from_column_statistics(&stats)
+                .unwrap()
+                .is_none()
+        );
 
         // Can't make geo stats from binary null
         let stats = ColumnStatistics::new_unknown()
             .with_sum_value(Precision::Exact(ScalarValue::Binary(None)));
-        assert!(GeoStatistics::try_from_column_statistics(&stats)
-            .unwrap()
-            .is_none());
+        assert!(
+            GeoStatistics::try_from_column_statistics(&stats)
+                .unwrap()
+                .is_none()
+        );
 
         // Can't make geo stats from binary null
         let stats = ColumnStatistics::new_unknown()

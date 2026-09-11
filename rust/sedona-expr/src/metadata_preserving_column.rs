@@ -34,7 +34,7 @@ use arrow_array::RecordBatch;
 use arrow_schema::{DataType, FieldRef, Schema};
 use datafusion_common::Result;
 use datafusion_expr::ColumnarValue;
-use datafusion_physical_expr::{expressions::Column, PhysicalExpr};
+use datafusion_physical_expr::{PhysicalExpr, expressions::Column};
 use sedona_common::sedona_internal_err;
 
 /// A wrapper around [`Column`] that preserves field metadata in `return_field()`.
@@ -159,9 +159,11 @@ mod tests {
 
         // return_field should return the stored field with metadata, not the input schema's field
         let returned_field = wrapper.return_field(&input_schema).unwrap();
-        assert!(returned_field
-            .metadata()
-            .contains_key("ARROW:extension:name"));
+        assert!(
+            returned_field
+                .metadata()
+                .contains_key("ARROW:extension:name")
+        );
         assert_eq!(
             returned_field.metadata().get("ARROW:extension:name"),
             Some(&"geoarrow.wkb".to_string())

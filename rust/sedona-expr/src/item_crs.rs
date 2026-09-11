@@ -22,8 +22,9 @@ use arrow_buffer::NullBuffer;
 use arrow_schema::{DataType, Field, FieldRef};
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::{
+    DataFusionError, Result, ScalarValue,
     cast::{as_string_view_array, as_struct_array},
-    exec_err, DataFusionError, Result, ScalarValue,
+    exec_err,
 };
 use datafusion_expr::{Accumulator, ColumnarValue};
 use sedona_common::sedona_internal_err;

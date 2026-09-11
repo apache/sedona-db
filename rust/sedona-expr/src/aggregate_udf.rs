@@ -17,10 +17,10 @@
 use std::{fmt::Debug, sync::Arc};
 
 use arrow_schema::{DataType, FieldRef};
-use datafusion_common::{not_impl_err, Result};
+use datafusion_common::{Result, not_impl_err};
 use datafusion_expr::{
-    function::{AccumulatorArgs, StateFieldsArgs},
     Accumulator, AggregateUDFImpl, Documentation, GroupsAccumulator, Signature, Volatility,
+    function::{AccumulatorArgs, StateFieldsArgs},
 };
 use sedona_common::sedona_internal_err;
 use sedona_schema::datatypes::SedonaType;
@@ -189,10 +189,10 @@ impl AggregateUDFImpl for SedonaAggregateUDF {
     }
 
     fn groups_accumulator_supported(&self, args: AccumulatorArgs) -> bool {
-        if let Ok(arg_types) = Self::accumulator_arg_types(&args) {
-            if let Ok((accumulator, _)) = self.dispatch_impl(&arg_types) {
-                return accumulator.groups_accumulator_supported(&arg_types);
-            }
+        if let Ok(arg_types) = Self::accumulator_arg_types(&args)
+            && let Ok((accumulator, _)) = self.dispatch_impl(&arg_types)
+        {
+            return accumulator.groups_accumulator_supported(&arg_types);
         }
 
         false
