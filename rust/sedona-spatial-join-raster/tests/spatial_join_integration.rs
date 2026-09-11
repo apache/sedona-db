@@ -40,28 +40,28 @@ use arrow_schema::{Field, Schema};
 use datafusion::{
     catalog::MemTable,
     execution::SessionStateBuilder,
-    physical_plan::{displayable, ExecutionPlan},
+    physical_plan::{ExecutionPlan, displayable},
     prelude::{SessionConfig, SessionContext},
 };
+use datafusion_common::Result;
 use datafusion_common::cast::as_int32_array;
 use datafusion_common::tree_node::{TreeNode, TreeNodeRecursion};
-use datafusion_common::Result;
 use rstest::rstest;
-use sedona_common::option::SpatialJoinOptions;
 use sedona_common::SedonaOptions;
+use sedona_common::option::SpatialJoinOptions;
 use sedona_geometry::transform::CrsEngine;
 use sedona_geometry::types::Edges;
 use sedona_proj::error::SedonaProjError;
-use sedona_proj::transform::{with_global_proj_engine, LazyProjEngine};
+use sedona_proj::transform::{LazyProjEngine, with_global_proj_engine};
 use sedona_query_planner::{
     optimizer::register_spatial_join_logical_optimizer, query_planner::SedonaQueryPlanner,
 };
 use sedona_raster::affine_transformation::to_world_coordinate;
 use sedona_raster::array::RasterStructArray;
 use sedona_raster::traits::RasterRef;
-use sedona_raster_functions::footprint::{densify_footprint_ring, FOOTPRINT_POINTS_PER_EDGE};
+use sedona_raster_functions::footprint::{FOOTPRINT_POINTS_PER_EDGE, densify_footprint_ring};
 use sedona_schema::crs::lnglat;
-use sedona_schema::datatypes::{SedonaType, RASTER};
+use sedona_schema::datatypes::{RASTER, SedonaType};
 use sedona_schema::raster::BandDataType;
 use sedona_spatial_join::SpatialJoinExec;
 use sedona_spatial_join_raster::physical_planner::RasterSpatialJoinPhysicalPlanner;

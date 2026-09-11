@@ -17,11 +17,11 @@
 
 use std::sync::Arc;
 
-use arrow_array::{builder::BinaryBuilder, Array, ArrayRef, StructArray};
-use datafusion_common::{exec_datafusion_err, exec_err, JoinType, Result};
+use arrow_array::{Array, ArrayRef, StructArray, builder::BinaryBuilder};
+use datafusion_common::{JoinType, Result, exec_datafusion_err, exec_err};
 use datafusion_expr::ColumnarValue;
 use sedona_common::{
-    sedona_internal_datafusion_err, sedona_internal_err, SpatialJoinOptions, SpatialLibrary,
+    SpatialJoinOptions, SpatialLibrary, sedona_internal_datafusion_err, sedona_internal_err,
 };
 use sedona_expr::statistics::GeoStatistics;
 use sedona_geometry::{
@@ -40,11 +40,11 @@ use sedona_schema::{
     datatypes::WKB_GEOMETRY,
 };
 use sedona_spatial_join::{
-    index::{spatial_index_builder::SpatialJoinBuildMetrics, SpatialIndexBuilder},
+    SpatialPredicate,
+    index::{SpatialIndexBuilder, spatial_index_builder::SpatialJoinBuildMetrics},
     join_provider::{DefaultSpatialJoinProvider, SpatialJoinProvider},
     operand_evaluator::{EvaluatedGeometryArray, EvaluatedGeometryArrayFactory},
     utils::bounds::Bounds2D,
-    SpatialPredicate,
 };
 
 /// [`SpatialJoinProvider`] for raster/geometry spatial joins.
