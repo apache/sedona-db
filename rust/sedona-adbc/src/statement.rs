@@ -23,9 +23,9 @@ use sedona_extension::streaming::StreamingRecordBatchReader;
 use std::sync::Arc;
 
 use adbc_core::{
+    Optionable, Statement,
     error::{Error, Result, Status},
     options::{OptionStatement, OptionValue},
-    Optionable, Statement,
 };
 
 use crate::{err_not_implemented, err_unrecognized_option, utils::from_datafusion_error};

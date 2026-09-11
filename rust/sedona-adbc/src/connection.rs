@@ -20,8 +20,8 @@
 #![allow(refining_impl_trait)]
 
 use adbc_core::{
-    options::{InfoCode, ObjectDepth},
     Connection,
+    options::{InfoCode, ObjectDepth},
 };
 use arrow_array::RecordBatchReader;
 use sedona::context::SedonaContext;
@@ -29,14 +29,14 @@ use sedona_extension::runtime::RuntimeHandle;
 use std::sync::Arc;
 
 use adbc_core::{
+    Optionable,
     error::{Error, Result, Status},
     options::{OptionConnection, OptionValue},
-    Optionable,
 };
 
 use crate::{
     err_not_implemented, err_unrecognized_option, statement::SedonaStatement,
-    utils::from_datafusion_error, utils::OptionValueExt,
+    utils::OptionValueExt, utils::from_datafusion_error,
 };
 
 pub struct SedonaConnection {
