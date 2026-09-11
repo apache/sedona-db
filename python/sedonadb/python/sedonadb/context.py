@@ -176,7 +176,7 @@ class SedonaContext:
         return _create_data_frame(self, obj, schema)
 
     def view(self, name: str) -> DataFrame:
-        """Create a [DataFrame][sedonadb.dataframe.DataFrame] from a named view
+        """Create a [`DataFrame`][sedonadb.dataframe.DataFrame] from a named view
 
         Refer to a named view registered with this context.
 
@@ -228,7 +228,7 @@ class SedonaContext:
         validate: bool = False,
         partitioning: Union[str, Iterable[str], None] = None,
     ) -> DataFrame:
-        """Create a [DataFrame][sedonadb.dataframe.DataFrame] from one or more Parquet files
+        """Create a [`DataFrame`][sedonadb.dataframe.DataFrame] from one or more Parquet files
 
         Args:
             table_paths: A str, Path, or iterable of paths containing URLs to Parquet
@@ -381,7 +381,7 @@ class SedonaContext:
     def sql(
         self, sql: str, *, params: Union[List, Tuple, Dict, None] = None
     ) -> DataFrame:
-        """Create a [DataFrame][sedonadb.dataframe.DataFrame] by executing SQL
+        """Create a [`DataFrame`][sedonadb.dataframe.DataFrame] by executing SQL
 
         Parses a SQL string into a logical plan and returns a DataFrame
         that can be used to request results or further modify the query.
@@ -582,7 +582,7 @@ class SedonaContext:
 
 
 def connect() -> SedonaContext:
-    """Create a new [SedonaContext][sedonadb.context.SedonaContext]
+    """Create a new [`SedonaContext`][sedonadb.context.SedonaContext]
 
     Runtime configuration (memory limits, spill directory, pool type)
     can be set via `options` on the returned context before executing

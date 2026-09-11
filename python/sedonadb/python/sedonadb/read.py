@@ -184,7 +184,7 @@ class Read:
         validate: bool = False,
         partitioning: Union[str, Iterable[str], None] = None,
     ) -> DataFrame:
-        """Create a [DataFrame][sedonadb.dataframe.DataFrame] from one or more Parquet files
+        """Create a [`DataFrame`][sedonadb.dataframe.DataFrame] from one or more Parquet files
 
         Args:
             table_paths: A str, Path, or iterable of paths containing URLs to Parquet
@@ -275,7 +275,7 @@ class Read:
         has_header: bool = True,
         delimiter: str = ",",
     ) -> DataFrame:
-        """Create a [DataFrame][sedonadb.dataframe.DataFrame] from one or more CSV files.
+        """Create a [`DataFrame`][sedonadb.dataframe.DataFrame] from one or more CSV files.
 
         The schema is inferred from the file(s). Geometry is not inferred;
         parse WKT/WKB columns explicitly (e.g. `ST_GeomFromText`) after reading.
@@ -317,7 +317,7 @@ class Read:
         table_paths: Union[str, Path, Iterable[str]],
         options: Optional[Dict[str, Any]] = None,
     ) -> DataFrame:
-        """Create a [DataFrame][sedonadb.dataframe.DataFrame] from newline-delimited JSON.
+        """Create a [`DataFrame`][sedonadb.dataframe.DataFrame] from newline-delimited JSON.
 
         Reads newline-delimited JSON (NDJSON / JSON Lines) — one JSON object
         per line — not a single JSON array. The schema is inferred.
