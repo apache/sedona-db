@@ -28,8 +28,6 @@
 pub mod register;
 
 mod gdal_common;
-// Temporary until https://github.com/apache/sedona-db/issues/804 is resolved.
-#[allow(dead_code)]
 mod gdal_dataset_provider;
 
 mod mask;
