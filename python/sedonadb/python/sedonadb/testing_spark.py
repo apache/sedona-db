@@ -167,7 +167,25 @@ class SedonaSpark(DBEngine):
     def result_to_table(self, result) -> pa.Table:
         # toArrow() preserves nulls Arrow-natively; toPandas() would turn a
         # nodata None into a float NaN and mask the value under test.
-        return result.toArrow()
+        #
+        # toArrow() ships a GeometryUDT column as the UDT's internal
+        # serialization bytes, not WKB, so geometry results route through
+        # sedona's own dataframe_to_arrow, which converts to EWKB in the
+        # JVM and tags the columns as geoarrow extension types — they then
+        # render WKT through the same geoarrow path as every other engine.
+        # Columns are renamed positionally around the call because
+        # dataframe_to_arrow resolves them by name and the generated names
+        # ("rs_worldtorastercoord(rast, 104.0, 494.0)") contain dots that
+        # name resolution re-parses as nested paths (apache/sedona#3351).
+        from sedona.spark.geoarrow import dataframe_to_arrow
+        from sedona.spark.sql.types import GeometryType
+
+        fields = result.schema.fields
+        if not any(isinstance(f.dataType, GeometryType) for f in fields):
+            return result.toArrow()
+        names = [f.name for f in fields]
+        renamed = result.toDF(*[f"c{i}" for i in range(len(fields))])
+        return dataframe_to_arrow(renamed).rename_columns(names)
 
     def result_has_raster(self, sql) -> bool:
         from sedona.spark.sql.types import RasterType
