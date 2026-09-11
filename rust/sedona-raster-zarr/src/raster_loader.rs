@@ -48,7 +48,7 @@ use std::hash::Hash;
 use arrow_buffer::Buffer;
 use arrow_schema::ArrowError;
 use async_trait::async_trait;
-use futures::{stream, StreamExt, TryStreamExt};
+use futures::{StreamExt, TryStreamExt, stream};
 use sedona_common::sedona_internal_datafusion_err;
 use sedona_raster::raster_loader::{AsyncRasterLoader, RasterLoadRequest, RasterLoadResult};
 use zarrs::array::{Array, ArrayBytes};
@@ -302,7 +302,7 @@ mod tests {
     use sedona_schema::raster::BandDataType;
     use tempfile::TempDir;
     use zarrs::array::ArrayBuilder;
-    use zarrs::array::{data_type as zarr_dtype, FillValue};
+    use zarrs::array::{FillValue, data_type as zarr_dtype};
     use zarrs::group::GroupBuilder;
     use zarrs_filesystem::FilesystemStore;
 

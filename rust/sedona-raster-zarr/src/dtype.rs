@@ -23,11 +23,11 @@
 
 use arrow_schema::ArrowError;
 use sedona_schema::raster::BandDataType;
-use zarrs::array::data_type::{
-    BoolDataType, Float32DataType, Float64DataType, Int16DataType, Int32DataType, Int64DataType,
-    Int8DataType, UInt16DataType, UInt32DataType, UInt64DataType, UInt8DataType,
-};
 use zarrs::array::DataType as ZarrDataType;
+use zarrs::array::data_type::{
+    BoolDataType, Float32DataType, Float64DataType, Int8DataType, Int16DataType, Int32DataType,
+    Int64DataType, UInt8DataType, UInt16DataType, UInt32DataType, UInt64DataType,
+};
 
 /// Map a Zarr `DataType` to a SedonaDB `BandDataType`.
 ///

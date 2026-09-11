@@ -40,9 +40,9 @@
 use std::sync::Arc;
 
 use arrow_schema::ArrowError;
+use object_store::ObjectStore;
 use object_store::path::Path as ObjectPath;
 use object_store::prefix::PrefixStore;
-use object_store::ObjectStore;
 use url::Url;
 use zarrs::storage::AsyncReadableListableStorage;
 use zarrs_object_store::AsyncObjectStore;

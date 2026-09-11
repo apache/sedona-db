@@ -43,7 +43,7 @@ use zarrs::storage::{AsyncReadableListableStorage, AsyncReadableListableStorageT
 
 use crate::coords;
 use crate::dtype::zarr_to_band_data_type;
-use crate::geozarr::{crs_from_cf_attributes, geotransform_from_cf_attributes, GroupGeoMetadata};
+use crate::geozarr::{GroupGeoMetadata, crs_from_cf_attributes, geotransform_from_cf_attributes};
 use crate::source_uri::build_chunk_anchor;
 
 /// Streaming reader over the chunk grid of a Zarr group.
@@ -461,13 +461,13 @@ fn transform_from_bbox(
             // Mirror the coordinate-array path: when the group declares no CRS,
             // infer a geographic one from the spatial dim names (lat/lon).
             // Generic y/x stay CRS-less (attach via RS_SetCRS).
-            if geo.crs.is_none() {
-                if let Some(inferred) = coords::infer_geographic_crs(
+            if geo.crs.is_none()
+                && let Some(inferred) = coords::infer_geographic_crs(
                     &array_infos[0].dim_names[y_axis],
                     &array_infos[0].dim_names[x_axis],
-                ) {
-                    geo.crs = Some(inferred.to_string());
-                }
+                )
+            {
+                geo.crs = Some(inferred.to_string());
             }
             log::debug!(
                 "Zarr group at {group_uri} has no `spatial:transform`; derived a \
@@ -1017,8 +1017,8 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use tempfile::TempDir;
-    use zarrs::array::data_type;
     use zarrs::array::ArrayBuilder;
+    use zarrs::array::data_type;
     use zarrs_filesystem::FilesystemStore;
 
     /// Direct coverage for `retrieve_chunk_bytes`. The function is the
@@ -1098,7 +1098,7 @@ mod tests {
         // y_axis=0, x_axis=1 → x_off=2*2=4, y_off=1*2=2
         assert_eq!(t[0], 10.0 + 4.0); // origin_x
         assert_eq!(t[3], 20.0 - 2.0); // origin_y after y_off=2 with sy=-1
-                                      // Scale/skew carry through unchanged.
+        // Scale/skew carry through unchanged.
         assert_eq!(t[1], 1.0);
         assert_eq!(t[2], 0.0);
         assert_eq!(t[4], 0.0);
