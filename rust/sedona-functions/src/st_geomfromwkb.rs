@@ -123,7 +123,7 @@ impl SedonaScalarKernel for STGeomFromWKB {
 
 #[cfg(test)]
 mod tests {
-    use arrow_array::{create_array, ArrayRef, BinaryArray, BinaryViewArray};
+    use arrow_array::{ArrayRef, BinaryArray, BinaryViewArray, create_array};
     use datafusion_common::scalar::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;

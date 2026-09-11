@@ -18,13 +18,13 @@ use std::{marker::PhantomData, sync::Arc, vec};
 
 use crate::executor::WkbBytesExecutor;
 use crate::st_envelope::write_envelope;
-use arrow_array::{builder::BinaryBuilder, Array, ArrayRef, BooleanArray};
+use arrow_array::{Array, ArrayRef, BooleanArray, builder::BinaryBuilder};
 use arrow_schema::{DataType, Field, FieldRef};
 use datafusion_common::exec_datafusion_err;
 use datafusion_common::{
+    ScalarValue,
     cast::as_float64_array,
     error::{DataFusionError, Result},
-    ScalarValue,
 };
 use datafusion_expr::{Accumulator, ColumnarValue, EmitTo, GroupsAccumulator, Volatility};
 use sedona_common::sedona_internal_err;
@@ -136,11 +136,7 @@ impl<T: std::fmt::Debug + WkbBounder2D + Default> BoundsAccumulator2D<T> {
         let mut wkb = Vec::new();
         let (x, y) = self.bounder.finish();
         let written = write_envelope(&x, &y, &mut wkb)?;
-        if written {
-            Ok(Some(wkb))
-        } else {
-            Ok(None)
-        }
+        if written { Ok(Some(wkb)) } else { Ok(None) }
     }
 
     // Check the input length for update methods.

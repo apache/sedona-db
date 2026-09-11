@@ -24,7 +24,7 @@ use geo_traits::{GeometryTrait, LineStringTrait, PolygonTrait};
 use sedona_expr::item_crs::ItemCrsKernel;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::wkb_factory::{
-    write_wkb_coord_trait, write_wkb_linestring_header, WKB_MIN_PROBABLE_BYTES,
+    WKB_MIN_PROBABLE_BYTES, write_wkb_coord_trait, write_wkb_linestring_header,
 };
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::{
@@ -233,12 +233,18 @@ mod tests {
 
         let input_wkt = create_array(
             &[
-                Some("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))"),                                  // Single hole, n=1
-                Some("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))"),                                  // Single hole, n=1
-                Some("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))"),                                  // Single hole, n=2 (too high)
-                Some("POLYGON ((0 0, 6 0, 6 6, 0 6, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (4 4, 4 5, 5 5, 5 4, 4 4))"),       // Two holes, n=1
-                Some("POLYGON ((0 0, 6 0, 6 6, 0 6, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (4 4, 4 5, 5 5, 5 4, 4 4))"),       // Two holes, n=2
-                Some("POLYGON ((0 0, 6 0, 6 6, 0 6, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (4 4, 4 5, 5 5, 5 4, 4 4))"),       // Two holes, n=3 (too high)
+                Some("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))"), // Single hole, n=1
+                Some("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))"), // Single hole, n=1
+                Some("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))"), // Single hole, n=2 (too high)
+                Some(
+                    "POLYGON ((0 0, 6 0, 6 6, 0 6, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (4 4, 4 5, 5 5, 5 4, 4 4))",
+                ), // Two holes, n=1
+                Some(
+                    "POLYGON ((0 0, 6 0, 6 6, 0 6, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (4 4, 4 5, 5 5, 5 4, 4 4))",
+                ), // Two holes, n=2
+                Some(
+                    "POLYGON ((0 0, 6 0, 6 6, 0 6, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (4 4, 4 5, 5 5, 5 4, 4 4))",
+                ), // Two holes, n=3 (too high)
             ],
             &sedona_type,
         );
@@ -273,9 +279,11 @@ mod tests {
 
         let input_wkt = create_array(
             &[
-                Some("POLYGON ((0 0, 1 0, 1 1))"),                                                            // Unclosed/Malformed WKT
-                Some("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (5 5, 5 6, 6 6, 6 5, 5 5))"),                       // External hole
-                Some("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 3, 3 3, 3 1, 1 1), (2 2, 2 2.5, 2.5 2.5, 2.5 2, 2 2))"), // Intersecting holes
+                Some("POLYGON ((0 0, 1 0, 1 1))"), // Unclosed/Malformed WKT
+                Some("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (5 5, 5 6, 6 6, 6 5, 5 5))"), // External hole
+                Some(
+                    "POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 3, 3 3, 3 1, 1 1), (2 2, 2 2.5, 2.5 2.5, 2.5 2, 2 2))",
+                ), // Intersecting holes
             ],
             &sedona_type,
         );
@@ -304,13 +312,15 @@ mod tests {
         let input_wkt = create_array(
             &[
                 // Valid Polygon Z extraction
-                Some("POLYGON Z ((0 0 10, 4 0 10, 4 4 10, 0 4 10, 0 0 10), (1 1 5, 1 2 5, 2 2 5, 2 1 5, 1 1 5))"),
+                Some(
+                    "POLYGON Z ((0 0 10, 4 0 10, 4 4 10, 0 4 10, 0 0 10), (1 1 5, 1 2 5, 2 2 5, 2 1 5, 1 1 5))",
+                ),
                 // Non-Polygon Z (Should be NULL)
                 Some("POINT Z (1 1 5)"),
                 // Polygon Z with no hole (Should be NULL)
                 Some("POLYGON Z ((0 0 10, 4 0 10, 4 4 10, 0 4 10, 0 0 10))"),
             ],
-            &sedona_type
+            &sedona_type,
         );
         let integers = arrow_array::create_array!(Int64, [Some(1), Some(1), Some(1)]);
         let expected = create_array(
@@ -337,13 +347,15 @@ mod tests {
         let input_wkt = create_array(
             &[
                 // Valid Polygon M extraction
-                Some("POLYGON M ((0 0 1, 4 0 2, 4 4 3, 0 4 4, 0 0 5), (1 1 6, 1 2 7, 2 2 8, 2 1 9, 1 1 10))"),
+                Some(
+                    "POLYGON M ((0 0 1, 4 0 2, 4 4 3, 0 4 4, 0 0 5), (1 1 6, 1 2 7, 2 2 8, 2 1 9, 1 1 10))",
+                ),
                 // Non-Polygon M (Should be NULL)
                 Some("LINESTRING M (0 0 1, 1 1 2)"),
                 // Polygon M with no hole (Should be NULL)
                 Some("POLYGON M ((0 0 1, 4 0 2, 4 4 3, 0 4 4, 0 0 5))"),
             ],
-            &sedona_type
+            &sedona_type,
         );
         let integers = arrow_array::create_array!(Int64, [Some(1), Some(1), Some(1)]);
         let expected = create_array(
@@ -370,13 +382,17 @@ mod tests {
         let input_wkt = create_array(
             &[
                 // Valid Polygon ZM extraction (n=1)
-                Some("POLYGON ZM ((0 0 10 1, 4 0 10 2, 4 4 10 3, 0 4 10 4, 0 0 10 5), (1 1 5 6, 1 2 5 7, 2 2 5 8, 2 1 5 9, 1 1 5 10))"),
+                Some(
+                    "POLYGON ZM ((0 0 10 1, 4 0 10 2, 4 4 10 3, 0 4 10 4, 0 0 10 5), (1 1 5 6, 1 2 5 7, 2 2 5 8, 2 1 5 9, 1 1 5 10))",
+                ),
                 // Index too high (n=2)
-                Some("POLYGON ZM ((0 0 10 1, 4 0 10 2, 4 4 10 3, 0 4 10 4, 0 0 10 5), (1 1 5 6, 1 2 5 7, 2 2 5 8, 2 1 5 9, 1 1 5 10))"),
+                Some(
+                    "POLYGON ZM ((0 0 10 1, 4 0 10 2, 4 4 10 3, 0 4 10 4, 0 0 10 5), (1 1 5 6, 1 2 5 7, 2 2 5 8, 2 1 5 9, 1 1 5 10))",
+                ),
                 // POLYGON ZM EMPTY (Should be NULL)
                 Some("POLYGON ZM EMPTY"),
             ],
-            &sedona_type
+            &sedona_type,
         );
         let integers = arrow_array::create_array!(Int64, [Some(1), Some(2), Some(1)]);
         let expected = create_array(

@@ -147,8 +147,8 @@ fn populate_wkb_item(item: &mut [u8], x: &f64, y: &f64) {
 
 #[cfg(test)]
 mod tests {
-    use arrow_array::create_array;
     use arrow_array::ArrayRef;
+    use arrow_array::create_array;
     use arrow_schema::DataType;
     use datafusion_expr::Literal;
     use datafusion_expr::ScalarUDF;

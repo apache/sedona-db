@@ -15,21 +15,21 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use arrow_array::builder::{BinaryBuilder, StringViewBuilder};
 use arrow_array::ArrayRef;
+use arrow_array::builder::{BinaryBuilder, StringViewBuilder};
 use arrow_schema::DataType;
 use datafusion_common::cast::{as_string_view_array, as_struct_array};
 use datafusion_common::config::ConfigOptions;
-use datafusion_common::{exec_err, DataFusionError, Result, ScalarValue};
+use datafusion_common::{DataFusionError, Result, ScalarValue, exec_err};
 use datafusion_expr::ColumnarValue;
 use sedona_common::option::with_crs_engine;
 use sedona_common::sedona_internal_err;
 use sedona_expr::item_crs::{make_item_crs, parse_item_crs_arg_type};
 use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel, SedonaScalarUDF};
-use sedona_geometry::transform::{transform, CrsTransform};
+use sedona_geometry::transform::{CrsTransform, transform};
 use sedona_geometry::types::Edges;
 use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
-use sedona_schema::crs::{deserialize_crs, Crs};
+use sedona_schema::crs::{Crs, deserialize_crs};
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;
 use std::io::Write;
@@ -354,10 +354,9 @@ impl<'a> ArgInput<'a> {
 
         if let Ok((SedonaType::Wkb(edges, _) | SedonaType::WkbView(edges, _), maybe_crs_type)) =
             parse_item_crs_arg_type(arg_type)
+            && maybe_crs_type.is_some()
         {
-            if maybe_crs_type.is_some() {
-                return Self::ItemCrs(edges);
-            }
+            return Self::ItemCrs(edges);
         }
 
         if ArgMatcher::is_numeric().match_type(arg_type)
@@ -381,10 +380,9 @@ impl<'a> ArgInput<'a> {
     fn from_arg(arg_type: &'a SedonaType, arg: &'a ColumnarValue) -> Self {
         if let Ok((SedonaType::Wkb(edges, _) | SedonaType::WkbView(edges, _), maybe_crs_type)) =
             parse_item_crs_arg_type(arg_type)
+            && maybe_crs_type.is_some()
         {
-            if maybe_crs_type.is_some() {
-                return Self::ItemCrs(edges);
-            }
+            return Self::ItemCrs(edges);
         }
 
         if ArgMatcher::is_numeric().match_type(arg_type)
@@ -444,13 +442,13 @@ impl<'a> ArgInput<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::create_array;
     use arrow_array::ArrayRef;
+    use arrow_array::create_array;
     use arrow_schema::DataType;
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
-    use sedona_schema::crs::lnglat;
     use sedona_schema::crs::Crs;
+    use sedona_schema::crs::lnglat;
     use sedona_schema::datatypes::{
         WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS,
     };

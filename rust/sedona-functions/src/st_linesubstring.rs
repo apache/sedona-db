@@ -15,8 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 use crate::executor::WkbExecutor;
-use arrow_array::builder::BinaryBuilder;
 use arrow_array::Array;
+use arrow_array::builder::BinaryBuilder;
 use arrow_schema::DataType;
 use datafusion_common::{error::Result, exec_datafusion_err, exec_err};
 use datafusion_expr::{ColumnarValue, Volatility};
@@ -246,11 +246,13 @@ unsafe fn interpolate<C: CoordTrait<T = f64>>(
     dim: Dimensions,
     buf: &mut impl Write,
 ) -> Result<(), SedonaGeometryError> {
-    for i in 0..dim.size() {
-        let v = p1.nth_unchecked(i) + (p2.nth_unchecked(i) - p1.nth_unchecked(i)) * fraction;
-        buf.write_all(&v.to_le_bytes())?;
+    unsafe {
+        for i in 0..dim.size() {
+            let v = p1.nth_unchecked(i) + (p2.nth_unchecked(i) - p1.nth_unchecked(i)) * fraction;
+            buf.write_all(&v.to_le_bytes())?;
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 #[cfg(test)]

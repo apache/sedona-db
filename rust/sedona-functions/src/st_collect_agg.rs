@@ -20,9 +20,10 @@ use crate::executor::WkbExecutor;
 use arrow_array::ArrayRef;
 use arrow_schema::{DataType, Field, FieldRef};
 use datafusion_common::{
+    ScalarValue,
     cast::{as_binary_array, as_int64_array, as_uint32_array},
     error::{DataFusionError, Result},
-    exec_err, ScalarValue,
+    exec_err,
 };
 use datafusion_expr::{Accumulator, ColumnarValue, Volatility};
 use geo_traits::Dimensions;
@@ -248,7 +249,7 @@ impl Accumulator for CollectionAccumulator {
                 _ => {
                     return sedona_internal_err!(
                         "unexpected nulls in st_collect() serialized state"
-                    )
+                    );
                 }
             }
         }

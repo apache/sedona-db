@@ -26,7 +26,7 @@ use datafusion_expr::ColumnarValue;
 use sedona_common::{option::SedonaOptions, sedona_internal_err};
 use sedona_geometry::{bounds::WkbBounder2D, types::Edges, wkb_header::WkbPointLayout};
 use sedona_schema::datatypes::SedonaType;
-use wkb::reader::{read_wkb, Wkb};
+use wkb::reader::{Wkb, read_wkb};
 
 /// Resolve the session bounder for a geometry/geography argument.
 pub(crate) fn bounder_for_arg_type(
@@ -329,10 +329,10 @@ impl GeometryFactory for PointXYGeometryFactory {
     fn try_from_wkb<'a>(&self, wkb_bytes: &'a [u8]) -> Result<Self::Geom<'a>> {
         // A finite Point: read its coordinate from the fixed offset, no parse.
         // POINT EMPTY (NaN/NaN) and any header error fall through to the parser.
-        if let Ok(Some(layout)) = WkbPointLayout::try_from_wkb(wkb_bytes) {
-            if let Ok(Some((x, y))) = layout.read_xy(wkb_bytes) {
-                return Ok(PointOrWkb::Point(x, y));
-            }
+        if let Ok(Some(layout)) = WkbPointLayout::try_from_wkb(wkb_bytes)
+            && let Ok(Some((x, y))) = layout.read_xy(wkb_bytes)
+        {
+            return Ok(PointOrWkb::Point(x, y));
         }
         let wkb = read_wkb(wkb_bytes).map_err(|e| DataFusionError::External(Box::new(e)))?;
         Ok(PointOrWkb::Other(wkb))
@@ -808,9 +808,10 @@ mod tests {
                 |_| unreachable!(),
             )
             .unwrap_err();
-        assert!(err
-            .message()
-            .contains("Expected 1000000 items but got Array with 3 items"));
+        assert!(
+            err.message()
+                .contains("Expected 1000000 items but got Array with 3 items")
+        );
 
         let factory0 = WkbGeometryFactory::default();
         let factory1 = WkbGeometryFactory::default();
@@ -833,10 +834,12 @@ mod tests {
     #[test]
     fn wkb_scalar() {
         let factory = WkbGeometryFactory::default();
-        assert!(ScalarValue::Binary(None)
-            .scalar_from_factory(&factory)
-            .unwrap()
-            .is_none());
+        assert!(
+            ScalarValue::Binary(None)
+                .scalar_from_factory(&factory)
+                .unwrap()
+                .is_none()
+        );
 
         let mut wkt_out = String::new();
         let binary_scalar = ScalarValue::Binary(Some(POINT.to_vec()));

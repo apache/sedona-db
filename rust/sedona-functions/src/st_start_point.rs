@@ -28,7 +28,7 @@ use sedona_expr::{
 };
 use sedona_geometry::{
     error::SedonaGeometryError,
-    wkb_factory::{write_wkb_coord_trait, write_wkb_point_header, WKB_MIN_PROBABLE_BYTES},
+    wkb_factory::{WKB_MIN_PROBABLE_BYTES, write_wkb_coord_trait, write_wkb_point_header},
 };
 use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY},
@@ -101,14 +101,14 @@ impl SedonaScalarKernel for STStartOrEndPoint {
         );
 
         executor.execute_wkb_void(|maybe_wkb| {
-            if let Some(wkb) = maybe_wkb {
-                if let Some(coord) = extract_start_or_end_coord(wkb, self.from_start) {
-                    if write_wkb_point_from_coord(&mut builder, coord).is_err() {
-                        return sedona_internal_err!("Failed to write WKB point header");
-                    };
-                    builder.append_value([]);
-                    return Ok(());
-                }
+            if let Some(wkb) = maybe_wkb
+                && let Some(coord) = extract_start_or_end_coord(wkb, self.from_start)
+            {
+                if write_wkb_point_from_coord(&mut builder, coord).is_err() {
+                    return sedona_internal_err!("Failed to write WKB point header");
+                };
+                builder.append_value([]);
+                return Ok(());
             }
 
             builder.append_null();

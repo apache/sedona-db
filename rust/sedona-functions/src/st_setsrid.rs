@@ -17,15 +17,17 @@
 use std::sync::{Arc, OnceLock};
 
 use arrow_array::{
+    Array, ArrayRef, StringViewArray,
     builder::{BinaryBuilder, NullBufferBuilder, StringViewBuilder},
-    new_null_array, Array, ArrayRef, StringViewArray,
+    new_null_array,
 };
 use arrow_buffer::NullBuffer;
 use arrow_schema::DataType;
 use datafusion_common::{
+    DataFusionError, ScalarValue,
     cast::{as_int64_array, as_string_view_array},
     error::Result,
-    exec_err, DataFusionError, ScalarValue,
+    exec_err,
 };
 use datafusion_common::{config::ConfigOptions, plan_err};
 use datafusion_expr::{ColumnarValue, Volatility};
@@ -40,7 +42,7 @@ use sedona_expr::{
 use sedona_geometry::transform::CrsEngine;
 use sedona_geometry::types::Edges;
 use sedona_schema::{
-    crs::{deserialize_crs, normalize_crs, CachedSRIDToCrs, Crs},
+    crs::{CachedSRIDToCrs, Crs, deserialize_crs, normalize_crs},
     datatypes::SedonaType,
     matchers::ArgMatcher,
 };
@@ -334,7 +336,7 @@ impl SedonaScalarKernel for SRIDifiedKernel {
                 }
                 Ok(ScalarValue::Utf8(None)) => None,
                 Ok(_) | Err(_) => {
-                    return sedona_internal_err!("Can't cast Crs {scalar_crs:?} to Utf8")
+                    return sedona_internal_err!("Can't cast Crs {scalar_crs:?} to Utf8");
                 }
             };
 
@@ -560,14 +562,11 @@ pub fn validate_crs_for_type(crs: &Crs, sedona_type: &SedonaType) -> Result<()> 
     };
 
     // For geography, ensure the CRS is geographical if present
-    if !matches!(edges, Edges::Planar) {
-        if let Some(crs) = crs {
-            if crs.geographic_params()?.is_none() {
-                return plan_err!(
-                    "Can't assign non-geographic CRS {crs} to column of type {sedona_type}"
-                );
-            }
-        }
+    if !matches!(edges, Edges::Planar)
+        && let Some(crs) = crs
+        && crs.geographic_params()?.is_none()
+    {
+        return plan_err!("Can't assign non-geographic CRS {crs} to column of type {sedona_type}");
     }
 
     Ok(())
@@ -591,12 +590,12 @@ pub fn validate_crs_array_for_type(crs_array: &ArrayRef, sedona_type: &SedonaTyp
     if !matches!(edges, Edges::Planar) {
         let crs_array_stringview = as_string_view_array(crs_array)?;
         for item in crs_array_stringview.iter().flatten() {
-            if let Some(crs) = deserialize_crs(item)? {
-                if crs.geographic_params()?.is_none() {
-                    return exec_err!(
-                        "Can't assign non-geographic CRS item {item} to column of type {sedona_type}"
-                    );
-                }
+            if let Some(crs) = deserialize_crs(item)?
+                && crs.geographic_params()?.is_none()
+            {
+                return exec_err!(
+                    "Can't assign non-geographic CRS item {item} to column of type {sedona_type}"
+                );
             }
         }
     }
@@ -608,7 +607,7 @@ pub fn validate_crs_array_for_type(crs_array: &ArrayRef, sedona_type: &SedonaTyp
 mod test {
     use std::rc::Rc;
 
-    use arrow_array::{create_array, ArrayRef};
+    use arrow_array::{ArrayRef, create_array};
     use arrow_schema::Field;
     use datafusion_common::config::ConfigOptions;
     use datafusion_expr::{ReturnFieldArgs, ScalarFunctionArgs, ScalarUDF};

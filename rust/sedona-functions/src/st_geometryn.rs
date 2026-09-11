@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use crate::executor::WkbExecutor;
 use arrow_array::builder::BinaryBuilder;
-use datafusion_common::{cast::as_int64_array, Result};
+use datafusion_common::{Result, cast::as_int64_array};
 use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::{
     GeometryCollectionTrait, GeometryTrait, MultiLineStringTrait, MultiPointTrait,
@@ -175,12 +175,16 @@ mod tests {
                 Some("MULTILINESTRING((1 1, 2 2), (3 3, 4 4))"), //  n=2 (Valid)
                 // 6. MULTIPOLYGON
                 Some("MULTIPOLYGON(((0 0, 1 1, 0 1, 0 0)), ((5 5, 6 6, 5 6, 5 5)))"), //   n=2 (Valid) - Original
-                Some("MULTIPOLYGON(((0 0, 1 1, 0 1, 0 0)))"),                          //  n=2 (OOB) - Original
+                Some("MULTIPOLYGON(((0 0, 1 1, 0 1, 0 0)))"), //  n=2 (OOB) - Original
                 Some("MULTIPOLYGON(((0 0, 1 1, 0 1, 0 0)), ((5 5, 6 6, 5 6, 5 5)))"), //  n=1 (Valid)
-                Some("MULTIPOLYGON EMPTY"),                                            //  Empty Multi (n=1)
+                Some("MULTIPOLYGON EMPTY"), //  Empty Multi (n=1)
                 // 7. GEOMETRYCOLLECTION (7 cases)
-                Some("GEOMETRYCOLLECTION(POINT(10 10), LINESTRING(20 20, 30 30), POLYGON((1 1, 2 2, 1 2, 1 1)))"), //  n=1 (Point) - Original
-                Some("GEOMETRYCOLLECTION(POINT(10 10), LINESTRING(20 20, 30 30), POLYGON((1 1, 2 2, 1 2, 1 1)))"), //  n=2 (LineString) - Original
+                Some(
+                    "GEOMETRYCOLLECTION(POINT(10 10), LINESTRING(20 20, 30 30), POLYGON((1 1, 2 2, 1 2, 1 1)))",
+                ), //  n=1 (Point) - Original
+                Some(
+                    "GEOMETRYCOLLECTION(POINT(10 10), LINESTRING(20 20, 30 30), POLYGON((1 1, 2 2, 1 2, 1 1)))",
+                ), //  n=2 (LineString) - Original
                 Some("GEOMETRYCOLLECTION(POINT(10 10))"), //  n=2 (OOB) - Original
                 Some("GEOMETRYCOLLECTION(POINT(1 1), GEOMETRYCOLLECTION(LINESTRING(2 2, 3 3)))"), //  n=1 (Nested: Point)
                 Some("GEOMETRYCOLLECTION(POINT(1 1), GEOMETRYCOLLECTION(LINESTRING(2 2, 3 3)))"), //  n=2 (Nested: GC)

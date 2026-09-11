@@ -18,7 +18,7 @@ use std::{sync::Arc, vec};
 
 use arrow_array::builder::{BinaryBuilder, StringViewBuilder};
 use arrow_schema::DataType;
-use datafusion_common::{error::Result, exec_datafusion_err, ScalarValue};
+use datafusion_common::{ScalarValue, error::Result, exec_datafusion_err};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::sedona_internal_err;
 use sedona_expr::{
@@ -67,11 +67,11 @@ impl SedonaScalarKernel for STGeomFromEWKB {
                 _ => {
                     return sedona_internal_err!(
                         "Unexpected arguments to invoke_batch: {arg_types:?}"
-                    )
+                    );
                 }
             },
             _ => {
-                return sedona_internal_err!("Unexpected arguments to invoke_batch: {arg_types:?}")
+                return sedona_internal_err!("Unexpected arguments to invoke_batch: {arg_types:?}");
             }
         };
 

@@ -17,9 +17,9 @@
 use std::{io::Write, sync::Arc, vec};
 
 use arrow_array::builder::BinaryBuilder;
+use datafusion_common::DataFusionError;
 use datafusion_common::error::Result;
 use datafusion_common::exec_err;
-use datafusion_common::DataFusionError;
 use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::{CoordTrait, GeometryTrait, LineStringTrait, MultiPointTrait, PointTrait};
 use sedona_common::sedona_internal_err;
@@ -185,7 +185,7 @@ fn add_coords(
         _ => {
             return exec_err!(
                 "ST_MakeLine() only supports Point, LineString, and MultiPoint as input"
-            )
+            );
         }
     }
 

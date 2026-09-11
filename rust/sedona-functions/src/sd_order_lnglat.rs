@@ -148,7 +148,7 @@ impl<F: Fn((f64, f64)) -> u64 + Send + Sync> SedonaScalarKernel for OrderLngLat<
 #[cfg(test)]
 mod test {
 
-    use arrow_array::{create_array, ArrayRef};
+    use arrow_array::{ArrayRef, create_array};
     use sedona_expr::scalar_udf::SedonaScalarUDF;
     use sedona_geometry::types::Edges;
     use sedona_schema::datatypes::WKB_GEOMETRY;

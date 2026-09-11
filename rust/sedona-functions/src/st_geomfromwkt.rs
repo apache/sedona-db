@@ -31,8 +31,8 @@ use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOGRAPHY_WGS84, WKB_GEOMETRY},
     matchers::ArgMatcher,
 };
-use wkb::writer::{write_geometry, WriteOptions};
 use wkb::Endianness;
+use wkb::writer::{WriteOptions, write_geometry};
 use wkt::Wkt;
 
 use sedona_geometry::types::GeometryTypeId;
@@ -320,7 +320,7 @@ fn invoke_scalar_with_srid(
 
 #[cfg(test)]
 mod tests {
-    use arrow_array::{create_array, ArrayRef};
+    use arrow_array::{ArrayRef, create_array};
     use arrow_schema::DataType;
     use datafusion_common::scalar::ScalarValue;
     use datafusion_expr::{Literal, ScalarUDF};

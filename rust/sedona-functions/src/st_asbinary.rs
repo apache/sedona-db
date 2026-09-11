@@ -43,10 +43,10 @@ struct STAsBinary {}
 impl SedonaScalarKernel for STAsBinary {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         // If we have WkbView input, return BinaryView to avoid a cast
-        if args.len() == 1 {
-            if let SedonaType::WkbView(_, _) = args[0] {
-                return Ok(Some(SedonaType::Arrow(DataType::BinaryView)));
-            }
+        if args.len() == 1
+            && let SedonaType::WkbView(_, _) = args[0]
+        {
+            return Ok(Some(SedonaType::Arrow(DataType::BinaryView)));
         }
 
         let matcher = ArgMatcher::new(

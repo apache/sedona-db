@@ -16,7 +16,7 @@
 // under the License.
 use std::{sync::Arc, vec};
 
-use crate::executor::{bounder_for_arg_type, WkbBytesExecutor};
+use crate::executor::{WkbBytesExecutor, bounder_for_arg_type};
 use arrow_array::builder::BinaryBuilder;
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::{
@@ -34,10 +34,11 @@ use sedona_geometry::{
     bounds::WkbBounder2D,
     interval::{Interval, IntervalTrait, WraparoundInterval},
     wkb_factory::{
-        write_wkb_empty_point, write_wkb_geometrycollection_header, write_wkb_linestring,
-        write_wkb_linestring_header, write_wkb_multilinestring, write_wkb_multilinestring_header,
-        write_wkb_multipoint_header, write_wkb_multipolygon, write_wkb_multipolygon_header,
-        write_wkb_point, write_wkb_polygon, write_wkb_polygon_header, WKB_MIN_PROBABLE_BYTES,
+        WKB_MIN_PROBABLE_BYTES, write_wkb_empty_point, write_wkb_geometrycollection_header,
+        write_wkb_linestring, write_wkb_linestring_header, write_wkb_multilinestring,
+        write_wkb_multilinestring_header, write_wkb_multipoint_header, write_wkb_multipolygon,
+        write_wkb_multipolygon_header, write_wkb_point, write_wkb_polygon,
+        write_wkb_polygon_header,
     },
 };
 use sedona_schema::{
@@ -408,7 +409,9 @@ mod tests {
         assert!(result);
         assert_scalar_equal_wkb_geometry(
             &ScalarValue::Binary(Some(buf)),
-            Some("MULTIPOLYGON(((170 -10,170 10,180 10,180 -10,170 -10)),((-180 -10,-180 10,-170 10,-170 -10,-180 -10)))"),
+            Some(
+                "MULTIPOLYGON(((170 -10,170 10,180 10,180 -10,170 -10)),((-180 -10,-180 10,-170 10,-170 -10,-180 -10)))",
+            ),
         );
     }
 

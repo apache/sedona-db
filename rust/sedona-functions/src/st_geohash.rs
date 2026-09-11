@@ -18,13 +18,14 @@
 use std::{collections::HashMap, iter::zip, sync::Arc};
 
 use crate::executor::WkbExecutor;
-use arrow_array::{builder::StringBuilder, Array, ArrayRef, Int64Array};
+use arrow_array::{Array, ArrayRef, Int64Array, builder::StringBuilder};
 use arrow_schema::DataType;
 use datafusion_common::{
+    ScalarValue,
     cast::{as_int64_array, as_string_view_array, as_struct_array, as_uint64_array},
     config::ConfigOptions,
     error::{DataFusionError, Result},
-    exec_err, plan_err, ScalarValue,
+    exec_err, plan_err,
 };
 use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::{GeometryTrait, GeometryType};
@@ -198,7 +199,7 @@ fn bounder_for_arg_type(
         _ => {
             return sedona_internal_err!(
                 "Expected geometry or geography argument but got {arg_type:?}"
-            )
+            );
         }
     };
 
@@ -809,7 +810,7 @@ fn geohash_encode(lon: f64, lat: f64, precision: i64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use arrow_array::{create_array, ArrayRef, UInt32Array, UInt64Array};
+    use arrow_array::{ArrayRef, UInt32Array, UInt64Array, create_array};
     use arrow_schema::Field;
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
@@ -1474,8 +1475,12 @@ mod tests {
                 Some("LINESTRING (30 10, 10 30, 40 40)"),
                 Some("POLYGON ((35 10, 45 45, 15 40, 10 20, 35 10), (20 30, 35 35, 30 20, 20 30))"),
                 Some("MULTIPOINT ((10 40), (40 30), (20 20), (30 10))"),
-                Some("MULTIPOLYGON (((30 20, 45 40, 10 40, 30 20)), ((15 5, 40 10, 10 20, 5 10, 15 5)))"),
-                Some("GEOMETRYCOLLECTION (POINT (40 10), LINESTRING (10 10, 20 20, 10 40), POLYGON ((40 40, 20 45, 45 30, 40 40)))"),
+                Some(
+                    "MULTIPOLYGON (((30 20, 45 40, 10 40, 30 20)), ((15 5, 40 10, 10 20, 5 10, 15 5)))",
+                ),
+                Some(
+                    "GEOMETRYCOLLECTION (POINT (40 10), LINESTRING (10 10, 20 20, 10 40), POLYGON ((40 40, 20 45, 45 30, 40 40)))",
+                ),
                 None,
             ],
             &sedona_type,

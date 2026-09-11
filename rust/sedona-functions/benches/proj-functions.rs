@@ -16,10 +16,10 @@
 // under the License.
 use std::sync::Arc;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use sedona_functions::register::default_function_set;
 use sedona_proj::transform::LazyProjEngine;
-use sedona_testing::benchmark_util::{benchmark, BenchmarkArgSpec::*, BenchmarkArgs};
+use sedona_testing::benchmark_util::{BenchmarkArgSpec::*, BenchmarkArgs, benchmark};
 
 fn criterion_benchmark(c: &mut Criterion) {
     let f = default_function_set();

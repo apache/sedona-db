@@ -16,7 +16,7 @@
 // under the License.
 use std::sync::Arc;
 
-use crate::executor::{bounder_for_arg_type, WkbBytesExecutor, WkbExecutor};
+use crate::executor::{WkbBytesExecutor, WkbExecutor, bounder_for_arg_type};
 use arrow_array::builder::Float64Builder;
 use arrow_schema::DataType;
 use datafusion_common::config::ConfigOptions;
@@ -29,7 +29,7 @@ use sedona_expr::{
     scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
 };
 use sedona_geometry::{
-    bounds::{geo_traits_bounds_m, geo_traits_bounds_xy, geo_traits_bounds_z, WkbBounder2D},
+    bounds::{WkbBounder2D, geo_traits_bounds_m, geo_traits_bounds_xy, geo_traits_bounds_z},
     interval::{Interval, IntervalTrait},
 };
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
@@ -258,16 +258,10 @@ fn invoke_scalar(
                 .map_err(|e| sedona_internal_datafusion_err!("Error updating bounds: {e}"))?;
             *xy_bounds.y()
         }
-        "z" => {
-            let z_bounds = geo_traits_bounds_z(item)
-                .map_err(|e| sedona_internal_datafusion_err!("Error updating bounds: {e}"))?;
-            z_bounds
-        }
-        "m" => {
-            let m_bounds = geo_traits_bounds_m(item)
-                .map_err(|e| sedona_internal_datafusion_err!("Error updating bounds: {e}"))?;
-            m_bounds
-        }
+        "z" => geo_traits_bounds_z(item)
+            .map_err(|e| sedona_internal_datafusion_err!("Error updating bounds: {e}"))?,
+        "m" => geo_traits_bounds_m(item)
+            .map_err(|e| sedona_internal_datafusion_err!("Error updating bounds: {e}"))?,
         _ => sedona_internal_err!("unexpected dim index")?,
     };
 
@@ -279,7 +273,7 @@ fn invoke_scalar(
 
 #[cfg(test)]
 mod tests {
-    use arrow_array::{create_array as arrow_array, ArrayRef};
+    use arrow_array::{ArrayRef, create_array as arrow_array};
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
