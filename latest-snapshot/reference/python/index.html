@@ -3352,7 +3352,7 @@ structured <code>numpy.void</code> values become structs.</li>
 
     <div class="doc doc-contents ">
 
-        <p>Create a <a class="autorefs autorefs-internal" title="DataFrame" href="#sedonadb.dataframe.DataFrame">DataFrame</a> from one or more Parquet files</p>
+        <p>Create a <a class="autorefs autorefs-internal" title="DataFrame" href="#sedonadb.dataframe.DataFrame"><code>DataFrame</code></a> from one or more Parquet files</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>
@@ -3681,7 +3681,7 @@ of components.</p>
 
     <div class="doc doc-contents ">
 
-        <p>Create a <a class="autorefs autorefs-internal" title="DataFrame" href="#sedonadb.dataframe.DataFrame">DataFrame</a> by executing SQL</p>
+        <p>Create a <a class="autorefs autorefs-internal" title="DataFrame" href="#sedonadb.dataframe.DataFrame"><code>DataFrame</code></a> by executing SQL</p>
 <p>Parses a SQL string into a logical plan and returns a DataFrame
 that can be used to request results or further modify the query.</p>
 
@@ -3755,7 +3755,7 @@ DuckDB. See <code>lit()</code> for a list of supported Python objects.</p>
 
     <div class="doc doc-contents ">
 
-        <p>Create a <a class="autorefs autorefs-internal" title="DataFrame" href="#sedonadb.dataframe.DataFrame">DataFrame</a> from a named view</p>
+        <p>Create a <a class="autorefs autorefs-internal" title="DataFrame" href="#sedonadb.dataframe.DataFrame"><code>DataFrame</code></a> from a named view</p>
 <p>Refer to a named view registered with this context.</p>
 
 
@@ -4005,7 +4005,7 @@ been called, subsequent configuration has no effect.</p>
 
     <div class="doc doc-contents ">
 
-        <p>Create a new <a class="autorefs autorefs-internal" title="SedonaContext" href="#sedonadb.context.SedonaContext">SedonaContext</a></p>
+        <p>Create a new <a class="autorefs autorefs-internal" title="SedonaContext" href="#sedonadb.context.SedonaContext"><code>SedonaContext</code></a></p>
 <p>Runtime configuration (memory limits, spill directory, pool type)
 can be set via <code>options</code> on the returned context before executing
 the first query::</p>
@@ -4122,13 +4122,22 @@ cannot be loaded, <code>None</code> is returned instead of raising an error.</p>
 
 
         <p>Representation of a (lazy) collection of columns</p>
-<p>This object is usually constructed from <code>sd = sedona.db.connect()</code>
-by importing an object with <code>sd.create_data_frame()</code>, reading a file
-with <code>sd.read_parquet()</code>/<code>sd.read_pyogrio()</code>, or executing SQL with
-<code>sd.sql()</code>. Once created, a DataFrame can be modified using the Python
-API (e.g., <code>.select()</code>, <code>.filter()</code>, <code>.sort()</code>, <code>.limit()</code>) or by
-creating a temporary view with <code>.to_view("name")</code> and querying the
-resulting view using <code>sd.sql()</code>. The Python API aims to provide
+<p>This object is usually constructed from a
+<a class="autorefs autorefs-internal" title="SedonaContext" href="#sedonadb.context.SedonaContext"><code>SedonaContext</code></a>, returned by
+<a class="autorefs autorefs-internal" title="connect" href="#sedonadb.context.connect"><code>connect()</code></a>, by importing an object with
+<a class="autorefs autorefs-internal" title="create_data_frame" href="#sedonadb.context.SedonaContext.create_data_frame"><code>create_data_frame()</code></a>,
+reading a file with
+<a class="autorefs autorefs-internal" title="read_parquet" href="#sedonadb.context.SedonaContext.read_parquet"><code>read_parquet()</code></a> or
+<a class="autorefs autorefs-internal" title="read_pyogrio" href="#sedonadb.context.SedonaContext.read_pyogrio"><code>read_pyogrio()</code></a>, or executing
+SQL with <a class="autorefs autorefs-internal" title="sql" href="#sedonadb.context.SedonaContext.sql"><code>sql()</code></a>. Once created, a
+DataFrame can be modified using the Python API (e.g.,
+<a class="autorefs autorefs-internal" title="select" href="#sedonadb.dataframe.DataFrame.select"><code>select()</code></a>,
+<a class="autorefs autorefs-internal" title="filter" href="#sedonadb.dataframe.DataFrame.filter"><code>filter()</code></a>,
+<a class="autorefs autorefs-internal" title="sort" href="#sedonadb.dataframe.DataFrame.sort"><code>sort()</code></a>, or
+<a class="autorefs autorefs-internal" title="limit" href="#sedonadb.dataframe.DataFrame.limit"><code>limit()</code></a>) or by creating a temporary
+view with <a class="autorefs autorefs-internal" title="to_view" href="#sedonadb.dataframe.DataFrame.to_view"><code>to_view()</code></a> and querying
+the resulting view using
+<a class="autorefs autorefs-internal" title="sql" href="#sedonadb.context.SedonaContext.sql"><code>sql()</code></a>. The Python API aims to provide
 a minimal subset of functionality derived primarily from Ibis and
 DuckDB's relational APIs.</p>
 <p>Examples:</p>
