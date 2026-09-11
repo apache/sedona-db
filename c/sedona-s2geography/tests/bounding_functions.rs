@@ -145,7 +145,7 @@ mod st_envelope {
 }
 
 mod st_xy_minmax {
-    use arrow_array::{create_array, ArrayRef};
+    use arrow_array::{ArrayRef, create_array};
     use arrow_schema::DataType;
     use datafusion_common::ScalarValue;
     use rstest::rstest;
