@@ -189,6 +189,9 @@ def test_columns(con):
 
 def test_select_struct_field_after_unnest_st_dump(con):
     # Regression for https://github.com/apache/sedona-db/issues/1232.
+    # The .geo accessor lives in the companion sedonadb-expr package, which
+    # the isolated python-wheels test environment does not install.
+    pytest.importorskip("sedonadb_expr")
     multi = con.sql("SELECT ST_GeomFromText('MULTIPOINT (0 0, 1 1)') AS geometry")
     dumped = multi.select(multi["geometry"].geo.dump().alias("dump")).unnest("dump")
     result = dumped.select(dumped["dump"]["geom"].alias("geometry"))
