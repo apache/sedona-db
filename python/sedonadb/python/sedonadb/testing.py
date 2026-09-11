@@ -290,15 +290,23 @@ class DBEngine:
         generally asserting a query result or verifying results between engines
         that have (e.g.) differing integer handling.
 
-        Geometry columns are rendered as WKT strings. List columns (e.g. the
-        `List<Double>` returned by `RS_Values`) can't be cast to string, so they
-        pass through as Python lists and are compared by value — assert them with
-        an expected cell that is itself a list, e.g. ``[([1.0, None],)]``.
+        Geometry columns are rendered as WKT strings — including SedonaDB's
+        item-level-CRS geometry (``struct<item: geoarrow.wkb, crs>``, returned
+        by RS_Envelope and friends whose output CRS can vary per row), which is
+        unwrapped to its geometry child first; the per-item crs field has no
+        counterpart in other engines' results and is asserted through RS_CRS
+        coverage instead. List columns (e.g. the `List<Double>` returned by
+        `RS_Values`) can't be cast to string, so they pass through as Python
+        lists and are compared by value — assert them with an expected cell
+        that is itself a list, e.g. ``[([1.0, None],)]``.
         """
         tab = self.result_to_table(result)
         columns = []
         for col in tab.columns:
             # isinstance() does not always work with pyarrow in pytest
+            unwrapped = _unwrap_item_crs_geometry(col)
+            if unwrapped is not None:
+                col = unwrapped
             if _type_is_geoarrow(col.type):
                 columns.append(ga.format_wkt(col, precision=wkt_precision).to_pylist())
             elif pa.types.is_list(col.type) or pa.types.is_large_list(col.type):
@@ -1107,6 +1115,31 @@ def _type_is_geoarrow(type):
     return hasattr(type, "extension_name") and type.extension_name.startswith(
         "geoarrow"
     )
+
+
+def _unwrap_item_crs_geometry(col):
+    """The geometry child of an item-level-CRS column, or None.
+
+    SedonaDB returns geometry whose CRS can vary per row (RS_Envelope,
+    RS_PixelAsPoint, ...) as ``struct<item: geoarrow.wkb, crs>``. Tuple
+    comparison wants the geometry values; parent-level nulls are propagated
+    into the child.
+    """
+    import pyarrow.compute as pc
+
+    if not pa.types.is_struct(col.type):
+        return None
+    fields = {
+        col.type.field(i).name: col.type.field(i).type
+        for i in range(col.type.num_fields)
+    }
+    if set(fields) != {"item", "crs"} or not _type_is_geoarrow(fields["item"]):
+        return None
+    child = pc.struct_field(col, "item")
+    if not _type_is_geoarrow(child.type):
+        # struct_field can strip the extension type; re-wrap its storage.
+        child = fields["item"].wrap_array(child)
+    return child
 
 
 def _crs_equal(actual, expected):
