@@ -86,6 +86,14 @@ def test_st_asbinary(eng, geom, expected):
     eng.assert_query_result(f"SELECT ST_AsBinary({geom_or_null(geom)})", expected)
 
 
+@pytest.mark.parametrize("eng", [SedonaDB])
+def test_st_aswkb_alias(eng):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        "SELECT ST_AsWKB(ST_Point(1, 2)) = ST_AsBinary(ST_Point(1, 2))", True
+    )
+
+
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
     ("geom"),
@@ -120,6 +128,12 @@ def test_st_astext(eng, geom):
         expected = expected.replace(r"Z(", r"Z (")
 
     eng.assert_query_result(f"SELECT ST_AsText({geom_or_null(geom)})", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB])
+def test_st_aswkt_alias(eng):
+    eng = eng.create_or_skip()
+    eng.assert_query_result("SELECT ST_AsWKT(ST_Point(1, 2))", "POINT(1 2)")
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
@@ -1681,6 +1695,14 @@ def test_st_force_dim(eng, geom, expected_2d, expected_3d):
     eng.assert_query_result(f"SELECT ST_Force3D({geom_or_null(geom)}, 5)", expected_3d)
 
 
+@pytest.mark.parametrize("eng", [SedonaDB])
+def test_st_force3dz_alias(eng):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        "SELECT ST_Force3DZ(ST_Point(1, 2), 3)", "POINT Z (1 2 3)"
+    )
+
+
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
     ("geom", "m", "expected_without_m", "expected_with_m"),
@@ -2271,6 +2293,14 @@ def test_st_geomfromtext_with_srid(eng, wkt, srid, expected):
     )
 
 
+@pytest.mark.parametrize("eng", [SedonaDB])
+def test_st_geometryfromtext_alias(eng):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        "SELECT ST_GeometryFromText('POINT (1 2)')", "POINT (1 2)"
+    )
+
+
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
     ("ewkt", "expected", "expected_srid"),
@@ -2377,24 +2407,6 @@ def test_st_linestringfromtext_alias(eng):
     eng.assert_query_result(
         "SELECT ST_LineStringFromText('LINESTRING (0 0, 1 1)')", "LINESTRING (0 0, 1 1)"
     )
-
-
-@pytest.mark.parametrize("eng", [SedonaDB])
-@pytest.mark.parametrize(
-    ("query", "expected"),
-    [
-        (
-            "SELECT ST_AsWKB(ST_Point(1, 2)) = ST_AsBinary(ST_Point(1, 2))",
-            True,
-        ),
-        ("SELECT ST_AsWKT(ST_Point(1, 2))", "POINT(1 2)"),
-        ("SELECT ST_Force3DZ(ST_Point(1, 2), 3)", "POINT Z (1 2 3)"),
-        ("SELECT ST_GeometryFromText('POINT (1 2)')", "POINT (1 2)"),
-    ],
-)
-def test_function_aliases(eng, query, expected):
-    eng = eng.create_or_skip()
-    eng.assert_query_result(query, expected)
 
 
 @pytest.mark.parametrize("eng", [SedonaDB])
