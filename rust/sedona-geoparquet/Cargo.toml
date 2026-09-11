@@ -24,7 +24,7 @@ homepage.workspace = true
 repository.workspace = true
 description.workspace = true
 readme.workspace = true
-edition.workspace = true
+edition = "2024"
 rust-version.workspace = true
 
 [lints.clippy]
@@ -40,6 +40,7 @@ default = []
 s2geography_tests = ["dep:sedona-s2geography"]
 
 [dev-dependencies]
+datafusion = { workspace = true, features = ["sql"] }
 sedona-testing = { workspace = true }
 url = { workspace = true }
 rstest = { workspace = true }

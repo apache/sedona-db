@@ -18,7 +18,7 @@
 use std::{collections::HashMap, str::FromStr};
 
 use datafusion::config::{ConfigField, TableParquetOptions, Visit};
-use datafusion_common::{plan_err, DataFusionError, Result};
+use datafusion_common::{DataFusionError, Result, plan_err};
 
 use crate::metadata::GeoParquetColumnMetadata;
 

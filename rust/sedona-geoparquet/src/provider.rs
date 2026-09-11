@@ -24,10 +24,10 @@ use datafusion::{
         file_format::parquet::ParquetFormat,
         listing::{ListingOptions, ListingTable, ListingTableConfig, ListingTableUrl},
     },
-    execution::{options::ReadOptions, SessionState},
+    execution::{SessionState, options::ReadOptions},
     prelude::{ParquetReadOptions, SessionConfig, SessionContext},
 };
-use datafusion_common::{exec_err, plan_err, Result};
+use datafusion_common::{Result, exec_err, plan_err};
 
 use crate::{
     format::GeoParquetFormat, metadata::GeoParquetColumnMetadata, options::TableGeoParquetOptions,
@@ -60,8 +60,8 @@ pub async fn geoparquet_listing_table(
         if !path_without_query.ends_with(option_extension.clone().as_str()) && !path.is_collection()
         {
             return exec_err!(
-                    "File path '{file_path}' does not match the expected extension '{option_extension}'"
-                );
+                "File path '{file_path}' does not match the expected extension '{option_extension}'"
+            );
         }
     }
 
@@ -464,9 +464,10 @@ mod test {
         )
         .await
         .unwrap_err();
-        assert!(err
-            .message()
-            .ends_with("does not match the expected extension '.parquet'"));
+        assert!(
+            err.message()
+                .ends_with("does not match the expected extension '.parquet'")
+        );
 
         let err = geoparquet_listing_table(
             &ctx,

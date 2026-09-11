@@ -18,8 +18,8 @@
 use std::{collections::HashMap, sync::Arc};
 
 use arrow_array::{
-    builder::{Float32Builder, NullBufferBuilder},
     ArrayRef, RecordBatch, StructArray,
+    builder::{Float32Builder, NullBufferBuilder},
 };
 use arrow_schema::{DataType, Field, FieldRef, Fields, Schema, SchemaRef};
 use async_trait::async_trait;
@@ -32,22 +32,22 @@ use datafusion::{
     },
 };
 use datafusion_common::{
-    config::ConfigOptions, exec_datafusion_err, exec_err, not_impl_err, DataFusionError, Result,
+    DataFusionError, Result, config::ConfigOptions, exec_datafusion_err, exec_err, not_impl_err,
 };
 use datafusion_execution::{SendableRecordBatchStream, TaskContext};
 use datafusion_expr::{
-    dml::InsertOp, ColumnarValue, ScalarUDF, ScalarUDFImpl, Signature, Volatility,
+    ColumnarValue, ScalarUDF, ScalarUDFImpl, Signature, Volatility, dml::InsertOp,
 };
 use datafusion_physical_expr::{
-    expressions::Column, LexRequirement, PhysicalExpr, ScalarFunctionExpr,
+    LexRequirement, PhysicalExpr, ScalarFunctionExpr, expressions::Column,
 };
 use datafusion_physical_plan::{
-    stream::RecordBatchStreamAdapter, DisplayAs, DisplayFormatType, ExecutionPlan,
+    DisplayAs, DisplayFormatType, ExecutionPlan, stream::RecordBatchStreamAdapter,
 };
 use float_next_after::NextAfter;
 use futures::StreamExt;
 use geo_traits::GeometryTrait;
-use sedona_common::{sedona_internal_err, SedonaOptions, SedonaRuntime};
+use sedona_common::{SedonaOptions, SedonaRuntime, sedona_internal_err};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_functions::executor::WkbExecutor;
 use sedona_geometry::types::Edges;
@@ -56,7 +56,7 @@ use sedona_geometry::{
     interval::{Interval, IntervalTrait},
 };
 use sedona_schema::{
-    crs::{deserialize_crs_from_obj, lnglat, Crs},
+    crs::{Crs, deserialize_crs_from_obj, lnglat},
     datatypes::SedonaType,
     matchers::ArgMatcher,
     schema::SedonaSchema,
@@ -751,15 +751,15 @@ mod test {
     use std::iter::zip;
     use std::path::Path;
 
-    use arrow_array::{create_array, Array, RecordBatch};
+    use arrow_array::{Array, RecordBatch, create_array};
     use datafusion::datasource::file_format::format_as_file_type;
     use datafusion::prelude::DataFrame;
     use datafusion::{
         execution::SessionStateBuilder,
-        prelude::{col, lit, SessionContext},
+        prelude::{SessionContext, col, lit},
     };
-    use datafusion_common::cast::{as_float32_array, as_struct_array};
     use datafusion_common::ScalarValue;
+    use datafusion_common::cast::{as_float32_array, as_struct_array};
     use datafusion_expr::{Cast, Expr, LogicalPlanBuilder};
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
     use parquet::basic::{EdgeInterpolationAlgorithm, LogicalType};
@@ -1099,9 +1099,10 @@ mod test {
         )
         .await
         .unwrap_err();
-        assert!(err
-            .message()
-            .starts_with("Can't overwrite GeoParquet 1.1 bbox column 'bbox'"));
+        assert!(
+            err.message()
+                .starts_with("Can't overwrite GeoParquet 1.1 bbox column 'bbox'")
+        );
 
         options.overwrite_bbox_columns = true;
         test_write_dataframe(&ctx, df, df_batches_with_bbox, options, vec![])

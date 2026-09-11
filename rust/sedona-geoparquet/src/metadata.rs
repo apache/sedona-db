@@ -21,7 +21,7 @@
 /// to remove the dependency on GeoArrow since we mostly don't need that here yet).
 /// This should be synchronized with that crate when possible.
 /// https://github.com/geoarrow/geoarrow-rs/blob/ad2d29ef90050c5cfcfa7dfc0b4a3e5d12e51bbe/rust/geoarrow-geoparquet/src/metadata.rs
-use datafusion_common::{plan_err, Result};
+use datafusion_common::{Result, plan_err};
 use parquet::basic::{EdgeInterpolationAlgorithm, LogicalType};
 use parquet::file::metadata::{KeyValue, ParquetMetaData};
 use sedona_expr::statistics::GeoStatistics;
@@ -666,7 +666,7 @@ fn column_from_logical_type(
                     Some(_) => {
                         return plan_err!(
                             "Unsupported edge interpolation algorithm in Parquet schema"
-                        )
+                        );
                     }
                 };
                 column_metadata.edges = Some(edges.to_string());
@@ -702,10 +702,10 @@ fn geoparquet_crs_from_logical_type(
         // Resolve projjson:some_key if possible. If this is not possible, the value that
         // will be passed on to the GeoParquet column metadata is the full string
         // "projjson:some_key".
-        if let Some(crs_kv_key) = crs_str.strip_prefix("projjson:") {
-            if let Some(crs_from_kv) = get_parquet_key_value(crs_kv_key, kv_metadata) {
-                return Some(Value::String(crs_from_kv.to_string()));
-            }
+        if let Some(crs_kv_key) = crs_str.strip_prefix("projjson:")
+            && let Some(crs_from_kv) = get_parquet_key_value(crs_kv_key, kv_metadata)
+        {
+            return Some(Value::String(crs_from_kv.to_string()));
         }
 
         // Resolve srid:<int value> to "<int value>", which is accepted by SedonaDB internals
@@ -731,10 +731,10 @@ fn geoparquet_crs_from_logical_type(
 fn get_parquet_key_value(key: &str, kv_metadata: Option<&Vec<KeyValue>>) -> Option<String> {
     if let Some(kv_metadata) = kv_metadata {
         for kv in kv_metadata {
-            if kv.key == key {
-                if let Some(value) = &kv.value {
-                    return Some(value.to_string());
-                }
+            if kv.key == key
+                && let Some(value) = &kv.value
+            {
+                return Some(value.to_string());
             }
         }
     }

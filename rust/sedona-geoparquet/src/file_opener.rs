@@ -20,8 +20,9 @@ use arrow_array::{Array, RecordBatch};
 use arrow_schema::{DataType, SchemaRef};
 use datafusion::datasource::{listing::PartitionedFile, physical_plan::parquet::ParquetAccessPlan};
 use datafusion_common::{
+    Result,
     cast::{as_binary_array, as_binary_view_array, as_large_binary_array},
-    exec_err, Result,
+    exec_err,
 };
 use datafusion_datasource::morsel::{Morsel, MorselPlan, MorselPlanner, Morselizer};
 use datafusion_datasource_parquet::metadata::DFParquetMetadata;
@@ -180,36 +181,35 @@ impl MorselPlanner for GeoParquetMetadataPlanner {
                 self.options.geometry_columns.inner(),
             )?;
 
-            if self.enable_pruning {
-                if let (Some(predicate), Some(metadata)) =
+            if self.enable_pruning
+                && let (Some(predicate), Some(metadata)) =
                     (self.predicate.as_ref(), metadata.as_ref())
-                {
-                    let spatial_filter = SpatialFilterFactory::default()
-                        .with_bounder_factory(self.bounder_factory.clone())
-                        .try_from_expr(predicate)?;
-                    filter_access_plan_using_geoparquet_file_metadata(
-                        &self.file_schema,
-                        &mut access_plan,
-                        &spatial_filter,
-                        metadata,
-                        &self.metrics,
-                    )?;
-                    filter_access_plan_using_geoparquet_covering(
-                        &self.file_schema,
-                        &mut access_plan,
-                        &spatial_filter,
-                        metadata,
-                        &parquet_metadata,
-                        &self.metrics,
-                    )?;
-                    filter_access_plan_using_native_geostats(
-                        &self.file_schema,
-                        &mut access_plan,
-                        &spatial_filter,
-                        &parquet_metadata,
-                        &self.metrics,
-                    )?;
-                }
+            {
+                let spatial_filter = SpatialFilterFactory::default()
+                    .with_bounder_factory(self.bounder_factory.clone())
+                    .try_from_expr(predicate)?;
+                filter_access_plan_using_geoparquet_file_metadata(
+                    &self.file_schema,
+                    &mut access_plan,
+                    &spatial_filter,
+                    metadata,
+                    &self.metrics,
+                )?;
+                filter_access_plan_using_geoparquet_covering(
+                    &self.file_schema,
+                    &mut access_plan,
+                    &spatial_filter,
+                    metadata,
+                    &parquet_metadata,
+                    &self.metrics,
+                )?;
+                filter_access_plan_using_native_geostats(
+                    &self.file_schema,
+                    &mut access_plan,
+                    &spatial_filter,
+                    &parquet_metadata,
+                    &self.metrics,
+                )?;
             }
 
             let validation_columns = if self.options.validate {
@@ -373,15 +373,15 @@ fn validate_wkb_values<'a>(
     column_name: &str,
 ) -> Result<()> {
     for (row_index, maybe_wkb) in values.into_iter().enumerate() {
-        if let Some(wkb_bytes) = maybe_wkb {
-            if let Err(e) = wkb::reader::read_wkb(wkb_bytes) {
-                return exec_err!(
-                    "WKB validation failed for column '{}' at row {}: {}",
-                    column_name,
-                    row_index,
-                    e
-                );
-            }
+        if let Some(wkb_bytes) = maybe_wkb
+            && let Err(e) = wkb::reader::read_wkb(wkb_bytes)
+        {
+            return exec_err!(
+                "WKB validation failed for column '{}' at row {}: {}",
+                column_name,
+                row_index,
+                e
+            );
         }
     }
 
