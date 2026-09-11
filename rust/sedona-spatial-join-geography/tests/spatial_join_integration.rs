@@ -29,13 +29,13 @@ use datafusion::{
     execution::SessionStateBuilder,
     prelude::{SessionConfig, SessionContext},
 };
-use datafusion_common::tree_node::{TreeNode, TreeNodeRecursion};
 use datafusion_common::Result;
+use datafusion_common::tree_node::{TreeNode, TreeNodeRecursion};
 use datafusion_expr::JoinType;
 use geo_types::{Coord, Rect};
 use rstest::rstest;
-use sedona_common::option::SpatialJoinOptions;
 use sedona_common::SedonaOptions;
+use sedona_common::option::SpatialJoinOptions;
 use sedona_geometry::types::GeometryTypeId;
 use sedona_query_planner::{
     optimizer::register_spatial_join_logical_optimizer, query_planner::SedonaQueryPlanner,
@@ -334,9 +334,15 @@ async fn test_geography_join_types(
     let batch_size = 30;
 
     let sql = match join_type {
-        JoinType::Inner => "SELECT L.id l_id, R.id r_id FROM L INNER JOIN R ON ST_Intersects(L.geometry, R.geometry) ORDER BY l_id, r_id",
-        JoinType::Left => "SELECT L.id l_id, R.id r_id FROM L LEFT JOIN R ON ST_Intersects(L.geometry, R.geometry) ORDER BY l_id, r_id",
-        JoinType::Right => "SELECT L.id l_id, R.id r_id FROM L RIGHT JOIN R ON ST_Intersects(L.geometry, R.geometry) ORDER BY l_id, r_id",
+        JoinType::Inner => {
+            "SELECT L.id l_id, R.id r_id FROM L INNER JOIN R ON ST_Intersects(L.geometry, R.geometry) ORDER BY l_id, r_id"
+        }
+        JoinType::Left => {
+            "SELECT L.id l_id, R.id r_id FROM L LEFT JOIN R ON ST_Intersects(L.geometry, R.geometry) ORDER BY l_id, r_id"
+        }
+        JoinType::Right => {
+            "SELECT L.id l_id, R.id r_id FROM L RIGHT JOIN R ON ST_Intersects(L.geometry, R.geometry) ORDER BY l_id, r_id"
+        }
         _ => unreachable!("Only testing Inner, Left, Right join types"),
     };
 
@@ -400,13 +406,23 @@ fn create_corner_case_test_data() -> Result<(TestPartitions, TestPartitions)> {
     // WKT fixtures for edge cases: full-width polygons and polar triangles
     let wkt_fixtures: Vec<Option<&str>> = vec![
         // Full-width polygons (spanning 360 degrees longitude, with intermediate points)
-        Some("POLYGON((-180 -10, -180 10, -90 10, 0 10, 90 10, 180 10, 180 -10, 90 -10, 0 -10, -90 -10, -180 -10))"),
-        Some("POLYGON((-180 20, -180 40, -90 40, 0 40, 90 40, 180 40, 180 20, 90 20, 0 20, -90 20, -180 20))"),
-        Some("POLYGON((-180 -45, -90 -30, 0 -45, 90 -30, 180 -45, 90 -60, 0 -45, -90 -60, -180 -45))"),
+        Some(
+            "POLYGON((-180 -10, -180 10, -90 10, 0 10, 90 10, 180 10, 180 -10, 90 -10, 0 -10, -90 -10, -180 -10))",
+        ),
+        Some(
+            "POLYGON((-180 20, -180 40, -90 40, 0 40, 90 40, 180 40, 180 20, 90 20, 0 20, -90 20, -180 20))",
+        ),
+        Some(
+            "POLYGON((-180 -45, -90 -30, 0 -45, 90 -30, 180 -45, 90 -60, 0 -45, -90 -60, -180 -45))",
+        ),
         // Full width polygon shifted so that it crosses the antimeridian
-        Some("POLYGON((0 -10, 0 10, 90 10, 180 10, 270 10, 360 10, 360 -10, 270 -10, 180 -10, 80 -10, 0 -10))"),
+        Some(
+            "POLYGON((0 -10, 0 10, 90 10, 180 10, 270 10, 360 10, 360 -10, 270 -10, 180 -10, 80 -10, 0 -10))",
+        ),
         // Whole planet
-        Some("POLYGON((-180 -90, 0 -90, 90 -90, 180 -90, 180 0, 180 90, 90 90, 0 90, -90 90, -180 90, -180 0, -180 -90))"),
+        Some(
+            "POLYGON((-180 -90, 0 -90, 90 -90, 180 -90, 180 0, 180 90, 90 90, 0 90, -90 90, -180 90, -180 0, -180 -90))",
+        ),
         // North pole triangles
         Some("POLYGON((0 70, -120 70, 120 70, 0 70))"),
         Some("POLYGON((0 80, 60 80, -60 80, 0 80))"),
