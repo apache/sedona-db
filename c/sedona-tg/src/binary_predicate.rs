@@ -105,7 +105,7 @@ impl<Op: tg::BinaryPredicate + Send + Sync> SedonaScalarKernel for TgPredicate<O
 
 #[cfg(test)]
 mod tests {
-    use arrow_array::{create_array, ArrayRef};
+    use arrow_array::{ArrayRef, create_array};
     use datafusion_common::scalar::ScalarValue;
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;

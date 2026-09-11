@@ -92,12 +92,12 @@ impl Geom {
         }
 
         let geom = Self { inner };
-        let err = tg_geom_error(geom.inner);
+        let err = unsafe { tg_geom_error(geom.inner) };
         if err.is_null() {
             return Ok(geom);
         }
 
-        let c_str = std::ffi::CStr::from_ptr(err);
+        let c_str = unsafe { std::ffi::CStr::from_ptr(err) };
         Err(TgError::Invalid(c_str.to_string_lossy().into_owned()))
     }
 
@@ -258,7 +258,7 @@ pub unsafe fn set_allocator(
     static ALLOCATOR_SET: OnceLock<()> = OnceLock::new();
 
     if ALLOCATOR_SET.set(()).is_ok() {
-        tg_env_set_allocator(Some(malloc), Some(realloc), Some(free));
+        unsafe { tg_env_set_allocator(Some(malloc), Some(realloc), Some(free)) };
         Ok(())
     } else {
         Err(TgError::Invalid("Allocator already set".to_string()))
