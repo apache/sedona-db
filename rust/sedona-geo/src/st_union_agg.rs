@@ -18,7 +18,7 @@ use std::{sync::Arc, vec};
 
 use arrow_array::ArrayRef;
 use arrow_schema::FieldRef;
-use datafusion_common::{error::Result, exec_err, ScalarValue};
+use datafusion_common::{ScalarValue, error::Result, exec_err};
 use datafusion_expr::{Accumulator, ColumnarValue};
 use geo::BooleanOps;
 use geo_traits::to_geo::ToGeoGeometry;
@@ -32,8 +32,8 @@ use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOMETRY},
     matchers::ArgMatcher,
 };
-use wkb::writer::write_geometry;
 use wkb::Endianness;
+use wkb::writer::write_geometry;
 use wkb::{reader::Wkb, writer::WriteOptions};
 
 /// ST_Union_Agg() implementation
@@ -303,7 +303,9 @@ mod test {
         ];
         assert_scalar_equal_wkb_geometry_topologically(
             &tester.aggregate_wkt(poly_and_nonoverlap_multi).unwrap(),
-            Some("MULTIPOLYGON(((0 0, 1 0, 1 1, 0 1, 0 0)),((2 2, 3 2, 3 3, 2 3, 2 2)),((4 4, 5 4, 5 5, 4 5, 4 4)))"),
+            Some(
+                "MULTIPOLYGON(((0 0, 1 0, 1 1, 0 1, 0 0)),((2 2, 3 2, 3 3, 2 3, 2 2)),((4 4, 5 4, 5 5, 4 5, 4 4)))",
+            ),
         );
 
         // MultiPolygon with MultiPolygon (should return union of all)
@@ -317,7 +319,9 @@ mod test {
         ];
         assert_scalar_equal_wkb_geometry_topologically(
             &tester.aggregate_wkt(multi_and_multi).unwrap(),
-            Some("MULTIPOLYGON(((0 0, 3 0, 3 3, 0 3, 0 0)),((10 10, 12 10, 12 11, 13 11, 13 13, 11 13, 11 12, 10 12, 10 10)))"),
+            Some(
+                "MULTIPOLYGON(((0 0, 3 0, 3 3, 0 3, 0 0)),((10 10, 12 10, 12 11, 13 11, 13 13, 11 13, 11 12, 10 12, 10 10)))",
+            ),
         );
     }
 
@@ -340,7 +344,9 @@ mod test {
         ];
         assert_scalar_equal_wkb_geometry_topologically(
             &tester.aggregate_wkt(multi_multi_case1).unwrap(),
-            Some("MULTIPOLYGON(((0 0, 3 0, 3 2, 5 2, 5 5, 2 5, 2 3, 0 3, 0 0)),((5 5, 8 5, 8 7, 10 7, 10 10, 7 10, 7 8, 5 8, 5 5)))"),
+            Some(
+                "MULTIPOLYGON(((0 0, 3 0, 3 2, 5 2, 5 5, 2 5, 2 3, 0 3, 0 0)),((5 5, 8 5, 8 7, 10 7, 10 10, 7 10, 7 8, 5 8, 5 5)))",
+            ),
         );
 
         // Test case 2: MultiPolygons with non-intersecting polygons
@@ -354,18 +360,28 @@ mod test {
         ];
         assert_scalar_equal_wkb_geometry_topologically(
             &tester.aggregate_wkt(multi_multi_case2).unwrap(),
-            Some("MULTIPOLYGON(((0 0,1 0,1 1,0 1,0 0)),((2 2,3 2,3 3,2 3,2 2)),((5 5,6 5,6 6,5 6,5 5)),((7 7,8 7,8 8,7 8,7 7)))"),
+            Some(
+                "MULTIPOLYGON(((0 0,1 0,1 1,0 1,0 0)),((2 2,3 2,3 3,2 3,2 2)),((5 5,6 5,6 6,5 6,5 5)),((7 7,8 7,8 8,7 8,7 7)))",
+            ),
         );
 
         // Test case 3: Three MultiPolygons with some overlap
         let multi_multi_case3 = vec![
-            vec![Some("MULTIPOLYGON(((0 0, 4 0, 4 4, 0 4, 0 0)), ((10 10, 14 10, 14 14, 10 14, 10 10)))")],
-            vec![Some("MULTIPOLYGON(((3 3, 7 3, 7 7, 3 7, 3 3)), ((13 13, 17 13, 17 17, 13 17, 13 13)))")],
-            vec![Some("MULTIPOLYGON(((6 6, 10 6, 10 10, 6 10, 6 6)), ((16 16, 20 16, 20 20, 16 20, 16 16)))")],
+            vec![Some(
+                "MULTIPOLYGON(((0 0, 4 0, 4 4, 0 4, 0 0)), ((10 10, 14 10, 14 14, 10 14, 10 10)))",
+            )],
+            vec![Some(
+                "MULTIPOLYGON(((3 3, 7 3, 7 7, 3 7, 3 3)), ((13 13, 17 13, 17 17, 13 17, 13 13)))",
+            )],
+            vec![Some(
+                "MULTIPOLYGON(((6 6, 10 6, 10 10, 6 10, 6 6)), ((16 16, 20 16, 20 20, 16 20, 16 16)))",
+            )],
         ];
         assert_scalar_equal_wkb_geometry_topologically(
             &tester.aggregate_wkt(multi_multi_case3).unwrap(),
-            Some("MULTIPOLYGON(((0 0, 4 0, 4 3, 7 3, 7 6, 10 6, 10 10, 6 10, 6 7, 3 7, 3 4, 0 4, 0 0)),((10 10, 14 10, 14 13, 17 13, 17 16, 20 16, 20 20, 16 20, 16 17, 13 17, 13 14, 10 14, 10 10)))"),
+            Some(
+                "MULTIPOLYGON(((0 0, 4 0, 4 3, 7 3, 7 6, 10 6, 10 10, 6 10, 6 7, 3 7, 3 4, 0 4, 0 0)),((10 10, 14 10, 14 13, 17 13, 17 16, 20 16, 20 20, 16 20, 16 17, 13 17, 13 14, 10 14, 10 10)))",
+            ),
         );
     }
 

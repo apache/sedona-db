@@ -14,14 +14,14 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use datafusion_common::{error::Result, not_impl_err, DataFusionError};
+use datafusion_common::{DataFusionError, error::Result, not_impl_err};
 use geo_traits::{
+    GeometryCollectionTrait, GeometryTrait,
+    GeometryType::*,
     to_geo::{
         ToGeoLineString, ToGeoMultiLineString, ToGeoMultiPoint, ToGeoMultiPolygon, ToGeoPoint,
         ToGeoPolygon,
     },
-    GeometryCollectionTrait, GeometryTrait,
-    GeometryType::*,
 };
 use geo_types::Geometry;
 use sedona_functions::executor::{GenericExecutor, GeometryFactory};

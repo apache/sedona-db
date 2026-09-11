@@ -26,7 +26,7 @@ use sedona_expr::{
     scalar_udf::{ScalarKernelRef, SedonaScalarKernel},
 };
 use sedona_functions::executor::WkbExecutor;
-use sedona_geo_generic_alg::algorithm::{line_measures::Euclidean, LengthMeasurableExt};
+use sedona_geo_generic_alg::algorithm::{LengthMeasurableExt, line_measures::Euclidean};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use wkb::reader::Wkb;
 
@@ -76,7 +76,7 @@ fn invoke_scalar(wkb: &Wkb) -> Result<f64> {
 
 #[cfg(test)]
 mod tests {
-    use arrow_array::{create_array, ArrayRef};
+    use arrow_array::{ArrayRef, create_array};
     use datafusion_common::scalar::ScalarValue;
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;

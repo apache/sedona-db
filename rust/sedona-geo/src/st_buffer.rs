@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use arrow_array::builder::BinaryBuilder;
 use arrow_schema::DataType;
-use datafusion_common::{cast::as_float64_array, error::Result, DataFusionError};
+use datafusion_common::{DataFusionError, cast::as_float64_array, error::Result};
 use datafusion_expr::ColumnarValue;
 use geo::algorithm::buffer::{Buffer, BufferStyle};
 use geo_types::Polygon;
@@ -35,9 +35,9 @@ use sedona_schema::{
     matchers::ArgMatcher,
 };
 use wkb::{
-    reader::Wkb,
-    writer::{write_geometry, WriteOptions},
     Endianness,
+    reader::Wkb,
+    writer::{WriteOptions, write_geometry},
 };
 
 use crate::to_geo::item_to_geometry;

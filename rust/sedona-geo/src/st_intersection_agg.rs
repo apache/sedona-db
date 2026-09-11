@@ -18,7 +18,7 @@ use std::{sync::Arc, vec};
 
 use arrow_array::ArrayRef;
 use arrow_schema::FieldRef;
-use datafusion_common::{error::Result, exec_err, ScalarValue};
+use datafusion_common::{ScalarValue, error::Result, exec_err};
 use datafusion_expr::{Accumulator, ColumnarValue};
 use geo::{BooleanOps, Intersects};
 use geo_traits::to_geo::ToGeoGeometry;
@@ -32,8 +32,8 @@ use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOMETRY},
     matchers::ArgMatcher,
 };
-use wkb::writer::write_geometry;
 use wkb::Endianness;
+use wkb::writer::write_geometry;
 use wkb::{reader::Wkb, writer::WriteOptions};
 
 /// ST_Intersection_Agg() implementation

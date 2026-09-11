@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use arrow_array::builder::BinaryBuilder;
 use datafusion_common::error::Result;
-use datafusion_common::{cast::as_float64_array, DataFusionError};
+use datafusion_common::{DataFusionError, cast::as_float64_array};
 use datafusion_expr::ColumnarValue;
 use geo::{ConcaveHull, CoordsIter, Geometry, GeometryCollection, Point, Polygon};
 use geo_traits::to_geo::{ToGeoGeometry, ToGeoPoint};
@@ -32,7 +32,7 @@ use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::{datatypes::WKB_GEOMETRY, matchers::ArgMatcher};
 use wkb::reader::Wkb;
-use wkb::writer::{write_geometry, WriteOptions};
+use wkb::writer::{WriteOptions, write_geometry};
 
 use crate::to_geo::item_to_geometry;
 
@@ -201,7 +201,7 @@ fn compute_and_write_hull(
         _ => {
             return Err(DataFusionError::Execution(
                 "Unsupported geometry type for concave hull".to_string(),
-            ))
+            ));
         }
     }
 
@@ -430,13 +430,13 @@ mod tests {
                 "MULTIPOLYGON (((26 125, 26 200, 126 200, 126 125, 26 125 ),\
                     ( 51 150, 101 150, 76 175, 51 150 )), (( 151 100, 151 200, 176 175, 151 100 )))",
                 0.1,
-                "POLYGON ((151 100, 176 175, 151 200, 126 200, 26 200, 26 125, 126 125, 151 100))"
+                "POLYGON ((151 100, 176 175, 151 200, 126 200, 26 200, 26 125, 126 125, 151 100))",
             ),
             (
                 "MULTIPOLYGON (((26 125, 26 200, 126 200, 126 125, 26 125 ),\
                     ( 51 150, 101 150, 76 175, 51 150 )), (( 151 100, 151 200, 176 175, 151 100 )))",
                 0.4,
-                "POLYGON((151 100,176 175,151 200,26 200,26 125,151 100))"
+                "POLYGON((151 100,176 175,151 200,26 200,26 125,151 100))",
             ),
             // Test GEOMETRYCOLLECTION with different pctconvex values
             (
@@ -444,14 +444,14 @@ mod tests {
                     GEOMETRYCOLLECTION(POLYGON((3 3,4 4,5 5,3 3)), \
                     GEOMETRYCOLLECTION(LINESTRING(6 6,7 7), POLYGON((8 8,9 9,10 10,8 8)))))",
                 0.1,
-                "POLYGON ((10 10, 1 1, 3 3, 3 3, 4 4, 5 5, 8 8, 9 9, 10 10))"
+                "POLYGON ((10 10, 1 1, 3 3, 3 3, 4 4, 5 5, 8 8, 9 9, 10 10))",
             ),
             (
                 "GEOMETRYCOLLECTION(LINESTRING(1 1,2 2), \
                     GEOMETRYCOLLECTION(POLYGON((3 3,4 4,5 5,3 3)), \
                     GEOMETRYCOLLECTION(LINESTRING(6 6,7 7), POLYGON((8 8,9 9,10 10,8 8)))))",
                 0.6,
-                "POLYGON ((10 10, 1 1, 3 3, 3 3, 4 4, 5 5, 8 8, 9 9, 10 10))"
+                "POLYGON ((10 10, 1 1, 3 3, 3 3, 4 4, 5 5, 8 8, 9 9, 10 10))",
             ),
         ];
 
