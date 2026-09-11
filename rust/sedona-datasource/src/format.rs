@@ -23,7 +23,7 @@ use async_trait::async_trait;
 use datafusion::{
     config::ConfigOptions,
     datasource::{
-        file_format::{file_compression_type::FileCompressionType, FileFormat, FileFormatFactory},
+        file_format::{FileFormat, FileFormatFactory, file_compression_type::FileCompressionType},
         listing::PartitionedFile,
         physical_plan::{
             FileGroupPartitioner, FileOpenFuture, FileOpener, FileScanConfig, FileSinkConfig,
@@ -32,20 +32,20 @@ use datafusion::{
         table_schema::TableSchema,
     },
 };
-use datafusion_catalog::{memory::DataSourceExec, Session};
-use datafusion_common::{not_impl_err, plan_err, DataFusionError, GetExt, Result, Statistics};
+use datafusion_catalog::{Session, memory::DataSourceExec};
+use datafusion_common::{DataFusionError, GetExt, Result, Statistics, not_impl_err, plan_err};
 use datafusion_datasource::projection::{ProjectionOpener, SplitProjection};
 use datafusion_physical_expr::{
-    projection::ProjectionExprs, LexOrdering, LexRequirement, PhysicalExpr,
+    LexOrdering, LexRequirement, PhysicalExpr, projection::ProjectionExprs,
 };
 use datafusion_physical_plan::{
+    ExecutionPlan,
     filter_pushdown::{FilterPushdownPropagation, PushedDown},
     metrics::ExecutionPlanMetricsSet,
-    ExecutionPlan,
 };
 use futures::{
-    lock::{Mutex, OwnedMutexGuard},
     StreamExt, TryStreamExt,
+    lock::{Mutex, OwnedMutexGuard},
 };
 use object_store::{ObjectMeta, ObjectStore};
 
@@ -464,7 +464,7 @@ mod test {
     use datafusion::{
         assert_batches_eq,
         datasource::listing::ListingTableUrl,
-        prelude::{col, SessionConfig, SessionContext},
+        prelude::{SessionConfig, SessionContext, col},
     };
     use datafusion_common::plan_err;
     use std::{
@@ -822,9 +822,10 @@ mod test {
         .await
         .unwrap_err();
 
-        assert!(err
-            .message()
-            .ends_with("does not match the expected extension 'echospec'"));
+        assert!(
+            err.message()
+                .ends_with("does not match the expected extension 'echospec'")
+        );
 
         // ...but we should be able to turn off the error
         external_table(

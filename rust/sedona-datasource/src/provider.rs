@@ -23,24 +23,24 @@ use datafusion::{
     catalog::TableProvider,
     config::TableOptions,
     datasource::{
+        TableType,
         file_format::FileFormat,
         listing::{ListingOptions, ListingTable, ListingTableConfig, ListingTableUrl},
         physical_plan::FileScanConfig,
-        TableType,
     },
-    execution::{options::ReadOptions, SessionState},
+    execution::{SessionState, options::ReadOptions},
     logical_expr::Expr,
     physical_plan::ExecutionPlan,
     prelude::{SessionConfig, SessionContext},
 };
-use datafusion_catalog::{memory::DataSourceExec, Session};
-use datafusion_common::{exec_err, extensions::Extensions, Result, TableReference};
+use datafusion_catalog::{Session, memory::DataSourceExec};
+use datafusion_common::{Result, TableReference, exec_err, extensions::Extensions};
 use datafusion_datasource::{
-    file_groups::FileGroup, file_scan_config::FileScanConfigBuilder, table_schema::TableSchema,
-    PartitionedFile,
+    PartitionedFile, file_groups::FileGroup, file_scan_config::FileScanConfigBuilder,
+    table_schema::TableSchema,
 };
 use datafusion_execution::object_store::ObjectStoreUrl;
-use object_store::{path::Path as ObjectPath, ObjectMeta};
+use object_store::{ObjectMeta, path::Path as ObjectPath};
 
 use crate::{
     format::ExternalFileFormat,
@@ -107,8 +107,8 @@ async fn listing_table_provider(
             let file_path = path.as_str();
             if !file_path.ends_with(option_extension.clone().as_str()) && !path.is_collection() {
                 return exec_err!(
-                        "File path '{file_path}' does not match the expected extension '{option_extension}'"
-                    );
+                    "File path '{file_path}' does not match the expected extension '{option_extension}'"
+                );
             }
         }
     }

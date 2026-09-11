@@ -54,7 +54,7 @@ pub trait ExternalFormatSpec: Debug + Send + Sync {
     /// The implementation must handle the `file_projection`; however,
     /// need not handle the `filters` (but may use them for pruning).
     async fn open_reader(&self, args: &OpenReaderArgs)
-        -> Result<Box<dyn RecordBatchReader + Send>>;
+    -> Result<Box<dyn RecordBatchReader + Send>>;
 
     /// Compute a clone of self but with the key/value options specified
     ///
