@@ -2476,6 +2476,97 @@ def test_st_geomfromwkb(eng, geom):
     eng.assert_query_result(f"SELECT ST_GeomFromWKB({wkb})", expected)
 
 
+# --- ST_XxxFromWKB typed constructors ---
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("fn_name", "matching_wkt"),
+    [
+        ("ST_PointFromWKB", "POINT (1 2)"),
+        ("ST_LineStringFromWKB", "LINESTRING (0 0, 1 1)"),
+    ],
+)
+def test_typed_wkb_constructors_accept_correct_type(eng, fn_name, matching_wkt):
+    eng = eng.create_or_skip()
+
+    wkb = shapely.from_wkt(matching_wkt).wkb
+    if isinstance(eng, SedonaDB):
+        wkb = "0x" + wkb.hex()
+    elif isinstance(eng, PostGIS):
+        wkb = r"\x" + wkb.hex()
+        wkb = f"'{wkb}'::bytea"
+    else:
+        raise
+    eng.assert_query_result(f"SELECT {fn_name}({wkb})", matching_wkt)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("fn_name", "wrong_wkt"),
+    [
+        ("ST_PointFromWKB", "LINESTRING (0 0, 1 1)"),
+        ("ST_LineStringFromWKB", "POINT (1 2)"),
+    ],
+)
+def test_typed_wkb_constructors_null_wrong_type(eng, fn_name, wrong_wkt):
+    eng = eng.create_or_skip()
+
+    wkb = shapely.from_wkt(wrong_wkt).wkb
+    if isinstance(eng, SedonaDB):
+        wkb = "0x" + wkb.hex()
+    elif isinstance(eng, PostGIS):
+        wkb = r"\x" + wkb.hex()
+        wkb = f"'{wkb}'::bytea"
+    else:
+        raise
+    eng.assert_query_result(f"SELECT {fn_name}({wkb})", None)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize("fn_name", ["ST_PointFromWKB", "ST_LineStringFromWKB"])
+def test_typed_wkb_constructors_null_input(eng, fn_name):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT {fn_name}(NULL)", None)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("fn_name", "matching_wkt"),
+    [
+        ("ST_PointFromWKB", "POINT (1 2)"),
+        ("ST_LineStringFromWKB", "LINESTRING (0 0, 1 1)"),
+    ],
+)
+def test_typed_wkb_constructors_accept_srid(eng, fn_name, matching_wkt):
+    eng = eng.create_or_skip()
+
+    wkb = shapely.from_wkt(matching_wkt).wkb
+    if isinstance(eng, SedonaDB):
+        wkb = "0x" + wkb.hex()
+    elif isinstance(eng, PostGIS):
+        wkb = r"\x" + wkb.hex()
+        wkb = f"'{wkb}'::bytea"
+    else:
+        raise
+    eng.assert_query_result(f"SELECT ST_SRID({fn_name}({wkb}, 4326))", 4326)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+def test_st_linefromwkb_alias(eng):
+    eng = eng.create_or_skip()
+
+    wkb = shapely.from_wkt("LINESTRING (0 0, 1 1)").wkb
+    if isinstance(eng, SedonaDB):
+        wkb = "0x" + wkb.hex()
+    elif isinstance(eng, PostGIS):
+        wkb = r"\x" + wkb.hex()
+        wkb = f"'{wkb}'::bytea"
+    else:
+        raise
+    eng.assert_query_result(f"SELECT ST_LineFromWKB({wkb})", "LINESTRING (0 0, 1 1)")
+
+
 # `ST_GeomFromWKBUnchecked` is not available in PostGIS
 @pytest.mark.parametrize("eng", [SedonaDB])
 @pytest.mark.parametrize(
