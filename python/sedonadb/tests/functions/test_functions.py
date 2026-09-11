@@ -1698,9 +1698,7 @@ def test_st_force_dim(eng, geom, expected_2d, expected_3d):
 @pytest.mark.parametrize("eng", [SedonaDB])
 def test_st_force3dz_alias(eng):
     eng = eng.create_or_skip()
-    eng.assert_query_result(
-        "SELECT ST_Force3DZ(ST_Point(1, 2), 3)", "POINT Z (1 2 3)"
-    )
+    eng.assert_query_result("SELECT ST_Force3DZ(ST_Point(1, 2), 3)", "POINT Z (1 2 3)")
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
@@ -2296,9 +2294,7 @@ def test_st_geomfromtext_with_srid(eng, wkt, srid, expected):
 @pytest.mark.parametrize("eng", [SedonaDB])
 def test_st_geometryfromtext_alias(eng):
     eng = eng.create_or_skip()
-    eng.assert_query_result(
-        "SELECT ST_GeometryFromText('POINT (1 2)')", "POINT (1 2)"
-    )
+    eng.assert_query_result("SELECT ST_GeometryFromText('POINT (1 2)')", "POINT (1 2)")
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
