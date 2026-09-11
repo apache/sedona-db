@@ -383,6 +383,16 @@ impl SedonaContext {
         // Always register default function set
         out.register_function_set(sedona_functions::register::default_function_set());
 
+        // Spark's array(...) constructor spelling, from DataFusion's Spark
+        // compatibility crate. DataFusion's core renamed array() to
+        // make_array() in apache/datafusion#3122, when sqlparser reserved
+        // the ARRAY keyword; the parser restriction is since gone and the
+        // Spark spelling now lives in datafusion-spark. Registering it lets
+        // Spark SQL that builds arrays run unchanged — DataFusion's own
+        // [...] literals and make_array() are unaffected.
+        out.ctx
+            .register_udf((*datafusion_spark::function::array::array()).clone());
+
         // Register geos scalar kernels if built with geos support
         #[cfg(feature = "geos")]
         out.register_scalar_kernels(sedona_geos::register::scalar_kernels().into_iter())?;
@@ -1019,6 +1029,24 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
+
+    #[tokio::test]
+    async fn spark_array_spelling() {
+        // Spark's array(...) resolves and agrees with DataFusion's own
+        // [...] literal and make_array() spellings.
+        let ctx = SedonaContext::new();
+        let batches = ctx
+            .sql("SELECT (array(1, 2) = [1, 2]) AND (array(1, 2) = make_array(1, 2)) AS eq")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        assert_batches_eq!(
+            ["+------+", "| eq   |", "+------+", "| true |", "+------+",],
+            &batches
+        );
+    }
 
     #[test]
     fn disables_physical_uncorrelated_scalar_subqueries() {

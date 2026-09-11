@@ -56,6 +56,16 @@ def test_options():
     assert "DataFrame object at" not in repr(sd.sql("SELECT 1 as one"))
 
 
+def test_spark_array_spelling():
+    """Spark's array(...) spelling builds the same list as DataFusion's
+    [...] literal and make_array() (registered from datafusion-spark)."""
+    sd = sedonadb.connect()
+    table = sd.sql(
+        "SELECT (array(1, 2) = [1, 2]) AND (array(1, 2) = make_array(1, 2)) AS eq"
+    ).to_arrow_table()
+    assert table.column("eq").to_pylist() == [True]
+
+
 def test_shared_context_and_dataframe_from_threads():
     sd = sedonadb.connect()
     df = sd.sql("SELECT * FROM (VALUES (1), (2), (3)) AS t(x)")

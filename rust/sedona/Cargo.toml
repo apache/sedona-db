@@ -68,6 +68,7 @@ datafusion-expr = { workspace = true, features = ["sql"] }
 datafusion-ffi = { workspace = true }
 datafusion-optimizer = { workspace = true }
 datafusion-session = { workspace = true }
+datafusion-spark = { workspace = true }
 dirs = { workspace = true }
 futures = { workspace = true }
 geo-traits = { workspace = true }
