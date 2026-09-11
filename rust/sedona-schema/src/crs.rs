@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 use datafusion_common::{
-    exec_err, plan_datafusion_err, plan_err, DataFusionError, HashMap, Result,
+    DataFusionError, HashMap, Result, exec_err, plan_datafusion_err, plan_err,
 };
 use lru::LruCache;
 use std::cell::RefCell;
@@ -765,7 +765,7 @@ impl<'a> WktParser<'a> {
             None => {
                 return Err(DataFusionError::Execution(
                     "unexpected end of WKT CRS string".into(),
-                ))
+                ));
             }
         }
         // A keyword or bare token runs until a structural character.
@@ -797,7 +797,7 @@ impl<'a> WktParser<'a> {
                         None => {
                             return Err(DataFusionError::Execution(
                                 "WKT CRS string has an unterminated bracket".into(),
-                            ))
+                            ));
                         }
                     }
                 }
@@ -1053,10 +1053,12 @@ mod test {
         assert!(projjson.crs_equals(&projjson));
 
         let projjson_without_identifier = "{}".parse::<ProjJSON>().unwrap();
-        assert!(projjson_without_identifier
-            .to_authority_code()
-            .unwrap()
-            .is_none());
+        assert!(
+            projjson_without_identifier
+                .to_authority_code()
+                .unwrap()
+                .is_none()
+        );
         assert!(!projjson.crs_equals(&projjson_without_identifier));
 
         let projjson = EPSG_6318_PROJJSON.parse::<ProjJSON>().unwrap();

@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use sedona_schema::crs::deserialize_crs;
 use std::hint::black_box;
 

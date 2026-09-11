@@ -24,7 +24,7 @@ use std::sync::LazyLock;
 /// Re-export for external crates that depended on this enum in this crate
 pub use sedona_geometry::types::Edges;
 
-use crate::crs::{deserialize_crs, deserialize_crs_from_obj, lnglat, Crs};
+use crate::crs::{Crs, deserialize_crs, deserialize_crs_from_obj, lnglat};
 use crate::extension_type::ExtensionType;
 use crate::raster::RasterSchema;
 
@@ -718,37 +718,45 @@ mod tests {
     fn geoarrow_deserialize_invalid() {
         let bad_json =
             ExtensionType::new("geoarrow.wkb", DataType::Binary, Some(r#"{"#.to_string()));
-        assert!(SedonaType::from_extension_type(bad_json)
-            .unwrap_err()
-            .message()
-            .contains("Error deserializing GeoArrow metadata"));
+        assert!(
+            SedonaType::from_extension_type(bad_json)
+                .unwrap_err()
+                .message()
+                .contains("Error deserializing GeoArrow metadata")
+        );
 
         let bad_type =
             ExtensionType::new("geoarrow.wkb", DataType::Binary, Some(r#"[]"#.to_string()));
-        assert!(SedonaType::from_extension_type(bad_type)
-            .unwrap_err()
-            .message()
-            .contains("Expected GeoArrow metadata as JSON object"));
+        assert!(
+            SedonaType::from_extension_type(bad_type)
+                .unwrap_err()
+                .message()
+                .contains("Expected GeoArrow metadata as JSON object")
+        );
 
         let bad_edges_type = ExtensionType::new(
             "geoarrow.wkb",
             DataType::Binary,
             Some(r#"{"edges": []}"#.to_string()),
         );
-        assert!(SedonaType::from_extension_type(bad_edges_type)
-            .unwrap_err()
-            .message()
-            .contains("Unsupported edges JSON type"));
+        assert!(
+            SedonaType::from_extension_type(bad_edges_type)
+                .unwrap_err()
+                .message()
+                .contains("Unsupported edges JSON type")
+        );
 
         let bad_edges_value = ExtensionType::new(
             "geoarrow.wkb",
             DataType::Binary,
             Some(r#"{"edges": "gazornenplat"}"#.to_string()),
         );
-        assert!(SedonaType::from_extension_type(bad_edges_value)
-            .unwrap_err()
-            .message()
-            .contains("Unsupported edges value"));
+        assert!(
+            SedonaType::from_extension_type(bad_edges_value)
+                .unwrap_err()
+                .message()
+                .contains("Unsupported edges value")
+        );
     }
 
     /// An extension name this crate has no built-in support for -- a
