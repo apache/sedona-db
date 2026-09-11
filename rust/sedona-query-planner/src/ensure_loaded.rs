@@ -293,7 +293,7 @@ mod tests {
 
     use arrow_schema::{DataType, Field, Schema};
     use datafusion_common::tree_node::TreeNodeRecursion;
-    use datafusion_expr::{col, ScalarUDF, Volatility};
+    use datafusion_expr::{ScalarUDF, Volatility, col};
     use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarUDF, SimpleSedonaScalarKernel};
     use sedona_schema::matchers::ArgMatcher;
 
@@ -365,10 +365,10 @@ mod tests {
     fn count_ensure_loaded(expr: &Expr) -> usize {
         let mut n = 0;
         expr.apply(|e| {
-            if let Expr::ScalarFunction(sf) = e {
-                if sf.func.name() == "rs_ensureloaded" {
-                    n += 1;
-                }
+            if let Expr::ScalarFunction(sf) = e
+                && sf.func.name() == "rs_ensureloaded"
+            {
+                n += 1;
             }
             Ok(TreeNodeRecursion::Continue)
         })

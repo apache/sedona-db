@@ -17,8 +17,8 @@
 use std::sync::Arc;
 
 use datafusion_common::{JoinSide, Result};
-use datafusion_physical_expr::projection::update_expr;
 use datafusion_physical_expr::PhysicalExpr;
+use datafusion_physical_expr::projection::update_expr;
 use datafusion_physical_plan::projection::ProjectionExpr;
 use sedona_common::sedona_internal_err;
 
@@ -486,7 +486,7 @@ impl SpatialPredicateTrait for KNNPredicate {
             JoinSide::Left => (projected_left_exprs, projected_right_exprs),
             JoinSide::Right => (projected_right_exprs, projected_left_exprs),
             JoinSide::None => {
-                return sedona_internal_err!("KNN join requires explicit probe_side designation")
+                return sedona_internal_err!("KNN join requires explicit probe_side designation");
             }
         };
 
@@ -620,9 +620,10 @@ mod tests {
         let projected_left_exprs = vec![proj_expr(proj_col("a", 0), "a0")];
         let projected_right_exprs = vec![proj_expr(proj_col("x", 0), "x0")];
 
-        assert!(on
-            .update_for_child_projections(&projected_left_exprs, &projected_right_exprs)?
-            .is_none());
+        assert!(
+            on.update_for_child_projections(&projected_left_exprs, &projected_right_exprs)?
+                .is_none()
+        );
         Ok(())
     }
 

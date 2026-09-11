@@ -20,7 +20,7 @@ use crate::ensure_loaded::EnsureLoadedOptimizerRule;
 use crate::logical_plan_node::SpatialJoinPlanNode;
 use crate::push_down_leaf_projections::PushDownLeafProjections;
 use crate::spatial_expr_utils::{
-    collect_spatial_predicate_names, find_knn_query_side, KNNJoinQuerySide,
+    KNNJoinQuerySide, collect_spatial_predicate_names, find_knn_query_side,
 };
 use crate::wrap_async_udf::WrapAsyncUdfRule;
 use datafusion::execution::session_state::SessionStateBuilder;
@@ -205,12 +205,12 @@ impl OptimizerRule for KnnJoinEarlyRewrite {
         }
 
         // Join(filter=ST_KNN(...))
-        if let LogicalPlan::Join(join) = &plan {
-            if let Some(filter) = join.filter.as_ref() {
-                let names = collect_spatial_predicate_names(filter);
-                if names.contains("st_knn") {
-                    return rewrite_join_to_spatial_join_plan_node(join);
-                }
+        if let LogicalPlan::Join(join) = &plan
+            && let Some(filter) = join.filter.as_ref()
+        {
+            let names = collect_spatial_predicate_names(filter);
+            if names.contains("st_knn") {
+                return rewrite_join_to_spatial_join_plan_node(join);
             }
         }
 
@@ -271,7 +271,8 @@ impl OptimizerRule for SpatialJoinLogicalRewrite {
             // KNN joins should have already been rewritten by KnnJoinEarlyRewrite, so we shouldn't
             // see them here.
             return sedona_internal_err!(
-                "Found KNN predicate in SpatialJoinLogicalRewrite, which should have been handled by KnnJoinEarlyRewrite");
+                "Found KNN predicate in SpatialJoinLogicalRewrite, which should have been handled by KnnJoinEarlyRewrite"
+            );
         }
 
         // Join with with equi-join condition should be planned as a regular HashJoin
@@ -396,14 +397,14 @@ impl OptimizerRule for MergeSpatialFilterIntoJoin {
         }
 
         let LogicalPlan::Join(Join {
-            ref left,
-            ref right,
-            ref on,
-            ref filter,
+            left,
+            right,
+            on,
+            filter,
             join_type,
-            ref join_constraint,
-            ref null_equality,
-            ref null_aware,
+            join_constraint,
+            null_equality,
+            null_aware,
             ..
         }) = input.as_ref()
         else {
@@ -591,7 +592,7 @@ mod test {
     use datafusion::{
         execution::SessionStateBuilder,
         functions::core::expr_fn::get_field,
-        prelude::{col, SessionContext},
+        prelude::{SessionContext, col},
     };
 
     use super::*;

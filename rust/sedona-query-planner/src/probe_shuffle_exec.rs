@@ -35,7 +35,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use datafusion_common::config::ConfigOptions;
-use datafusion_common::{internal_err, plan_err, Result, Statistics};
+use datafusion_common::{Result, Statistics, internal_err, plan_err};
 use datafusion_execution::{SendableRecordBatchStream, TaskContext};
 use datafusion_physical_expr::PhysicalExpr;
 use datafusion_physical_plan::execution_plan::CardinalityEffect;

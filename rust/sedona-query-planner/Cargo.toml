@@ -23,7 +23,7 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 description = "Query planner and common traits for spatial join operations in Apache SedonaDB"
-edition.workspace = true
+edition = "2024"
 rust-version.workspace = true
 
 [dependencies]
@@ -42,6 +42,6 @@ sedona-schema = { workspace = true }
 
 [dev-dependencies]
 arrow = { workspace = true }
-datafusion = { workspace = true, features = ["nested_expressions"] }
+datafusion = { workspace = true, features = ["nested_expressions", "sql"] }
 sedona-schema = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }

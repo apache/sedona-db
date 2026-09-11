@@ -24,11 +24,11 @@
 //! contains <https://github.com/apache/datafusion/pull/22620>.
 //! Removal is tracked by <https://github.com/apache/sedona-db/issues/1232>.
 
-use datafusion_common::{tree_node::Transformed, Result};
+use datafusion_common::{Result, tree_node::Transformed};
 use datafusion_expr::LogicalPlan;
 use datafusion_optimizer::{
-    extract_leaf_expressions::PushDownLeafProjections as DataFusionPushDownLeafProjections,
     ApplyOrder, OptimizerConfig, OptimizerRule,
+    extract_leaf_expressions::PushDownLeafProjections as DataFusionPushDownLeafProjections,
 };
 
 /// The post-#22620 leaf projection rule, backported for DataFusion 54.1.
