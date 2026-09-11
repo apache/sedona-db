@@ -140,11 +140,7 @@ impl GeoTransformEx for [f64] {
         // acos rather than atan2 of the same ratio so an axis-aligned grid
         // reports +0.0 and a mirrored one +pi, matching Sedona Spark exactly.
         let theta = (self.scale_x() / self.scale_x().hypot(self.skew_y())).acos();
-        if self.skew_y() > 0.0 {
-            -theta
-        } else {
-            theta
-        }
+        if self.skew_y() > 0.0 { -theta } else { theta }
     }
 
     #[inline]
@@ -239,7 +235,7 @@ pub fn geotransform_from_bbox_and_spatial_shape(
         other => {
             return Err(RasterError::Invalid(format!(
                 "registration must be \"pixel\" or \"node\"; got {other:?}"
-            )))
+            )));
         }
     };
 

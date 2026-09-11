@@ -16,8 +16,8 @@
 // under the License.
 
 use arrow_array::{
-    new_null_array, Array, ArrayRef, BinaryArray, BinaryViewArray, Float64Array, Int64Array,
-    ListArray, StringArray, StringViewArray, StructArray, UInt32Array,
+    Array, ArrayRef, BinaryArray, BinaryViewArray, Float64Array, Int64Array, ListArray,
+    StringArray, StringViewArray, StructArray, UInt32Array, new_null_array,
 };
 use arrow_buffer::NullBuffer;
 use arrow_schema::DataType;
@@ -31,7 +31,7 @@ use crate::error::RasterError;
 use crate::traits::{BandRef, NdBuffer, Override, RasterRef};
 use crate::view_entries::{ViewEntries, ViewEntry};
 use sedona_schema::raster::{
-    band_indices, band_view_indices, raster_indices, BandDataType, RasterSchema,
+    BandDataType, RasterSchema, band_indices, band_view_indices, raster_indices,
 };
 
 /// Arrow-backed implementation of BandRef for a single band within a raster.
@@ -472,7 +472,7 @@ pub fn with_column_overrides(
             return Err(RasterError::Invalid(format!(
                 "with_column_overrides: input nulls have {} rows, expected {num_rows} or 1",
                 nulls.len()
-            )))
+            )));
         }
         None => None,
     };
@@ -942,7 +942,7 @@ mod tests {
     use arrow_array::{ArrayRef, ListArray, StructArray, UInt32Array};
     use arrow_buffer::{Buffer, NullBuffer, OffsetBuffer, ScalarBuffer};
     use arrow_schema::{DataType, Field, Fields};
-    use sedona_schema::raster::{band_indices, raster_indices, BandDataType, RasterSchema};
+    use sedona_schema::raster::{BandDataType, RasterSchema, band_indices, raster_indices};
     use sedona_testing::rasters::generate_test_rasters;
     use std::sync::Arc;
 
@@ -1262,13 +1262,14 @@ mod tests {
         for i in 0..3 {
             let band = raster.band(i).unwrap();
             let expected_value = i as u8;
-            assert!(band
-                .nd_buffer()
-                .unwrap()
-                .as_contiguous()
-                .unwrap()
-                .iter()
-                .all(|&x| x == expected_value));
+            assert!(
+                band.nd_buffer()
+                    .unwrap()
+                    .as_contiguous()
+                    .unwrap()
+                    .iter()
+                    .all(|&x| x == expected_value)
+            );
         }
 
         // Test array
@@ -2040,8 +2041,8 @@ mod tests {
         // the data buffer so the NdBuffer.offset invariant holds — a view whose
         // offset runs past the buffer end must error even though it's empty.
         let array = build_explicit_view_raster(); // source_shape [8], 8 data bytes
-                                                  // start=100 with steps=0: validate skips the start bound for empty axes,
-                                                  // so this composes byte_offset=100 over the 8-byte buffer.
+        // start=100 with steps=0: validate skips the start bound for empty axes,
+        // so this composes byte_offset=100 over the 8-byte buffer.
         let escaping_view = make_band_view_list(vec![vec![(0, 100, 1, 0)]], None);
         let mutated = replace_band_column(&array, band_indices::VIEW, escaping_view);
         let rasters = RasterStructArray::try_new(&mutated).unwrap();

@@ -19,11 +19,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use arrow_array::{
+    ArrayRef, BinaryViewArray, ListArray, StructArray,
     builder::{
         ArrayBuilder, BinaryBuilder, BinaryViewBuilder, Int64Builder, StringBuilder,
         StringViewBuilder, UInt32Builder,
     },
-    ArrayRef, BinaryViewArray, ListArray, StructArray,
 };
 use arrow_buffer::{Buffer, NullBuffer, OffsetBuffer, ScalarBuffer};
 use arrow_schema::DataType;
@@ -364,12 +364,10 @@ impl BandArrayBuilder {
     pub fn finish_band(&mut self) -> Result<(), RasterError> {
         let current_count = self.data.len();
         if current_count != self.data_count_at_start + 1 {
-            return Err(RasterError::Invalid(
-                format!(
-                    "Expected exactly one band data value per band, but got {} appended since start_band()",
-                    current_count - self.data_count_at_start
-                ),
-            ));
+            return Err(RasterError::Invalid(format!(
+                "Expected exactly one band data value per band, but got {} appended since start_band()",
+                current_count - self.data_count_at_start
+            )));
         }
         Ok(())
     }
@@ -522,7 +520,7 @@ mod tests {
     use crate::builder::RasterBuilder;
     use crate::traits::{BandOverrides, RasterRef};
     use arrow_array::{Array, BinaryViewArray, StringArray, UInt32Array};
-    use sedona_schema::raster::{band_indices, BandDataType};
+    use sedona_schema::raster::{BandDataType, band_indices};
 
     /// The point of this whole refactor: a bare `BandArrayBuilder`, with no
     /// enclosing `RasterBuilder`/raster envelope at all, builds a real band

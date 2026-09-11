@@ -198,11 +198,13 @@ mod tests {
         };
         let result = to_raster_coordinate(&bad_raster, 100.0, 200.0);
         assert!(result.is_err());
-        assert!(result
-            .err()
-            .unwrap()
-            .to_string()
-            .contains("determinant is zero."));
+        assert!(
+            result
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("determinant is zero.")
+        );
     }
 
     fn rotation_raster(scale_x: f64, scale_y: f64, skew_x: f64, skew_y: f64) -> TestRaster {

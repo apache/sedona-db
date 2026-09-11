@@ -43,7 +43,7 @@
 //! directly — same as `sedona-geometry`, which has no internal variant.
 
 use arrow_schema::ArrowError;
-use datafusion_common::{exec_datafusion_err, DataFusionError};
+use datafusion_common::{DataFusionError, exec_datafusion_err};
 use thiserror::Error;
 
 /// Error type for the raster crates.

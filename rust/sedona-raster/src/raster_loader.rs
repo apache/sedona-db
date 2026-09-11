@@ -34,7 +34,7 @@ use arrow_schema::ArrowError;
 use datafusion_common::config::{
     ConfigEntry, ConfigExtension, ConfigField, ExtensionOptions, Visit,
 };
-use datafusion_common::{config_err, Result as DFResult};
+use datafusion_common::{Result as DFResult, config_err};
 use sedona_schema::raster::BandDataType;
 
 use crate::view_entries::ViewEntries;

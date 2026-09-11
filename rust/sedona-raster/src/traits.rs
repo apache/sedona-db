@@ -142,15 +142,15 @@ impl<'a> NdBuffer<'a> {
 /// This is the shared convention consumers use to recover the source path and
 /// band from a band's `outdb_uri()`.
 pub fn split_outdb_band_fragment(uri: &str) -> Result<(String, u32), RasterError> {
-    if let Some((prefix, fragment)) = uri.rsplit_once('#') {
-        if let Some(band_str) = fragment.strip_prefix("band=") {
-            return match band_str.parse::<u32>() {
-                Ok(band) if band >= 1 => Ok((prefix.to_string(), band)),
-                _ => Err(RasterError::Invalid(format!(
-                    "Invalid band index in outdb URI fragment '#band={band_str}': expected a positive integer in 1..=u32::MAX"
-                ))),
-            };
-        }
+    if let Some((prefix, fragment)) = uri.rsplit_once('#')
+        && let Some(band_str) = fragment.strip_prefix("band=")
+    {
+        return match band_str.parse::<u32>() {
+            Ok(band) if band >= 1 => Ok((prefix.to_string(), band)),
+            _ => Err(RasterError::Invalid(format!(
+                "Invalid band index in outdb URI fragment '#band={band_str}': expected a positive integer in 1..=u32::MAX"
+            ))),
+        };
     }
     Ok((uri.to_string(), 1))
 }
