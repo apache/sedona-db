@@ -1040,7 +1040,9 @@ mod tests {
         datatypes::SedonaType,
         schema::SedonaSchema,
     };
-    use sedona_testing::data::{test_geoparquet, test_raster};
+    use sedona_testing::data::test_geoparquet;
+    #[cfg(feature = "gdal")]
+    use sedona_testing::data::test_raster;
     use tempfile::tempdir;
 
     use super::*;
@@ -1528,6 +1530,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "gdal")]
     #[tokio::test]
     async fn geotiff_format() {
         let ctx = SedonaContext::new_local_interactive().await.unwrap();
