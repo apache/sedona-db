@@ -46,6 +46,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_asewkb::st_asewkb_udf,
         crate::st_astext::st_astext_udf,
         crate::st_azimuth::st_azimuth_udf,
+        crate::st_boundary::st_boundary_udf,
         crate::st_dimension::st_dimension_udf,
         crate::st_dump::st_dump_udf,
         crate::st_envelope::st_envelope_udf,

@@ -27,6 +27,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     benchmark::scalar(c, &f, "native", "st_astext", Point);
     benchmark::scalar(c, &f, "native", "st_astext", LineString(10));
 
+    benchmark::scalar(c, &f, "native", "st_boundary", Polygon(10));
+    benchmark::scalar(c, &f, "native", "st_boundary", Polygon(500));
+
     benchmark::scalar(c, &f, "native", "st_dimension", Point);
     benchmark::scalar(c, &f, "native", "st_dimension", LineString(10));
 
