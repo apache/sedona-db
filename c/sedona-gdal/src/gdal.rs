@@ -23,6 +23,7 @@
 //! at every call site.
 
 use crate::config;
+use crate::cpl::CslStringList;
 use crate::dataset::Dataset;
 use crate::driver::{Driver, DriverManager};
 use crate::errors::Result;
@@ -223,6 +224,17 @@ impl Gdal {
     /// slice — it skips the `Vec` copy.
     pub fn get_vsi_mem_file_buffer_owned(&self, file_name: &str) -> Result<vsi::VSIBuffer> {
         vsi::get_vsi_mem_file_buffer_owned(self.api, file_name)
+    }
+
+    /// Open a VSI directory for iteration.
+    /// See also [`vsi::open_dir`].
+    pub fn open_vsi_dir(
+        &self,
+        path: &str,
+        recurse_depth: i32,
+        options: Option<&CslStringList>,
+    ) -> Result<crate::vsi::VsiDir> {
+        crate::vsi::open_dir(self.api, path, recurse_depth, options)
     }
 
     // -- Raster operations ---------------------------------------------------
