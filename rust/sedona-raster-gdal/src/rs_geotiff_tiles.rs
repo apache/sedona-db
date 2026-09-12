@@ -37,7 +37,7 @@ use sedona_datasource::format::ExternalFileFormat;
 use sedona_datasource::spec::{ExternalFormatSpec, Object, OpenReaderArgs, SupportsRepartition};
 use sedona_gdal::spatial_ref::SpatialRef;
 use sedona_raster::builder::{RasterBuilder, StartBandArgs};
-use sedona_raster::view_entries::ViewEntry;
+use sedona_raster::view_entries::{ViewEntries, ViewEntry};
 
 use crate::gdal_common::{
     gdal_to_band_data_type, nodata_f64_to_bytes, normalize_outdb_source_path, open_gdal_dataset,
@@ -266,7 +266,7 @@ pub fn build_batch_for_file(
                         .map(|v| nodata_f64_to_bytes(v, &band_data_type));
 
                     let outdb_uri = format!("{normalized_path}#band={band_idx}");
-                    let view = [
+                    let view = ViewEntries::new(vec![
                         ViewEntry {
                             source_axis: 0,
                             start: py as i64,
@@ -279,7 +279,7 @@ pub fn build_batch_for_file(
                             step: 1,
                             steps: tw as i64,
                         },
-                    ];
+                    ]);
 
                     rast_builder
                         .start_band(StartBandArgs {
