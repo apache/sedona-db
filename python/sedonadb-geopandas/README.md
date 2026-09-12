@@ -34,7 +34,10 @@ big = gdf[gdf["pop"] > 1_000_000]          # boolean-mask filter
 gdf["surveyed"] = True                     # broadcast a scalar column
 gdf["centers"] = gdf.geometry.centroid     # assign a computed column
 web = gdf.to_crs("EPSG:3857")              # reproject (CRS tracked through)
-result = web.to_geopandas()                # back to a real GeoDataFrame
+
+zones = gdf.dissolve(by="region")          # group and union geometry
+
+result = zones.to_geopandas()               # back to a real GeoDataFrame
 ```
 
 ## Intentional differences from GeoPandas
@@ -45,7 +48,9 @@ deliberately *not* identical to GeoPandas:
 - **Lazy, not eager**: operations build a query; data materializes on
   `to_geopandas()` / `to_pandas()` / display.
 - **No row index / alignment**: there is no pandas `Index`; joins and filters
-  are positional/relational, not index-aligned.
+  are positional/relational, not index-aligned. Consequently `dissolve()`
+  leaves the group keys as ordinary columns instead of moving them into the
+  index.
 - **Immutable under the hood**: "in-place" style operations return a new frame.
   A `Series` read from a frame stays usable across assignments that only *add*
   columns (so `g = gdf.geometry` can supply `g.area`, `g.length`, ... in turn),
@@ -61,6 +66,18 @@ deliberately *not* identical to GeoPandas:
   against the destination and silently write the wrong values. Assign a `Series`
   read from the same frame, or a scalar (a geometry included). For anything the
   wrapper does not cover, drop to the SedonaDB `DataFrame` API directly.
+
+`dissolve()` aggregates non-geometry columns with `"first"`, which is an
+unordered aggregate: it returns *some* value from the group rather than the one
+from the first row, and unlike GeoPandas it does not skip missing values, so a
+group containing a null or NaN may aggregate to that. Dissolving an empty frame
+without a group key returns one row — empty geometry collection, null attribute
+values — rather than zero rows, because that is what a grouping-free SQL
+aggregate produces, and a group mixing 2D and 3D geometries raises rather than
+being promoted to 3D. Grouping is observed-only: unused categories of a
+categorical key do not produce empty groups the way GeoPandas' default
+`observed=False` does, because the category domain does not survive a relational
+aggregation.
 
 See the SedonaDB "Migrating from GeoPandas" guide for the relational model that
 underlies each method.
