@@ -190,7 +190,9 @@ def test_columns(con):
 def test_select_struct_field_after_unnest_st_dump(con):
     # Regression for https://github.com/apache/sedona-db/issues/1232.
     multi = con.sql("SELECT ST_GeomFromText('MULTIPOINT (0 0, 1 1)') AS geometry")
-    dumped = multi.select(multi["geometry"].geo.dump().alias("dump")).unnest("dump")
+    dumped = multi.select(multi["geometry"].funcs.st_dump().alias("dump")).unnest(
+        "dump"
+    )
     result = dumped.select(dumped["dump"]["geom"].alias("geometry"))
 
     assert result.to_arrow_table().num_rows == 2
