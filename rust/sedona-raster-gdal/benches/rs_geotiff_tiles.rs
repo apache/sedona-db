@@ -19,7 +19,7 @@
 
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use sedona_gdal::driver::DriverManager;
 use sedona_gdal::global::with_global_gdal_api;
 use sedona_gdal::raster::types::Buffer;

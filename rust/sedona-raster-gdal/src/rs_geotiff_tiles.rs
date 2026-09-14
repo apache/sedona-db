@@ -22,8 +22,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use arrow_array::{
-    builder::StringBuilder, builder::UInt32Builder, ArrayRef, RecordBatch, RecordBatchIterator,
-    RecordBatchReader,
+    ArrayRef, RecordBatch, RecordBatchIterator, RecordBatchReader, builder::StringBuilder,
+    builder::UInt32Builder,
 };
 use arrow_schema::{DataType, Field, Schema, SchemaRef};
 use async_trait::async_trait;
@@ -31,7 +31,7 @@ use datafusion::catalog::{TableFunctionImpl, TableProvider};
 use datafusion::datasource::listing::{
     ListingOptions, ListingTable, ListingTableConfig, ListingTableUrl,
 };
-use datafusion_common::{exec_datafusion_err, plan_err, Result, ScalarValue, Statistics};
+use datafusion_common::{Result, ScalarValue, Statistics, exec_datafusion_err, plan_err};
 use datafusion_expr::Expr;
 use sedona_datasource::format::ExternalFileFormat;
 use sedona_datasource::spec::{ExternalFormatSpec, Object, OpenReaderArgs, SupportsRepartition};
@@ -351,7 +351,9 @@ impl TableFunctionImpl for RsGeoTiffTilesFunction {
             Expr::Literal(ScalarValue::Utf8View(Some(s)), _) => s.to_string(),
             Expr::Literal(ScalarValue::LargeUtf8(Some(s)), _) => s.clone(),
             other => {
-                return plan_err!("rs_geotiff_tiles() expected literal string path but got {other}")
+                return plan_err!(
+                    "rs_geotiff_tiles() expected literal string path but got {other}"
+                );
             }
         };
 
@@ -361,7 +363,7 @@ impl TableFunctionImpl for RsGeoTiffTilesFunction {
                 other => {
                     return plan_err!(
                         "rs_geotiff_tiles() expected literal boolean recursive but got {other}"
-                    )
+                    );
                 }
             }
         } else {
