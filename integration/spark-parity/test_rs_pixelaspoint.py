@@ -31,25 +31,14 @@ both the geometry and its CRS.
 
 import pytest
 
-from sedonadb.raster_testing import write_random_geotiff
 from sedonadb.testing import SedonaDB, compare
 from sedonadb.testing_spark import SedonaSpark
 
 
 def _engines(name, tmp_path, crs=None):
     sedona, spark = SedonaDB(), SedonaSpark()
-    path = tmp_path / f"{name}.tif"
-    write_random_geotiff(
-        path,
-        "uint8",
-        bands=2,
-        height=6,
-        width=7,
-        bbox=(100.0, 482.0, 114.0, 500.0),
-        crs=crs,
-    )
     for eng in (sedona, spark):
-        eng.create_raster_view(name, path)
+        eng.create_random_raster_view(name, tmp_path / f"{name}.tif", crs=crs)
     return sedona, spark
 
 

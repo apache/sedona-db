@@ -205,6 +205,7 @@ class DBEngine:
         gdal_transform=None,
         nodata=None,
         plants=None,
+        crs=None,
     ) -> "DBEngine":
         """Write a random GeoTIFF at `path` and register it as view `name`
         (see `create_raster_view`).
@@ -214,10 +215,12 @@ class DBEngine:
         cannot drift from the expectation. The grid defaults to
         `RANDOM_GRID_BBOX` on the 7x6 grid (2x3 pixels; override with `bbox`
         or, for grids a bbox cannot express, a raw GDAL `gdal_transform` —
-        at most one). It is small and north-up/CRS-less so nothing reprojects
-        and results stay bit-comparable across engines, and the pixels are
+        at most one). It is small and north-up so nothing reprojects and
+        results stay bit-comparable across engines, and the pixels are
         seeded, so registering the same `path` on several engines rewrites
-        identical bytes and every engine sees the same raster.
+        identical bytes and every engine sees the same raster. `crs` defaults
+        to none (nothing reprojects); pass one when a test needs the output to
+        carry a CRS.
         """
         from sedonadb.raster_testing import DecodedRaster
 
@@ -230,7 +233,7 @@ class DBEngine:
             gdal_transform=gdal_transform,
             nodata=nodata,
             plants=plants,
-        ).write_geotiff(path)
+        ).write_geotiff(path, crs=crs)
         return self.create_raster_view(name, path)
 
     def decode_raster_result(self, sql):

@@ -26,7 +26,6 @@ the crs=EPSG:3857 case exercises both geometry and CRS.
 
 import pytest
 
-from sedonadb.raster_testing import write_random_geotiff
 from sedonadb.testing import SedonaDB, compare
 from sedonadb.testing_spark import SedonaSpark
 
@@ -64,17 +63,9 @@ def test_rs_pixelaspolygon(col, row, polygon, crs, tmp_path):
     """A 1-based pixel coordinate names its footprint on both engines,
     extrapolation included; the raster's CRS (when set) rides along."""
     sedona, spark = SedonaDB(), SedonaSpark()
-    path = tmp_path / "papoly_src.tif"
-    write_random_geotiff(
-        path,
-        "uint8",
-        bands=2,
-        height=6,
-        width=7,
-        bbox=(100.0, 482.0, 114.0, 500.0),
-        crs=crs,
-    )
     for eng in (sedona, spark):
-        eng.create_raster_view("papoly_src", path)
+        eng.create_random_raster_view(
+            "papoly_src", tmp_path / "papoly_src.tif", crs=crs
+        )
     sql = f"SELECT RS_PixelAsPolygon(rast, {col}, {row}) FROM papoly_src"
     compare(sql, sedona, spark, expected=polygon)

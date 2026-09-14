@@ -29,7 +29,6 @@ engines emit an identical ring.
 
 import pytest
 
-from sedonadb.raster_testing import write_random_geotiff
 from sedonadb.testing import SedonaDB, compare
 from sedonadb.testing_spark import SedonaSpark
 
@@ -46,17 +45,7 @@ from sedonadb.testing_spark import SedonaSpark
 )
 def test_rs_envelope(crs, tmp_path):
     """The footprint rectangle reads identically from both engines."""
-    path = tmp_path / "env_src.tif"
-    write_random_geotiff(
-        path,
-        "uint8",
-        bands=1,
-        height=6,
-        width=7,
-        bbox=(100.0, 482.0, 114.0, 500.0),
-        crs=crs,
-    )
     sedona, spark = SedonaDB(), SedonaSpark()
     for eng in (sedona, spark):
-        eng.create_raster_view("env_src", path)
+        eng.create_random_raster_view("env_src", tmp_path / "env_src.tif", crs=crs)
     compare("SELECT RS_Envelope(rast) FROM env_src", sedona, spark)
