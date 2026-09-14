@@ -268,3 +268,54 @@ def test_table_parquet(eng):
             eng.assert_query_result(
                 "SELECT * FROM test_df ORDER BY idx", df, check_crs=check_crs
             )
+
+
+def _ewkb_point(x, y, srid):
+    """A little-endian EWKB point carrying `srid` (0 for no SRID)."""
+    import struct
+
+    geometry_type = 0x00000001 | (0x20000000 if srid else 0)
+    header = struct.pack("<BI", 1, geometry_type)
+    srid_part = struct.pack("<I", srid) if srid else b""
+    return header + srid_part + struct.pack("<dd", x, y)
+
+
+def test_geometry_crs_per_row_is_representation_agnostic():
+    """The CRS comparator reads a per-row CRS from any of the three shapes an
+    engine uses — a per-geometry SRID in the WKB bytes (Sedona Spark), an
+    item-level ``struct<item, crs>`` (SedonaDB raster geometry), or the
+    geoarrow column metadata (SedonaDB plain geometry) — so a row-level and a
+    column-level SRID land on the same answer."""
+    from sedonadb.testing import _geometry_crs_per_row
+
+    def epsg(col):
+        return [c.to_epsg() if c else None for c in _geometry_crs_per_row(col)]
+
+    # 1. Per-geometry SRID in the WKB bytes, differing per row (+ a bare row).
+    ewkb = ga.wkb().wrap_array(
+        pa.array(
+            [
+                _ewkb_point(1.0, 2.0, 4326),
+                _ewkb_point(3.0, 4.0, 3857),
+                _ewkb_point(5.0, 6.0, 0),
+            ],
+            pa.binary(),
+        )
+    )
+    assert epsg(ewkb) == [4326, 3857, None]
+
+    # 2. Column-level geoarrow metadata, broadcast to every row.
+    column = ga.with_crs(
+        ga.as_wkb(["POINT (0 1)", "POINT (2 3)"]), pyproj.CRS("EPSG:3857").to_json()
+    )
+    assert epsg(column) == [3857, 3857]
+
+    # 3. SedonaDB's item-level struct<item, crs>, per row.
+    item = ga.as_wkb(["POINT (0 1)", "POINT (2 3)"])
+    struct = pa.StructArray.from_arrays(
+        [item, pa.array(["EPSG:4326", "0"])], names=["item", "crs"]
+    )
+    assert epsg(struct) == [4326, None]
+
+    # A non-geometry column is not CRS-bearing.
+    assert _geometry_crs_per_row(pa.chunked_array([pa.array([1, 2])])) is None

@@ -20,9 +20,9 @@ For a north-up grid the hull is the footprint rectangle, and the engines
 emit an identical ring — clockwise from the upper-left corner — so the
 anchor is the exact WKT (contrast RS_Envelope, where only the ring
 order differs). Both engines carry the hull's CRS (SedonaDB as an
-item-level CRS, Sedona Spark as a per-geometry SRID that our transport
-surfaces at column level); `compare` normalizes and checks them, so the
-crs=EPSG:3857 case verifies both the geometry and its CRS.
+item-level CRS, Sedona Spark as a per-geometry SRID); `compare` reads
+either per row and checks they agree, so the crs=EPSG:3857 case verifies
+both the geometry and its CRS.
 """
 
 import pytest
