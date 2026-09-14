@@ -1197,7 +1197,12 @@ def _normalize_crs(raw):
 
 
 def _ewkb_srid(blob):
-    """The SRID embedded in an EWKB blob, or None.
+    """The SRID embedded in a single EWKB blob, or None.
+
+    The scalar, per-row dual of `_unique_srid_from_ewkb` (which vectorizes the
+    same EWKB format over a column and collapses to one SRID, raising on a
+    mixed column). The per-row form is what keeps `_geometry_crs_per_row`
+    agnostic to whether an engine attaches CRS per row or per column.
 
     EWKB tags the geometry-type word with 0x20000000 when an SRID follows it;
     the word and the SRID share the leading byte's endianness. Sedona Spark
