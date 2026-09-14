@@ -145,6 +145,13 @@ impl SedonaScalarKernel for STGeomFromWKB {
             let executor = WkbExecutor::new(&temp_args, args);
             if let Some(expected) = self.expected_geom_type {
                 let mut builder = BinaryViewBuilder::with_capacity(executor.num_iterations());
+                if matches!(arg_types[0], SedonaType::Arrow(DataType::Null)) {
+                    for _ in 0..executor.num_iterations() {
+                        builder.append_null();
+                    }
+                    return executor.finish(Arc::new(builder.finish()));
+                }
+
                 executor.execute_wkb_void(|maybe_item| {
                     match maybe_item {
                         Some(item)
@@ -274,6 +281,22 @@ mod tests {
         assert_scalar_equal(
             &tester.invoke_scalar(ScalarValue::Null).unwrap(),
             &create_scalar(None, &WKB_VIEW_GEOMETRY),
+        );
+    }
+
+    #[rstest]
+    #[case(st_pointfromwkb_udf())]
+    #[case(st_linestringfromwkb_udf())]
+    fn typed_wkb_null_column(#[case] udf: SedonaScalarUDF) {
+        let tester = ScalarUdfTester::new(udf.into(), vec![SedonaType::Arrow(DataType::Null)]);
+        let result = tester
+            .invoke_array(Arc::new(arrow_array::NullArray::new(3)))
+            .unwrap();
+
+        assert_eq!(tester.return_type().unwrap(), WKB_VIEW_GEOMETRY);
+        assert_array_equal(
+            &result,
+            &create_array(&[None::<&str>, None, None], &WKB_VIEW_GEOMETRY),
         );
     }
 
