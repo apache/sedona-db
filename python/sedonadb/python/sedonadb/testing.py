@@ -293,12 +293,14 @@ class DBEngine:
         Geometry columns are rendered as WKT strings — including SedonaDB's
         item-level-CRS geometry (``struct<item: geoarrow.wkb, crs>``, returned
         by RS_Envelope and friends whose output CRS can vary per row), which is
-        unwrapped to its geometry child first; the per-item crs field has no
-        counterpart in other engines' results and is asserted through RS_CRS
-        coverage instead. List columns (e.g. the `List<Double>` returned by
-        `RS_Values`) can't be cast to string, so they pass through as Python
-        lists and are compared by value — assert them with an expected cell
-        that is itself a list, e.g. ``[([1.0, None],)]``.
+        unwrapped to its geometry child first. This representation carries the
+        geometry but not its CRS; the CRS is a separate parity dimension that
+        `compare` checks with a normalizing comparator (see
+        `_assert_geometry_crs_equal`), so it is verified rather than dropped.
+        List columns (e.g. the `List<Double>` returned by `RS_Values`) can't be
+        cast to string, so they pass through as Python lists and are compared
+        by value — assert them with an expected cell that is itself a list,
+        e.g. ``[([1.0, None],)]``.
         """
         tab = self.result_to_table(result)
         columns = []
@@ -1061,10 +1063,19 @@ def compare(sql, *engines, expected=None):
         if expected is not None:
             subject.assert_result(result, expected)
         for reference in references:
-            reference_tuples = reference.result_to_tuples(
-                reference.execute_and_collect(sql)
+            reference_result = reference.execute_and_collect(sql)
+            subject.assert_result(result, reference.result_to_tuples(reference_result))
+            # Geometry parity is split into two independent dimensions: the
+            # geometry itself (WKT, above) and its CRS (below). Keeping them
+            # separate lets WKT anchors stay plain WKT strings while the CRS
+            # is still verified rather than silently dropped. `result_to_table`
+            # takes a lazy result, so re-collect for each engine — the fixtures
+            # are tiny and deterministic.
+            _assert_geometry_crs_equal(
+                subject.result_to_table(subject.execute_and_collect(sql)),
+                reference.result_to_table(reference.execute_and_collect(sql)),
+                context=sql,
             )
-            subject.assert_result(result, reference_tuples)
 
 
 def geom_or_null(arg, srid=None):
@@ -1153,6 +1164,110 @@ def _crs_equal(actual, expected):
         return True
     else:
         return pyproj.CRS(actual) == pyproj.CRS(expected)
+
+
+def _normalize_crs(raw):
+    """A raw CRS (from geoarrow metadata or SedonaDB's item crs field) as a
+    `pyproj.CRS`, or None when the value means "no CRS".
+
+    Engines disagree on serialization — SedonaDB writes a short authority
+    code (``"EPSG:3857"``) or PROJJSON, Sedona Spark writes PROJJSON, and an
+    absent CRS shows up as ``None``, ``""``, ``"0"`` (SedonaDB's SRID-0
+    sentinel), or ``{}`` — so parse every present form through pyproj and let
+    it decide semantic equality across those spellings.
+    """
+    import json
+
+    import pyproj
+
+    if raw is None:
+        return None
+    if isinstance(raw, (bytes, bytearray)):
+        raw = raw.decode()
+    if isinstance(raw, dict):
+        return None if not raw else pyproj.CRS.from_user_input(json.dumps(raw))
+    if isinstance(raw, int):
+        return None if raw == 0 else pyproj.CRS.from_epsg(raw)
+    if isinstance(raw, str):
+        text = raw.strip()
+        if text in ("", "0", "{}"):
+            return None
+        return pyproj.CRS.from_user_input(text)
+    return pyproj.CRS.from_user_input(raw)
+
+
+def _column_geoarrow_crs(col_type):
+    """The raw CRS carried in a geoarrow column's extension metadata, or None."""
+    import json
+
+    try:
+        meta = json.loads(col_type.__arrow_ext_serialize__() or b"{}")
+    except Exception:
+        return None
+    return meta.get("crs")
+
+
+def _geometry_crs_per_row(col):
+    """Per-row normalized CRS for a geometry column, or None if `col` is not
+    geometry.
+
+    Handles both shapes a geometry column takes here: a plain geoarrow column
+    whose CRS lives in the column's extension metadata (broadcast to every
+    row), and SedonaDB's item-level ``struct<item: geoarrow.wkb, crs>`` whose
+    CRS varies per row. A null geometry carries no CRS, so its cell is None.
+    """
+    if pa.types.is_struct(col.type):
+        geometry = _unwrap_item_crs_geometry(col)
+        if geometry is None:
+            return None
+        import pyarrow.compute as pc
+
+        per_row = pc.struct_field(col, "crs").to_pylist()
+        geoms = geometry.to_pylist()
+        return [
+            None if g is None else _normalize_crs(c) for g, c in zip(geoms, per_row)
+        ]
+    if _type_is_geoarrow(col.type):
+        column_crs = _normalize_crs(_column_geoarrow_crs(col.type))
+        return [None if g is None else column_crs for g in col.to_pylist()]
+    return None
+
+
+def _assert_geometry_crs_equal(got, expected, context=None):
+    """Assert two result tables carry the same CRS on every geometry column.
+
+    The companion to the WKT comparison in `compare`: geometry values travel
+    as CRS-less WKT there, so this is where an output's CRS is actually
+    verified. Columns are matched by position; a column that is geometry in
+    one table and not the other counts as a CRS of None on the non-geometry
+    side.
+    """
+    where = f" for `{context}`" if context else ""
+    for i in range(got.num_columns):
+        got_crs = _geometry_crs_per_row(got.column(i))
+        expected_crs = (
+            _geometry_crs_per_row(expected.column(i))
+            if i < expected.num_columns
+            else None
+        )
+        if got_crs is None and expected_crs is None:
+            continue
+        got_crs = got_crs if got_crs is not None else [None] * got.num_rows
+        expected_crs = (
+            expected_crs if expected_crs is not None else [None] * expected.num_rows
+        )
+        if len(got_crs) != len(expected_crs):
+            raise AssertionError(
+                f"Row count mismatch on geometry column {i}{where}: "
+                f"got {len(got_crs)}, expected {len(expected_crs)}"
+            )
+        for row, (a, b) in enumerate(zip(got_crs, expected_crs)):
+            if (a is None) != (b is None) or (a is not None and a != b):
+                raise AssertionError(
+                    f"CRS mismatch on geometry column {i}, row {row}{where}:\n"
+                    f"  got:      {a}\n"
+                    f"  expected: {b}"
+                )
 
 
 def _paths(paths):

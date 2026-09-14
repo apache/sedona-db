@@ -22,21 +22,40 @@ origin corner from both, unlike RS_WorldToRasterCoord where SedonaDB is
 WKT. Out of the grid the engines part ways: SedonaDB extrapolates along
 the geotransform where Sedona Spark raises, even though Sedona Spark's
 own RS_PixelAsCentroid and RS_PixelAsPolygon extrapolate.
+
+On a raster with a CRS the output point carries it (as SedonaDB's
+item-level CRS and Sedona Spark's column CRS); `compare` checks that the
+two agree, so the crs=EPSG:3857 case verifies both the geometry and its
+CRS.
 """
 
 import pytest
 
+from sedonadb.raster_testing import write_random_geotiff
 from sedonadb.testing import SedonaDB, compare
 from sedonadb.testing_spark import SedonaSpark
 
 
-def _engines(name, tmp_path):
+def _engines(name, tmp_path, crs=None):
     sedona, spark = SedonaDB(), SedonaSpark()
+    path = tmp_path / f"{name}.tif"
+    write_random_geotiff(
+        path,
+        "uint8",
+        bands=2,
+        height=6,
+        width=7,
+        bbox=(100.0, 482.0, 114.0, 500.0),
+        crs=crs,
+    )
     for eng in (sedona, spark):
-        eng.create_random_raster_view(name, tmp_path / f"{name}.tif")
+        eng.create_raster_view(name, path)
     return sedona, spark
 
 
+@pytest.mark.parametrize(
+    "crs", [pytest.param(None, id="crsless"), pytest.param("EPSG:3857", id="epsg3857")]
+)
 @pytest.mark.parametrize(
     "col,row,point",
     [
@@ -44,10 +63,10 @@ def _engines(name, tmp_path):
         pytest.param(2, 3, "POINT (102 494)", id="interior"),
     ],
 )
-def test_rs_pixelaspoint(col, row, point, tmp_path):
+def test_rs_pixelaspoint(col, row, point, crs, tmp_path):
     """A 1-based pixel coordinate names its upper-left corner on both
-    engines."""
-    sedona, spark = _engines("pap_src", tmp_path)
+    engines; the raster's CRS (when set) rides along on the point."""
+    sedona, spark = _engines("pap_src", tmp_path, crs=crs)
     sql = f"SELECT RS_PixelAsPoint(rast, {col}, {row}) FROM pap_src"
     compare(sql, sedona, spark, expected=point)
 

@@ -19,15 +19,21 @@
 Both engines read the pixel coordinate 1-based, emit an identical ring
 (clockwise from the pixel's upper-left corner), and — unlike
 RS_PixelAsPoint — both extrapolate out-of-grid coordinates along the
-geotransform, so every case anchors the exact WKT.
+geotransform, so every case anchors the exact WKT. On a raster with a
+CRS the footprint carries it, and `compare` verifies that CRS agrees, so
+the crs=EPSG:3857 case exercises both geometry and CRS.
 """
 
 import pytest
 
+from sedonadb.raster_testing import write_random_geotiff
 from sedonadb.testing import SedonaDB, compare
 from sedonadb.testing_spark import SedonaSpark
 
 
+@pytest.mark.parametrize(
+    "crs", [pytest.param(None, id="crsless"), pytest.param("EPSG:3857", id="epsg3857")]
+)
 @pytest.mark.parametrize(
     "col,row,polygon",
     [
@@ -54,11 +60,21 @@ from sedonadb.testing_spark import SedonaSpark
         ),
     ],
 )
-def test_rs_pixelaspolygon(col, row, polygon, tmp_path):
+def test_rs_pixelaspolygon(col, row, polygon, crs, tmp_path):
     """A 1-based pixel coordinate names its footprint on both engines,
-    extrapolation included."""
+    extrapolation included; the raster's CRS (when set) rides along."""
     sedona, spark = SedonaDB(), SedonaSpark()
+    path = tmp_path / "papoly_src.tif"
+    write_random_geotiff(
+        path,
+        "uint8",
+        bands=2,
+        height=6,
+        width=7,
+        bbox=(100.0, 482.0, 114.0, 500.0),
+        crs=crs,
+    )
     for eng in (sedona, spark):
-        eng.create_random_raster_view("papoly_src", tmp_path / "papoly_src.tif")
+        eng.create_raster_view("papoly_src", path)
     sql = f"SELECT RS_PixelAsPolygon(rast, {col}, {row}) FROM papoly_src"
     compare(sql, sedona, spark, expected=polygon)

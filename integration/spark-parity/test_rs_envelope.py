@@ -16,13 +16,14 @@
 # under the License.
 """SedonaDB vs Sedona Spark parity for RS_Envelope.
 
-SedonaDB returns the envelope with an item-level CRS (the harness
-compares the geometry and leaves the crs field to the RS_CRS coverage).
-Both engines produce the same rectangle for the standard north-up grid
-but disagree on the ring: SedonaDB starts at the lower-left corner and
-winds counter-clockwise; Sedona Spark winds clockwise — geometrically
-equal, unequal as WKT, so every case is an xfail. Contrast
-RS_ConvexHull, where the engines emit an identical ring.
+SedonaDB carries the envelope's CRS as an item-level CRS and Sedona
+Spark as a column CRS; `compare` normalizes and checks them, but the
+geometry itself diverges. Both engines produce the same rectangle for
+the standard north-up grid yet disagree on the ring: SedonaDB starts at
+the lower-left corner and winds counter-clockwise; Sedona Spark winds
+clockwise — geometrically equal, unequal as WKT, so every case is an
+xfail on the ring (the CRS agrees). Contrast RS_ConvexHull, where the
+engines emit an identical ring.
 """
 
 import pytest
