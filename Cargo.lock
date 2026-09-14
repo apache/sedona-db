@@ -1038,6 +1038,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "bindgen"
+version = "0.73.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "787ef8ef523575546b106a58213d6e6b06198a05c2f757258c68a74273670cfa"
+dependencies = [
+ "bitflags",
+ "cexpr",
+ "clang-sys",
+ "log",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "regex",
+ "rustc-hash",
+ "shlex 2.0.1",
+ "syn 3.0.5",
+]
+
+[[package]]
 name = "bitflags"
 version = "2.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2900,7 +2919,7 @@ version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cceef1cc08a1f031c5717cb645bb361a3114470cc142cc96bc5e62b79695632e"
 dependencies = [
- "bindgen",
+ "bindgen 0.72.1",
  "pkg-config",
  "semver",
 ]
@@ -5492,7 +5511,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72807656f15001e0fb2c1cf5e24c4726e7a056388042e85dd70ef2b0b66e6e44"
 dependencies = [
  "cc",
- "savvy-ffi 0.11.0",
+ "savvy-ffi",
  "savvy-macro",
 ]
 
@@ -5505,15 +5524,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.5",
-]
-
-[[package]]
-name = "savvy-ffi"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62dfb707ed0e1e1d0c8a65a56cbecd5b5eb04bd53fc4ae8d5e29035bef945265"
-dependencies = [
- "cc",
 ]
 
 [[package]]
@@ -5990,7 +6000,7 @@ version = "0.5.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
- "bindgen",
+ "bindgen 0.73.2",
  "cmake",
  "geo",
  "geo-types",
@@ -6455,7 +6465,7 @@ dependencies = [
  "datafusion-expr",
  "datafusion-ffi",
  "savvy",
- "savvy-ffi 0.10.0",
+ "savvy-ffi",
  "sedona",
  "sedona-adbc",
  "sedona-expr",

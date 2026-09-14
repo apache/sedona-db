@@ -32,7 +32,7 @@ default = []
 gpu = []
 
 [build-dependencies]
-bindgen = "0.72.1"
+bindgen = "0.73.2"
 cmake = "0.1"
 which = "8.0"
 
