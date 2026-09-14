@@ -216,9 +216,11 @@ mod tests {
 
         let linestring_from_wkb: ScalarUDF = st_linestringfromwkb_udf().into();
         assert_eq!(linestring_from_wkb.name(), "st_linestringfromwkb");
-        assert!(linestring_from_wkb
-            .aliases()
-            .contains(&"st_linefromwkb".to_string()));
+        assert!(
+            linestring_from_wkb
+                .aliases()
+                .contains(&"st_linefromwkb".to_string())
+        );
 
         let point_from_wkb: ScalarUDF = st_pointfromwkb_udf().into();
         assert_eq!(point_from_wkb.name(), "st_pointfromwkb");
