@@ -187,6 +187,10 @@ def to_str(v):
             return f"`{v['c'][1]}`"
         elif v["t"] == "Space":
             return " "
+        elif v["t"] == "SoftBreak":
+            return " "
+        elif v["t"] == "LineBreak":
+            return "\n"
         elif v["t"] == "Para":
             return "".join(to_str(item) for item in v["c"])
         elif v["t"] == "RawInline":

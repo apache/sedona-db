@@ -44,10 +44,10 @@ GeoTIFF files can also be queried directly by file path (e.g., `SELECT * FROM 'p
 
 ```sql
 SELECT path, x, y
-FROM rs_geotiff_tiles('https://download.osgeo.org/geotiff/samples/gdal_eg/cea.tif');
+FROM rs_geotiff_tiles('../../../submodules/sedona-testing/data/raster/test4.tiff');
 ```
 
 ```sql
 SELECT RS_MetaData(rast)
-FROM rs_geotiff_tiles('https://download.osgeo.org/geotiff/samples/gdal_eg/cea.tif');
+FROM rs_geotiff_tiles('../../../submodules/sedona-testing/data/raster/test4.tiff');
 ```
