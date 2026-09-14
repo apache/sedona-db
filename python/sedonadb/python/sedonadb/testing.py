@@ -1170,44 +1170,30 @@ def _crs_equal(actual, expected):
 
 
 def _normalize_crs(raw):
-    """A raw CRS (from geoarrow metadata or SedonaDB's item crs field) as a
-    `pyproj.CRS`, or None when the value means "no CRS".
+    """A raw CRS as a `pyproj.CRS`, or None when the value means "no CRS".
 
-    Engines disagree on serialization — SedonaDB writes a short authority
-    code (``"EPSG:3857"``) or PROJJSON, Sedona Spark writes PROJJSON, and an
-    absent CRS shows up as ``None``, ``""``, ``"0"`` (SedonaDB's SRID-0
-    sentinel), or ``{}`` — so parse every present form through pyproj and let
-    it decide semantic equality across those spellings.
+    The per-row CRS arrives in whatever form its source uses — a geoarrow
+    ``Crs`` object (from a column's ``type.crs``), a PROJJSON or authority
+    string (SedonaDB's item ``crs`` field), or an integer SRID (parsed from
+    EWKB) — and an absent CRS as ``None``, ``""``, or ``"0"`` (SedonaDB's
+    SRID-0 sentinel). Fold the absent forms to None and hand every present
+    form to pyproj, which decides semantic equality across the spellings.
     """
-    import json
-
     import pyproj
 
     if raw is None:
         return None
     if isinstance(raw, (bytes, bytearray)):
         raw = raw.decode()
-    if isinstance(raw, dict):
-        return None if not raw else pyproj.CRS.from_user_input(json.dumps(raw))
     if isinstance(raw, int):
         return None if raw == 0 else pyproj.CRS.from_epsg(raw)
     if isinstance(raw, str):
         text = raw.strip()
-        if text in ("", "0", "{}"):
+        if text in ("", "0"):
             return None
         return pyproj.CRS.from_user_input(text)
-    return pyproj.CRS.from_user_input(raw)
-
-
-def _column_geoarrow_crs(col_type):
-    """The raw CRS carried in a geoarrow column's extension metadata, or None."""
-    import json
-
-    try:
-        meta = json.loads(col_type.__arrow_ext_serialize__() or b"{}")
-    except Exception:
-        return None
-    return meta.get("crs")
+    # A geoarrow Crs object (or anything else pyproj accepts directly).
+    return pyproj.CRS(raw)
 
 
 def _ewkb_srid(blob):
@@ -1240,8 +1226,8 @@ def _geometry_crs_per_row(col):
       `crs` field;
     - a per-geometry SRID embedded in the WKB (Sedona Spark encodes CRS this
       way, and it survives our transport as EWKB in the column's bytes);
-    - the geoarrow column's extension metadata, as the column-level fallback
-      (where SedonaDB puts a plain geometry's CRS).
+    - the geoarrow column's ``type.crs``, as the column-level fallback (where
+      SedonaDB puts a plain geometry's CRS).
 
     A null geometry carries no CRS, so its cell is None.
     """
@@ -1257,7 +1243,7 @@ def _geometry_crs_per_row(col):
             None if g is None else _normalize_crs(c) for g, c in zip(geoms, per_row)
         ]
     if _type_is_geoarrow(col.type):
-        column_crs = _normalize_crs(_column_geoarrow_crs(col.type))
+        column_crs = _normalize_crs(col.type.crs)
         out = []
         for blob in col.to_pylist():
             if blob is None:
@@ -1298,7 +1284,7 @@ def _assert_geometry_crs_equal(got, expected, context=None):
                 f"got {len(got_crs)}, expected {len(expected_crs)}"
             )
         for row, (a, b) in enumerate(zip(got_crs, expected_crs)):
-            if (a is None) != (b is None) or (a is not None and a != b):
+            if not _crs_equal(a, b):
                 raise AssertionError(
                     f"CRS mismatch on geometry column {i}, row {row}{where}:\n"
                     f"  got:      {a}\n"
