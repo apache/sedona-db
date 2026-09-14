@@ -24,9 +24,9 @@ the geotransform where Sedona Spark raises, even though Sedona Spark's
 own RS_PixelAsCentroid and RS_PixelAsPolygon extrapolate.
 
 On a raster with a CRS the output point carries it (as SedonaDB's
-item-level CRS and Sedona Spark's column CRS); `compare` checks that the
-two agree, so the crs=EPSG:3857 case verifies both the geometry and its
-CRS.
+item-level CRS and Sedona Spark's per-geometry SRID, surfaced at column
+level by our transport); `compare` checks that the two agree, so the
+crs=EPSG:3857 case verifies both the geometry and its CRS.
 """
 
 import pytest

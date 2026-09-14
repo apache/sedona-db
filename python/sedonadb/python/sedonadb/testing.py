@@ -1215,6 +1215,15 @@ def _geometry_crs_per_row(col):
     whose CRS lives in the column's extension metadata (broadcast to every
     row), and SedonaDB's item-level ``struct<item: geoarrow.wkb, crs>`` whose
     CRS varies per row. A null geometry carries no CRS, so its cell is None.
+
+    One transport limitation to note: Sedona Spark geometries carry a per-row
+    CRS natively (a per-geometry SRID), but our transport surfaces it at column
+    level — ``dataframe_to_arrow`` infers one column CRS when a column's rows
+    share it and emits no CRS at all when they differ. So the Spark side here
+    is effectively per-column, exact whenever a column's rows share a CRS (as
+    in every raster-function output today) and a blind spot for a genuinely
+    mixed-CRS column (which would read as no-CRS). Extracting Spark's per-row
+    SRID from the EWKB would close that gap if a case ever needs it.
     """
     if pa.types.is_struct(col.type):
         geometry = _unwrap_item_crs_geometry(col)

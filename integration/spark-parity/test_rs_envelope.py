@@ -16,9 +16,10 @@
 # under the License.
 """SedonaDB vs Sedona Spark parity for RS_Envelope.
 
-SedonaDB carries the envelope's CRS as an item-level CRS and Sedona
-Spark as a column CRS; `compare` normalizes and checks them, but the
-geometry itself diverges. Both engines produce the same rectangle for
+Both engines carry the envelope's CRS (SedonaDB as an item-level CRS,
+Sedona Spark as a per-geometry SRID surfaced at column level by our
+transport); `compare` normalizes and checks them, but the geometry
+itself diverges. Both engines produce the same rectangle for
 the standard north-up grid yet disagree on the ring: SedonaDB starts at
 the lower-left corner and winds counter-clockwise; Sedona Spark winds
 clockwise — geometrically equal, unequal as WKT, so every case is an
