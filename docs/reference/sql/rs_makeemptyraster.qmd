@@ -201,9 +201,14 @@ A grid matching an existing raster's extent at a coarser resolution:
 SELECT RS_Width(RS_MakeEmptyRaster(1, 16, 8, RS_Envelope(RS_Example())));
 ```
 
-The Sedona Spark forms:
+The Sedona Spark forms, from an upper-left corner and cell size:
 
 ```sql
 SELECT RS_MakeEmptyRaster(2, 10, 10, 0.0, 0.0, 1.0);
+```
+
+and from a full affine transform and SRID:
+
+```sql
 SELECT RS_MakeEmptyRaster(2, 'I', 10, 10, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, 4326);
 ```
