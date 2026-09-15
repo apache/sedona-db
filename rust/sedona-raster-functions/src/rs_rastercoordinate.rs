@@ -17,15 +17,21 @@
 use std::{sync::Arc, vec};
 
 use crate::executor::RasterExecutor;
+use arrow_array::Float64Array;
 use arrow_array::builder::{BinaryBuilder, Int64Builder};
 use arrow_schema::DataType;
 use datafusion_common::cast::as_float64_array;
 use datafusion_common::error::Result;
+use datafusion_common::exec_datafusion_err;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::types::Edges;
+use sedona_geometry::wkb_header::read_point_xy;
 use sedona_raster::affine_transformation::to_raster_coordinate;
-use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
+use sedona_schema::{
+    datatypes::SedonaType,
+    matchers::{ArgMatcher, TypeMatcher},
+};
 
 /// RS_WorldToRasterCoordY() scalar UDF documentation
 ///
@@ -33,7 +39,16 @@ use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 pub fn rs_worldtorastercoordy_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "rs_worldtorastercoordy",
-        vec![Arc::new(RsCoordinateMapper { coord: Coord::Y })],
+        vec![
+            Arc::new(RsCoordinateMapper {
+                coord: Coord::Y,
+                from_point: false,
+            }),
+            Arc::new(RsCoordinateMapper {
+                coord: Coord::Y,
+                from_point: true,
+            }),
+        ],
         Volatility::Immutable,
     )
 }
@@ -44,7 +59,16 @@ pub fn rs_worldtorastercoordy_udf() -> SedonaScalarUDF {
 pub fn rs_worldtorastercoordx_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "rs_worldtorastercoordx",
-        vec![Arc::new(RsCoordinateMapper { coord: Coord::X })],
+        vec![
+            Arc::new(RsCoordinateMapper {
+                coord: Coord::X,
+                from_point: false,
+            }),
+            Arc::new(RsCoordinateMapper {
+                coord: Coord::X,
+                from_point: true,
+            }),
+        ],
         Volatility::Immutable,
     )
 }
@@ -55,7 +79,10 @@ pub fn rs_worldtorastercoordx_udf() -> SedonaScalarUDF {
 pub fn rs_worldtorastercoord_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "rs_worldtorastercoord",
-        vec![Arc::new(RsCoordinatePoint {})],
+        vec![
+            Arc::new(RsCoordinatePoint { from_point: false }),
+            Arc::new(RsCoordinatePoint { from_point: true }),
+        ],
         Volatility::Immutable,
     )
 }
@@ -66,22 +93,30 @@ enum Coord {
     Y,
 }
 
+impl Coord {
+    fn pick(&self, raster_x: i64, raster_y: i64) -> i64 {
+        match self {
+            Coord::X => raster_x,
+            Coord::Y => raster_y,
+        }
+    }
+}
+
 #[derive(Debug)]
 struct RsCoordinateMapper {
     coord: Coord,
+    /// `false`: `(raster, worldX, worldY)`. `true`: the Sedona Spark parity
+    /// overload `(raster, point)`, which reads the world coordinate from a
+    /// point geometry.
+    from_point: bool,
 }
 
 impl SedonaScalarKernel for RsCoordinateMapper {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(
-            vec![
-                ArgMatcher::is_raster(),
-                ArgMatcher::is_numeric(),
-                ArgMatcher::is_numeric(),
-            ],
+            coord_input_matchers(self.from_point),
             SedonaType::Arrow(DataType::Int64),
         );
-
         matcher.match_args(args)
     }
 
@@ -93,47 +128,51 @@ impl SedonaScalarKernel for RsCoordinateMapper {
         let executor = RasterExecutor::new(arg_types, args);
         let mut builder = Int64Builder::with_capacity(executor.num_iterations());
 
-        // Expand world x and y coordinate parameters to arrays and cast to Float64
-        let world_x_array = args[1].clone().cast_to(&DataType::Float64, None)?;
-        let world_x_array = world_x_array.into_array(executor.num_iterations())?;
-        let world_x_array = as_float64_array(&world_x_array)?;
-        let world_y_array = args[2].clone().cast_to(&DataType::Float64, None)?;
-        let world_y_array = world_y_array.into_array(executor.num_iterations())?;
-        let world_y_array = as_float64_array(&world_y_array)?;
-        let mut world_x_iter = world_x_array.iter();
-        let mut world_y_iter = world_y_array.iter();
-
-        executor.execute_raster_void(|_i, raster_opt| {
-            let x_opt = world_x_iter.next().unwrap();
-            let y_opt = world_y_iter.next().unwrap();
-
-            match (raster_opt, x_opt, y_opt) {
-                (Some(raster), Some(x), Some(y)) => {
-                    let (raster_x, raster_y) = to_raster_coordinate(raster, x, y)?;
-                    match self.coord {
-                        Coord::X => builder.append_value(raster_x),
-                        Coord::Y => builder.append_value(raster_y),
-                    };
+        if self.from_point {
+            executor.execute_raster_wkb_crs_void(|raster_opt, wkb_opt, _crs| {
+                match (raster_opt, point_xy(wkb_opt)?) {
+                    (Some(raster), Some((x, y))) => {
+                        let (raster_x, raster_y) = to_raster_coordinate(raster, x, y)?;
+                        builder.append_value(self.coord.pick(raster_x, raster_y));
+                    }
+                    _ => builder.append_null(),
                 }
-                (_, _, _) => builder.append_null(),
-            }
-            Ok(())
-        })?;
+                Ok(())
+            })?;
+        } else {
+            let (world_x, world_y) = world_xy_arrays(args, executor.num_iterations())?;
+            let mut world_x_iter = world_x.iter();
+            let mut world_y_iter = world_y.iter();
+            executor.execute_raster_void(|_i, raster_opt| {
+                match (
+                    raster_opt,
+                    world_x_iter.next().unwrap(),
+                    world_y_iter.next().unwrap(),
+                ) {
+                    (Some(raster), Some(x), Some(y)) => {
+                        let (raster_x, raster_y) = to_raster_coordinate(raster, x, y)?;
+                        builder.append_value(self.coord.pick(raster_x, raster_y));
+                    }
+                    (_, _, _) => builder.append_null(),
+                }
+                Ok(())
+            })?;
+        }
 
         executor.finish(Arc::new(builder.finish()))
     }
 }
 
 #[derive(Debug)]
-struct RsCoordinatePoint;
+struct RsCoordinatePoint {
+    /// `false`: `(raster, worldX, worldY)`. `true`: the Sedona Spark parity
+    /// overload `(raster, point)`.
+    from_point: bool,
+}
 impl SedonaScalarKernel for RsCoordinatePoint {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matcher = ArgMatcher::new(
-            vec![
-                ArgMatcher::is_raster(),
-                ArgMatcher::is_numeric(),
-                ArgMatcher::is_numeric(),
-            ],
+            coord_input_matchers(self.from_point),
             SedonaType::Wkb(Edges::Planar, None),
         );
 
@@ -154,34 +193,86 @@ impl SedonaScalarKernel for RsCoordinatePoint {
             item.len() * executor.num_iterations(),
         );
 
-        // Expand world x and y coordinate parameters to arrays and cast to Float64
-        let world_x_array = args[1].clone().cast_to(&DataType::Float64, None)?;
-        let world_x_array = world_x_array.into_array(executor.num_iterations())?;
-        let world_x_array = as_float64_array(&world_x_array)?;
-        let world_y_array = args[2].clone().cast_to(&DataType::Float64, None)?;
-        let world_y_array = world_y_array.into_array(executor.num_iterations())?;
-        let world_y_array = as_float64_array(&world_y_array)?;
-        let mut world_x_iter = world_x_array.iter();
-        let mut world_y_iter = world_y_array.iter();
-
-        executor.execute_raster_void(|_i, raster_opt| {
-            let x_opt = world_x_iter.next().unwrap();
-            let y_opt = world_y_iter.next().unwrap();
-
-            match (raster_opt, x_opt, y_opt) {
-                (Some(raster), Some(world_x), Some(world_y)) => {
-                    let (raster_x, raster_y) = to_raster_coordinate(raster, world_x, world_y)?;
-                    item[5..13].copy_from_slice(&(raster_x as f64).to_le_bytes());
-                    item[13..21].copy_from_slice(&(raster_y as f64).to_le_bytes());
-                    builder.append_value(item);
+        if self.from_point {
+            executor.execute_raster_wkb_crs_void(|raster_opt, wkb_opt, _crs| {
+                match (raster_opt, point_xy(wkb_opt)?) {
+                    (Some(raster), Some((x, y))) => {
+                        let (raster_x, raster_y) = to_raster_coordinate(raster, x, y)?;
+                        item[5..13].copy_from_slice(&(raster_x as f64).to_le_bytes());
+                        item[13..21].copy_from_slice(&(raster_y as f64).to_le_bytes());
+                        builder.append_value(item);
+                    }
+                    _ => builder.append_null(),
                 }
-                (_, _, _) => builder.append_null(),
-            }
-            Ok(())
-        })?;
+                Ok(())
+            })?;
+        } else {
+            let (world_x, world_y) = world_xy_arrays(args, executor.num_iterations())?;
+            let mut world_x_iter = world_x.iter();
+            let mut world_y_iter = world_y.iter();
+            executor.execute_raster_void(|_i, raster_opt| {
+                match (
+                    raster_opt,
+                    world_x_iter.next().unwrap(),
+                    world_y_iter.next().unwrap(),
+                ) {
+                    (Some(raster), Some(world_x), Some(world_y)) => {
+                        let (raster_x, raster_y) = to_raster_coordinate(raster, world_x, world_y)?;
+                        item[5..13].copy_from_slice(&(raster_x as f64).to_le_bytes());
+                        item[13..21].copy_from_slice(&(raster_y as f64).to_le_bytes());
+                        builder.append_value(item);
+                    }
+                    (_, _, _) => builder.append_null(),
+                }
+                Ok(())
+            })?;
+        }
 
         executor.finish(Arc::new(builder.finish()))
     }
+}
+
+/// Input matchers for a world→raster coordinate function: the numeric
+/// `(raster, worldX, worldY)` form, or the `(raster, point)` overload.
+fn coord_input_matchers(from_point: bool) -> Vec<Arc<dyn TypeMatcher + Send + Sync>> {
+    if from_point {
+        vec![
+            ArgMatcher::is_raster(),
+            ArgMatcher::is_geometry_or_geography(),
+        ]
+    } else {
+        vec![
+            ArgMatcher::is_raster(),
+            ArgMatcher::is_numeric(),
+            ArgMatcher::is_numeric(),
+        ]
+    }
+}
+
+/// The world `(x, y)` carried by a point geometry, or `None` for a null or
+/// empty point. Errors on a non-point geometry. The point's coordinates are
+/// used as-is, in the raster's own space — the numeric form takes no CRS
+/// either, so the point overload does not reproject.
+fn point_xy(wkb_opt: Option<&[u8]>) -> Result<Option<(f64, f64)>> {
+    match wkb_opt {
+        Some(wkb) => {
+            read_point_xy(wkb).map_err(|e| exec_datafusion_err!("RS_WorldToRasterCoord: {e}"))
+        }
+        None => Ok(None),
+    }
+}
+
+/// The world X and Y numeric arguments (args 1 and 2) as Float64 row arrays.
+fn world_xy_arrays(args: &[ColumnarValue], n: usize) -> Result<(Float64Array, Float64Array)> {
+    let x = args[1]
+        .clone()
+        .cast_to(&DataType::Float64, None)?
+        .into_array(n)?;
+    let y = args[2]
+        .clone()
+        .cast_to(&DataType::Float64, None)?
+        .into_array(n)?;
+    Ok((as_float64_array(&x)?.clone(), as_float64_array(&y)?.clone()))
 }
 
 #[cfg(test)]
@@ -252,6 +343,43 @@ mod tests {
                 .to_string()
                 .contains("determinant is zero")
         );
+    }
+
+    #[rstest]
+    fn udf_invoke_xy_from_point(#[values(Coord::Y, Coord::X)] coord: Coord) {
+        // The (raster, point) overload reads the world coordinate from a point
+        // geometry and answers exactly like the numeric form: world (2, 3) is
+        // raster 1's origin -> raster coordinate (0, 0). Raster 0 is nulled.
+        let udf = match coord {
+            Coord::X => rs_worldtorastercoordx_udf(),
+            Coord::Y => rs_worldtorastercoordy_udf(),
+        };
+        let tester = ScalarUdfTester::new(udf.into(), vec![RASTER, WKB_GEOMETRY]);
+        let rasters = generate_test_rasters(2, Some(0)).unwrap();
+        let points = create_array(&[Some("POINT (2 3)"), Some("POINT (2 3)")], &WKB_GEOMETRY);
+        let expected: Arc<dyn arrow_array::Array> =
+            Arc::new(arrow_array::Int64Array::from(vec![None, Some(0_i64)]));
+        let result = tester
+            .invoke_array_array(Arc::new(rasters), points)
+            .unwrap();
+        assert_array_equal(&result, &expected);
+    }
+
+    #[rstest]
+    fn udf_invoke_pt_from_point() {
+        // The combined (raster, point) overload returns the raster-coordinate
+        // point, matching the numeric form: world (2, 3) -> POINT (0 0).
+        let tester = ScalarUdfTester::new(
+            rs_worldtorastercoord_udf().into(),
+            vec![RASTER, WKB_GEOMETRY],
+        );
+        let rasters = generate_test_rasters(2, Some(0)).unwrap();
+        let points = create_array(&[Some("POINT (2 3)"), Some("POINT (2 3)")], &WKB_GEOMETRY);
+        let expected = &create_array(&[None, Some("POINT (0 0)")], &WKB_GEOMETRY);
+        let result = tester
+            .invoke_array_array(Arc::new(rasters), points)
+            .unwrap();
+        assert_array_equal(&result, expected);
     }
 
     #[rstest]

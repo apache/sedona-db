@@ -23,10 +23,9 @@ case is a cataloged divergence: SedonaDB treats pixel coordinates as
 0-based where Sedona Spark (following PostGIS, and SedonaDB's own
 RS_PixelAs* functions) is 1-based (apache/sedona-db#1235) — and on a
 fractional negative index the engines also disagree on rounding, so
-outside the grid the answers are not even a uniform pixel apart.
-Sedona Spark additionally accepts a point geometry in place of the
-(x, y) pair, an overload SedonaDB lacks (the X/Y variants share both
-gaps).
+outside the grid the answers are not even a uniform pixel apart. Both
+engines also accept a point geometry in place of the (x, y) pair, and
+that form carries the same 0- vs 1-based divergence.
 """
 
 import pytest
@@ -79,10 +78,10 @@ def test_rs_worldtorastercoord_outside(tmp_path):
 
 
 @pytest.mark.xfail(
-    reason="SedonaDB has no point-geometry overload of RS_WorldToRasterCoord "
-    "(it raises 'No kernel matching arguments'); Sedona Spark accepts "
-    "(raster, point) and answers 1-based, so once the overload exists the "
-    "0- vs 1-based divergence (apache/sedona-db#1235) still applies"
+    reason="both engines now accept the (raster, point) overload, but SedonaDB "
+    "reads pixel coordinates 0-based where Sedona Spark is 1-based "
+    "(apache/sedona-db#1235), so the point form lands one pixel apart, exactly "
+    "like the numeric form"
 )
 def test_rs_worldtorastercoord_point_overload(tmp_path):
     """The point-geometry form maps the interior point (104 494) to the
