@@ -19,9 +19,10 @@ use std::{sync::Arc, vec};
 use arrow_array::builder::BinaryBuilder;
 use arrow_schema::DataType;
 use datafusion_common::{
+    ScalarValue,
     cast::{as_string_view_array, as_struct_array},
     error::Result,
-    exec_datafusion_err, exec_err, ScalarValue,
+    exec_datafusion_err, exec_err,
 };
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::sedona_internal_err;

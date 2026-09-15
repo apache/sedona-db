@@ -14,9 +14,9 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use arrow_array::types::Float64Type;
 use arrow_array::Array;
 use arrow_array::PrimitiveArray;
+use arrow_array::types::Float64Type;
 use datafusion_common::cast::as_float64_array;
 use datafusion_common::error::Result;
 use geo_traits::Dimensions;

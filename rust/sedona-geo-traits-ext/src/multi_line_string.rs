@@ -79,7 +79,7 @@ macro_rules! forward_multi_line_string_trait_ext_funcs {
 
         #[inline]
         unsafe fn line_string_unchecked_ext(&self, i: usize) -> Self::LineStringTypeExt<'_> {
-            <Self as MultiLineStringTrait>::line_string_unchecked(self, i)
+            unsafe { <Self as MultiLineStringTrait>::line_string_unchecked(self, i) }
         }
 
         #[inline]

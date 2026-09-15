@@ -27,8 +27,8 @@ use sedona_query_planner::{
 };
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use sedona_spatial_join::{
-    physical_planner::{repartition_probe_side, should_swap_join_order},
     SpatialJoinExec,
+    physical_planner::{repartition_probe_side, should_swap_join_order},
 };
 
 use crate::join_provider::GeographyJoinProvider;

@@ -28,12 +28,13 @@ use datafusion_common::{JoinType, Result};
 use sedona_common::SpatialJoinOptions;
 use sedona_expr::statistics::GeoStatistics;
 use sedona_spatial_join::{
+    SpatialPredicate,
     evaluated_batch::evaluated_batch_stream::SendableEvaluatedBatchStream,
     index::{
+        SpatialIndexBuilder, SpatialIndexRef,
         default_spatial_index_builder::DefaultSpatialIndexBuilder,
-        spatial_index_builder::SpatialJoinBuildMetrics, SpatialIndexBuilder, SpatialIndexRef,
+        spatial_index_builder::SpatialJoinBuildMetrics,
     },
-    SpatialPredicate,
 };
 
 use crate::refiner::GeographyRefinerFactory;

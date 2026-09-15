@@ -106,7 +106,7 @@ fn infer_geometry_type_name(buf: &[u8]) -> Result<&'static str> {
 
 #[cfg(test)]
 mod tests {
-    use arrow_array::{create_array, ArrayRef};
+    use arrow_array::{ArrayRef, create_array};
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;

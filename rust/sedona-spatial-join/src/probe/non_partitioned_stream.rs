@@ -24,8 +24,8 @@ use datafusion_common::Result;
 use futures::{Stream, StreamExt};
 
 use crate::evaluated_batch::{
-    evaluated_batch_stream::{EvaluatedBatchStream, SendableEvaluatedBatchStream},
     EvaluatedBatch,
+    evaluated_batch_stream::{EvaluatedBatchStream, SendableEvaluatedBatchStream},
 };
 use crate::probe::ProbeStreamMetrics;
 

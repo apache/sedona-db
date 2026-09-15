@@ -19,7 +19,7 @@ use std::sync::Arc;
 use crate::executor::WkbBytesExecutor;
 use arrow_array::builder::Int8Builder;
 use arrow_schema::DataType;
-use datafusion_common::{error::Result, DataFusionError};
+use datafusion_common::{DataFusionError, error::Result};
 use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::Dimensions;
 use sedona_common::sedona_internal_err;

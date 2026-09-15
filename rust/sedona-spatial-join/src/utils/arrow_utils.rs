@@ -18,9 +18,9 @@
 use std::sync::Arc;
 
 use arrow::array::{Array, ArrayData, BinaryViewArray, ListArray, RecordBatch, StringViewArray};
-use arrow_array::make_array;
 use arrow_array::ArrayRef;
 use arrow_array::StructArray;
+use arrow_array::make_array;
 use arrow_schema::SchemaRef;
 use arrow_schema::{ArrowError, DataType};
 use datafusion_common::Result;
@@ -390,8 +390,8 @@ mod tests {
         assert_eq!(size, 0);
     }
 
-    fn build_struct_with_list_of_view_and_list_of_i32(
-    ) -> (ArrayRef, &'static [u8], &'static [u8], &'static [u8]) {
+    fn build_struct_with_list_of_view_and_list_of_i32()
+    -> (ArrayRef, &'static [u8], &'static [u8], &'static [u8]) {
         let short: &'static [u8] = b"short";
         let long1: &'static [u8] = b"Long string that is definitely longer than 12 bytes";
         let long2: &'static [u8] = b"Another long string to make buffer larger";

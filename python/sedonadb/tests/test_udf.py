@@ -254,6 +254,22 @@ def test_native_scalar_udf_export_import_roundtrip(con):
     assert actual.equals(expected)
 
 
+def test_native_scalar_udf_export_preserves_sedona_options(con):
+    from sedonadb.udf import sedona_native_scalar_udf
+
+    capsules = con.funcs.st_envelope.__sedonadb_scalar_udf__()
+    con.register(sedona_native_scalar_udf(capsules, name="rt_envelope"))
+
+    expected = con.sql(
+        "SELECT ST_Envelope(ST_GeogFromText('POINT (1 2)')) AS col"
+    ).to_arrow_table()
+    actual = con.sql(
+        "SELECT rt_envelope(ST_GeogFromText('POINT (1 2)')) AS col"
+    ).to_arrow_table()
+
+    assert actual.equals(expected)
+
+
 def test_native_scalar_udf_register_appends_overload(con):
     # Registering a native scalar UDF under a name already in use appends its
     # kernels as overloads rather than replacing the function: both the

@@ -15,19 +15,19 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::{any::Any, sync::Arc};
+use std::sync::Arc;
 
 use arrow_array::{Array, Float64Array, Int32Array, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema, SchemaRef};
 use async_trait::async_trait;
 use datafusion::{
     catalog::{MemTable, Session, TableProvider},
-    datasource::{empty::EmptyTable, TableType},
+    datasource::{TableType, empty::EmptyTable},
     execution::SessionStateBuilder,
     prelude::{SessionConfig, SessionContext},
 };
 use datafusion_common::tree_node::{TreeNode, TreeNodeRecursion};
-use datafusion_common::{stats::Precision, JoinSide, Result, Statistics};
+use datafusion_common::{JoinSide, Result, Statistics, stats::Precision};
 use datafusion_execution::TaskContext;
 use datafusion_expr::{ColumnarValue, Expr, JoinType};
 use datafusion_physical_plan::filter::FilterExec;
@@ -51,15 +51,15 @@ use sedona_schema::{
     matchers::ArgMatcher,
 };
 use sedona_spatial_join::{
-    spatial_predicate::RelationPredicate, DefaultSpatialJoinPhysicalPlanner, ProbeShuffleExec,
-    SpatialJoinExec, SpatialPredicate,
+    DefaultSpatialJoinPhysicalPlanner, ProbeShuffleExec, SpatialJoinExec, SpatialPredicate,
+    spatial_predicate::RelationPredicate,
 };
 use sedona_testing::datagen::RandomPartitionedDataBuilder;
 use tokio::sync::OnceCell;
 
 use sedona_common::{
-    option::{ExecutionMode, SpatialJoinOptions},
     NumSpatialPartitionsConfig, SpatialJoinDebugOptions, SpatialLibrary,
+    option::{ExecutionMode, SpatialJoinOptions},
 };
 
 type TestPartitions = (SchemaRef, Vec<Vec<RecordBatch>>);
@@ -154,6 +154,12 @@ fn setup_context(options: Option<SpatialJoinOptions>, batch_size: usize) -> Resu
     let mut session_config = SessionConfig::from_env()?
         .with_information_schema(true)
         .with_batch_size(batch_size);
+    // Work around https://github.com/apache/datafusion/issues/24933:
+    // physical scalar subqueries discard Arrow field metadata.
+    session_config
+        .options_mut()
+        .optimizer
+        .enable_physical_uncorrelated_scalar_subquery = false;
     session_config = session_config.with_option_extension(SedonaOptions::default());
     let mut state_builder = SessionStateBuilder::new();
     if let Some(options) = options {
@@ -191,21 +197,20 @@ fn setup_context(options: Option<SpatialJoinOptions>, batch_size: usize) -> Resu
 #[derive(Debug)]
 struct StatsOverrideTableProvider {
     inner: Arc<dyn TableProvider>,
-    stats: Statistics,
+    stats: Arc<Statistics>,
 }
 
 impl StatsOverrideTableProvider {
     fn new(inner: Arc<dyn TableProvider>, stats: Statistics) -> Self {
-        Self { inner, stats }
+        Self {
+            inner,
+            stats: Arc::new(stats),
+        }
     }
 }
 
 #[async_trait]
 impl TableProvider for StatsOverrideTableProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn schema(&self) -> SchemaRef {
         self.inner.schema()
     }
@@ -229,12 +234,12 @@ impl TableProvider for StatsOverrideTableProvider {
 #[derive(Debug)]
 struct StatsOverrideExec {
     inner: Arc<dyn ExecutionPlan>,
-    stats: Statistics,
-    properties: PlanProperties,
+    stats: Arc<Statistics>,
+    properties: Arc<PlanProperties>,
 }
 
 impl StatsOverrideExec {
-    fn new(inner: Arc<dyn ExecutionPlan>, stats: Statistics) -> Self {
+    fn new(inner: Arc<dyn ExecutionPlan>, stats: Arc<Statistics>) -> Self {
         let properties = PlanProperties::new(
             inner.equivalence_properties().clone(),
             inner.output_partitioning().clone(),
@@ -244,7 +249,7 @@ impl StatsOverrideExec {
         Self {
             inner,
             stats,
-            properties,
+            properties: Arc::new(properties),
         }
     }
 }
@@ -343,11 +348,13 @@ async fn assert_build_side_from_stats(
         OriginalInputSide::Right => "l_marker",
     };
     assert!(spatial_join.left.schema().index_of(expected_marker).is_ok());
-    assert!(spatial_join
-        .right
-        .schema()
-        .index_of(expected_probe_marker)
-        .is_ok());
+    assert!(
+        spatial_join
+            .right
+            .schema()
+            .index_of(expected_probe_marker)
+            .is_ok()
+    );
 
     let result_batches = df.collect().await?;
     assert_eq!(
@@ -366,11 +373,7 @@ impl ExecutionPlan for StatsOverrideExec {
         "StatsOverrideExec"
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn properties(&self) -> &PlanProperties {
+    fn properties(&self) -> &Arc<PlanProperties> {
         &self.properties
     }
 
@@ -403,11 +406,7 @@ impl ExecutionPlan for StatsOverrideExec {
         self.inner.execute(partition, context)
     }
 
-    fn statistics(&self) -> Result<Statistics> {
-        Ok(self.stats.clone())
-    }
-
-    fn partition_statistics(&self, partition: Option<usize>) -> Result<Statistics> {
+    fn partition_statistics(&self, partition: Option<usize>) -> Result<Arc<Statistics>> {
         match partition {
             None => Ok(self.stats.clone()),
             Some(partition) => self.inner.partition_statistics(Some(partition)),
@@ -666,7 +665,7 @@ fn find_spatial_join_exec_arc(
 ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
     let mut found = None;
     plan.apply(|node| {
-        if node.as_any().downcast_ref::<SpatialJoinExec>().is_some() {
+        if node.downcast_ref::<SpatialJoinExec>().is_some() {
             found = Some(Arc::clone(node));
             return Ok(TreeNodeRecursion::Stop);
         }
@@ -710,8 +709,14 @@ async fn test_spatial_join_swap_inputs_produces_same_plan(
 
     // We use a Left Join as a template to create the plan, then modify it to Mark Join
     let sqls = [
-        format!("SELECT {} FROM L {} JOIN R ON ST_Contains(L.geometry, R.geometry) AND L.dist < R.dist ORDER BY {}", join_types.2, join_types.0, join_types.2),
-        format!("SELECT {} FROM R {} JOIN L ON ST_Within(R.geometry, L.geometry) AND L.dist < R.dist ORDER BY {}", join_types.2, join_types.1, join_types.2),
+        format!(
+            "SELECT {} FROM L {} JOIN R ON ST_Contains(L.geometry, R.geometry) AND L.dist < R.dist ORDER BY {}",
+            join_types.2, join_types.0, join_types.2
+        ),
+        format!(
+            "SELECT {} FROM R {} JOIN L ON ST_Within(R.geometry, L.geometry) AND L.dist < R.dist ORDER BY {}",
+            join_types.2, join_types.1, join_types.2
+        ),
     ];
     let mut spatial_exec_plans = Vec::with_capacity(sqls.len());
     let mut results = Vec::with_capacity(sqls.len());
@@ -1098,18 +1103,36 @@ async fn test_with_join_types(
     let inner_sql = "SELECT L.id l_id, R.id r_id FROM L INNER JOIN R ON ST_Intersects(L.geometry, R.geometry) ORDER BY l_id, r_id";
     let sql = match join_type {
         JoinType::Inner => inner_sql,
-        JoinType::Left => "SELECT L.id l_id, R.id r_id FROM L LEFT JOIN R ON ST_Intersects(L.geometry, R.geometry) ORDER BY l_id, r_id",
-        JoinType::Right => "SELECT L.id l_id, R.id r_id FROM L RIGHT JOIN R ON ST_Intersects(L.geometry, R.geometry) ORDER BY l_id, r_id",
-        JoinType::Full => "SELECT L.id l_id, R.id r_id FROM L FULL OUTER JOIN R ON ST_Intersects(L.geometry, R.geometry) ORDER BY l_id, r_id",
-        JoinType::LeftSemi => "SELECT L.id l_id FROM L LEFT SEMI JOIN R ON ST_Intersects(L.geometry, R.geometry) ORDER BY l_id",
-        JoinType::RightSemi => "SELECT R.id r_id FROM L RIGHT SEMI JOIN R ON ST_Intersects(L.geometry, R.geometry) ORDER BY r_id",
-        JoinType::LeftAnti => "SELECT L.id l_id FROM L LEFT ANTI JOIN R ON ST_Intersects(L.geometry, R.geometry) ORDER BY l_id",
-        JoinType::RightAnti => "SELECT R.id r_id FROM L RIGHT ANTI JOIN R ON ST_Intersects(L.geometry, R.geometry) ORDER BY r_id",
+        JoinType::Left => {
+            "SELECT L.id l_id, R.id r_id FROM L LEFT JOIN R ON ST_Intersects(L.geometry, R.geometry) ORDER BY l_id, r_id"
+        }
+        JoinType::Right => {
+            "SELECT L.id l_id, R.id r_id FROM L RIGHT JOIN R ON ST_Intersects(L.geometry, R.geometry) ORDER BY l_id, r_id"
+        }
+        JoinType::Full => {
+            "SELECT L.id l_id, R.id r_id FROM L FULL OUTER JOIN R ON ST_Intersects(L.geometry, R.geometry) ORDER BY l_id, r_id"
+        }
+        JoinType::LeftSemi => {
+            "SELECT L.id l_id FROM L LEFT SEMI JOIN R ON ST_Intersects(L.geometry, R.geometry) ORDER BY l_id"
+        }
+        JoinType::RightSemi => {
+            "SELECT R.id r_id FROM L RIGHT SEMI JOIN R ON ST_Intersects(L.geometry, R.geometry) ORDER BY r_id"
+        }
+        JoinType::LeftAnti => {
+            "SELECT L.id l_id FROM L LEFT ANTI JOIN R ON ST_Intersects(L.geometry, R.geometry) ORDER BY l_id"
+        }
+        JoinType::RightAnti => {
+            "SELECT R.id r_id FROM L RIGHT ANTI JOIN R ON ST_Intersects(L.geometry, R.geometry) ORDER BY r_id"
+        }
         JoinType::LeftMark => {
-            unreachable!("LeftMark is not directly supported in SQL, will be tested in other tests");
+            unreachable!(
+                "LeftMark is not directly supported in SQL, will be tested in other tests"
+            );
         }
         JoinType::RightMark => {
-            unreachable!("RightMark is not directly supported in SQL, will be tested in other tests");
+            unreachable!(
+                "RightMark is not directly supported in SQL, will be tested in other tests"
+            );
         }
     };
 
@@ -1224,7 +1247,7 @@ async fn run_spatial_join_query(
 fn collect_spatial_join_exec(plan: &Arc<dyn ExecutionPlan>) -> Result<Vec<&SpatialJoinExec>> {
     let mut spatial_join_execs = Vec::new();
     plan.apply(|node| {
-        if let Some(spatial_join_exec) = node.as_any().downcast_ref::<SpatialJoinExec>() {
+        if let Some(spatial_join_exec) = node.downcast_ref::<SpatialJoinExec>() {
             spatial_join_execs.push(spatial_join_exec);
         }
         Ok(TreeNodeRecursion::Continue)
@@ -1293,7 +1316,7 @@ async fn test_mark_join(
     fn collect_nlj_exec(plan: &Arc<dyn ExecutionPlan>) -> Result<Vec<&NestedLoopJoinExec>> {
         let mut execs = Vec::new();
         plan.apply(|node| {
-            if let Some(exec) = node.as_any().downcast_ref::<NestedLoopJoinExec>() {
+            if let Some(exec) = node.downcast_ref::<NestedLoopJoinExec>() {
                 execs.push(exec);
             }
             Ok(TreeNodeRecursion::Continue)
@@ -1357,10 +1380,10 @@ fn extract_geoms_and_ids(partitions: &[Vec<RecordBatch>]) -> Vec<(i32, geo::Geom
             let mut id_iter = ids.iter();
             executor
                 .execute_wkb_void(|maybe_geom| {
-                    if let Some(id_opt) = id_iter.next() {
-                        if let (Some(id), Some(geom)) = (id_opt, maybe_geom) {
-                            result.push((id, geom.clone()))
-                        }
+                    if let Some(id_opt) = id_iter.next()
+                        && let (Some(id), Some(geom)) = (id_opt, maybe_geom)
+                    {
+                        result.push((id, geom.clone()))
                     }
                     Ok(())
                 })
@@ -1985,7 +2008,7 @@ async fn test_knn_join_mixed_filter_only_query_side_pushed_down() -> Result<()> 
 
 /// Check if there is a `FilterExec` node that is an ancestor of a `SpatialJoinExec`.
 fn has_filter_exec_above_spatial_join(plan: &Arc<dyn ExecutionPlan>) -> bool {
-    if plan.as_any().downcast_ref::<FilterExec>().is_some() {
+    if plan.downcast_ref::<FilterExec>().is_some() {
         // Check if any descendant of this FilterExec is a SpatialJoinExec
         for child in plan.children() {
             if contains_spatial_join_exec(child) {
@@ -2006,7 +2029,7 @@ fn has_filter_exec_above_spatial_join(plan: &Arc<dyn ExecutionPlan>) -> bool {
 fn contains_spatial_join_exec(plan: &Arc<dyn ExecutionPlan>) -> bool {
     let mut found = false;
     plan.apply(|node| {
-        if node.as_any().downcast_ref::<SpatialJoinExec>().is_some() {
+        if node.downcast_ref::<SpatialJoinExec>().is_some() {
             found = true;
             return Ok(TreeNodeRecursion::Stop);
         }
@@ -2020,7 +2043,7 @@ fn contains_spatial_join_exec(plan: &Arc<dyn ExecutionPlan>) -> bool {
 fn subtree_contains_filter_exec(plan: &Arc<dyn ExecutionPlan>) -> bool {
     let mut found = false;
     plan.apply(|node| {
-        if node.as_any().downcast_ref::<FilterExec>().is_some() {
+        if node.downcast_ref::<FilterExec>().is_some() {
             found = true;
             return Ok(TreeNodeRecursion::Stop);
         }
@@ -2034,7 +2057,7 @@ fn subtree_contains_filter_exec(plan: &Arc<dyn ExecutionPlan>) -> bool {
 fn subtree_contains_probe_shuffle_exec(plan: &Arc<dyn ExecutionPlan>) -> bool {
     let mut found = false;
     plan.apply(|node| {
-        if node.as_any().downcast_ref::<ProbeShuffleExec>().is_some() {
+        if node.downcast_ref::<ProbeShuffleExec>().is_some() {
             found = true;
             return Ok(TreeNodeRecursion::Stop);
         }

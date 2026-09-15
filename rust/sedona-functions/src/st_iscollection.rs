@@ -92,7 +92,7 @@ fn invoke_scalar(buf: &[u8]) -> Result<bool> {
 
 #[cfg(test)]
 mod tests {
-    use arrow_array::{create_array as arrow_array, ArrayRef};
+    use arrow_array::{ArrayRef, create_array as arrow_array};
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;

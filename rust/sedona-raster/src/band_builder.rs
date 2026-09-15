@@ -19,11 +19,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use arrow_array::{
+    ArrayRef, BinaryViewArray, ListArray, StructArray,
     builder::{
         ArrayBuilder, BinaryBuilder, BinaryViewBuilder, Int64Builder, StringBuilder,
         StringViewBuilder, UInt32Builder,
     },
-    ArrayRef, BinaryViewArray, ListArray, StructArray,
 };
 use arrow_buffer::{Buffer, NullBuffer, OffsetBuffer, ScalarBuffer};
 use arrow_schema::DataType;
@@ -60,6 +60,14 @@ pub trait BandWriter {
         &mut self,
         src: &BinaryViewArray,
         row: usize,
+    ) -> Result<(), RasterError>;
+    /// Append the current band's data as a zero-copy view into `buffer`
+    /// (see [`BandArrayBuilder::append_band_data_buffer`]).
+    fn append_band_data_buffer(
+        &mut self,
+        buffer: &Buffer,
+        offset: u32,
+        len: u32,
     ) -> Result<(), RasterError>;
 }
 
@@ -356,12 +364,10 @@ impl BandArrayBuilder {
     pub fn finish_band(&mut self) -> Result<(), RasterError> {
         let current_count = self.data.len();
         if current_count != self.data_count_at_start + 1 {
-            return Err(RasterError::Invalid(
-                format!(
-                    "Expected exactly one band data value per band, but got {} appended since start_band()",
-                    current_count - self.data_count_at_start
-                ),
-            ));
+            return Err(RasterError::Invalid(format!(
+                "Expected exactly one band data value per band, but got {} appended since start_band()",
+                current_count - self.data_count_at_start
+            )));
         }
         Ok(())
     }
@@ -467,6 +473,16 @@ impl BandWriter for BandArrayBuilder {
         self.start_band_impl(args)
     }
 
+    fn append_band_data_buffer(
+        &mut self,
+        buffer: &Buffer,
+        offset: u32,
+        len: u32,
+    ) -> Result<(), RasterError> {
+        // Inherent method of the same name (method resolution prefers it).
+        BandArrayBuilder::append_band_data_buffer(self, buffer, offset, len)
+    }
+
     fn band_data_writer(&mut self) -> &mut BinaryViewBuilder {
         &mut self.data
     }
@@ -504,7 +520,7 @@ mod tests {
     use crate::builder::RasterBuilder;
     use crate::traits::{BandOverrides, RasterRef};
     use arrow_array::{Array, BinaryViewArray, StringArray, UInt32Array};
-    use sedona_schema::raster::{band_indices, BandDataType};
+    use sedona_schema::raster::{BandDataType, band_indices};
 
     /// The point of this whole refactor: a bare `BandArrayBuilder`, with no
     /// enclosing `RasterBuilder`/raster envelope at all, builds a real band

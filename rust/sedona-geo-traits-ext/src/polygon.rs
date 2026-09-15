@@ -86,7 +86,7 @@ macro_rules! forward_polygon_trait_ext_funcs {
 
         #[inline]
         unsafe fn interior_unchecked_ext(&self, i: usize) -> Self::RingTypeExt<'_> {
-            <Self as PolygonTrait>::interior_unchecked(self, i)
+            unsafe { <Self as PolygonTrait>::interior_unchecked(self, i) }
         }
     };
 }

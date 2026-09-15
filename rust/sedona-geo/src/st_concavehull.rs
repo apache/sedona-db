@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use arrow_array::builder::BinaryBuilder;
 use datafusion_common::error::Result;
-use datafusion_common::{cast::as_float64_array, DataFusionError};
+use datafusion_common::{DataFusionError, cast::as_float64_array};
 use datafusion_expr::ColumnarValue;
 use geo::concave_hull::ConcaveHullOptions;
 use geo::{ConcaveHull, CoordsIter, Geometry, GeometryCollection, Point, Polygon};
@@ -33,7 +33,7 @@ use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::{datatypes::WKB_GEOMETRY, matchers::ArgMatcher};
 use wkb::reader::Wkb;
-use wkb::writer::{write_geometry, WriteOptions};
+use wkb::writer::{WriteOptions, write_geometry};
 
 use crate::to_geo::item_to_geometry;
 
@@ -214,7 +214,7 @@ fn compute_and_write_hull(
         _ => {
             return Err(DataFusionError::Execution(
                 "Unsupported geometry type for concave hull".to_string(),
-            ))
+            ));
         }
     }
 
@@ -443,7 +443,7 @@ mod tests {
                 "MULTIPOLYGON (((26 125, 26 200, 126 200, 126 125, 26 125 ),\
                     ( 51 150, 101 150, 76 175, 51 150 )), (( 151 100, 151 200, 176 175, 151 100 )))",
                 0.1,
-                "POLYGON ((151 100, 176 175, 151 200, 126 200, 26 200, 26 125, 126 125, 151 100))"
+                "POLYGON ((151 100, 176 175, 151 200, 126 200, 26 200, 26 125, 126 125, 151 100))",
             ),
             (
                 "MULTIPOLYGON (((26 125, 26 200, 126 200, 126 125, 26 125 ),\

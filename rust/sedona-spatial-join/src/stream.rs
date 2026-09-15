@@ -27,12 +27,12 @@ use datafusion_physical_plan::joins::utils::{ColumnIndex, JoinFilter};
 use datafusion_physical_plan::metrics::{
     self, ExecutionPlanMetricsSet, MetricBuilder, SpillMetrics,
 };
-use datafusion_physical_plan::{handle_state, RecordBatchStream, SendableRecordBatchStream};
+use datafusion_physical_plan::{RecordBatchStream, SendableRecordBatchStream, handle_state};
 use futures::future::BoxFuture;
 use futures::stream::StreamExt;
-use futures::{ready, task::Poll, FutureExt};
+use futures::{FutureExt, ready, task::Poll};
 use parking_lot::Mutex;
-use sedona_common::{sedona_internal_err, SedonaOptions};
+use sedona_common::{SedonaOptions, sedona_internal_err};
 use sedona_functions::st_analyze_agg::AnalyzeAccumulator;
 use sedona_geometry::bounds::WkbGeometryBounder;
 use sedona_schema::datatypes::WKB_GEOMETRY;
@@ -41,18 +41,18 @@ use std::iter::zip;
 use std::ops::Range;
 use std::sync::Arc;
 
-use crate::evaluated_batch::evaluated_batch_stream::evaluate::create_evaluated_probe_stream;
-use crate::evaluated_batch::evaluated_batch_stream::SendableEvaluatedBatchStream;
 use crate::evaluated_batch::EvaluatedBatch;
+use crate::evaluated_batch::evaluated_batch_stream::SendableEvaluatedBatchStream;
+use crate::evaluated_batch::evaluated_batch_stream::evaluate::create_evaluated_probe_stream;
 use crate::index::partitioned_index_provider::PartitionedIndexProvider;
 use crate::index::spatial_index::SpatialIndexRef;
 use crate::join_provider::SpatialJoinProvider;
 use crate::operand_evaluator::create_operand_evaluator;
 use crate::partitioning::SpatialPartition;
 use crate::prepare::SpatialJoinComponents;
+use crate::probe::ProbeStreamMetrics;
 use crate::probe::knn_results_merger::KNNResultsMerger;
 use crate::probe::partitioned_stream_provider::PartitionedProbeStreamProvider;
-use crate::probe::ProbeStreamMetrics;
 use crate::spatial_predicate::SpatialPredicate;
 use crate::utils::join_utils::{
     adjust_indices_with_visited_info, apply_join_filter_to_indices, build_batch_from_indices,
@@ -433,18 +433,18 @@ impl SpatialJoinStream {
             return Poll::Ready(Ok(StatefulStreamResult::Continue));
         }
 
-        if num_partitions > 1 {
-            if let SpatialPredicate::KNearestNeighbors(knn) = &self.spatial_predicate {
-                self.knn_results_merger = Some(Box::new(KNNResultsMerger::try_new(
-                    knn.k as usize,
-                    self.options.knn_include_tie_breakers,
-                    self.target_output_batch_size,
-                    Arc::clone(&self.runtime_env),
-                    self.spill_compression,
-                    self.schema.clone(),
-                    SpillMetrics::new(&self.metrics_set, self.probe_partition_id),
-                )?));
-            }
+        if num_partitions > 1
+            && let SpatialPredicate::KNearestNeighbors(knn) = &self.spatial_predicate
+        {
+            self.knn_results_merger = Some(Box::new(KNNResultsMerger::try_new(
+                knn.k as usize,
+                self.options.knn_include_tie_breakers,
+                self.target_output_batch_size,
+                Arc::clone(&self.runtime_env),
+                self.spill_compression,
+                self.schema.clone(),
+                SpillMetrics::new(&self.metrics_set, self.probe_partition_id),
+            )?));
         }
 
         self.state = SpatialJoinStreamState::WaitBuildIndex(0, true);
@@ -718,7 +718,7 @@ impl SpatialJoinStream {
             _ => {
                 return Poll::Ready(sedona_internal_err!(
                     "process_unmatched_build_batch called with invalid state"
-                ))
+                ));
             }
         };
 
@@ -755,11 +755,9 @@ impl SpatialJoinStream {
         is_last_stream: bool,
     ) -> Poll<Result<StatefulStreamResult<Option<RecordBatch>>>> {
         self.spatial_index = None;
-        if is_last_stream {
-            if let Some(provider) = self.index_provider.as_ref() {
-                provider.dispose_index(current_partition_id);
-                assert!(provider.num_loaded_indexes() == 0);
-            }
+        if is_last_stream && let Some(provider) = self.index_provider.as_ref() {
+            provider.dispose_index(current_partition_id);
+            assert!(provider.num_loaded_indexes() == 0);
         }
 
         let num_regular_partitions = self
@@ -768,10 +766,10 @@ impl SpatialJoinStream {
 
         let next_partition_id = current_partition_id + 1;
 
-        if let Some(merger) = self.knn_results_merger.as_deref_mut() {
-            if next_partition_id < num_regular_partitions {
-                merger.rotate(next_partition_id == num_regular_partitions - 1)?;
-            }
+        if let Some(merger) = self.knn_results_merger.as_deref_mut()
+            && next_partition_id < num_regular_partitions
+        {
+            merger.rotate(next_partition_id == num_regular_partitions - 1)?;
         }
 
         if next_partition_id >= num_regular_partitions {
@@ -1353,10 +1351,9 @@ impl SpatialJoinBatchIterator {
             if let Some(batch) = knn
                 .knn_results_merger
                 .produce_batch_until(end_offset_in_partition)?
+                && batch.num_rows() > 0
             {
-                if batch.num_rows() > 0 {
-                    return Ok(Some(batch));
-                }
+                return Ok(Some(batch));
             }
         }
 
@@ -1445,14 +1442,14 @@ impl SpatialJoinBatchIterator {
         };
 
         // set the build side bitmap
-        if need_produce_result_in_final(self.join_type) {
-            if let Some(visited_bitmaps) = self.spatial_index.visited_build_side() {
-                mark_build_side_rows_as_visited(
-                    &build_indices,
-                    &interleave_indices_map,
-                    visited_bitmaps,
-                );
-            }
+        if need_produce_result_in_final(self.join_type)
+            && let Some(visited_bitmaps) = self.spatial_index.visited_build_side()
+        {
+            mark_build_side_rows_as_visited(
+                &build_indices,
+                &interleave_indices_map,
+                visited_bitmaps,
+            );
         }
 
         Ok((
@@ -1955,8 +1952,10 @@ mod tests {
                 .column(0)
                 .as_primitive::<arrow::datatypes::Int32Type>()
                 .value(i);
-            assert_eq!(original_id, assembled_id,
-                "Data mismatch when mapping back from assembled batch row {i} to original batch {original_batch_idx} row {original_row_idx}");
+            assert_eq!(
+                original_id, assembled_id,
+                "Data mismatch when mapping back from assembled batch row {i} to original batch {original_batch_idx} row {original_row_idx}"
+            );
         }
     }
 

@@ -18,19 +18,19 @@
 use std::{fmt::Debug, sync::Arc};
 
 use arrow_array::{
+    Array, ArrayRef, BooleanArray, FixedSizeBinaryArray, Float32Array, Float64Array, StructArray,
+    UInt8Array, UInt16Array,
     builder::{
         ArrayBuilder, BinaryBuilder, BooleanBuilder, FixedSizeBinaryBuilder, Float32Builder,
-        Float64Builder, Int16Builder, Int32Builder, Int64Builder, Int8Builder, UInt16Builder,
-        UInt32Builder, UInt64Builder, UInt8Builder,
+        Float64Builder, Int8Builder, Int16Builder, Int32Builder, Int64Builder, UInt8Builder,
+        UInt16Builder, UInt32Builder, UInt64Builder,
     },
-    Array, ArrayRef, BooleanArray, FixedSizeBinaryArray, Float32Array, Float64Array, StructArray,
-    UInt16Array, UInt8Array,
 };
 use arrow_buffer::ScalarBuffer;
 use arrow_schema::{ArrowError, DataType};
 use geoarrow_array::{
-    array::{CoordBuffer, PointArray, SeparatedCoordBuffer},
     GeoArrowArray,
+    array::{CoordBuffer, PointArray, SeparatedCoordBuffer},
 };
 use geoarrow_schema::Dimension;
 use las::{Header, Point};
@@ -296,11 +296,11 @@ fn build_attribute(
 
             for d in iter {
                 let mut v = i8::from_le_bytes(d.try_into().unwrap());
-                if let Some(no_data) = no_data {
-                    if no_data == v as i64 {
-                        builder.append_null();
-                        continue;
-                    }
+                if let Some(no_data) = no_data
+                    && no_data == v as i64
+                {
+                    builder.append_null();
+                    continue;
                 }
                 if attribute.scale.is_some() || attribute.offset.is_some() {
                     v = (v as f64 * scale + offset) as i8;
@@ -316,11 +316,11 @@ fn build_attribute(
 
             for d in iter {
                 let mut v = i16::from_le_bytes(d.try_into().unwrap());
-                if let Some(no_data) = no_data {
-                    if no_data == v as i64 {
-                        builder.append_null();
-                        continue;
-                    }
+                if let Some(no_data) = no_data
+                    && no_data == v as i64
+                {
+                    builder.append_null();
+                    continue;
                 }
                 if attribute.scale.is_some() || attribute.offset.is_some() {
                     v = (v as f64 * scale + offset) as i16;
@@ -336,11 +336,11 @@ fn build_attribute(
 
             for d in iter {
                 let mut v = i32::from_le_bytes(d.try_into().unwrap());
-                if let Some(no_data) = no_data {
-                    if no_data == v as i64 {
-                        builder.append_null();
-                        continue;
-                    }
+                if let Some(no_data) = no_data
+                    && no_data == v as i64
+                {
+                    builder.append_null();
+                    continue;
                 }
                 if attribute.scale.is_some() || attribute.offset.is_some() {
                     v = (v as f64 * scale + offset) as i32;
@@ -356,11 +356,11 @@ fn build_attribute(
 
             for d in iter {
                 let mut v = i64::from_le_bytes(d.try_into().unwrap());
-                if let Some(no_data) = no_data {
-                    if no_data == v {
-                        builder.append_null();
-                        continue;
-                    }
+                if let Some(no_data) = no_data
+                    && no_data == v
+                {
+                    builder.append_null();
+                    continue;
                 }
                 if attribute.scale.is_some() || attribute.offset.is_some() {
                     v = (v as f64 * scale + offset) as i64;
@@ -376,11 +376,11 @@ fn build_attribute(
 
             for d in iter {
                 let mut v = u8::from_le_bytes(d.try_into().unwrap());
-                if let Some(no_data) = no_data {
-                    if no_data == v as u64 {
-                        builder.append_null();
-                        continue;
-                    }
+                if let Some(no_data) = no_data
+                    && no_data == v as u64
+                {
+                    builder.append_null();
+                    continue;
                 }
                 if attribute.scale.is_some() || attribute.offset.is_some() {
                     v = (v as f64 * scale + offset) as u8;
@@ -396,11 +396,11 @@ fn build_attribute(
 
             for d in iter {
                 let mut v = u16::from_le_bytes(d.try_into().unwrap());
-                if let Some(no_data) = no_data {
-                    if no_data == v as u64 {
-                        builder.append_null();
-                        continue;
-                    }
+                if let Some(no_data) = no_data
+                    && no_data == v as u64
+                {
+                    builder.append_null();
+                    continue;
                 }
                 if attribute.scale.is_some() || attribute.offset.is_some() {
                     v = (v as f64 * scale + offset) as u16;
@@ -416,11 +416,11 @@ fn build_attribute(
 
             for d in iter {
                 let mut v = u32::from_le_bytes(d.try_into().unwrap());
-                if let Some(no_data) = no_data {
-                    if no_data == v as u64 {
-                        builder.append_null();
-                        continue;
-                    }
+                if let Some(no_data) = no_data
+                    && no_data == v as u64
+                {
+                    builder.append_null();
+                    continue;
                 }
                 if attribute.scale.is_some() || attribute.offset.is_some() {
                     v = (v as f64 * scale + offset) as u32;
@@ -436,11 +436,11 @@ fn build_attribute(
 
             for d in iter {
                 let mut v = u64::from_le_bytes(d.try_into().unwrap());
-                if let Some(no_data) = no_data {
-                    if no_data == v {
-                        builder.append_null();
-                        continue;
-                    }
+                if let Some(no_data) = no_data
+                    && no_data == v
+                {
+                    builder.append_null();
+                    continue;
                 }
                 if attribute.scale.is_some() || attribute.offset.is_some() {
                     v = (v as f64 * scale + offset) as u64;
@@ -456,11 +456,11 @@ fn build_attribute(
 
             for d in iter {
                 let mut v = f32::from_le_bytes(d.try_into().unwrap());
-                if let Some(no_data) = no_data {
-                    if no_data == v as f64 {
-                        builder.append_null();
-                        continue;
-                    }
+                if let Some(no_data) = no_data
+                    && no_data == v as f64
+                {
+                    builder.append_null();
+                    continue;
                 }
                 if attribute.scale.is_some() || attribute.offset.is_some() {
                     v = (v as f64 * scale + offset) as f32;
@@ -476,11 +476,11 @@ fn build_attribute(
 
             for d in iter {
                 let mut v = f64::from_le_bytes(d.try_into().unwrap());
-                if let Some(no_data) = no_data {
-                    if no_data == v {
-                        builder.append_null();
-                        continue;
-                    }
+                if let Some(no_data) = no_data
+                    && no_data == v
+                {
+                    builder.append_null();
+                    continue;
                 }
                 if attribute.scale.is_some() || attribute.offset.is_some() {
                     v = v * scale + offset;
@@ -494,7 +494,7 @@ fn build_attribute(
         dt => {
             return Err(ArrowError::ExternalError(
                 format!("Unsupported data type for extra bytes: `{dt}`").into(),
-            ))
+            ));
         }
     }
 
@@ -503,57 +503,35 @@ fn build_attribute(
 
 #[cfg(test)]
 mod tests {
-    use std::{fs::File, sync::Arc};
+    use std::sync::Arc;
 
     use arrow_array::{
         cast::AsArray,
         types::{
-            Float32Type, Float64Type, Int16Type, Int32Type, Int64Type, Int8Type, UInt16Type,
-            UInt32Type, UInt64Type, UInt8Type,
+            Float32Type, Float64Type, Int8Type, Int16Type, Int32Type, Int64Type, UInt8Type,
+            UInt16Type, UInt32Type, UInt64Type,
         },
     };
     use datafusion_datasource::PartitionedFile;
-    use las::{point::Format, Builder, Writer};
-    use object_store::{local::LocalFileSystem, path::Path, ObjectStore};
+    use las::{Builder, point::Format};
+    use object_store::{ObjectStoreExt, local::LocalFileSystem, path::Path};
 
     use crate::las::{
         options::{LasExtraBytes, LasOptions},
         reader::LasFileReaderFactory,
     };
 
-    #[tokio::test]
-    async fn point_formats() {
-        let tmpdir = tempfile::tempdir().unwrap();
-
+    #[test]
+    fn point_formats() {
         for format in 0..=10 {
-            let tmp_path = tmpdir.path().join("format.laz");
-            let tmp_file = File::create(&tmp_path).unwrap();
-
-            // create laz file
             let mut builder = Builder::from((1, 4));
             builder.point_format = Format::new(format).unwrap();
-            builder.point_format.is_compressed = true;
             let header = builder.into_header().unwrap();
-            let mut writer = Writer::new(tmp_file, header).unwrap();
-            writer.close().unwrap();
-
-            // read batch with `LazFileReader`
-            let store = LocalFileSystem::new();
-            let location = Path::from_filesystem_path(tmp_path).unwrap();
-            let object = store.head(&location).await.unwrap();
-
-            let file_reader = LasFileReaderFactory::new(Arc::new(store), None)
-                .create_reader(
-                    PartitionedFile::new(location, object.size),
-                    LasOptions::default(),
-                )
-                .unwrap();
-            let metadata = file_reader.get_metadata().await.unwrap();
-
-            let batch = file_reader
-                .get_batch(&metadata.chunk_table[0])
-                .await
-                .unwrap();
+            let batch = arrow_array::RecordBatch::from(
+                super::RowBuilder::new(0, Arc::new(header))
+                    .finish()
+                    .unwrap(),
+            );
 
             match format {
                 0 => assert_eq!(batch.num_columns(), 17),

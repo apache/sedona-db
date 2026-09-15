@@ -21,8 +21,8 @@ use datafusion_common::Result;
 use parquet::{
     basic::LogicalType,
     geospatial::accumulator::{
-        init_geo_stats_accumulator_factory, GeoStatsAccumulator, GeoStatsAccumulatorFactory,
-        ParquetGeoStatsAccumulator, VoidGeoStatsAccumulator,
+        GeoStatsAccumulator, GeoStatsAccumulatorFactory, ParquetGeoStatsAccumulator,
+        VoidGeoStatsAccumulator, init_geo_stats_accumulator_factory,
     },
     schema::types::ColumnDescPtr,
 };
@@ -74,10 +74,9 @@ impl GeoStatsAccumulatorFactory for SedonaGeoStatsAccumulatorFactory {
             crs: _,
             algorithm: None | Some(parquet::basic::EdgeInterpolationAlgorithm::SPHERICAL),
         }) = descr.logical_type_ref()
+            && let Some(bounder) = self.bounder_factory.bounder_for_edge_type(Edges::Spherical)
         {
-            if let Some(bounder) = self.bounder_factory.bounder_for_edge_type(Edges::Spherical) {
-                return Box::new(GeographyGeoStatsAccumulator::new(bounder));
-            }
+            return Box::new(GeographyGeoStatsAccumulator::new(bounder));
         }
 
         Box::new(VoidGeoStatsAccumulator::default())
@@ -179,7 +178,11 @@ impl GeoStatsAccumulator for GeographyGeoStatsAccumulator {
 
 #[cfg(test)]
 mod test {
-    use super::*;
+    #[cfg(feature = "s2geography_tests")]
+    use super::GeographyGeoStatsAccumulator;
+
+    #[cfg(feature = "s2geography_tests")]
+    use parquet::geospatial::accumulator::GeoStatsAccumulator;
 
     #[cfg(feature = "s2geography_tests")]
     use parquet::geospatial::bounding_box::BoundingBox;

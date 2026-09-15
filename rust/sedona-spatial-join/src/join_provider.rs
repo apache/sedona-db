@@ -24,13 +24,13 @@ use sedona_common::SpatialJoinOptions;
 use sedona_expr::statistics::GeoStatistics;
 
 use crate::{
+    SpatialPredicate,
     index::{
-        spatial_index_builder::{SpatialIndexBuilder, SpatialJoinBuildMetrics},
         DefaultSpatialIndexBuilder,
+        spatial_index_builder::{SpatialIndexBuilder, SpatialJoinBuildMetrics},
     },
     operand_evaluator::{DefaultGeometryArrayFactory, EvaluatedGeometryArrayFactory},
     refine::DefaultIndexQueryResultRefinerFactory,
-    SpatialPredicate,
 };
 
 /// Provider for join internals

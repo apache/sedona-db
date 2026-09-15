@@ -21,7 +21,7 @@
 //! Original code is dual-licensed under Apache-2.0 or MIT; used here under Apache-2.0.
 use num_traits::Zero;
 
-use crate::{coord, Coord, CoordNum};
+use crate::{Coord, CoordNum, coord};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 pub enum Orientation {

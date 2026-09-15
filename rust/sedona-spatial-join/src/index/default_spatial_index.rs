@@ -18,8 +18,8 @@
 use std::{
     ops::Range,
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicUsize, Ordering},
     },
 };
 
@@ -38,13 +38,13 @@ use sedona_geo::to_geo::item_to_geometry;
 use sedona_geometry::interval::Interval;
 use wkb::reader::Wkb;
 
-use crate::index::spatial_index::DISTANCE_TOLERANCE;
 use crate::index::SpatialIndex;
+use crate::index::spatial_index::DISTANCE_TOLERANCE;
 use crate::{
     evaluated_batch::EvaluatedBatch,
     index::{
-        knn_adapter::{KnnComponents, SedonaKnnAdapter},
         IndexQueryResult, QueryResultMetrics,
+        knn_adapter::{KnnComponents, SedonaKnnAdapter},
     },
     operand_evaluator::distance_value_at,
     refine::IndexQueryResultRefiner,
@@ -52,7 +52,7 @@ use crate::{
 };
 use arrow::array::BooleanBufferBuilder;
 use async_trait::async_trait;
-use sedona_common::{option::SpatialJoinOptions, sedona_internal_err, ExecutionMode};
+use sedona_common::{ExecutionMode, option::SpatialJoinOptions, sedona_internal_err};
 
 struct DefaultSpatialIndexInner {
     pub(crate) schema: SchemaRef,
@@ -674,9 +674,9 @@ mod tests {
     use crate::evaluated_batch::evaluated_batch_stream::{
         EvaluatedBatchStream, SendableEvaluatedBatchStream,
     };
+    use crate::index::DefaultSpatialIndexBuilder;
     use crate::index::spatial_index::SpatialIndexRef;
     use crate::index::spatial_index_builder::{SpatialIndexBuilder, SpatialJoinBuildMetrics};
-    use crate::index::DefaultSpatialIndexBuilder;
     use arrow_array::RecordBatch;
     use arrow_schema::{DataType, Field};
     use datafusion_common::JoinSide;

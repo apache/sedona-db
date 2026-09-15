@@ -79,7 +79,7 @@ impl SedonaScalarKernel for RsExample {
 mod tests {
     use super::*;
     use datafusion_expr::ScalarUDF;
-    use sedona_testing::raster_spec::{assert_raster_scalar_equals, RasterSpec};
+    use sedona_testing::raster_spec::{RasterSpec, assert_raster_scalar_equals};
 
     #[test]
     fn udf_size() {

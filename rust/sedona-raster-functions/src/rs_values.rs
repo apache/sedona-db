@@ -44,7 +44,7 @@ use arrow_array::{Array, ArrayRef, StructArray};
 use arrow_schema::DataType;
 use datafusion_common::cast::as_int32_array;
 use datafusion_common::config::ConfigOptions;
-use datafusion_common::{exec_err, Result, ScalarValue};
+use datafusion_common::{Result, ScalarValue, exec_err};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_raster::array::RasterStructArray;

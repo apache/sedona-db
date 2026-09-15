@@ -185,7 +185,7 @@ impl WkbPointLayout {
             _ => {
                 return Err(SedonaGeometryError::Invalid(
                     "WKB: missing or invalid byte order".to_string(),
-                ))
+                ));
             }
         };
 
@@ -397,7 +397,7 @@ impl<'a> WkbBuffer<'a> {
             other => {
                 return Err(SedonaGeometryError::Invalid(format!(
                     "Unexpected byte order: {other:?}"
-                )))
+                )));
             }
         };
         self.remaining -= 4;
@@ -440,7 +440,7 @@ impl<'a> WkbBuffer<'a> {
             other => {
                 return Err(SedonaGeometryError::Invalid(format!(
                     "Unexpected byte order: {other:?}"
-                )))
+                )));
             }
         };
         self.remaining -= 8;
@@ -490,7 +490,7 @@ mod tests {
     use super::*;
     use sedona_testing::fixtures::*;
     use std::str::FromStr;
-    use wkb::writer::{write_geometry, WriteOptions};
+    use wkb::writer::{WriteOptions, write_geometry};
     use wkt::Wkt;
 
     fn make_wkb(wkt_value: &'static str) -> Vec<u8> {
@@ -588,7 +588,9 @@ mod tests {
         let header = WkbHeader::try_new(&wkb).unwrap();
         assert_eq!(header.size(), 1);
 
-        let wkb = make_wkb("GEOMETRYCOLLECTION (POINT (1 2), LINESTRING (1 2, 3 4), POLYGON ((0 0, 0 1, 1 0, 0 0)))");
+        let wkb = make_wkb(
+            "GEOMETRYCOLLECTION (POINT (1 2), LINESTRING (1 2, 3 4), POLYGON ((0 0, 0 1, 1 0, 0 0)))",
+        );
         let header = WkbHeader::try_new(&wkb).unwrap();
         assert_eq!(header.size(), 3);
     }
@@ -805,7 +807,9 @@ mod tests {
         let header = WkbHeader::try_new(&wkb).unwrap();
         assert_eq!(header.first_xy(), (1.0, 2.0));
 
-        let wkb = make_wkb("GEOMETRYCOLLECTION (POINT (1 2), LINESTRING (1 2, 3 4), POLYGON ((0 0, 0 1, 1 0, 0 0)))");
+        let wkb = make_wkb(
+            "GEOMETRYCOLLECTION (POINT (1 2), LINESTRING (1 2, 3 4), POLYGON ((0 0, 0 1, 1 0, 0 0)))",
+        );
         let header = WkbHeader::try_new(&wkb).unwrap();
         assert_eq!(header.first_xy(), (1.0, 2.0));
     }

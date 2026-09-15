@@ -25,12 +25,12 @@
 
 use std::sync::Arc;
 
-use arrow_array::cast::AsArray;
 use arrow_array::StructArray;
+use arrow_array::cast::AsArray;
 use arrow_schema::ArrowError;
 use sedona_raster::array::RasterStructArray;
 use sedona_raster::traits::RasterRef;
-use sedona_raster_zarr::{open_storage_from_uri, ZarrChunkReader};
+use sedona_raster_zarr::{ZarrChunkReader, open_storage_from_uri};
 
 /// Drain a `ZarrChunkReader` into a single `StructArray`. Fixtures in
 /// this file are small (≤8 chunk rows) so they fit in one batch with a
@@ -57,8 +57,8 @@ async fn read_all(uri: &str, arrays: Option<&[String]>) -> Result<StructArray, A
 }
 use sedona_schema::raster::BandDataType;
 use tempfile::TempDir;
-use zarrs::array::data_type;
 use zarrs::array::ArrayBuilder;
+use zarrs::array::data_type;
 use zarrs::group::{Group, GroupBuilder};
 use zarrs::metadata_ext::group::consolidated_metadata::{
     ConsolidatedMetadata, ConsolidatedMetadataKind,

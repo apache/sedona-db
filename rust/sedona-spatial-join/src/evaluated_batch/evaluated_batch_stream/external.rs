@@ -28,7 +28,7 @@ use arrow_schema::{Schema, SchemaRef};
 use datafusion_common::{DataFusionError, Result};
 use datafusion_common_runtime::SpawnedTask;
 use datafusion_execution::{
-    disk_manager::RefCountedTempFile, RecordBatchStream, SendableRecordBatchStream,
+    RecordBatchStream, SendableRecordBatchStream, disk_manager::RefCountedTempFile,
 };
 use datafusion_physical_plan::stream::RecordBatchReceiverStreamBuilder;
 use futures::{FutureExt, StreamExt};
@@ -36,12 +36,12 @@ use pin_project_lite::pin_project;
 use sedona_common::sedona_internal_err;
 
 use crate::evaluated_batch::{
+    EvaluatedBatch,
     evaluated_batch_stream::EvaluatedBatchStream,
     spill::{
-        spilled_batch_to_evaluated_batch, spilled_schema_to_evaluated_schema,
-        EvaluatedBatchSpillReader,
+        EvaluatedBatchSpillReader, spilled_batch_to_evaluated_batch,
+        spilled_schema_to_evaluated_schema,
     },
-    EvaluatedBatch,
 };
 
 const RECORD_BATCH_CHANNEL_CAPACITY: usize = 2;

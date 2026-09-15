@@ -112,8 +112,9 @@ pub fn rs_skewy_udf() -> SedonaScalarUDF {
 
 /// RS_Rotation() scalar UDF implementation
 ///
-/// Calculate the uniform rotation of the raster
-/// in radians based on the skew parameters.
+/// Calculate the rotation of the raster in radians: the angle of the grid's
+/// column-axis direction, `acos(scaleX / hypot(scaleX, skewY))` negated when
+/// `skewY > 0` — Sedona Spark's `RS_Rotation` formula.
 pub fn rs_rotation_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "rs_rotation",
@@ -242,7 +243,11 @@ mod tests {
 
         let rasters = generate_test_rasters(3, Some(1)).unwrap();
         let expected_values = match g {
-            GeoTransformParam::Rotation => vec![Some(-0.0), None, Some(-0.29145679447786704)],
+            GeoTransformParam::Rotation => {
+                // Spark's formula on the sheared third raster; +0.0 (not -0.0)
+                // for the axis-aligned first.
+                vec![Some(0.0), None, Some(-(0.2f64 / 0.2f64.hypot(0.08)).acos())]
+            }
             GeoTransformParam::ScaleX => vec![Some(0.1), None, Some(0.2)],
             GeoTransformParam::ScaleY => vec![Some(-0.2), None, Some(-0.4)],
             GeoTransformParam::SkewX => vec![Some(0.0), None, Some(0.06)],

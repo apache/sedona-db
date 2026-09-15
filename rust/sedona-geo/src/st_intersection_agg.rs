@@ -18,7 +18,7 @@ use std::{sync::Arc, vec};
 
 use arrow_array::ArrayRef;
 use arrow_schema::FieldRef;
-use datafusion_common::{error::Result, exec_err, ScalarValue};
+use datafusion_common::{ScalarValue, error::Result, exec_err};
 use datafusion_expr::{Accumulator, ColumnarValue};
 use geo::{BooleanOps, Intersects};
 use geo_traits::to_geo::ToGeoGeometry;
@@ -32,8 +32,8 @@ use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOMETRY},
     matchers::ArgMatcher,
 };
-use wkb::writer::write_geometry;
 use wkb::Endianness;
+use wkb::writer::write_geometry;
 use wkb::{reader::Wkb, writer::WriteOptions};
 
 /// ST_Intersection_Agg() implementation
@@ -181,22 +181,12 @@ impl Accumulator for IntersectionAccumulator {
     }
 
     fn size(&self) -> usize {
-        let mut size = size_of_val(self);
-
-        // Add size of the geometry data if it exists
-        if let Some(geo::Geometry::MultiPolygon(mp)) = &self.current_intersection {
-            for poly in &mp.0 {
-                // Count exterior ring points
-                size += size_of::<geo::Coord>() * poly.exterior().0.len();
-
-                // Count interior ring points
-                for ring in poly.interiors() {
-                    size += size_of::<geo::Coord>() * ring.0.len();
-                }
-            }
-        }
-
-        size
+        size_of_val(self)
+            + self
+                .current_intersection
+                .as_ref()
+                .map(crate::geometry_mem::geometry_heap_size)
+                .unwrap_or(0)
     }
 
     fn state(&mut self) -> Result<Vec<ScalarValue>> {

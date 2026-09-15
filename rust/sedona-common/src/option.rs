@@ -18,10 +18,10 @@ use std::fmt::Display;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use datafusion_common::Result;
 use datafusion_common::config::{
     ConfigEntry, ConfigExtension, ConfigField, ConfigOptions, ExtensionOptions, Visit,
 };
-use datafusion_common::Result;
 use datafusion_common::{config_err, config_namespace};
 use regex::Regex;
 use sedona_geometry::bounding_box::BoundingBox;
@@ -350,9 +350,9 @@ impl ConfigField for ExecutionMode {
                     };
                     ExecutionMode::Speculative(n)
                 } else {
-                    return Err(datafusion_common::DataFusionError::Configuration(
-                        format!("Unknown execution mode: {value}. Expected formats: prepare_none, prepare_build, prepare_probe, auto, auto[number]")
-                    ));
+                    return Err(datafusion_common::DataFusionError::Configuration(format!(
+                        "Unknown execution mode: {value}. Expected formats: prepare_none, prepare_build, prepare_probe, auto, auto[number]"
+                    )));
                 }
             }
         };

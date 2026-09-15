@@ -225,8 +225,7 @@ pub(super) async fn exec_and_print(
 
         // Track memory usage for the query result if it's bounded
         let task_ctx = ctx.ctx.task_ctx();
-        let mut reservation =
-            MemoryConsumer::new("DataFusion-Cli").register(task_ctx.memory_pool());
+        let reservation = MemoryConsumer::new("DataFusion-Cli").register(task_ctx.memory_pool());
 
         if physical_plan.boundedness().is_unbounded() {
             if physical_plan.pipeline_behavior() == EmissionType::Final {

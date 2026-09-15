@@ -14,7 +14,8 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-"""SedonaDB vs Sedona Spark parity for the scalar raster readers.
+"""SedonaDB vs Sedona Spark parity for RS_BandNoDataValue.
+
 
 Sedona Spark is the compatibility target, so each test runs one shared SQL
 string on both engines and asserts they agree with the harness-level

@@ -16,8 +16,8 @@
 // under the License.
 
 use arrow_array::{
-    new_null_array, Array, ArrayRef, BinaryArray, BinaryViewArray, Float64Array, Int64Array,
-    ListArray, StringArray, StringViewArray, StructArray, UInt32Array,
+    Array, ArrayRef, BinaryArray, BinaryViewArray, Float64Array, Int64Array, ListArray,
+    StringArray, StringViewArray, StructArray, UInt32Array, new_null_array,
 };
 use arrow_buffer::NullBuffer;
 use arrow_schema::DataType;
@@ -31,7 +31,7 @@ use crate::error::RasterError;
 use crate::traits::{BandRef, NdBuffer, Override, RasterRef};
 use crate::view_entries::{ViewEntries, ViewEntry};
 use sedona_schema::raster::{
-    band_indices, band_view_indices, raster_indices, BandDataType, RasterSchema,
+    BandDataType, RasterSchema, band_indices, band_view_indices, raster_indices,
 };
 
 /// Arrow-backed implementation of BandRef for a single band within a raster.
@@ -472,7 +472,7 @@ pub fn with_column_overrides(
             return Err(RasterError::Invalid(format!(
                 "with_column_overrides: input nulls have {} rows, expected {num_rows} or 1",
                 nulls.len()
-            )))
+            )));
         }
         None => None,
     };
@@ -940,9 +940,9 @@ mod tests {
     use crate::builder::{RasterBuilder, StartBandArgs};
     use crate::traits::{BandOverrides, Override};
     use arrow_array::{ArrayRef, ListArray, StructArray, UInt32Array};
-    use arrow_buffer::{NullBuffer, OffsetBuffer, ScalarBuffer};
+    use arrow_buffer::{Buffer, NullBuffer, OffsetBuffer, ScalarBuffer};
     use arrow_schema::{DataType, Field, Fields};
-    use sedona_schema::raster::{band_indices, raster_indices, BandDataType, RasterSchema};
+    use sedona_schema::raster::{BandDataType, RasterSchema, band_indices, raster_indices};
     use sedona_testing::rasters::generate_test_rasters;
     use std::sync::Arc;
 
@@ -1262,13 +1262,14 @@ mod tests {
         for i in 0..3 {
             let band = raster.band(i).unwrap();
             let expected_value = i as u8;
-            assert!(band
-                .nd_buffer()
-                .unwrap()
-                .as_contiguous()
-                .unwrap()
-                .iter()
-                .all(|&x| x == expected_value));
+            assert!(
+                band.nd_buffer()
+                    .unwrap()
+                    .as_contiguous()
+                    .unwrap()
+                    .iter()
+                    .all(|&x| x == expected_value)
+            );
         }
 
         // Test array
@@ -2040,8 +2041,8 @@ mod tests {
         // the data buffer so the NdBuffer.offset invariant holds — a view whose
         // offset runs past the buffer end must error even though it's empty.
         let array = build_explicit_view_raster(); // source_shape [8], 8 data bytes
-                                                  // start=100 with steps=0: validate skips the start bound for empty axes,
-                                                  // so this composes byte_offset=100 over the 8-byte buffer.
+        // start=100 with steps=0: validate skips the start bound for empty axes,
+        // so this composes byte_offset=100 over the 8-byte buffer.
         let escaping_view = make_band_view_list(vec![vec![(0, 100, 1, 0)]], None);
         let mutated = replace_band_column(&array, band_indices::VIEW, escaping_view);
         let rasters = RasterStructArray::try_new(&mutated).unwrap();
@@ -2051,5 +2052,175 @@ mod tests {
                 && err.to_string().contains("exceeds buffer length"),
             "got: {err}"
         );
+    }
+
+    /// One-row raster with a single InDb UInt8 band of `shape` holding
+    /// `pixels`.
+    fn indb_band_fixture(dims: &[&str], shape: &[i64], pixels: Vec<u8>) -> StructArray {
+        let mut b = RasterBuilder::new(1);
+        b.start_raster_nd(&[0.0, 1.0, 0.0, 0.0, 0.0, -1.0], dims, shape, None)
+            .unwrap();
+        b.start_band(StartBandArgs {
+            name: Some("orig"),
+            ..StartBandArgs::new(dims, shape, BandDataType::UInt8)
+        })
+        .unwrap();
+        b.band_data_writer().append_value(pixels);
+        b.finish_band().unwrap();
+        b.finish_raster().unwrap();
+        b.finish().unwrap()
+    }
+
+    #[test]
+    fn copy_into_with_data_override_shares_the_override_buffer_zero_copy() {
+        let input = indb_band_fixture(&["x"], &[16], (0u8..16).collect());
+        let in_rasters = RasterStructArray::try_new(&input).unwrap();
+        let in_raster = in_rasters.get(0).unwrap();
+        let in_band = in_raster.band(0).unwrap();
+
+        // 16 bytes (> the inline threshold) so sharing is observable.
+        let replacement = Buffer::from_vec((100u8..116).collect::<Vec<u8>>());
+        let mut ob = RasterBuilder::new(1);
+        ob.start_raster_nd(&[0.0, 1.0, 0.0, 0.0, 0.0, -1.0], &["x"], &[16], None)
+            .unwrap();
+        in_band
+            .copy_into(
+                &mut ob,
+                BandOverrides {
+                    data: Override::Set(&replacement),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        ob.finish_band().unwrap();
+        ob.finish_raster().unwrap();
+        let out = ob.finish().unwrap();
+        let out_rasters = RasterStructArray::try_new(&out).unwrap();
+        let out_raster = out_rasters.get(0).unwrap();
+        let out_band = out_raster.band(0).unwrap();
+
+        let ndb = out_band.nd_buffer().unwrap();
+        assert_eq!(ndb.buffer, replacement.as_slice());
+        assert_eq!(
+            ndb.buffer.as_ptr(),
+            replacement.as_ptr(),
+            "a data override must share the override buffer, not copy it"
+        );
+        // Everything else is still inherited from the source.
+        assert_eq!(out_band.name(), Some("orig"));
+        assert!(out_band.is_indb());
+    }
+
+    #[test]
+    fn copy_into_with_source_shape_view_and_data_overrides_builds_resolved_band() {
+        // Source: a [4, 16] buffer viewed down to row 1 (visible [1, 16]).
+        let view = ViewEntries::new(vec![
+            ViewEntry {
+                source_axis: 0,
+                start: 1,
+                step: 1,
+                steps: 1,
+            },
+            ViewEntry {
+                source_axis: 1,
+                start: 0,
+                step: 1,
+                steps: 16,
+            },
+        ]);
+        let mut ib = RasterBuilder::new(1);
+        ib.start_raster_nd(
+            &[0.0, 1.0, 0.0, 0.0, 0.0, -1.0],
+            &["y", "x"],
+            &[1, 16],
+            None,
+        )
+        .unwrap();
+        ib.start_band(StartBandArgs {
+            name: Some("orig"),
+            view: Some(&view),
+            ..StartBandArgs::new(&["y", "x"], &[4, 16], BandDataType::UInt8)
+        })
+        .unwrap();
+        ib.band_data_writer()
+            .append_value((0u8..64).collect::<Vec<u8>>());
+        ib.finish_band().unwrap();
+        ib.finish_raster().unwrap();
+        let input = ib.finish().unwrap();
+        let in_rasters = RasterStructArray::try_new(&input).unwrap();
+        let in_raster = in_rasters.get(0).unwrap();
+        let in_band = in_raster.band(0).unwrap();
+        assert_eq!(in_band.shape(), &[1, 16]);
+
+        // Derive a band holding only the visible region under an identity
+        // view — what a loader that range-reads the window would produce.
+        let resolved = Buffer::from_vec((16u8..32).collect::<Vec<u8>>());
+        let identity = ViewEntries::identity_for_shape(&[1, 16]);
+        let mut ob = RasterBuilder::new(1);
+        ob.start_raster_nd(
+            &[0.0, 1.0, 0.0, 0.0, 0.0, -1.0],
+            &["y", "x"],
+            &[1, 16],
+            None,
+        )
+        .unwrap();
+        in_band
+            .copy_into(
+                &mut ob,
+                BandOverrides {
+                    source_shape: Some(&[1, 16]),
+                    view: Override::Set(&identity),
+                    data: Override::Set(&resolved),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        ob.finish_band().unwrap();
+        ob.finish_raster().unwrap();
+        let out = ob.finish().unwrap();
+        let out_rasters = RasterStructArray::try_new(&out).unwrap();
+        let out_raster = out_rasters.get(0).unwrap();
+        let out_band = out_raster.band(0).unwrap();
+
+        assert_eq!(out_band.shape(), &[1, 16]);
+        assert_eq!(out_band.raw_source_shape(), &[1, 16]);
+        assert!(out_band.view().is_identity(&[1, 16]));
+        assert_eq!(
+            out_band.nd_buffer().unwrap().as_contiguous().unwrap(),
+            resolved.as_slice()
+        );
+        assert_eq!(out_band.name(), Some("orig"));
+    }
+
+    #[test]
+    fn copy_into_with_data_clear_writes_an_outdb_style_band() {
+        let input = indb_band_fixture(&["x"], &[16], (0u8..16).collect());
+        let in_rasters = RasterStructArray::try_new(&input).unwrap();
+        let in_raster = in_rasters.get(0).unwrap();
+        let in_band = in_raster.band(0).unwrap();
+
+        let mut ob = RasterBuilder::new(1);
+        ob.start_raster_nd(&[0.0, 1.0, 0.0, 0.0, 0.0, -1.0], &["x"], &[16], None)
+            .unwrap();
+        in_band
+            .copy_into(
+                &mut ob,
+                BandOverrides {
+                    data: Override::Clear,
+                    outdb_uri: Override::Set("file:///tmp/orig.tif"),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        ob.finish_band().unwrap();
+        ob.finish_raster().unwrap();
+        let out = ob.finish().unwrap();
+        let out_rasters = RasterStructArray::try_new(&out).unwrap();
+        let out_raster = out_rasters.get(0).unwrap();
+        let out_band = out_raster.band(0).unwrap();
+
+        assert!(!out_band.is_indb());
+        assert_eq!(out_band.outdb_uri(), Some("file:///tmp/orig.tif"));
+        assert_eq!(out_band.shape(), &[16]);
     }
 }

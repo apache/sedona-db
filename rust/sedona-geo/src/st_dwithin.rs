@@ -80,7 +80,7 @@ impl SedonaScalarKernel for STDWithin {
 
 #[cfg(test)]
 mod tests {
-    use arrow_array::{create_array as arrow_array, ArrayRef};
+    use arrow_array::{ArrayRef, create_array as arrow_array};
     use datafusion_common::scalar::ScalarValue;
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;

@@ -29,13 +29,13 @@ use std::rc::Rc;
 
 use arrow_array::ArrayRef;
 use arrow_schema::DataType;
-use datafusion_common::{exec_datafusion_err, exec_err, DataFusionError, Result};
+use datafusion_common::{DataFusionError, Result, exec_datafusion_err, exec_err};
 use datafusion_expr::ColumnarValue;
 use sedona_geometry::error::SedonaGeometryError;
-use sedona_geometry::transform::{visit_point_coords, CrsEngine, CrsTransform};
+use sedona_geometry::transform::{CrsEngine, CrsTransform, visit_point_coords};
 use sedona_raster::error::RasterResultExt;
 use sedona_raster::geo_transform::GeoTransformEx;
-use sedona_raster::traits::{nodata_bytes_to_f64_lossless, BandRef, NdBuffer, RasterRef};
+use sedona_raster::traits::{BandRef, NdBuffer, RasterRef, nodata_bytes_to_f64_lossless};
 use sedona_schema::crs::CrsRef;
 use sedona_schema::datatypes::SedonaType;
 use wkb::reader::read_wkb;
@@ -272,10 +272,10 @@ pub(crate) fn read_pixel(
     // be represented faithfully; failing loudly is preferred over a wrong value.
     let value = nodata_bytes_to_f64_lossless(bytes, &buffer.data_type).context(func)?;
 
-    if let Some(nodata) = nodata {
-        if value == nodata || (value.is_nan() && nodata.is_nan()) {
-            return Ok(None);
-        }
+    if let Some(nodata) = nodata
+        && (value == nodata || (value.is_nan() && nodata.is_nan()))
+    {
+        return Ok(None);
     }
 
     Ok(Some(value))

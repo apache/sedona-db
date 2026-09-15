@@ -384,8 +384,8 @@ mod tests {
 
         use super::*;
         use crate::{
-            coord, line_string, polygon, Geometry, GeometryCollection, Line, MultiLineString,
-            MultiPoint, MultiPolygon, Point, Polygon,
+            Geometry, GeometryCollection, Line, MultiLineString, MultiPoint, MultiPolygon, Point,
+            Polygon, coord, line_string, polygon,
         };
 
         #[test]

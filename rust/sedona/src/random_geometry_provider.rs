@@ -14,7 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::{any::Any, fmt::Debug, sync::Arc};
+use std::{fmt::Debug, sync::Arc};
 
 use arrow_schema::{DataType, SchemaRef};
 use async_trait::async_trait;
@@ -185,10 +185,6 @@ impl RandomGeometryProvider {
 
 #[async_trait]
 impl TableProvider for RandomGeometryProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn schema(&self) -> SchemaRef {
         self.builder.schema()
     }
@@ -234,7 +230,7 @@ impl TableProvider for RandomGeometryProvider {
 struct RandomGeometryExec {
     builder: RandomPartitionedDataBuilder,
     last_partition_rows: usize,
-    properties: PlanProperties,
+    properties: Arc<PlanProperties>,
 }
 
 impl RandomGeometryExec {
@@ -249,7 +245,7 @@ impl RandomGeometryExec {
         Self {
             builder,
             last_partition_rows,
-            properties,
+            properties: Arc::new(properties),
         }
     }
 }
@@ -269,15 +265,11 @@ impl ExecutionPlan for RandomGeometryExec {
         "RandomGeometryExec"
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn schema(&self) -> SchemaRef {
         self.builder.schema()
     }
 
-    fn properties(&self) -> &PlanProperties {
+    fn properties(&self) -> &Arc<PlanProperties> {
         &self.properties
     }
 

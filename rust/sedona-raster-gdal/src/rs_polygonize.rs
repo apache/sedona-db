@@ -43,7 +43,7 @@ use sedona_schema::matchers::ArgMatcher;
 
 use crate::gdal_common::with_gdal;
 use crate::gdal_dataset_provider::{
-    configure_thread_local_options, thread_local_provider, RasterDataset,
+    RasterDataset, configure_thread_local_options, thread_local_provider,
 };
 
 pub fn rs_polygonize_udf() -> SedonaScalarUDF {
@@ -302,15 +302,15 @@ mod tests {
     use super::*;
 
     use arrow_array::Array;
+    use datafusion_common::ScalarValue;
     use datafusion_common::cast::{
         as_float64_array, as_list_array, as_string_view_array, as_struct_array,
     };
-    use datafusion_common::ScalarValue;
     use datafusion_expr::{ScalarUDF, ScalarUDFImpl};
     use sedona_gdal::raster::types::Buffer;
     use sedona_raster::array::RasterStructArray;
     use sedona_schema::datatypes::RASTER;
-    use sedona_testing::raster_spec::{raster_array, RasterSpec};
+    use sedona_testing::raster_spec::{RasterSpec, raster_array};
     use sedona_testing::testers::ScalarUdfTester;
     use tempfile::tempdir;
 

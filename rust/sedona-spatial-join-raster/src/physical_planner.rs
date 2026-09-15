@@ -29,7 +29,7 @@ use sedona_query_planner::{
     spatial_predicate::{RelationPredicate, SpatialPredicate, SpatialRelationType},
 };
 use sedona_schema::{crs::Crs, datatypes::SedonaType, matchers::ArgMatcher};
-use sedona_spatial_join::{physical_planner::repartition_probe_side, SpatialJoinExec};
+use sedona_spatial_join::{SpatialJoinExec, physical_planner::repartition_probe_side};
 
 use crate::join_provider::RasterJoinProvider;
 
@@ -238,20 +238,20 @@ mod test {
     use std::sync::Arc;
 
     use arrow_schema::Schema;
-    use datafusion_physical_expr::{expressions::Column, PhysicalExpr};
+    use datafusion_physical_expr::{PhysicalExpr, expressions::Column};
     use sedona_geometry::types::Edges;
     use sedona_query_planner::spatial_predicate::{
         RelationPredicate, SpatialPredicate, SpatialRelationType,
     };
     use sedona_schema::crs::{deserialize_crs, lnglat};
-    use sedona_schema::datatypes::{SedonaType, RASTER, WKB_GEOMETRY};
+    use sedona_schema::datatypes::{RASTER, SedonaType, WKB_GEOMETRY};
 
     use super::{raster_geometry_target_crs, raster_operand_on_left};
 
     fn schema_with(field_name: &str, sedona_type: &SedonaType) -> Arc<Schema> {
-        Arc::new(Schema::new(vec![sedona_type
-            .to_storage_field(field_name, true)
-            .unwrap()]))
+        Arc::new(Schema::new(vec![
+            sedona_type.to_storage_field(field_name, true).unwrap(),
+        ]))
     }
 
     fn col(name: &str) -> Arc<dyn PhysicalExpr> {
@@ -277,20 +277,24 @@ mod test {
         let target = raster_geometry_target_crs(&pred, &raster_schema, &geom_schema)
             .unwrap()
             .expect("raster/geometry should be handled");
-        assert!(target
-            .as_deref()
-            .unwrap()
-            .crs_equals(lnglat().as_deref().unwrap()));
+        assert!(
+            target
+                .as_deref()
+                .unwrap()
+                .crs_equals(lnglat().as_deref().unwrap())
+        );
 
         // (geometry, raster): still resolves to the geometry's CRS.
         let pred = relation(col("geom"), col("raster"), SpatialRelationType::Contains);
         let target = raster_geometry_target_crs(&pred, &geom_schema, &raster_schema)
             .unwrap()
             .expect("geometry/raster should be handled");
-        assert!(target
-            .as_deref()
-            .unwrap()
-            .crs_equals(lnglat().as_deref().unwrap()));
+        assert!(
+            target
+                .as_deref()
+                .unwrap()
+                .crs_equals(lnglat().as_deref().unwrap())
+        );
     }
 
     #[test]
@@ -334,10 +338,12 @@ mod test {
         let target = raster_geometry_target_crs(&pred, &geom_schema, &raster_schema)
             .unwrap()
             .expect("raster/geometry should be handled");
-        assert!(target
-            .as_deref()
-            .unwrap()
-            .crs_equals(deserialize_crs("EPSG:3857").unwrap().as_deref().unwrap()));
+        assert!(
+            target
+                .as_deref()
+                .unwrap()
+                .crs_equals(deserialize_crs("EPSG:3857").unwrap().as_deref().unwrap())
+        );
     }
 
     #[test]

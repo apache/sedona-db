@@ -50,9 +50,9 @@ pub fn is_geometry_empty<G: GeometryTrait<T = f64>>(
 mod tests {
     use super::*;
     use std::str::FromStr;
-    use wkb::reader::read_wkb;
-    use wkb::writer::{write_geometry, WriteOptions};
     use wkb::Endianness;
+    use wkb::reader::read_wkb;
+    use wkb::writer::{WriteOptions, write_geometry};
     use wkt::Wkt;
 
     fn create_wkb_bytes_from_wkt(wkt_str: &str) -> Vec<u8> {

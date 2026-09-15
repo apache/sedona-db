@@ -20,6 +20,7 @@ use std::sync::Arc;
 use arrow_array::RecordBatchReader;
 use arrow_schema::ArrowError;
 use datafusion::catalog::{MemTable, TableProvider};
+use datafusion_expr::ScalarUDF;
 use datafusion_ffi::udf::FFI_ScalarUDF;
 use savvy::{savvy, savvy_err, IntoExtPtrSexp, OwnedStringSexp, Result};
 
@@ -27,7 +28,7 @@ use sedona::{
     context::SedonaContext, context_builder::SedonaContextBuilder,
     record_batch_reader_provider::RecordBatchReaderProvider,
 };
-use sedona_extension::runtime::RuntimeHandle;
+use sedona_extension::{runtime::RuntimeHandle, scalar_kernel::with_config_options_for_ffi};
 use sedona_geoparquet::provider::GeoParquetReadOptions;
 
 use crate::{
@@ -153,7 +154,16 @@ impl InternalContext {
 
     pub fn scalar_udf_xptr(&self, name: &str) -> savvy::Result<savvy::Sexp> {
         if let Some(udf) = self.inner.ctx.state().scalar_functions().get(name) {
-            let ffi_scalar_udf: FFI_ScalarUDF = udf.clone().into();
+            let udf = if let Some(sedona_udf) = self.inner.scalar_udf(name)? {
+                let config_options = self.inner.ctx.state().config_options().clone();
+                Arc::new(ScalarUDF::from(with_config_options_for_ffi(
+                    sedona_udf,
+                    config_options,
+                )?))
+            } else {
+                udf.clone()
+            };
+            let ffi_scalar_udf: FFI_ScalarUDF = udf.into();
             let mut ffi_xptr = FFIScalarUdfR(ffi_scalar_udf).into_external_pointer();
             unsafe { savvy_ffi::Rf_protect(ffi_xptr.0) };
             ffi_xptr.set_class(vec!["datafusion_scalar_udf"])?;

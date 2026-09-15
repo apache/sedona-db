@@ -16,8 +16,8 @@
 // under the License.
 
 use arrow_array::{
-    builder::{BinaryViewBuilder, BooleanBuilder, Float64Builder, Int64Builder, StringViewBuilder},
     Array, ArrayRef, BinaryViewArray, ListArray, StructArray,
+    builder::{BinaryViewBuilder, BooleanBuilder, Float64Builder, Int64Builder, StringViewBuilder},
 };
 use arrow_buffer::{Buffer, OffsetBuffer, ScalarBuffer};
 use arrow_schema::DataType;
@@ -413,7 +413,9 @@ impl RasterBuilder {
                 nodata: nodata.map_or(Override::Keep, Override::Set),
                 outdb_uri: outdb_uri.map_or(Override::Keep, Override::Set),
                 outdb_format: outdb_format.map_or(Override::Keep, Override::Set),
+                source_shape: None,
                 view: Override::Set(&composed),
+                data: Override::Keep,
             },
         )
     }
@@ -661,6 +663,15 @@ impl BandWriter for RasterBuilder {
     ) -> Result<(), RasterError> {
         self.bands.append_band_data_from(src, row)
     }
+
+    fn append_band_data_buffer(
+        &mut self,
+        buffer: &Buffer,
+        offset: u32,
+        len: u32,
+    ) -> Result<(), RasterError> {
+        self.bands.append_band_data_buffer(buffer, offset, len)
+    }
 }
 
 #[cfg(test)]
@@ -774,13 +785,14 @@ mod tests {
         for i in 0..3 {
             let band = raster.band(i).unwrap();
             let expected_value = i as u8;
-            assert!(band
-                .nd_buffer()
-                .unwrap()
-                .as_contiguous()
-                .unwrap()
-                .iter()
-                .all(|&x| x == expected_value));
+            assert!(
+                band.nd_buffer()
+                    .unwrap()
+                    .as_contiguous()
+                    .unwrap()
+                    .iter()
+                    .all(|&x| x == expected_value)
+            );
         }
 
         // Test iterator
@@ -884,7 +896,7 @@ mod tests {
 
     #[test]
     fn copy_raster_from_overrides_transform_and_preserves_bands() {
-        use sedona_testing::raster_spec::{assert_rasters_equal, RasterSpec};
+        use sedona_testing::raster_spec::{RasterSpec, assert_rasters_equal};
 
         // Source: a CRS, a nodata sentinel, and pixel values to preserve.
         let source = RasterSpec::d2(2, 1)

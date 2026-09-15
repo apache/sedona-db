@@ -24,7 +24,7 @@ homepage.workspace = true
 repository.workspace = true
 description.workspace = true
 readme.workspace = true
-edition.workspace = true
+edition = "2024"
 rust-version.workspace = true
 
 [lints.clippy]

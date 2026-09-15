@@ -39,28 +39,28 @@ use arrow_schema::DataType;
 use datafusion_common::cast::as_string_view_array;
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::error::Result;
-use datafusion_common::{exec_err, ScalarValue};
+use datafusion_common::{ScalarValue, exec_err};
 use datafusion_expr::{ColumnarValue, Volatility};
 
-use sedona_common::{sedona_internal_err, SedonaOptions};
+use sedona_common::{SedonaOptions, sedona_internal_err};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_gdal::raster::types::ResampleAlg;
 use sedona_raster::array::RasterRefImpl;
 use sedona_raster::builder::RasterBuilder;
 use sedona_raster::geo_transform::GeoTransform;
 use sedona_raster::traits::RasterRef;
+use sedona_raster_functions::RasterExecutor;
 use sedona_raster_functions::rs_ensure_loaded::{
     NEEDS_PIXELS_METADATA_KEY, RETURNS_BYTES_METADATA_KEY,
 };
-use sedona_raster_functions::RasterExecutor;
-use sedona_schema::datatypes::{SedonaType, RASTER};
+use sedona_schema::datatypes::{RASTER, SedonaType};
 use sedona_schema::matchers::ArgMatcher;
 
-use crate::gdal_common::{raster_ref_to_gdal_mem, with_gdal, GdalBandLayout};
+use crate::gdal_common::{GdalBandLayout, raster_ref_to_gdal_mem, with_gdal};
 use crate::gdal_dataset_provider::configure_thread_local_options;
 use crate::utils::{
-    append_warped_nd_from_dataset, parse_resample_algorithm, reject_lossy_resample_dtypes, Grid,
-    OutputGrid,
+    Grid, OutputGrid, append_warped_nd_from_dataset, parse_resample_algorithm,
+    reject_lossy_resample_dtypes,
 };
 
 /// RS_ReprojectMatch() scalar UDF implementation.
@@ -293,7 +293,7 @@ fn reproject_match(
 mod tests {
     use super::*;
     use sedona_testing::raster_spec::{
-        assert_raster_scalar_equals, assert_rasters_equal, raster_array, RasterSpec,
+        RasterSpec, assert_raster_scalar_equals, assert_rasters_equal, raster_array,
     };
     use sedona_testing::testers::ScalarUdfTester;
 

@@ -17,7 +17,7 @@
 // Extend TriangleTrait traits for the `geo-traits` crate
 
 use geo_traits::{GeometryTrait, TriangleTrait, UnimplementedTriangle};
-use geo_types::{polygon, Coord, CoordNum, Line, Polygon, Triangle};
+use geo_types::{Coord, CoordNum, Line, Polygon, Triangle, polygon};
 
 use crate::{CoordTraitExt, GeoTraitExtWithTypeTag, TriangleTag};
 

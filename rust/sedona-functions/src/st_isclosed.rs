@@ -23,8 +23,8 @@ use datafusion_common::error::Result;
 use datafusion_expr::Volatility;
 use geo_traits::GeometryCollectionTrait;
 use geo_traits::{
-    to_geo::{ToGeoLineString, ToGeoMultiLineString},
     GeometryTrait,
+    to_geo::{ToGeoLineString, ToGeoMultiLineString},
 };
 use sedona_common::sedona_internal_err;
 use sedona_expr::item_crs::ItemCrsKernel;
@@ -112,7 +112,7 @@ fn is_geometry_closed(item: &Wkb) -> Result<bool> {
 
 #[cfg(test)]
 mod tests {
-    use arrow_array::{create_array as arrow_array, ArrayRef};
+    use arrow_array::{ArrayRef, create_array as arrow_array};
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;

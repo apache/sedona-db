@@ -17,9 +17,9 @@
 
 use std::sync::Arc;
 
-use arrow_array::{builder::BinaryBuilder, Float64Array};
+use arrow_array::{Float64Array, builder::BinaryBuilder};
 use arrow_schema::DataType;
-use datafusion_common::{cast::as_float64_array, error::Result, DataFusionError};
+use datafusion_common::{DataFusionError, cast::as_float64_array, error::Result};
 use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::Dimensions;
 use sedona_expr::{
@@ -28,7 +28,7 @@ use sedona_expr::{
 };
 use sedona_geometry::{
     error::SedonaGeometryError,
-    transform::{transform, CrsTransform},
+    transform::{CrsTransform, transform},
     wkb_factory::WKB_MIN_PROBABLE_BYTES,
 };
 use sedona_schema::{

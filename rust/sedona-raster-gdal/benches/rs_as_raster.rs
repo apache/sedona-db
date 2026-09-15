@@ -21,13 +21,13 @@ use std::{hint::black_box, sync::Arc};
 
 use arrow_array::{ArrayRef, BooleanArray, Float64Array, StringArray};
 use arrow_schema::DataType;
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use datafusion_expr::ScalarUDF;
 use sedona_schema::crs::deserialize_crs;
-use sedona_schema::datatypes::{Edges, SedonaType, RASTER};
+use sedona_schema::datatypes::{Edges, RASTER, SedonaType};
 use sedona_testing::{
     create::create_array,
-    raster_spec::{raster_array as build_raster_array, RasterSpec},
+    raster_spec::{RasterSpec, raster_array as build_raster_array},
     testers::ScalarUdfTester,
 };
 

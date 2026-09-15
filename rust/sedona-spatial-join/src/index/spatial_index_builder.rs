@@ -20,9 +20,9 @@ use std::sync::Arc;
 use datafusion_physical_plan::metrics::{self, ExecutionPlanMetricsSet, MetricBuilder};
 use sedona_expr::statistics::GeoStatistics;
 
+use crate::IndexQueryResultRefiner;
 use crate::evaluated_batch::evaluated_batch_stream::SendableEvaluatedBatchStream;
 use crate::index::spatial_index::SpatialIndexRef;
-use crate::IndexQueryResultRefiner;
 use async_trait::async_trait;
 use datafusion_common::Result;
 

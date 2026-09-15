@@ -20,12 +20,12 @@
 
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use sedona_spatial_join::partitioning::{
-    flat::FlatPartitioner, rtree::RTreePartitioner, SpatialPartitioner,
+    SpatialPartitioner, flat::FlatPartitioner, rtree::RTreePartitioner,
 };
 use sedona_spatial_join::utils::internal_benchmark_util::{
-    default_extent, grid_partitions, sample_queries, QUERY_BATCH_SIZE,
+    QUERY_BATCH_SIZE, default_extent, grid_partitions, sample_queries,
 };
 
 /// Grid dimensions to benchmark. Each produces dim*dim partitions.

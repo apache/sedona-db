@@ -19,12 +19,12 @@
 //! Ported (and contains copied code) from `geo::algorithm::map_coords`:
 //! <https://github.com/georust/geo/blob/f2326a3dd1fa9ff39d3e65618eb7ca2bacad2c0c/geo/src/algorithm/map_coords.rs>.
 //! Original code is dual-licensed under Apache-2.0 or MIT; used here under Apache-2.0.
-pub(crate) use crate::geometry::*;
 pub(crate) use crate::CoordNum;
+pub(crate) use crate::geometry::*;
 
+use Coord;
 use core::borrow::Borrow;
 use sedona_geo_traits_ext::*;
-use Coord;
 
 /// Map a function over all the coordinates in an object, returning a new one
 pub trait MapCoords<T: CoordNum, NT: CoordNum> {
@@ -799,8 +799,8 @@ impl<T: CoordNum> MapCoordsInPlace<T> for Triangle<T> {
 mod test {
     use super::{MapCoords, MapCoordsInPlace};
     use crate::{
-        coord, polygon, Coord, Geometry, GeometryCollection, Line, LineString, MultiLineString,
-        MultiPoint, MultiPolygon, Point, Polygon, Rect,
+        Coord, Geometry, GeometryCollection, Line, LineString, MultiLineString, MultiPoint,
+        MultiPolygon, Point, Polygon, Rect, coord, polygon,
     };
 
     #[test]

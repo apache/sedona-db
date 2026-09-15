@@ -381,7 +381,7 @@ mod tests {
     use datafusion_expr::ScalarUDF;
     use sedona_schema::datatypes::RASTER;
     use sedona_schema::raster::BandDataType;
-    use sedona_testing::raster_spec::{assert_rasters_equal, RasterSpec};
+    use sedona_testing::raster_spec::{RasterSpec, assert_rasters_equal};
     use sedona_testing::rasters::generate_test_rasters;
     use sedona_testing::testers::ScalarUdfTester;
 

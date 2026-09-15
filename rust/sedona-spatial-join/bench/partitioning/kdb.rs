@@ -17,10 +17,10 @@
 
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use rand::{rngs::StdRng, RngExt, SeedableRng};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use rand::{RngExt, SeedableRng, rngs::StdRng};
 use sedona_geometry::{bounding_box::BoundingBox, interval::IntervalTrait};
-use sedona_spatial_join::partitioning::{kdb::KDBPartitioner, SpatialPartitioner};
+use sedona_spatial_join::partitioning::{SpatialPartitioner, kdb::KDBPartitioner};
 
 const SAMPLE_COUNT: usize = 20_000;
 const QUERY_BATCH_SIZE: usize = 1_024;

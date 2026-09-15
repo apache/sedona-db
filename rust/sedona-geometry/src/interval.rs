@@ -538,11 +538,14 @@ impl IntervalTrait for WraparoundInterval {
             (false, true) => {
                 let inner = self.inner;
                 let (left, right) = other.split();
-                match (inner.intersects_interval(&left), inner.intersects_interval(&right)) {
+                match (
+                    inner.intersects_interval(&left),
+                    inner.intersects_interval(&right),
+                ) {
                     // Intersects both the left and right intervals
-                    (true, true) => {
-                        Err(SedonaGeometryError::Invalid(format!("Can't represent the intersection of {self:?} and {other:?} as a single WraparoundInterval")))
-                    },
+                    (true, true) => Err(SedonaGeometryError::Invalid(format!(
+                        "Can't represent the intersection of {self:?} and {other:?} as a single WraparoundInterval"
+                    ))),
                     // Intersects only the left interval
                     (true, false) => Ok(inner.intersection(&left)?.into()),
                     // Intersects only the right interval
@@ -570,7 +573,9 @@ impl IntervalTrait for WraparoundInterval {
                         excluded_union.lo(),
                     ))
                 } else {
-                    Err(SedonaGeometryError::Invalid(format!("Can't represent the intersection of {self:?} and {other:?} as a single WraparoundInterval")))
+                    Err(SedonaGeometryError::Invalid(format!(
+                        "Can't represent the intersection of {self:?} and {other:?} as a single WraparoundInterval"
+                    )))
                 }
             }
         }
@@ -1329,8 +1334,9 @@ mod test {
 
         // Can't convert a wraparound interval that actually wraps around to an Interval
         let err = Interval::try_from(wraparound).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("Can't convert wraparound interval"));
+        assert!(
+            err.to_string()
+                .contains("Can't convert wraparound interval")
+        );
     }
 }

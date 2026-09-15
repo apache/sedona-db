@@ -21,7 +21,7 @@ use arrow_schema::Schema;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion_common::{JoinSide, Result};
 use datafusion_physical_expr::PhysicalExpr;
-use sedona_common::{sedona_internal_err, SpatialJoinOptions};
+use sedona_common::{SpatialJoinOptions, sedona_internal_err};
 use sedona_query_planner::probe_shuffle_exec::ProbeShuffleExec;
 use sedona_query_planner::spatial_join_physical_planner::{
     PlanSpatialJoinArgs, SpatialJoinPhysicalPlanner,
@@ -234,7 +234,7 @@ pub fn is_spatial_predicate_supported(
                     return sedona_internal_err!(
                         "Invalid probe side in KNN predicate: {:?}",
                         probe_side
-                    )
+                    );
                 }
             };
             Ok(is_geometry_type_supported(left, left_schema)?
@@ -285,9 +285,9 @@ mod test {
     #[test]
     fn test_is_knn_predicate_supported() {
         // ST_KNN(left, right)
-        let left_schema = Arc::new(Schema::new(vec![WKB_GEOMETRY
-            .to_storage_field("geom", false)
-            .unwrap()]));
+        let left_schema = Arc::new(Schema::new(vec![
+            WKB_GEOMETRY.to_storage_field("geom", false).unwrap(),
+        ]));
         let right_schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int32, false),
             WKB_GEOMETRY.to_storage_field("geom", false).unwrap(),
@@ -314,9 +314,9 @@ mod test {
         assert!(is_spatial_predicate_supported(&knn_pred, &left_schema, &right_schema).unwrap());
 
         // ST_KNN with geography (should NOT be supported)
-        let left_geog_schema = Arc::new(Schema::new(vec![WKB_GEOGRAPHY
-            .to_storage_field("geog", false)
-            .unwrap()]));
+        let left_geog_schema = Arc::new(Schema::new(vec![
+            WKB_GEOGRAPHY.to_storage_field("geog", false).unwrap(),
+        ]));
         assert!(
             !is_spatial_predicate_supported(&knn_pred, &left_geog_schema, &right_schema).unwrap()
         );

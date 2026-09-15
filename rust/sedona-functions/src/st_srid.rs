@@ -17,13 +17,13 @@
 
 use crate::executor::WkbExecutor;
 use arrow_array::{
-    builder::{StringViewBuilder, UInt32Builder},
     Array,
+    builder::{StringViewBuilder, UInt32Builder},
 };
 use arrow_schema::DataType;
 use datafusion_common::{
-    cast::{as_string_view_array, as_struct_array},
     DataFusionError, Result, ScalarValue,
+    cast::{as_string_view_array, as_struct_array},
 };
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::sedona_internal_err;
@@ -272,7 +272,7 @@ impl SedonaScalarKernel for StCrsItemCrs {
 #[cfg(test)]
 mod test {
     use super::*;
-    use arrow_array::{create_array, ArrayRef};
+    use arrow_array::{ArrayRef, create_array};
     use arrow_schema::Field;
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;

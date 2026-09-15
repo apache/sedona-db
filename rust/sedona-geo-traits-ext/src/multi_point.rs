@@ -104,7 +104,7 @@ macro_rules! forward_multi_point_trait_ext_funcs {
 
         #[inline]
         unsafe fn point_unchecked_ext(&self, i: usize) -> Self::PointTypeExt<'_> {
-            <Self as MultiPointTrait>::point_unchecked(self, i)
+            unsafe { <Self as MultiPointTrait>::point_unchecked(self, i) }
         }
 
         #[inline]
@@ -122,7 +122,7 @@ where
 
     /// Specialized coordinate accessor for `geo_types::MultiPoint`.
     unsafe fn geo_coord_unchecked(&self, i: usize) -> Option<Coord<T>> {
-        Some(self.0.get_unchecked(i).0)
+        unsafe { Some(self.0.get_unchecked(i).0) }
     }
 
     // Specialized implementation for geo_types::MultiPoint to reduce performance overhead
@@ -143,7 +143,7 @@ where
 
     /// Specialized coordinate accessor for `&geo_types::MultiPoint`.
     unsafe fn geo_coord_unchecked(&self, i: usize) -> Option<Coord<T>> {
-        Some(self.0.get_unchecked(i).0)
+        unsafe { Some(self.0.get_unchecked(i).0) }
     }
 
     // Specialized implementation for geo_types::MultiPoint to reduce performance overhead

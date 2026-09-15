@@ -16,7 +16,7 @@
 // under the License.
 //! Centroid extraction functionality for WKB geometries
 
-use datafusion_common::{exec_err, Result};
+use datafusion_common::{Result, exec_err};
 use geo_traits::CoordTrait;
 use geo_traits::GeometryTrait;
 use geo_traits::PointTrait;

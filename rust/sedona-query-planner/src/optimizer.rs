@@ -18,8 +18,9 @@ use std::sync::Arc;
 
 use crate::ensure_loaded::EnsureLoadedOptimizerRule;
 use crate::logical_plan_node::SpatialJoinPlanNode;
+use crate::push_down_leaf_projections::PushDownLeafProjections;
 use crate::spatial_expr_utils::{
-    collect_spatial_predicate_names, find_knn_query_side, KNNJoinQuerySide,
+    KNNJoinQuerySide, collect_spatial_predicate_names, find_knn_query_side,
 };
 use crate::wrap_async_udf::WrapAsyncUdfRule;
 use datafusion::execution::session_state::SessionStateBuilder;
@@ -32,6 +33,29 @@ use datafusion_expr::{Filter, Join, JoinType, LogicalPlan};
 use datafusion_optimizer::{ApplyOrder, Optimizer, OptimizerConfig, OptimizerRule};
 use sedona_common::option::SedonaOptions;
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
+
+/// Replace DataFusion 54.1's leaf projection pushdown rule with the version
+/// containing the `Unnest` barrier added by DataFusion PR #22620.
+/// Tracked by <https://github.com/apache/sedona-db/issues/1232>.
+pub fn register_vendored_optimizer_rules(
+    mut session_state_builder: SessionStateBuilder,
+) -> Result<SessionStateBuilder> {
+    let optimizer = session_state_builder
+        .optimizer()
+        .get_or_insert_with(Optimizer::new);
+    let rule_pos = optimizer
+        .rules
+        .iter()
+        .position(|rule| rule.name() == "push_down_leaf_projections")
+        .ok_or_else(|| {
+            sedona_internal_datafusion_err!(
+                "PushDownLeafProjections rule not found in default optimizer rules"
+            )
+        })?;
+
+    optimizer.rules[rule_pos] = Arc::new(PushDownLeafProjections::new());
+    Ok(session_state_builder)
+}
 
 /// Register the logical spatial join optimizer rules.
 ///
@@ -181,12 +205,12 @@ impl OptimizerRule for KnnJoinEarlyRewrite {
         }
 
         // Join(filter=ST_KNN(...))
-        if let LogicalPlan::Join(join) = &plan {
-            if let Some(filter) = join.filter.as_ref() {
-                let names = collect_spatial_predicate_names(filter);
-                if names.contains("st_knn") {
-                    return rewrite_join_to_spatial_join_plan_node(join);
-                }
+        if let LogicalPlan::Join(join) = &plan
+            && let Some(filter) = join.filter.as_ref()
+        {
+            let names = collect_spatial_predicate_names(filter);
+            if names.contains("st_knn") {
+                return rewrite_join_to_spatial_join_plan_node(join);
             }
         }
 
@@ -247,7 +271,8 @@ impl OptimizerRule for SpatialJoinLogicalRewrite {
             // KNN joins should have already been rewritten by KnnJoinEarlyRewrite, so we shouldn't
             // see them here.
             return sedona_internal_err!(
-                "Found KNN predicate in SpatialJoinLogicalRewrite, which should have been handled by KnnJoinEarlyRewrite");
+                "Found KNN predicate in SpatialJoinLogicalRewrite, which should have been handled by KnnJoinEarlyRewrite"
+            );
         }
 
         // Join with with equi-join condition should be planned as a regular HashJoin
@@ -372,18 +397,25 @@ impl OptimizerRule for MergeSpatialFilterIntoJoin {
         }
 
         let LogicalPlan::Join(Join {
-            ref left,
-            ref right,
-            ref on,
-            ref filter,
+            left,
+            right,
+            on,
+            filter,
             join_type,
-            ref join_constraint,
-            ref null_equality,
+            join_constraint,
+            null_equality,
+            null_aware,
             ..
         }) = input.as_ref()
         else {
             return Ok(Transformed::no(plan));
         };
+
+        // This should not happen for the types of joins we optimize here
+        // (only applies to left anti).
+        if *null_aware {
+            return Ok(Transformed::no(plan));
+        }
 
         // Check if this is a suitable join for rewriting
         let is_equi_join = !on.is_empty() && !spatial_predicates.contains("st_knn");
@@ -408,6 +440,7 @@ impl OptimizerRule for MergeSpatialFilterIntoJoin {
             JoinType::Inner,
             *join_constraint,
             *null_equality,
+            *null_aware,
         )?;
 
         Ok(Transformed::yes(LogicalPlan::Join(rewritten_plan)))
@@ -551,5 +584,54 @@ impl OptimizerRule for KnnQuerySideFilterPushdown {
         };
 
         Ok(Transformed::yes(result))
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use datafusion::{
+        execution::SessionStateBuilder,
+        functions::core::expr_fn::get_field,
+        prelude::{SessionContext, col},
+    };
+
+    use super::*;
+
+    #[tokio::test]
+    async fn replaces_leaf_projection_rule_and_keeps_unnest_as_barrier() {
+        // Regression for https://github.com/apache/sedona-db/issues/1232.
+        let mut builder =
+            register_vendored_optimizer_rules(SessionStateBuilder::new_with_default_features())
+                .unwrap();
+        let matching_rules = builder
+            .optimizer()
+            .as_ref()
+            .unwrap()
+            .rules
+            .iter()
+            .filter(|rule| rule.name() == "push_down_leaf_projections")
+            .count();
+        assert_eq!(matching_rules, 1);
+
+        let ctx = SessionContext::new_with_state(builder.build());
+        let batches = ctx
+            .sql(
+                "SELECT [named_struct('path', [1], 'geom', 'a'), \
+                               named_struct('path', [2], 'geom', 'b')] AS dump",
+            )
+            .await
+            .unwrap()
+            .unnest_columns(&["dump"])
+            .unwrap()
+            .select(vec![get_field(col("dump"), "geom").alias("geometry")])
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+
+        assert_eq!(
+            batches.iter().map(|batch| batch.num_rows()).sum::<usize>(),
+            2
+        );
     }
 }

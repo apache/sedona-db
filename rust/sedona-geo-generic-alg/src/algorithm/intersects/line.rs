@@ -21,7 +21,7 @@
 //! Original code is dual-licensed under Apache-2.0 or MIT; used here under Apache-2.0.
 use sedona_geo_traits_ext::*;
 
-use super::{point_in_rect, IntersectsTrait};
+use super::{IntersectsTrait, point_in_rect};
 use crate::*;
 
 impl<T, LHS, RHS> IntersectsTrait<LineTag, CoordTag, RHS> for LHS

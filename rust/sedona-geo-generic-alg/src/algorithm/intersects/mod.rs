@@ -145,12 +145,11 @@ where
     B: BoundingRect<T>,
 {
     let mut disjoint_bbox = false;
-    if let Some(a_bbox) = a.bounding_rect().into() {
-        if let Some(b_bbox) = b.bounding_rect().into() {
-            if !a_bbox.intersects(&b_bbox) {
-                disjoint_bbox = true;
-            }
-        }
+    if let Some(a_bbox) = a.bounding_rect().into()
+        && let Some(b_bbox) = b.bounding_rect().into()
+        && !a_bbox.intersects(&b_bbox)
+    {
+        disjoint_bbox = true;
     }
     disjoint_bbox
 }
@@ -161,8 +160,8 @@ mod test {
 
     use crate::Intersects;
     use crate::{
-        coord, line_string, polygon, Geometry, Line, LineString, MultiLineString, MultiPoint,
-        MultiPolygon, Point, Polygon, Rect,
+        Geometry, Line, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon,
+        Rect, coord, line_string, polygon,
     };
 
     /// Tests: intersection LineString and LineString
@@ -428,27 +427,35 @@ mod test {
 
         assert!(bounding_rect_xl.to_polygon().intersects(&bounding_rect_sm));
         assert!(bounding_rect_xl.intersects(&bounding_rect_sm.to_polygon()));
-        assert!(bounding_rect_xl
-            .to_polygon()
-            .intersects(&bounding_rect_sm.to_polygon()));
+        assert!(
+            bounding_rect_xl
+                .to_polygon()
+                .intersects(&bounding_rect_sm.to_polygon())
+        );
 
         assert!(bounding_rect_sm.to_polygon().intersects(&bounding_rect_xl));
         assert!(bounding_rect_sm.intersects(&bounding_rect_xl.to_polygon()));
-        assert!(bounding_rect_sm
-            .to_polygon()
-            .intersects(&bounding_rect_xl.to_polygon()));
+        assert!(
+            bounding_rect_sm
+                .to_polygon()
+                .intersects(&bounding_rect_xl.to_polygon())
+        );
 
         assert!(bounding_rect_sm.to_polygon().intersects(&bounding_rect_s2));
         assert!(bounding_rect_sm.intersects(&bounding_rect_s2.to_polygon()));
-        assert!(bounding_rect_sm
-            .to_polygon()
-            .intersects(&bounding_rect_s2.to_polygon()));
+        assert!(
+            bounding_rect_sm
+                .to_polygon()
+                .intersects(&bounding_rect_s2.to_polygon())
+        );
 
         assert!(bounding_rect_s2.to_polygon().intersects(&bounding_rect_sm));
         assert!(bounding_rect_s2.intersects(&bounding_rect_sm.to_polygon()));
-        assert!(bounding_rect_s2
-            .to_polygon()
-            .intersects(&bounding_rect_sm.to_polygon()));
+        assert!(
+            bounding_rect_s2
+                .to_polygon()
+                .intersects(&bounding_rect_sm.to_polygon())
+        );
     }
     #[test]
     fn point_intersects_line_test() {

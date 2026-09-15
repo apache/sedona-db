@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use arrow_array::{ArrayRef, Float64Array};
 use arrow_schema::DataType;
-use datafusion_common::{exec_datafusion_err, JoinType, Result, ScalarValue};
+use datafusion_common::{JoinType, Result, ScalarValue, exec_datafusion_err};
 use datafusion_physical_plan::ColumnarValue;
 use sedona_common::sedona_internal_err;
 use sedona_expr::statistics::GeoStatistics;
@@ -30,14 +30,14 @@ use sedona_s2geography::{
 };
 use sedona_schema::datatypes::SedonaType;
 use sedona_spatial_join::{
+    SpatialJoinOptions, SpatialPredicate,
     index::{
-        default_spatial_index_builder::DefaultSpatialIndexBuilder,
-        spatial_index_builder::SpatialJoinBuildMetrics, SpatialIndexBuilder,
+        SpatialIndexBuilder, default_spatial_index_builder::DefaultSpatialIndexBuilder,
+        spatial_index_builder::SpatialJoinBuildMetrics,
     },
     join_provider::SpatialJoinProvider,
     operand_evaluator::{EvaluatedGeometryArray, EvaluatedGeometryArrayFactory},
     utils::bounds::Bounds2D,
-    SpatialJoinOptions, SpatialPredicate,
 };
 
 use crate::{

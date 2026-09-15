@@ -25,8 +25,8 @@
 //! - RS_AsGeoTiff(raster, compressionType, imageQuality, tileWidth, tileHeight)
 
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::gdal_common::with_gdal;
 use arrow_array::builder::BinaryViewBuilder;
@@ -35,7 +35,7 @@ use arrow_schema::DataType;
 use datafusion_common::cast::{as_float64_array, as_string_array, as_uint32_array};
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::error::Result;
-use datafusion_common::{exec_datafusion_err, exec_err, ScalarValue};
+use datafusion_common::{ScalarValue, exec_datafusion_err, exec_err};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_gdal::vsi::VSIBuffer;
@@ -49,7 +49,7 @@ use sedona_schema::raster::BandDataType;
 
 // Use thread-local provider to create GDAL datasets from `RasterRef`.
 use crate::gdal_dataset_provider::{
-    configure_thread_local_options, thread_local_provider, GDALDatasetProvider,
+    GDALDatasetProvider, configure_thread_local_options, thread_local_provider,
 };
 
 /// Counter for generating unique VSI memory file names
@@ -171,10 +171,10 @@ impl RsAsGeoTiff {
             options_list.push(format!("COMPRESS={}", comp.gdal_value()));
 
             // Add quality for JPEG
-            if comp == CompressionType::Jpeg {
-                if let Some(q) = jpeg_quality {
-                    options_list.push(format!("JPEG_QUALITY={}", q));
-                }
+            if comp == CompressionType::Jpeg
+                && let Some(q) = jpeg_quality
+            {
+                options_list.push(format!("JPEG_QUALITY={}", q));
             }
 
             // Add a predictor for Deflate/LZW (improves compression): horizontal

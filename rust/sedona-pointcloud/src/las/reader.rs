@@ -26,15 +26,15 @@ use bytes::Bytes;
 use datafusion_common::error::DataFusionError;
 use datafusion_datasource::PartitionedFile;
 use datafusion_execution::cache::cache_manager::FileMetadataCache;
-use futures::{future::BoxFuture, FutureExt};
-use las::{raw::Point as RawPoint, Header, Point};
+use futures::{FutureExt, future::BoxFuture};
+use las::{Header, Point, raw::Point as RawPoint};
 use laz::{
+    DecompressionSelection, LasZipError,
     record::{
         LayeredPointRecordDecompressor, RecordDecompressor, SequentialPointRecordDecompressor,
     },
-    DecompressionSelection, LasZipError,
 };
-use object_store::ObjectStore;
+use object_store::{ObjectStore, ObjectStoreExt};
 
 use crate::las::{
     builder::RowBuilder,
@@ -102,14 +102,18 @@ impl LasFileReader {
         let metadata = self.get_metadata().await?;
         let header = metadata.header.clone();
 
-        // fetch bytes
-        let bytes = self.get_bytes(chunk_meta.byte_range.clone()).await?;
-
         // record batch builder
         let num_points = chunk_meta.num_points as usize;
         let mut builder = RowBuilder::new(num_points, header.clone())
             .with_geometry_encoding(self.options.geometry_encoding)
             .with_extra_attributes(metadata.extra_attributes.clone(), self.options.extra_bytes);
+
+        if num_points == 0 {
+            return Ok(RecordBatch::from(builder.finish()?));
+        }
+
+        // fetch bytes
+        let bytes = self.get_bytes(chunk_meta.byte_range.clone()).await?;
 
         // parse points
         if header.laz_vlr().is_ok() {
@@ -193,8 +197,8 @@ mod tests {
     use std::{fs::File, sync::Arc};
 
     use datafusion_datasource::PartitionedFile;
-    use las::{point::Format, Builder, Writer};
-    use object_store::{local::LocalFileSystem, path::Path, ObjectStore};
+    use las::{Builder, Writer, point::Format};
+    use object_store::{ObjectStoreExt, local::LocalFileSystem, path::Path};
 
     use crate::las::reader::LasFileReaderFactory;
 

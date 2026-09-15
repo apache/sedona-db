@@ -29,7 +29,7 @@ rust-version.workspace = true
 
 [features]
 default = ["protobuf"]
-protobuf = ["datafusion-proto"]
+protobuf = ["datafusion-proto", "prost"]
 
 [dependencies]
 arrow-array = { workspace = true, features = ["ffi"]}
@@ -42,6 +42,7 @@ datafusion-expr = { workspace = true }
 datafusion-physical-expr = { workspace = true }
 datafusion-physical-plan = { workspace = true }
 datafusion-proto = { workspace = true, optional = true }
+prost = { workspace = true, optional = true }
 futures = { workspace = true }
 libc = "0.2.178"
 sedona-common = { workspace = true }

@@ -34,13 +34,22 @@ if TYPE_CHECKING:
 class DataFrame:
     """Representation of a (lazy) collection of columns
 
-    This object is usually constructed from `sd = sedona.db.connect()`
-    by importing an object with `sd.create_data_frame()`, reading a file
-    with `sd.read_parquet()`/`sd.read_pyogrio()`, or executing SQL with
-    `sd.sql()`. Once created, a DataFrame can be modified using the Python
-    API (e.g., `.select()`, `.filter()`, `.sort()`, `.limit()`) or by
-    creating a temporary view with `.to_view("name")` and querying the
-    resulting view using `sd.sql()`. The Python API aims to provide
+    This object is usually constructed from a
+    [`SedonaContext`][sedonadb.context.SedonaContext], returned by
+    [`connect()`][sedonadb.context.connect], by importing an object with
+    [`create_data_frame()`][sedonadb.context.SedonaContext.create_data_frame],
+    reading a file with
+    [`read_parquet()`][sedonadb.context.SedonaContext.read_parquet] or
+    [`read_pyogrio()`][sedonadb.context.SedonaContext.read_pyogrio], or executing
+    SQL with [`sql()`][sedonadb.context.SedonaContext.sql]. Once created, a
+    DataFrame can be modified using the Python API (e.g.,
+    [`select()`][sedonadb.dataframe.DataFrame.select],
+    [`filter()`][sedonadb.dataframe.DataFrame.filter],
+    [`sort()`][sedonadb.dataframe.DataFrame.sort], or
+    [`limit()`][sedonadb.dataframe.DataFrame.limit]) or by creating a temporary
+    view with [`to_view()`][sedonadb.dataframe.DataFrame.to_view] and querying
+    the resulting view using
+    [`sql()`][sedonadb.context.SedonaContext.sql]. The Python API aims to provide
     a minimal subset of functionality derived primarily from Ibis and
     DuckDB's relational APIs.
 

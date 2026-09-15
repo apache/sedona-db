@@ -20,7 +20,7 @@
 //! <https://github.com/georust/geo/blob/5d667f844716a3d0a17aa60bc0a58528cb5808c3/geo/src/algorithm/bounding_rect.rs>.
 //! Original code is dual-licensed under Apache-2.0 or MIT; used here under Apache-2.0.
 use crate::utils::{partial_max, partial_min};
-use crate::{coord, geometry::*, CoordNum};
+use crate::{CoordNum, coord, geometry::*};
 use core::borrow::Borrow;
 use geo_types::private_utils::get_bounding_rect;
 use sedona_geo_traits_ext::*;
@@ -285,15 +285,15 @@ fn bounding_rect_merge<T: CoordNum>(a: Rect<T>, b: Rect<T>) -> Rect<T> {
 mod test {
     use core::f64;
 
-    use wkb::writer::WriteOptions;
     use wkb::Endianness;
+    use wkb::writer::WriteOptions;
 
     use super::bounding_rect_merge;
-    use crate::line_string;
     use crate::BoundingRect;
+    use crate::line_string;
     use crate::{
-        coord, point, polygon, Geometry, GeometryCollection, Line, LineString, MultiLineString,
-        MultiPoint, MultiPolygon, Polygon, Rect,
+        Geometry, GeometryCollection, Line, LineString, MultiLineString, MultiPoint, MultiPolygon,
+        Polygon, Rect, coord, point, polygon,
     };
 
     #[test]

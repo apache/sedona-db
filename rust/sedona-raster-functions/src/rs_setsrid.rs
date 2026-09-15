@@ -28,9 +28,9 @@ use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::transform::CrsEngine;
-use sedona_raster::array::{with_column_overrides, RasterColumnOverrides};
+use sedona_raster::array::{RasterColumnOverrides, with_column_overrides};
 use sedona_raster::traits::Override;
-use sedona_schema::crs::{normalize_crs, CachedSRIDToCrs};
+use sedona_schema::crs::{CachedSRIDToCrs, normalize_crs};
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;
 

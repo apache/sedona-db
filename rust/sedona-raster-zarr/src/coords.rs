@@ -30,8 +30,8 @@
 use arrow_schema::ArrowError;
 use sedona_common::sedona_internal_datafusion_err;
 use zarrs::array::data_type::{
-    Float32DataType, Float64DataType, Int16DataType, Int32DataType, Int64DataType, Int8DataType,
-    UInt16DataType, UInt32DataType, UInt64DataType, UInt8DataType,
+    Float32DataType, Float64DataType, Int8DataType, Int16DataType, Int32DataType, Int64DataType,
+    UInt8DataType, UInt16DataType, UInt32DataType, UInt64DataType,
 };
 use zarrs::array::{Array, ArraySubset};
 use zarrs::storage::AsyncReadableListableStorage;

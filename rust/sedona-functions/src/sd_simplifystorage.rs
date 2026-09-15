@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use arrow_array::ArrayRef;
 use arrow_schema::{DataType, FieldRef, UnionFields};
-use datafusion_common::{config::ConfigOptions, datatype::DataTypeExt, Result, ScalarValue};
+use datafusion_common::{Result, ScalarValue, config::ConfigOptions, datatype::DataTypeExt};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
@@ -275,8 +275,7 @@ mod tests {
             let tester = ScalarUdfTester::new(udf.clone().into(), vec![initial_type.clone()]);
             let return_type = tester.return_type().unwrap();
             assert_eq!(
-                return_type,
-                simplified_type,
+                return_type, simplified_type,
                 "expected {initial_type:?} to simplify to {simplified_type:?} but got {return_type:?}"
             );
 

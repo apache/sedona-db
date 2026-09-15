@@ -38,15 +38,15 @@ use crate::executor::RasterExecutor;
 use crate::footprint::write_convexhull_wkb;
 use arrow_array::builder::BooleanBuilder;
 use arrow_schema::DataType;
+use datafusion_common::Result;
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::exec_err;
-use datafusion_common::Result;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::transform::CrsEngine;
 use sedona_raster::error::RasterResultExt;
 use sedona_raster::traits::RasterRef;
-use sedona_schema::crs::{lnglat, CrsRef};
+use sedona_schema::crs::{CrsRef, lnglat};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 use sedona_tg::tg;
 
@@ -345,13 +345,13 @@ fn evaluate_predicate_with_crs<Op: tg::BinaryPredicate>(
             return exec_err!(
                 "Cannot evaluate spatial predicate: \
                 left geometry has CRS but right geometry does not"
-            )
+            );
         }
         (None, Some(_)) => {
             return exec_err!(
                 "Cannot evaluate spatial predicate: \
                 right geometry has CRS but left geometry does not"
-            )
+            );
         }
     };
 
@@ -411,16 +411,16 @@ pub fn raster_intersects_geom_wkb(raster: &dyn RasterRef, geom_wkb: &[u8]) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::{create_array, ArrayRef};
+    use arrow_array::{ArrayRef, create_array};
     use datafusion_common::DataFusionError;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_geometry::types::Edges;
     use sedona_proj::error::SedonaProjError;
-    use sedona_proj::transform::{with_global_proj_engine, LazyProjEngine};
+    use sedona_proj::transform::{LazyProjEngine, with_global_proj_engine};
     use sedona_raster::builder::RasterBuilder;
-    use sedona_schema::crs::deserialize_crs;
     use sedona_schema::crs::OGC_CRS84_PROJJSON;
+    use sedona_schema::crs::deserialize_crs;
     use sedona_schema::datatypes::RASTER;
     use sedona_schema::datatypes::WKB_GEOMETRY;
     use sedona_schema::raster::BandDataType;

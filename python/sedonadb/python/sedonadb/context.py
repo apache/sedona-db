@@ -176,7 +176,7 @@ class SedonaContext:
         return _create_data_frame(self, obj, schema)
 
     def view(self, name: str) -> DataFrame:
-        """Create a [DataFrame][sedonadb.dataframe.DataFrame] from a named view
+        """Create a [`DataFrame`][sedonadb.dataframe.DataFrame] from a named view
 
         Refer to a named view registered with this context.
 
@@ -228,7 +228,7 @@ class SedonaContext:
         validate: bool = False,
         partitioning: Union[str, Iterable[str], None] = None,
     ) -> DataFrame:
-        """Create a [DataFrame][sedonadb.dataframe.DataFrame] from one or more Parquet files
+        """Create a [`DataFrame`][sedonadb.dataframe.DataFrame] from one or more Parquet files
 
         Args:
             table_paths: A str, Path, or iterable of paths containing URLs to Parquet
@@ -381,7 +381,7 @@ class SedonaContext:
     def sql(
         self, sql: str, *, params: Union[List, Tuple, Dict, None] = None
     ) -> DataFrame:
-        """Create a [DataFrame][sedonadb.dataframe.DataFrame] by executing SQL
+        """Create a [`DataFrame`][sedonadb.dataframe.DataFrame] by executing SQL
 
         Parses a SQL string into a logical plan and returns a DataFrame
         that can be used to request results or further modify the query.
@@ -558,6 +558,8 @@ class SedonaContext:
         is accepted by `pyarrow.array([...])` is supported in addition to:
 
         - Shapely geometries become SedonaDB geometry objects.
+        - GeoArrow scalars (WKB, WKT, or native encodings) become SedonaDB
+        geometries with CRS and edge type (planar or spherical) preserved.
         - GeoSeries objects of length 1 become SedonaDB geometries
         with CRS preserved.
         - GeoDataFrame objects with a single column and single row become
@@ -569,12 +571,18 @@ class SedonaContext:
         value.
         - pyproj CRS objects become PROJJSON strings (e.g., so they may be used
         in `ST_SetCRS()`, `ST_Point()`, or `ST_GeomFromWKT()`).
+        - pandas `Timestamp` and `Timedelta` values keep their full resolution
+        (and time zone); `pandas.NA` and `numpy.ma.masked` become NULL and
+        `pandas.NaT` a timestamp NULL.
+        - NumPy `datetime64`/`timedelta64` values in any unit convert at a
+        lossless Arrow resolution, 0-d arrays resolve as their scalar, and
+        structured `numpy.void` values become structs.
         """
         return lit_expr(value, ctx=self)
 
 
 def connect() -> SedonaContext:
-    """Create a new [SedonaContext][sedonadb.context.SedonaContext]
+    """Create a new [`SedonaContext`][sedonadb.context.SedonaContext]
 
     Runtime configuration (memory limits, spill directory, pool type)
     can be set via `options` on the returned context before executing

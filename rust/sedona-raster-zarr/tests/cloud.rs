@@ -37,11 +37,11 @@
 
 use std::sync::Arc;
 
+use object_store::ObjectStore;
 use object_store::aws::AmazonS3Builder;
 use object_store::http::HttpBuilder;
-use object_store::ObjectStore;
 use sedona_raster::array::RasterStructArray;
-use sedona_raster_zarr::{open_storage_from_uri, ZarrChunkReader};
+use sedona_raster_zarr::{ZarrChunkReader, open_storage_from_uri};
 
 /// NASA MEaSUREs ITS_LIVE global glacier ice-velocity datacubes — public,
 /// anonymous, in `s3://its-live-data/` (us-west-2). Project and data docs:

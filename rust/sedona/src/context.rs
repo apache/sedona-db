@@ -21,7 +21,7 @@ use std::{
 
 use crate::exec::create_plan_from_sql;
 use crate::object_storage::ensure_object_store_registered_with_options;
-use crate::url_table::enable_sedona_url_table;
+use crate::url_table::install_sedona_url_table;
 use crate::{
     catalog::DynamicObjectStoreCatalog,
     random_geometry_provider::RandomGeometryFunction,
@@ -39,7 +39,7 @@ use datafusion::{
         runtime_env::{RuntimeEnv, RuntimeEnvBuilder},
         SessionStateBuilder,
     },
-    prelude::{CsvReadOptions, DataFrame, NdJsonReadOptions, SessionConfig, SessionContext},
+    prelude::{CsvReadOptions, DataFrame, JsonReadOptions, SessionConfig, SessionContext},
     sql::parser::{DFParser, Statement},
 };
 use datafusion::{dataframe::DataFrameWriteOptions, execution::memory_pool::MemoryLimit};
@@ -73,7 +73,10 @@ use sedona_schema::schema::SedonaSchema;
 use sedona_spatial_join_gpu::options::GpuOptions;
 
 use sedona_query_planner::{
-    optimizer::{register_ensure_loaded_optimizer, register_spatial_join_logical_optimizer},
+    optimizer::{
+        register_ensure_loaded_optimizer, register_spatial_join_logical_optimizer,
+        register_vendored_optimizer_rules,
+    },
     query_planner::SedonaQueryPlanner,
 };
 use sedona_raster::raster_loader::{AsyncRasterLoader, RasterLoaderConfig, RasterLoaderRegistry};
@@ -100,7 +103,11 @@ impl SedonaContext {
     pub fn new() -> Self {
         // This will panic only if the default build settings are
         // incorrect which we test!
-        Self::new_from_context(SessionContext::new()).unwrap()
+        let state_builder = SessionStateBuilder::new_with_default_features();
+        // DataFusion #22620 workaround tracked by
+        // https://github.com/apache/sedona-db/issues/1232.
+        let state_builder = register_vendored_optimizer_rules(state_builder).unwrap();
+        Self::finish_new(SessionContext::new_with_state(state_builder.build())).unwrap()
     }
 
     /// Creates a new context with default interactive options
@@ -235,6 +242,9 @@ impl SedonaContext {
             .with_runtime_env(runtime_env)
             .with_config(session_config);
 
+        // DataFusion #22620 workaround tracked by
+        // https://github.com/apache/sedona-db/issues/1232.
+        state_builder = register_vendored_optimizer_rules(state_builder)?;
         state_builder = register_spatial_join_logical_optimizer(state_builder)?;
         state_builder = register_ensure_loaded_optimizer(state_builder)?;
         state_builder = state_builder.with_query_planner(Arc::new(planner));
@@ -255,25 +265,73 @@ impl SedonaContext {
         // `enable_url_table` so directory-shaped external formats (Zarr)
         // resolve to a single-object table rather than a listing over the
         // directory's contents.
-        let ctx = enable_sedona_url_table(SessionContext::new_with_state(state));
+        let ctx = SessionContext::new_with_state(state);
 
-        // Install dynamic catalog provider that can register required object stores
+        // Load the configured catalogs before finishing context setup below.
         ctx.refresh_catalogs().await?;
-        ctx.register_catalog_list(Arc::new(DynamicObjectStoreCatalog::new(
-            ctx.state().catalog_list().clone(),
-            ctx.state_weak_ref(),
-        )));
 
-        Self::new_from_context(ctx)
+        let out = Self::finish_new(ctx)?;
+
+        // Install state-dependent catalog wrappers after context setup so
+        // their weak references point at the live SessionState.
+        install_sedona_url_table(&out.ctx);
+
+        // The provider stores a weak reference to SessionState, so install it
+        // only after the context is fully initialized.
+        out.ctx
+            .register_catalog_list(Arc::new(DynamicObjectStoreCatalog::new(
+                out.ctx.state().catalog_list().clone(),
+                out.ctx.state_weak_ref(),
+            )));
+
+        Ok(out)
     }
 
-    /// Creates a new context from a previously configured DataFusion context
-    pub fn new_from_context(ctx: SessionContext) -> Result<Self> {
+    fn finish_new(ctx: SessionContext) -> Result<Self> {
         let mut out = Self {
             ctx,
             functions: RwLock::new(FunctionSet::new()),
             raster_loader_registry: Arc::new(RwLock::new(RasterLoaderRegistry::new())),
         };
+
+        // Work around https://github.com/apache/datafusion/issues/24933:
+        // physical scalar subqueries discard Arrow field metadata.
+        let state_ref = out.ctx.state_ref();
+        let mut state = state_ref.write();
+        state
+            .config_mut()
+            .options_mut()
+            .optimizer
+            .enable_physical_uncorrelated_scalar_subquery = false;
+
+        // The default context does not yet carry Sedona's configuration
+        // extension, while the interactive context was configured above.
+        let extensions = &mut state.config_mut().options_mut().extensions;
+        if extensions.get::<SedonaOptions>().is_none() {
+            extensions.insert(SedonaOptions::default());
+        }
+
+        // SedonaContext::new() does not pass through the interactive
+        // constructor, so install the default geography bounder here as well.
+        #[cfg(feature = "s2geography")]
+        {
+            use sedona_geometry::types::Edges;
+
+            let options = extensions
+                .get_mut::<SedonaOptions>()
+                .expect("SedonaOptions was installed above");
+            if options
+                .runtime
+                .bounder_factory()
+                .bounder_for_edge_type(Edges::Spherical)
+                .is_none()
+            {
+                options.runtime = options.runtime.with_bounder(
+                    Edges::Spherical,
+                    Arc::new(sedona_s2geography::rect_bounder::WkbGeographyBounder::default()),
+                )?;
+            }
+        }
 
         // Stash a clone of the shared registry handle inside
         // `ConfigOptions` via the `RasterLoaderConfig` extension. The
@@ -287,15 +345,10 @@ impl SedonaContext {
         // mutates the Arc held in `out.raster_loader_registry`) are immediately
         // visible to UDF reads through this config extension because
         // both handles share the same `RwLock`.
-        out.ctx
-            .state_ref()
-            .write()
-            .config_mut()
-            .options_mut()
-            .extensions
-            .insert(RasterLoaderConfig::from_handle(Arc::clone(
-                &out.raster_loader_registry,
-            )));
+        extensions.insert(RasterLoaderConfig::from_handle(Arc::clone(
+            &out.raster_loader_registry,
+        )));
+        drop(state);
 
         // Register the RS_EnsureLoaded async UDF. It pulls the registry
         // out of `args.config_options` at dispatch time, so it doesn't
@@ -672,7 +725,7 @@ impl SedonaContext {
         }
 
         self.ctx
-            .read_json(table_paths, NdJsonReadOptions::default())
+            .read_json(table_paths, JsonReadOptions::default())
             .await
     }
 }
@@ -966,6 +1019,59 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
+
+    #[test]
+    fn disables_physical_uncorrelated_scalar_subqueries() {
+        let ctx = SedonaContext::new();
+        assert!(
+            !ctx.ctx
+                .state()
+                .config_options()
+                .optimizer
+                .enable_physical_uncorrelated_scalar_subquery
+        );
+    }
+
+    #[tokio::test]
+    async fn select_struct_field_after_unnest_st_dump() {
+        // Regression for https://github.com/apache/sedona-db/issues/1232.
+        use datafusion::{functions::core::expr_fn::get_field, prelude::col};
+
+        let ctx = SedonaContext::new();
+        let df = ctx
+            .sql(
+                r#"
+                SELECT ST_Dump(
+                    ST_GeomFromText('MULTIPOINT (0 0, 1 1)')
+                ) AS dump
+                "#,
+            )
+            .await
+            .unwrap()
+            .unnest_columns(&["dump"])
+            .unwrap()
+            .select(vec![get_field(col("dump"), "geom").alias("geometry")])
+            .unwrap();
+
+        let batches = df.collect().await.unwrap();
+        assert_eq!(
+            batches.iter().map(|batch| batch.num_rows()).sum::<usize>(),
+            2
+        );
+    }
+
+    #[cfg(feature = "s2geography")]
+    #[tokio::test]
+    async fn geography_bounds_default_context() {
+        let ctx = SedonaContext::new();
+        ctx.ctx
+            .sql("SELECT ST_XMin(ST_GeogFromText('POINT (1 2)'))")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+    }
 
     #[tokio::test]
     async fn outdb_registry_has_gdal_at_bootstrap_and_accepts_runtime_registration() {

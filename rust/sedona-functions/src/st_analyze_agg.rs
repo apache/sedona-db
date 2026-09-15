@@ -19,15 +19,16 @@ use std::vec;
 
 use std::{mem::size_of_val, sync::Arc};
 
+use arrow_array::StructArray;
 use arrow_array::builder::Float64Builder;
 use arrow_array::builder::Int64Builder;
-use arrow_array::StructArray;
 use arrow_array::{Array, ArrayRef, Float64Array, Int64Array};
 use arrow_schema::{DataType, Field, FieldRef};
 use datafusion_common::{
+    ScalarValue,
     cast::as_binary_array,
     error::{DataFusionError, Result},
-    exec_datafusion_err, ScalarValue,
+    exec_datafusion_err,
 };
 use datafusion_expr::Volatility;
 use datafusion_expr::{Accumulator, ColumnarValue};
@@ -35,7 +36,7 @@ use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_expr::aggregate_udf::{SedonaAccumulatorRef, SedonaAggregateUDF};
 use sedona_expr::item_crs::ItemCrsSedonaAccumulator;
 use sedona_expr::{aggregate_udf::SedonaAccumulator, statistics::GeoStatistics};
-use sedona_geometry::analyze::{analyze_wkb, GeometrySummary};
+use sedona_geometry::analyze::{GeometrySummary, analyze_wkb};
 use sedona_geometry::bounding_box::BoundingBox;
 use sedona_geometry::bounds::{WkbBounder2D, WkbGeometryBounder};
 use sedona_geometry::interval::IntervalTrait;
@@ -62,12 +63,22 @@ pub fn st_analyze_agg_udf() -> SedonaAggregateUDF {
 ///
 /// This wrapper is exposed because it is used by the spatial join implementation.
 pub fn st_analyze_agg_impl() -> Vec<SedonaAccumulatorRef> {
-    vec![Arc::new(STAnalyzeAgg::<WkbGeometryBounder>::new(
-        ArgMatcher::new(vec![ArgMatcher::is_geometry()], output_sedona_type()),
-    ))]
+    st_analyze_agg_impl_for::<WkbGeometryBounder>(ArgMatcher::new(
+        vec![ArgMatcher::is_geometry()],
+        output_sedona_type(),
+    ))
 }
 
-fn output_sedona_type() -> SedonaType {
+/// Create an ST_Analyze_Agg implementation backed by a particular edge bounder.
+pub fn st_analyze_agg_impl_for<T>(matcher: ArgMatcher) -> Vec<SedonaAccumulatorRef>
+where
+    T: WkbBounder2D + Default + std::fmt::Debug + 'static,
+{
+    vec![Arc::new(STAnalyzeAgg::<T>::new(matcher))]
+}
+
+/// Return the logical output type of ST_Analyze_Agg.
+pub fn output_sedona_type() -> SedonaType {
     let output_fields = STAnalyzeAgg::<WkbGeometryBounder>::output_fields();
     SedonaType::Arrow(DataType::Struct(output_fields.into()))
 }
@@ -224,9 +235,9 @@ impl<T> STAnalyzeAgg<T> {
             Arc::new(Int64Array::from(vec![stats.puntal_count().unwrap_or(0)])) as ArrayRef,
             Arc::new(Int64Array::from(vec![stats.lineal_count().unwrap_or(0)])) as ArrayRef,
             Arc::new(Int64Array::from(vec![stats.polygonal_count().unwrap_or(0)])) as ArrayRef,
-            Arc::new(Int64Array::from(vec![stats
-                .collection_count()
-                .unwrap_or(0)])) as ArrayRef,
+            Arc::new(Int64Array::from(vec![
+                stats.collection_count().unwrap_or(0),
+            ])) as ArrayRef,
             Arc::new(Self::create_float64_array(mean_envelope_width)) as ArrayRef,
             Arc::new(Self::create_float64_array(mean_envelope_height)) as ArrayRef,
             Arc::new(Self::create_float64_array(mean_envelope_area)) as ArrayRef,
@@ -415,7 +426,7 @@ impl<T: WkbBounder2D + Default + std::fmt::Debug> AnalyzeAccumulator<T> {
     }
 }
 
-impl<T: WkbBounder2D + Default + std::fmt::Debug> Accumulator for AnalyzeAccumulator<T> {
+impl<T: WkbBounder2D + Default + std::fmt::Debug + 'static> Accumulator for AnalyzeAccumulator<T> {
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
         if values.is_empty() {
             return sedona_internal_err!("No input arrays provided to accumulator");

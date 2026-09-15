@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 pub mod centroid;
+mod geometry_mem;
 pub mod register;
 mod st_area;
 mod st_asgeojson;

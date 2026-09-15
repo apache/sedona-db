@@ -393,7 +393,7 @@ pub fn transform(
         _ => {
             return Err(SedonaGeometryError::Invalid(
                 "GeometryType not supported for transform".to_string(),
-            ))
+            ));
         }
     }
 

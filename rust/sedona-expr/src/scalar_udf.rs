@@ -14,11 +14,11 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use std::{any::Any, collections::HashMap, fmt::Debug, sync::Arc};
+use std::{collections::HashMap, fmt::Debug, sync::Arc};
 
 use arrow_schema::{DataType, FieldRef};
 use datafusion_common::config::ConfigOptions;
-use datafusion_common::{not_impl_err, Result, ScalarValue};
+use datafusion_common::{Result, ScalarValue, not_impl_err};
 use datafusion_expr::{
     ColumnarValue, Documentation, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDFImpl, Signature,
     Volatility,
@@ -236,6 +236,12 @@ impl SedonaScalarUDF {
         &self.kernels
     }
 
+    /// Replace this UDF's kernels while preserving its name, volatility,
+    /// aliases, and metadata.
+    pub fn with_kernels(self, kernels: Vec<ScalarKernelRef>) -> Self {
+        Self { kernels, ..self }
+    }
+
     /// Create a SedonaScalarUDF from a single kernel
     ///
     /// This constructor creates a [Volatility::Immutable] function with no documentation
@@ -284,10 +290,6 @@ impl SedonaScalarUDF {
 }
 
 impl ScalarUDFImpl for SedonaScalarUDF {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         &self.name
     }
@@ -355,10 +357,10 @@ impl ScalarUDFImpl for SedonaScalarUDF {
 #[cfg(test)]
 mod tests {
 
-    use datafusion_common::{scalar::ScalarValue, DFSchema};
+    use datafusion_common::{DFSchema, scalar::ScalarValue};
     use sedona_testing::testers::ScalarUdfTester;
 
-    use datafusion_expr::{lit, ExprSchemable, ScalarUDF};
+    use datafusion_expr::{ExprSchemable, ScalarUDF, lit};
     use sedona_geometry::types::Edges;
     use sedona_schema::{crs::lnglat, datatypes::WKB_GEOMETRY};
 

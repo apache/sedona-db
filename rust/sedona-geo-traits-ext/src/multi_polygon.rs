@@ -69,7 +69,7 @@ macro_rules! forward_multi_polygon_trait_ext_funcs {
 
         #[inline]
         unsafe fn polygon_unchecked_ext(&self, i: usize) -> Self::PolygonTypeExt<'_> {
-            <Self as MultiPolygonTrait>::polygon_unchecked(self, i)
+            unsafe { <Self as MultiPolygonTrait>::polygon_unchecked(self, i) }
         }
 
         #[inline]
@@ -95,7 +95,7 @@ where
 
     #[inline]
     unsafe fn polygon_unchecked_ext(&self, i: usize) -> Self::PolygonTypeExt<'_> {
-        self.0.get_unchecked(i)
+        unsafe { self.0.get_unchecked(i) }
     }
 
     #[inline]
@@ -124,7 +124,7 @@ where
 
     #[inline]
     unsafe fn polygon_unchecked_ext(&self, i: usize) -> Self::PolygonTypeExt<'_> {
-        self.0.get_unchecked(i)
+        unsafe { self.0.get_unchecked(i) }
     }
 
     #[inline]

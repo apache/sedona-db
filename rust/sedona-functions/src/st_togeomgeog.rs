@@ -17,7 +17,7 @@
 
 use std::sync::Arc;
 
-use datafusion_common::{config::ConfigOptions, Result};
+use datafusion_common::{Result, config::ConfigOptions};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::sedona_internal_err;
 use sedona_expr::{

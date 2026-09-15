@@ -35,7 +35,7 @@ use datafusion_expr::expr_schema::ExprSchemable;
 use datafusion_expr::{Expr, LogicalPlan};
 use datafusion_optimizer::{ApplyOrder, OptimizerConfig, OptimizerRule};
 
-use crate::restore_metadata::{restore_metadata_udf, RESTORE_METADATA_NAME};
+use crate::restore_metadata::{RESTORE_METADATA_NAME, restore_metadata_udf};
 
 /// Logical optimizer rule that wraps async scalar UDF calls with
 /// `sd_restore_metadata` to preserve field metadata stripped at the
@@ -91,11 +91,11 @@ fn merged_input_schema(inputs: &[&LogicalPlan]) -> Option<Arc<DFSchema>> {
 
 /// Pre-order pass: skip children of `sd_restore_metadata` for idempotency.
 fn skip_already_wrapped(expr: Expr) -> Result<Transformed<Expr>> {
-    if let Expr::ScalarFunction(ref func_call) = expr {
-        if func_call.func.name() == RESTORE_METADATA_NAME {
-            // Already wrapped; skip children to avoid re-wrapping nested async UDFs.
-            return Ok(Transformed::new(expr, false, TreeNodeRecursion::Jump));
-        }
+    if let Expr::ScalarFunction(ref func_call) = expr
+        && func_call.func.name() == RESTORE_METADATA_NAME
+    {
+        // Already wrapped; skip children to avoid re-wrapping nested async UDFs.
+        return Ok(Transformed::new(expr, false, TreeNodeRecursion::Jump));
     }
     Ok(Transformed::no(expr))
 }
@@ -117,7 +117,6 @@ fn wrap_async_udf(expr: Expr, schema: &Arc<DFSchema>) -> Result<Transformed<Expr
     let is_async = func_call
         .func
         .inner()
-        .as_any()
         .downcast_ref::<AsyncScalarUDF>()
         .is_some();
 
@@ -151,7 +150,6 @@ fn wrap_async_udf(expr: Expr, schema: &Arc<DFSchema>) -> Result<Transformed<Expr
 mod tests {
     use super::*;
 
-    use std::any::Any;
     use std::collections::HashMap;
     use std::hash::{Hash, Hasher};
 
@@ -160,7 +158,7 @@ mod tests {
     use datafusion_expr::async_udf::{AsyncScalarUDF, AsyncScalarUDFImpl};
     use datafusion_expr::expr_schema::ExprSchemable;
     use datafusion_expr::{
-        col, ColumnarValue, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDF, Signature, Volatility,
+        ColumnarValue, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDF, Signature, Volatility, col,
     };
 
     /// A fake async UDF for testing.
@@ -192,10 +190,6 @@ mod tests {
     }
 
     impl datafusion_expr::ScalarUDFImpl for FakeAsyncUdf {
-        fn as_any(&self) -> &dyn Any {
-            self
-        }
-
         fn name(&self) -> &str {
             "fake_async"
         }

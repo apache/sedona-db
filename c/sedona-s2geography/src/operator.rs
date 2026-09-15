@@ -226,11 +226,13 @@ mod tests {
 
         let mut op = Op::new(OpType::DWithin);
         assert_eq!(op.name(), "distance_within");
-        assert!(!op
-            .eval_binary_distance_predicate(&geog1, &geog2, 100000.0)
-            .unwrap());
-        assert!(op
-            .eval_binary_distance_predicate(&geog1, &geog2, 200000.0)
-            .unwrap());
+        assert!(
+            !op.eval_binary_distance_predicate(&geog1, &geog2, 100000.0)
+                .unwrap()
+        );
+        assert!(
+            op.eval_binary_distance_predicate(&geog1, &geog2, 200000.0)
+                .unwrap()
+        );
     }
 }

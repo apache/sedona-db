@@ -83,7 +83,7 @@ impl Iterator for ProjectedRecordBatchReader {
 #[cfg(test)]
 mod test {
 
-    use arrow_array::{create_array, ArrayRef, RecordBatchIterator};
+    use arrow_array::{ArrayRef, RecordBatchIterator, create_array};
     use datafusion::assert_batches_eq;
 
     use super::*;

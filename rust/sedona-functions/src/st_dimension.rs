@@ -91,7 +91,7 @@ fn invoke_scalar(item: &Wkb) -> Result<i8> {
 
 #[cfg(test)]
 mod tests {
-    use arrow_array::{create_array as arrow_array, ArrayRef};
+    use arrow_array::{ArrayRef, create_array as arrow_array};
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
@@ -141,7 +141,9 @@ mod tests {
             Some("GEOMETRYCOLLECTION EMPTY"),
             Some("GEOMETRYCOLLECTION (POINT (1 2))"),
             Some("GEOMETRYCOLLECTION (POINT (1 2), LINESTRING EMPTY)"),
-            Some("GEOMETRYCOLLECTION (POINT (1 2), LINESTRING (1 2, 2 2), POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0)))"),
+            Some(
+                "GEOMETRYCOLLECTION (POINT (1 2), LINESTRING (1 2, 2 2), POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0)))",
+            ),
             Some("GEOMETRYCOLLECTION (POINT (1 2), GEOMETRYCOLLECTION (LINESTRING (1 2, 2 2)))"),
         ];
         let expected: ArrayRef = arrow_array!(

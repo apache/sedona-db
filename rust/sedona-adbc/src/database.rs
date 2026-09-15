@@ -15,9 +15,9 @@
 // specific language governing permissions and limitations
 // under the License.
 use adbc_core::{
+    Database, Optionable,
     error::{Error, Result, Status},
     options::{OptionConnection, OptionDatabase, OptionValue},
-    Database, Optionable,
 };
 
 use crate::{connection::SedonaConnection, err_unrecognized_option};

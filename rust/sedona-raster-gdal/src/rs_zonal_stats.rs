@@ -57,7 +57,7 @@ use arrow_schema::{DataType, Field, Fields};
 use datafusion_common::cast::{as_boolean_array, as_int64_array, as_string_array};
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::error::Result;
-use datafusion_common::{exec_datafusion_err, exec_err, ScalarValue};
+use datafusion_common::{ScalarValue, exec_datafusion_err, exec_err};
 use datafusion_expr::{ColumnarValue, Volatility};
 
 use sedona_common::sedona_internal_err;
@@ -66,17 +66,17 @@ use sedona_gdal::gdal::Gdal;
 use sedona_raster::array::RasterRefImpl;
 use sedona_raster::error::RasterResultExt;
 use sedona_raster::traits::RasterRef;
+use sedona_raster_functions::RasterExecutor;
 use sedona_raster_functions::crs_utils::{align_wkb_to_crs, resolve_crs, with_crs_engine};
 use sedona_raster_functions::rs_ensure_loaded::NEEDS_PIXELS_METADATA_KEY;
 use sedona_raster_functions::rs_spatial_predicates::raster_intersects_geom_wkb;
-use sedona_raster_functions::RasterExecutor;
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;
 use sedona_schema::raster::BandDataType;
 
 use crate::gdal_common::{raster_geo_transform, with_gdal};
 use crate::gdal_dataset_provider::configure_thread_local_options;
-use crate::mask::{envelope_window, rasterize_geometry_mask, PixelWindow};
+use crate::mask::{PixelWindow, envelope_window, rasterize_geometry_mask};
 
 /// The statistics RS_ZonalStatsAll returns, in the order Sedona Spark reports
 /// them. RS_ZonalStats selects one of these by name.
@@ -745,13 +745,13 @@ fn collect_zonal_values(
     } else {
         None
     };
-    if let Some(nd) = nodata {
-        if nd.len() != byte_size {
-            return sedona_internal_err!(
-                "RS_ZonalStats: band {band_num} nodata is {} bytes, expected {byte_size} for {data_type:?}",
-                nd.len()
-            );
-        }
+    if let Some(nd) = nodata
+        && nd.len() != byte_size
+    {
+        return sedona_internal_err!(
+            "RS_ZonalStats: band {band_num} nodata is {} bytes, expected {byte_size} for {data_type:?}",
+            nd.len()
+        );
     }
 
     scratch.clear();
@@ -1139,14 +1139,18 @@ mod tests {
         assert!(err.contains("has 3 bands"), "{err}");
         // Explicit band is range-checked (1-based).
         assert_eq!(resolve_band(Some(2), 3).unwrap(), 2);
-        assert!(resolve_band(Some(0), 3)
-            .unwrap_err()
-            .to_string()
-            .contains(">= 1"));
-        assert!(resolve_band(Some(4), 3)
-            .unwrap_err()
-            .to_string()
-            .contains("out of range"));
+        assert!(
+            resolve_band(Some(0), 3)
+                .unwrap_err()
+                .to_string()
+                .contains(">= 1")
+        );
+        assert!(
+            resolve_band(Some(4), 3)
+                .unwrap_err()
+                .to_string()
+                .contains("out of range")
+        );
     }
 
     #[test]
@@ -1276,7 +1280,7 @@ mod udf_tests {
     use arrow_array::{Array, StructArray};
     use datafusion_expr::ScalarUDF;
     use sedona_proj::error::SedonaProjError;
-    use sedona_proj::transform::{with_global_proj_engine, LazyProjEngine};
+    use sedona_proj::transform::{LazyProjEngine, with_global_proj_engine};
     use sedona_raster_functions::crs_utils::crs_transform_wkb;
     use sedona_schema::crs::deserialize_crs;
     use sedona_schema::datatypes::{Edges, RASTER};

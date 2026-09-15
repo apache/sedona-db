@@ -21,7 +21,7 @@ use arrow::compute::{concat as arrow_concat, interleave as arrow_interleave};
 use arrow_array::{Array, ArrayRef, Float64Array, RecordBatch};
 use arrow_schema::DataType;
 use datafusion_common::{
-    exec_datafusion_err, utils::proxy::VecAllocExt, JoinSide, Result, ScalarValue,
+    JoinSide, Result, ScalarValue, exec_datafusion_err, utils::proxy::VecAllocExt,
 };
 use datafusion_expr::ColumnarValue;
 use datafusion_physical_expr::PhysicalExpr;
@@ -354,10 +354,8 @@ impl EvaluatedGeometryArray {
             return Ok(None);
         };
 
-        if !needs_array {
-            if let ColumnarValue::Scalar(value) = distance_value {
-                return Ok(Some(ColumnarValue::Scalar(value.clone())));
-            }
+        if !needs_array && let ColumnarValue::Scalar(value) = distance_value {
+            return Ok(Some(ColumnarValue::Scalar(value.clone())));
         }
 
         let mut arrays: Vec<ArrayRef> = Vec::with_capacity(geom_arrays.len());
@@ -734,9 +732,10 @@ mod test {
         let result = EvaluatedGeometryArray::concat(&[]);
         assert!(result.is_err());
         if let Err(e) = result {
-            assert!(e
-                .to_string()
-                .contains("concat requires at least one geometry array"));
+            assert!(
+                e.to_string()
+                    .contains("concat requires at least one geometry array")
+            );
         }
     }
 

@@ -263,10 +263,12 @@ impl InternalContext {
         };
 
         if let Some(ScalarUdfLookup::Sedona(sedona_scalar_udf)) = inner {
+            let config_options = self.inner.ctx.state().config_options().clone();
             Ok(Bound::new(
                 py,
                 PySedonaScalarUdf {
                     inner: sedona_scalar_udf,
+                    config_options,
                 },
             )?
             .into_any())

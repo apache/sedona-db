@@ -245,11 +245,13 @@ mod tests {
         let result_err =
             tester.invoke_array_scalar_scalar(Arc::new(noninvertible_rasters), 2.0_f64, 3.0_f64);
         assert!(result_err.is_err());
-        assert!(result_err
-            .err()
-            .unwrap()
-            .to_string()
-            .contains("determinant is zero"));
+        assert!(
+            result_err
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("determinant is zero")
+        );
     }
 
     #[rstest]
@@ -277,11 +279,13 @@ mod tests {
         let result_err =
             tester.invoke_array_scalar_scalar(Arc::new(noninvertible_rasters), 2.0_f64, 3.0_f64);
         assert!(result_err.is_err());
-        assert!(result_err
-            .err()
-            .unwrap()
-            .to_string()
-            .contains("determinant is zero"));
+        assert!(
+            result_err
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("determinant is zero")
+        );
     }
 
     #[rstest]

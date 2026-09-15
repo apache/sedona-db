@@ -37,9 +37,9 @@ use std::sync::Arc;
 
 use arrow_array::{ArrayRef, BooleanArray, Float64Array, StringArray};
 use arrow_schema::DataType;
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use datafusion_expr::ScalarUDF;
-use sedona_schema::datatypes::{SedonaType, RASTER};
+use sedona_schema::datatypes::{RASTER, SedonaType};
 use sedona_testing::{raster_spec::RasterSpec, testers::ScalarUdfTester};
 
 fn criterion_benchmark(c: &mut Criterion) {

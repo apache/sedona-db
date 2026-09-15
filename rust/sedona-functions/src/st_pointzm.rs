@@ -20,12 +20,12 @@ use std::{
     vec,
 };
 
-use arrow_array::{builder::BinaryBuilder, Array};
+use arrow_array::{Array, builder::BinaryBuilder};
 use arrow_schema::DataType;
+use datafusion_common::DataFusionError;
 use datafusion_common::cast::as_float64_array;
 use datafusion_common::error::Result;
 use datafusion_common::scalar::ScalarValue;
-use datafusion_common::DataFusionError;
 use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::Dimensions;
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
@@ -210,7 +210,7 @@ fn write_wkb_pointzm(
 
 #[cfg(test)]
 mod tests {
-    use arrow_array::{create_array, ArrayRef};
+    use arrow_array::{ArrayRef, create_array};
     use arrow_schema::DataType;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;

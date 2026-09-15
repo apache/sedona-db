@@ -30,8 +30,8 @@ use sedona_expr::{
 use sedona_geometry::{
     error::SedonaGeometryError,
     wkb_factory::{
-        write_wkb_coord_trait, write_wkb_multipoint_header, write_wkb_point_header,
-        WKB_MIN_PROBABLE_BYTES,
+        WKB_MIN_PROBABLE_BYTES, write_wkb_coord_trait, write_wkb_multipoint_header,
+        write_wkb_point_header,
     },
 };
 use sedona_schema::{
@@ -320,7 +320,9 @@ mod tests {
                 Some("POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0), (1 1, 3 1, 1 3, 1 1))"),
                 Some("MULTIPOINT (1 2, 3 4, 5 6, 7 8)"),
                 Some("MULTILINESTRING ((1 2, 3 4), EMPTY, (5 6, 7 8))"),
-                Some("MULTIPOLYGON (((0 0, 10 0, 10 10, 0 10, 0 0)), EMPTY, ((0 0, 5 0, 0 5, 0 0), (1 1, 3 1, 1 3, 1 1)))"),
+                Some(
+                    "MULTIPOLYGON (((0 0, 10 0, 10 10, 0 10, 0 0)), EMPTY, ((0 0, 5 0, 0 5, 0 0), (1 1, 3 1, 1 3, 1 1)))",
+                ),
                 Some("GEOMETRYCOLLECTION (POINT (1 2), LINESTRING EMPTY, LINESTRING (3 4, 5 6))"),
                 // 3d and 4d
                 Some("LINESTRING Z (1 2 3, 4 5 6, 7 8 9)"),
@@ -348,7 +350,9 @@ mod tests {
                 Some("MULTIPOINT (0 0, 10 0, 10 10, 0 10, 0 0, 1 1, 3 1, 1 3, 1 1)"),
                 Some("MULTIPOINT (1 2, 3 4, 5 6, 7 8)"),
                 Some("MULTIPOINT (1 2, 3 4, 5 6, 7 8)"),
-                Some("MULTIPOINT (0 0, 10 0, 10 10, 0 10, 0 0, 0 0, 5 0, 0 5, 0 0, 1 1, 3 1, 1 3, 1 1)"),
+                Some(
+                    "MULTIPOINT (0 0, 10 0, 10 10, 0 10, 0 0, 0 0, 5 0, 0 5, 0 0, 1 1, 3 1, 1 3, 1 1)",
+                ),
                 Some("MULTIPOINT (1 2, 3 4, 5 6)"),
                 // 3d and 4d
                 Some("MULTIPOINT Z (1 2 3, 4 5 6, 7 8 9)"),

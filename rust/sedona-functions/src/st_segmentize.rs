@@ -17,9 +17,9 @@
 
 use std::{io::Write, sync::Arc};
 
-use arrow_array::{builder::BinaryBuilder, Array};
+use arrow_array::{Array, builder::BinaryBuilder};
 use arrow_schema::DataType;
-use datafusion_common::{cast::as_float64_array, exec_datafusion_err, exec_err, Result};
+use datafusion_common::{Result, cast::as_float64_array, exec_datafusion_err, exec_err};
 use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::{
     CoordTrait, Dimensions, GeometryCollectionTrait, GeometryTrait, LineStringTrait,
@@ -33,9 +33,9 @@ use sedona_geometry::{
     error::SedonaGeometryError,
     interpolate::lerp,
     wkb_factory::{
-        write_wkb_coord_trait, write_wkb_geometrycollection_header, write_wkb_linestring_header,
-        write_wkb_multilinestring_header, write_wkb_multipolygon_header, write_wkb_polygon_header,
-        write_wkb_polygon_ring_header, WKB_MIN_PROBABLE_BYTES,
+        WKB_MIN_PROBABLE_BYTES, write_wkb_coord_trait, write_wkb_geometrycollection_header,
+        write_wkb_linestring_header, write_wkb_multilinestring_header,
+        write_wkb_multipolygon_header, write_wkb_polygon_header, write_wkb_polygon_ring_header,
     },
 };
 use sedona_schema::{

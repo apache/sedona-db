@@ -15,9 +15,9 @@
 // specific language governing permissions and limitations
 // under the License.
 use adbc_core::{
+    Driver, Optionable,
     error::Result,
     options::{OptionDatabase, OptionValue},
-    Driver, Optionable,
 };
 
 use crate::database::SedonaDatabase;

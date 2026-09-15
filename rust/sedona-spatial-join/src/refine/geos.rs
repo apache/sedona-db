@@ -15,14 +15,14 @@
 // specific language governing permissions and limitations
 // under the License.
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
     Arc, OnceLock,
+    atomic::{AtomicUsize, Ordering},
 };
 
 use datafusion_common::{DataFusionError, Result};
 use geos::{Geom, PreparedGeometry};
 use parking_lot::Mutex;
-use sedona_common::{sedona_internal_err, ExecutionMode, SpatialJoinOptions};
+use sedona_common::{ExecutionMode, SpatialJoinOptions, sedona_internal_err};
 use sedona_expr::statistics::GeoStatistics;
 use sedona_geos::wkb_to_geos::GEOSWkbFactory;
 use wkb::reader::Wkb;
@@ -30,8 +30,8 @@ use wkb::reader::Wkb;
 use crate::{
     index::IndexQueryResult,
     refine::{
-        exec_mode_selector::{get_or_update_execution_mode, ExecModeSelector, SelectOptimalMode},
         IndexQueryResultRefiner,
+        exec_mode_selector::{ExecModeSelector, SelectOptimalMode, get_or_update_execution_mode},
     },
     spatial_predicate::{RelationPredicate, SpatialPredicate, SpatialRelationType},
     utils::init_once_array::InitOnceArray,
@@ -588,8 +588,8 @@ mod tests {
     use crate::spatial_predicate::{DistancePredicate, RelationPredicate, SpatialRelationType};
     use datafusion_common::JoinSide;
     use datafusion_common::ScalarValue;
-    use datafusion_physical_expr::expressions::{Column, Literal};
     use datafusion_physical_expr::PhysicalExpr;
+    use datafusion_physical_expr::expressions::{Column, Literal};
     use sedona_common::DEFAULT_SPECULATIVE_THRESHOLD;
     use std::sync::Arc;
 

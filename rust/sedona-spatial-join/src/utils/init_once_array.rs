@@ -14,7 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use datafusion_common::{utils::proxy::VecAllocExt, Result};
+use datafusion_common::{Result, utils::proxy::VecAllocExt};
 use std::sync::atomic::{AtomicPtr, Ordering};
 
 /// A thread-safe array of values with lock-free concurrent access.
@@ -259,10 +259,12 @@ mod tests {
             ))
         });
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Failed to create value"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to create value")
+        );
     }
 
     #[test]

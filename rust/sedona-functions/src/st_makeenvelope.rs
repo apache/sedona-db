@@ -19,7 +19,7 @@ use std::{iter::zip, sync::Arc};
 
 use arrow_array::builder::BinaryBuilder;
 use arrow_schema::DataType;
-use datafusion_common::{cast::as_float64_array, error::Result, ScalarValue};
+use datafusion_common::{ScalarValue, cast::as_float64_array, error::Result};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_schema::{

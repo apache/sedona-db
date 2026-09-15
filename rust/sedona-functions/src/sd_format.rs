@@ -18,13 +18,14 @@ use std::{fmt::Write, sync::Arc, vec};
 
 use crate::executor::WkbExecutor;
 use arrow_array::{
-    builder::StringBuilder, cast::AsArray, Array, GenericListArray, GenericListViewArray,
-    OffsetSizeTrait, StructArray,
+    Array, GenericListArray, GenericListViewArray, OffsetSizeTrait, StructArray,
+    builder::StringBuilder, cast::AsArray,
 };
 use arrow_schema::{DataType, Field, Fields};
 use datafusion_common::{
+    ScalarValue,
     error::{DataFusionError, Result},
-    internal_err, ScalarValue,
+    internal_err,
 };
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
@@ -71,22 +72,21 @@ impl SedonaScalarKernel for SDFormatDefault {
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
         let mut maybe_width_hint: Option<usize> = None;
-        if args.len() >= 2 {
-            if let ColumnarValue::Scalar(ScalarValue::Utf8(Some(options_value))) =
+        if args.len() >= 2
+            && let ColumnarValue::Scalar(ScalarValue::Utf8(Some(options_value))) =
                 args[1].cast_to(&DataType::Utf8, None)?
+        {
+            let options: serde_json::Value = options_value
+                .parse()
+                .map_err(|e| DataFusionError::External(Box::new(e)))?;
+            if let Some(width_hint_value) = options.get("width_hint")
+                && let Some(width_hint_i64) = width_hint_value.as_i64()
             {
-                let options: serde_json::Value = options_value
-                    .parse()
-                    .map_err(|e| DataFusionError::External(Box::new(e)))?;
-                if let Some(width_hint_value) = options.get("width_hint") {
-                    if let Some(width_hint_i64) = width_hint_value.as_i64() {
-                        maybe_width_hint = Some(
-                            width_hint_i64
-                                .try_into()
-                                .map_err(|e| DataFusionError::External(Box::new(e)))?,
-                        );
-                    }
-                }
+                maybe_width_hint = Some(
+                    width_hint_i64
+                        .try_into()
+                        .map_err(|e| DataFusionError::External(Box::new(e)))?,
+                );
             }
         }
 
@@ -418,8 +418,8 @@ impl<'a, T: std::fmt::Write> std::fmt::Write for LimitedSizeOutput<'a, T> {
 #[cfg(test)]
 mod tests {
     use arrow_array::{
-        create_array, ArrayRef, Float64Array, Int32Array, ListArray, ListViewArray, StringArray,
-        StructArray,
+        ArrayRef, Float64Array, Int32Array, ListArray, ListViewArray, StringArray, StructArray,
+        create_array,
     };
     use arrow_schema::{DataType, Field};
     use datafusion::arrow::buffer::{OffsetBuffer, ScalarBuffer};

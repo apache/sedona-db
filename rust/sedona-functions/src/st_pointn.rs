@@ -16,7 +16,7 @@
 // under the License.
 use arrow_array::builder::BinaryBuilder;
 use arrow_schema::DataType;
-use datafusion_common::{error::Result, ScalarValue};
+use datafusion_common::{ScalarValue, error::Result};
 use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::{CoordTrait, GeometryTrait, LineStringTrait};
 use sedona_common::sedona_internal_err;
@@ -26,7 +26,7 @@ use sedona_expr::{
 };
 use sedona_geometry::{
     error::SedonaGeometryError,
-    wkb_factory::{write_wkb_coord_trait, write_wkb_point_header, WKB_MIN_PROBABLE_BYTES},
+    wkb_factory::{WKB_MIN_PROBABLE_BYTES, write_wkb_coord_trait, write_wkb_point_header},
 };
 use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY},
@@ -96,26 +96,26 @@ impl SedonaScalarKernel for STPointN {
                 }
             };
 
-            if let Some(wkb) = maybe_wkb {
-                if let geo_traits::GeometryType::LineString(line_string) = wkb.as_type() {
-                    let num_coords = line_string.num_coords() as i64;
+            if let Some(wkb) = maybe_wkb
+                && let geo_traits::GeometryType::LineString(line_string) = wkb.as_type()
+            {
+                let num_coords = line_string.num_coords() as i64;
 
-                    // if n is out of the range, return NULL
-                    if n.abs() > num_coords {
-                        builder.append_null();
-                        return Ok(());
-                    }
+                // if n is out of the range, return NULL
+                if n.abs() > num_coords {
+                    builder.append_null();
+                    return Ok(());
+                }
 
-                    // Negative values are counted backwards from the end
-                    let n = if n > 0 { n - 1 } else { num_coords + n } as usize;
+                // Negative values are counted backwards from the end
+                let n = if n > 0 { n - 1 } else { num_coords + n } as usize;
 
-                    if let Some(coord) = line_string.coord(n) {
-                        if write_wkb_point_from_coord(&mut builder, coord).is_err() {
-                            return sedona_internal_err!("Failed to write WKB point");
-                        };
-                        builder.append_value([]);
-                        return Ok(());
-                    }
+                if let Some(coord) = line_string.coord(n) {
+                    if write_wkb_point_from_coord(&mut builder, coord).is_err() {
+                        return sedona_internal_err!("Failed to write WKB point");
+                    };
+                    builder.append_value([]);
+                    return Ok(());
                 }
             }
 

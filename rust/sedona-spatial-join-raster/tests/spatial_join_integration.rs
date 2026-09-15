@@ -40,28 +40,28 @@ use arrow_schema::{Field, Schema};
 use datafusion::{
     catalog::MemTable,
     execution::SessionStateBuilder,
-    physical_plan::{displayable, ExecutionPlan},
+    physical_plan::{ExecutionPlan, displayable},
     prelude::{SessionConfig, SessionContext},
 };
+use datafusion_common::Result;
 use datafusion_common::cast::as_int32_array;
 use datafusion_common::tree_node::{TreeNode, TreeNodeRecursion};
-use datafusion_common::Result;
 use rstest::rstest;
-use sedona_common::option::SpatialJoinOptions;
 use sedona_common::SedonaOptions;
+use sedona_common::option::SpatialJoinOptions;
 use sedona_geometry::transform::CrsEngine;
 use sedona_geometry::types::Edges;
 use sedona_proj::error::SedonaProjError;
-use sedona_proj::transform::{with_global_proj_engine, LazyProjEngine};
+use sedona_proj::transform::{LazyProjEngine, with_global_proj_engine};
 use sedona_query_planner::{
     optimizer::register_spatial_join_logical_optimizer, query_planner::SedonaQueryPlanner,
 };
 use sedona_raster::affine_transformation::to_world_coordinate;
 use sedona_raster::array::RasterStructArray;
 use sedona_raster::traits::RasterRef;
-use sedona_raster_functions::footprint::{densify_footprint_ring, FOOTPRINT_POINTS_PER_EDGE};
+use sedona_raster_functions::footprint::{FOOTPRINT_POINTS_PER_EDGE, densify_footprint_ring};
 use sedona_schema::crs::lnglat;
-use sedona_schema::datatypes::{SedonaType, RASTER};
+use sedona_schema::datatypes::{RASTER, SedonaType};
 use sedona_schema::raster::BandDataType;
 use sedona_spatial_join::SpatialJoinExec;
 use sedona_spatial_join_raster::physical_planner::RasterSpatialJoinPhysicalPlanner;
@@ -128,6 +128,12 @@ fn register_geom_table(ctx: &SessionContext) -> Result<()> {
 /// `SpatialJoinExec`. Otherwise the join stays a `NestedLoopJoinExec`.
 fn build_context(optimized: bool) -> Result<SessionContext> {
     let mut session_config = SessionConfig::from_env()?.with_batch_size(16);
+    // Work around https://github.com/apache/datafusion/issues/24933:
+    // physical scalar subqueries discard Arrow field metadata.
+    session_config
+        .options_mut()
+        .optimizer
+        .enable_physical_uncorrelated_scalar_subquery = false;
     session_config = session_config.with_option_extension(SedonaOptions::default());
 
     // Install a real CRS engine, mirroring the engine a normal session
@@ -181,7 +187,7 @@ fn setup_context(optimized: bool) -> Result<SessionContext> {
 fn count_spatial_join_execs(plan: &Arc<dyn ExecutionPlan>) -> Result<usize> {
     let mut count = 0;
     plan.apply(|node| {
-        if node.as_any().downcast_ref::<SpatialJoinExec>().is_some() {
+        if node.downcast_ref::<SpatialJoinExec>().is_some() {
             count += 1;
         }
         Ok(TreeNodeRecursion::Continue)
@@ -203,7 +209,7 @@ fn schema_has_raster(schema: &Schema) -> bool {
 fn spatial_join_raster_sides(plan: &Arc<dyn ExecutionPlan>) -> Result<(bool, bool)> {
     let mut sides = None;
     plan.apply(|node| {
-        if let Some(sj) = node.as_any().downcast_ref::<SpatialJoinExec>() {
+        if let Some(sj) = node.downcast_ref::<SpatialJoinExec>() {
             sides = Some((
                 schema_has_raster(sj.left.schema().as_ref()),
                 schema_has_raster(sj.right.schema().as_ref()),

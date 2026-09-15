@@ -19,10 +19,10 @@ use std::sync::Arc;
 use arrow_array::builder::BinaryBuilder;
 use arrow_schema::DataType;
 use datafusion_common::{
-    cast::as_float64_array, error::Result, exec_datafusion_err, DataFusionError,
+    DataFusionError, cast::as_float64_array, error::Result, exec_datafusion_err,
 };
 use datafusion_expr::ColumnarValue;
-use geo::{algorithm::line_measures::InterpolatableLine, Euclidean};
+use geo::{Euclidean, algorithm::line_measures::InterpolatableLine};
 use geo_traits::GeometryTrait;
 use sedona_expr::{
     item_crs::ItemCrsKernel,

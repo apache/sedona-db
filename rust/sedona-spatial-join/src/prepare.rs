@@ -21,14 +21,14 @@ use arrow_schema::SchemaRef;
 use datafusion_common::Result;
 use datafusion_common_runtime::JoinSet;
 use datafusion_execution::{
+    SendableRecordBatchStream, TaskContext,
     disk_manager::RefCountedTempFile,
     memory_pool::{MemoryConsumer, MemoryReservation},
-    SendableRecordBatchStream, TaskContext,
 };
 use datafusion_expr::JoinType;
 use datafusion_physical_plan::metrics::ExecutionPlanMetricsSet;
 use fastrand::Rng;
-use sedona_common::{sedona_internal_err, NumSpatialPartitionsConfig, SedonaOptions};
+use sedona_common::{NumSpatialPartitionsConfig, SedonaOptions, sedona_internal_err};
 use sedona_expr::statistics::GeoStatistics;
 use sedona_geometry::bounding_box::BoundingBox;
 
@@ -36,18 +36,18 @@ use crate::index::spatial_index_builder::SpatialJoinBuildMetrics;
 use crate::join_provider::SpatialJoinProvider;
 use crate::{
     index::{
-        memory_plan::{compute_memory_plan, MemoryPlan, PartitionMemorySummary},
-        partitioned_index_provider::PartitionedIndexProvider,
         BuildPartition, BuildSideBatchesCollector, CollectBuildSideMetrics,
+        memory_plan::{MemoryPlan, PartitionMemorySummary, compute_memory_plan},
+        partitioned_index_provider::PartitionedIndexProvider,
     },
     partitioning::{
+        PartitionedSide, SpatialPartition, SpatialPartitioner,
         broadcast::BroadcastPartitioner,
         flat::FlatPartitioner,
         kdb::KDBPartitioner,
         round_robin::RoundRobinPartitioner,
         rtree::RTreePartitioner,
         stream_repartitioner::{SpilledPartition, SpilledPartitions, StreamRepartitioner},
-        PartitionedSide, SpatialPartition, SpatialPartitioner,
     },
     probe::partitioned_stream_provider::ProbeStreamOptions,
     spatial_predicate::SpatialPredicate,
@@ -368,7 +368,7 @@ impl SpatialJoinComponentsBuilder {
             let runtime_env = Arc::clone(&runtime_env);
             let partitioner = build_partitioner.box_clone();
             join_set.spawn(async move {
-                let partitioned_spill_files = StreamRepartitioner::builder(
+                StreamRepartitioner::builder(
                     runtime_env,
                     partitioner,
                     PartitionedSide::BuildSide,
@@ -380,8 +380,7 @@ impl SpatialJoinComponentsBuilder {
                 .spilled_batch_in_memory_size_threshold(spilled_batch_in_memory_size_threshold)
                 .build()
                 .repartition_stream(stream)
-                .await;
-                partitioned_spill_files
+                .await
             });
         }
 

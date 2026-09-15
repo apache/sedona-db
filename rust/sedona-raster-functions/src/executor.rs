@@ -21,13 +21,13 @@ use datafusion_common::cast::{
     as_binary_array, as_binary_view_array, as_string_view_array, as_struct_array,
 };
 use datafusion_common::error::Result;
-use datafusion_common::{exec_err, ScalarValue};
+use datafusion_common::{ScalarValue, exec_err};
 use datafusion_expr::ColumnarValue;
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_raster::array::{RasterRefImpl, RasterStructArray};
-use sedona_schema::crs::{deserialize_crs, Crs, CrsRef};
-use sedona_schema::datatypes::SedonaType;
+use sedona_schema::crs::{Crs, CrsRef, deserialize_crs};
 use sedona_schema::datatypes::RASTER;
+use sedona_schema::datatypes::SedonaType;
 
 /// Helper for writing raster kernel implementations
 ///
@@ -648,7 +648,7 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
                         other => {
                             return sedona_internal_err!(
                                 "Unsupported geometry scalar type: {other:?}"
-                            )
+                            );
                         }
                     };
                     Ok(GeomWkbCrsAccessor::WkbScalar {
@@ -714,8 +714,8 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::builder::Int64Builder;
     use arrow_array::Int64Array;
+    use arrow_array::builder::Int64Builder;
     use arrow_schema::Field;
     use sedona_geometry::types::Edges;
     use sedona_raster::traits::RasterRef;

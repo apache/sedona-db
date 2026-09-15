@@ -26,7 +26,6 @@
 //! from `return_field()` regardless of the input schema, allowing projection
 //! pushdown to work correctly while preserving GeoArrow extension metadata.
 
-use std::any::Any;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
 use std::sync::Arc;
@@ -35,7 +34,7 @@ use arrow_array::RecordBatch;
 use arrow_schema::{DataType, FieldRef, Schema};
 use datafusion_common::Result;
 use datafusion_expr::ColumnarValue;
-use datafusion_physical_expr::{expressions::Column, PhysicalExpr};
+use datafusion_physical_expr::{PhysicalExpr, expressions::Column};
 use sedona_common::sedona_internal_err;
 
 /// A wrapper around [`Column`] that preserves field metadata in `return_field()`.
@@ -60,7 +59,7 @@ impl Hash for MetadataPreservingColumn {
 
 impl PartialEq for MetadataPreservingColumn {
     fn eq(&self, other: &Self) -> bool {
-        self.inner.as_ref().dyn_eq(other.inner.as_any()) && self.field == other.field
+        self.inner.as_ref().dyn_eq(other.inner.as_ref()) && self.field == other.field
     }
 }
 
@@ -89,10 +88,6 @@ impl Display for MetadataPreservingColumn {
 }
 
 impl PhysicalExpr for MetadataPreservingColumn {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn data_type(&self, _input_schema: &Schema) -> Result<DataType> {
         // Return data type from our stored field instead of looking up from input schema
         // This avoids index mismatch issues when the schema differs from the original
@@ -164,9 +159,11 @@ mod tests {
 
         // return_field should return the stored field with metadata, not the input schema's field
         let returned_field = wrapper.return_field(&input_schema).unwrap();
-        assert!(returned_field
-            .metadata()
-            .contains_key("ARROW:extension:name"));
+        assert!(
+            returned_field
+                .metadata()
+                .contains_key("ARROW:extension:name")
+        );
         assert_eq!(
             returned_field.metadata().get("ARROW:extension:name"),
             Some(&"geoarrow.wkb".to_string())

@@ -26,12 +26,12 @@ use std::sync::Arc;
 
 use crate::{
     evaluated_batch::{
-        evaluated_batch_stream::SendableEvaluatedBatchStream, spill::EvaluatedBatchSpillWriter,
-        EvaluatedBatch,
+        EvaluatedBatch, evaluated_batch_stream::SendableEvaluatedBatchStream,
+        spill::EvaluatedBatchSpillWriter,
     },
     operand_evaluator::EvaluatedGeometryArray,
     partitioning::{
-        partition_slots::PartitionSlots, PartitionedSide, SpatialPartition, SpatialPartitioner,
+        PartitionedSide, SpatialPartition, SpatialPartitioner, partition_slots::PartitionSlots,
     },
 };
 use arrow::compute::interleave_record_batch;
@@ -178,7 +178,7 @@ impl SpilledPartitions {
                 None => {
                     return sedona_internal_err!(
                         "Some of the spilled partitions have already been taken away"
-                    )
+                    );
                 }
             }
         }
@@ -498,10 +498,11 @@ impl StreamRepartitioner {
 
     fn flush_pending_batches(&mut self) -> Result<()> {
         if self.pending_batches.is_empty() {
-            debug_assert!(self
-                .slot_assignments
-                .iter()
-                .all(|assignments| assignments.is_empty()));
+            debug_assert!(
+                self.slot_assignments
+                    .iter()
+                    .all(|assignments| assignments.is_empty())
+            );
             return Ok(());
         }
 
@@ -911,10 +912,12 @@ mod tests {
 
         repartitioner.repartition_batch(batch)?;
         let result = repartitioner.finish()?;
-        assert!(result
-            .spilled_partition(SpatialPartition::None)?
-            .spill_files()
-            .is_empty());
+        assert!(
+            result
+                .spilled_partition(SpatialPartition::None)?
+                .spill_files()
+                .is_empty()
+        );
         assert_eq!(
             read_ids(
                 &result
@@ -1052,10 +1055,12 @@ mod tests {
 
         // Check if the result geometry array is BinaryViewArray
         let geom_array = result.geom_array.geometry_array();
-        assert!(geom_array
-            .as_any()
-            .downcast_ref::<BinaryViewArray>()
-            .is_some());
+        assert!(
+            geom_array
+                .as_any()
+                .downcast_ref::<BinaryViewArray>()
+                .is_some()
+        );
 
         // Check values
         let view_array = geom_array

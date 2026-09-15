@@ -21,12 +21,12 @@ use std::task::{Context, Poll};
 
 use arrow_array::RecordBatch;
 use datafusion_common::Result;
-use datafusion_physical_plan::{metrics, SendableRecordBatchStream};
+use datafusion_physical_plan::{SendableRecordBatchStream, metrics};
 use futures::{Stream, StreamExt};
 
 use crate::evaluated_batch::{
-    evaluated_batch_stream::{EvaluatedBatchStream, SendableEvaluatedBatchStream},
     EvaluatedBatch,
+    evaluated_batch_stream::{EvaluatedBatchStream, SendableEvaluatedBatchStream},
 };
 use crate::operand_evaluator::{EvaluatedGeometryArray, OperandEvaluator};
 use crate::utils::arrow_utils::{compact_batch, schema_contains_view_types};

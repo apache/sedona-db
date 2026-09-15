@@ -62,7 +62,7 @@ impl SedonaScalarKernel for SDOrderDefault {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::{create_array, ArrayRef};
+    use arrow_array::{ArrayRef, create_array};
     use arrow_schema::DataType;
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;

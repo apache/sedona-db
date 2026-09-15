@@ -15,11 +15,11 @@
 // specific language governing permissions and limitations
 // under the License.
 use arrow_array::{
-    builder::{BinaryBuilder, NullBufferBuilder, OffsetBufferBuilder, UInt32Builder},
     ListArray, StructArray,
+    builder::{BinaryBuilder, NullBufferBuilder, OffsetBufferBuilder, UInt32Builder},
 };
 use arrow_schema::{DataType, Field, Fields};
-use datafusion_common::{config::ConfigOptions, Result};
+use datafusion_common::{Result, config::ConfigOptions};
 use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::{
     GeometryCollectionTrait, GeometryTrait, GeometryType, MultiLineStringTrait, MultiPointTrait,
@@ -305,8 +305,12 @@ mod tests {
                 Some("MULTIPOINT (1 1, 2 2)"),
                 Some("MULTILINESTRING ((1 1, 2 2), EMPTY, (3 3, 4 4))"),
                 Some("MULTIPOLYGON (((1 1, 2 2, 2 1, 1 1)), EMPTY, ((3 3, 4 4, 4 3, 3 3)))"),
-                Some("GEOMETRYCOLLECTION (POINT (1 2), MULTILINESTRING ((1 1, 2 2), EMPTY, (3 3, 4 4)), LINESTRING (1 1, 2 2))"),
-                Some("GEOMETRYCOLLECTION (POINT (1 2), GEOMETRYCOLLECTION (MULTILINESTRING ((1 1, 2 2), EMPTY, (3 3, 4 4)), LINESTRING (1 1, 2 2)))"),
+                Some(
+                    "GEOMETRYCOLLECTION (POINT (1 2), MULTILINESTRING ((1 1, 2 2), EMPTY, (3 3, 4 4)), LINESTRING (1 1, 2 2))",
+                ),
+                Some(
+                    "GEOMETRYCOLLECTION (POINT (1 2), GEOMETRYCOLLECTION (MULTILINESTRING ((1 1, 2 2), EMPTY, (3 3, 4 4)), LINESTRING (1 1, 2 2)))",
+                ),
             ],
             &sedona_type,
         );

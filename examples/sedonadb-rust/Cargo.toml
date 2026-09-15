@@ -30,7 +30,7 @@ rust-version = "1.88.0"
 [workspace]
 
 [dependencies]
-datafusion = { version = "52.5.0"}
+datafusion = { version = "54.1.0"}
 # We use a git dependency here so that we can test these examples
 sedona = { git = "https://github.com/apache/sedona-db.git", package = "sedona" }
 tokio = { version = "1.52", features = ["rt-multi-thread"]}

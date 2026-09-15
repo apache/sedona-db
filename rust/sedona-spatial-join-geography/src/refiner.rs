@@ -21,22 +21,22 @@
 //! using s2geography, rather than the default Cartesian predicates.
 
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
     Arc,
+    atomic::{AtomicUsize, Ordering},
 };
 
-use datafusion_common::{exec_datafusion_err, Result};
-use sedona_common::{sedona_internal_err, ExecutionMode, SpatialJoinOptions};
+use datafusion_common::{Result, exec_datafusion_err};
+use sedona_common::{ExecutionMode, SpatialJoinOptions, sedona_internal_err};
 use sedona_expr::statistics::GeoStatistics;
 use sedona_s2geography::{
     geography::{Geography, GeographyFactory},
     operator::{Op, OpType},
 };
 use sedona_spatial_join::{
+    IndexQueryResult, IndexQueryResultRefiner, SpatialPredicate,
     refine::IndexQueryResultRefinerFactory,
     spatial_predicate::{RelationPredicate, SpatialRelationType},
     utils::init_once_array::InitOnceArray,
-    IndexQueryResult, IndexQueryResultRefiner, SpatialPredicate,
 };
 use wkb::reader::Wkb;
 
@@ -66,14 +66,14 @@ impl GeographyRefiner {
                 _ => {
                     return sedona_internal_err!(
                         "GeographyRefiner created with unsupported relation type {relation_type}"
-                    )
+                    );
                 }
             },
             SpatialPredicate::Distance(_) => OpType::DWithin,
             _ => {
                 return sedona_internal_err!(
                     "GeographyRefiner created with unsupported predicate {predicate}"
-                )
+                );
             }
         };
 

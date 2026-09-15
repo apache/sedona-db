@@ -22,9 +22,9 @@ use arrow_array::{
 use arrow_schema::{ArrowError, Field};
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::{plan_err, DataFusionError, Result, ScalarValue};
-use datafusion_expr::ColumnarValue;
+use datafusion_expr::{ColumnarValue, ScalarUDFImpl};
 use sedona_common::sedona_internal_err;
-use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
+use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel, SedonaScalarUDF};
 use sedona_schema::datatypes::SedonaType;
 use std::{
     ffi::{c_char, c_int, c_void, CStr, CString},
@@ -32,6 +32,7 @@ use std::{
     iter::zip,
     ptr::{null, null_mut, swap_nonoverlapping},
     str::FromStr,
+    sync::Arc,
 };
 
 use crate::extension::{ffi_arrow_schema_is_valid, SedonaCScalarKernel, SedonaCScalarKernelImpl};
@@ -347,6 +348,7 @@ impl CScalarKernelImplWrapper {
 pub struct ExportedScalarKernel {
     inner: ScalarKernelRef,
     function_name: Option<CString>,
+    config_options: Arc<ConfigOptions>,
 }
 
 impl From<ScalarKernelRef> for ExportedScalarKernel {
@@ -354,6 +356,7 @@ impl From<ScalarKernelRef> for ExportedScalarKernel {
         ExportedScalarKernel {
             inner: value,
             function_name: None,
+            config_options: Arc::new(ConfigOptions::new()),
         }
     }
 }
@@ -382,9 +385,47 @@ impl ExportedScalarKernel {
         }
     }
 
-    fn new_impl(&self) -> ExportedScalarKernelImpl {
-        ExportedScalarKernelImpl::new(self.inner.clone())
+    /// Add the session's configuration options when exporting a function.
+    ///
+    /// SedonaDB's scalar UDF FFI does not currently pass the importing
+    /// context's options through to execution. Retaining the exporting
+    /// context's `Arc<ConfigOptions>` ensures the implementation receives the
+    /// same configuration as a normal `ScalarFunctionArgs` invocation.
+    pub fn with_config_options(self, config_options: Arc<ConfigOptions>) -> Self {
+        Self {
+            config_options,
+            ..self
+        }
     }
+
+    fn new_impl(&self) -> ExportedScalarKernelImpl {
+        ExportedScalarKernelImpl::new(self.inner.clone(), Arc::clone(&self.config_options))
+    }
+}
+
+/// Prepare a Sedona UDF for export through DataFusion's scalar-UDF FFI.
+///
+/// DataFusion's FFI currently replaces invocation config with defaults. Wrap
+/// each native kernel in Sedona's kernel FFI so the exporting session's
+/// options remain available on the implementation side of that boundary.
+pub fn with_config_options_for_ffi(
+    udf: SedonaScalarUDF,
+    config_options: Arc<ConfigOptions>,
+) -> Result<SedonaScalarUDF> {
+    let function_name = udf.name().to_string();
+    let kernels = udf
+        .kernels()
+        .iter()
+        .map(|kernel| {
+            let exported = ExportedScalarKernel::from(kernel.clone())
+                .with_function_name(&function_name)
+                .with_config_options(Arc::clone(&config_options));
+            let imported = ImportedScalarKernel::try_from(SedonaCScalarKernel::from(exported))?;
+            Ok(Arc::new(imported) as ScalarKernelRef)
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok(udf.with_kernels(kernels))
 }
 
 /// C callable wrapper to expose [ExportedScalarKernel::function_name]
@@ -434,6 +475,7 @@ unsafe extern "C" fn c_factory_release(self_: *mut SedonaCScalarKernel) {
 /// Rust-backed implementation of [SedonaCScalarKernelImpl]
 struct ExportedScalarKernelImpl {
     inner: ScalarKernelRef,
+    config_options: Arc<ConfigOptions>,
     last_arg_types: Option<Vec<SedonaType>>,
     last_return_type: Option<SedonaType>,
     last_error: CString,
@@ -453,9 +495,10 @@ impl From<ExportedScalarKernelImpl> for SedonaCScalarKernelImpl {
 }
 
 impl ExportedScalarKernelImpl {
-    fn new(kernel: ScalarKernelRef) -> Self {
+    fn new(kernel: ScalarKernelRef, config_options: Arc<ConfigOptions>) -> Self {
         Self {
             inner: kernel,
+            config_options,
             last_arg_types: None,
             last_return_type: None,
             last_error: CString::default(),
@@ -575,7 +618,7 @@ impl ExportedScalarKernelImpl {
                     &args,
                     return_type,
                     num_rows as usize,
-                    None,
+                    Some(self.config_options.as_ref()),
                 )?;
 
                 // Convert the result to an ArrayRef
@@ -693,6 +736,7 @@ mod test {
     use arrow_schema::DataType;
     use datafusion_common::exec_err;
     use datafusion_expr::Volatility;
+    use sedona_common::SedonaOptions;
     use sedona_expr::scalar_udf::{SedonaScalarUDF, SimpleSedonaScalarKernel};
     use sedona_schema::{datatypes::WKB_GEOMETRY, matchers::ArgMatcher};
     use sedona_testing::{create::create_array, testers::ScalarUdfTester};
@@ -750,6 +794,60 @@ mod test {
             err.message(),
             "simple_udf_from_ffi(): No kernel matching arguments"
         );
+    }
+
+    #[test]
+    fn ffi_roundtrip_uses_exported_sedona_options() {
+        let kernel = Arc::new(RequiresSedonaOptions) as ScalarKernelRef;
+        let mut config_options = ConfigOptions::new();
+        config_options.extensions.insert(SedonaOptions::default());
+        let exported_kernel =
+            ExportedScalarKernel::from(kernel).with_config_options(Arc::new(config_options));
+        let ffi_kernel = SedonaCScalarKernel::from(exported_kernel);
+        let imported_kernel = ImportedScalarKernel::try_from(ffi_kernel).unwrap();
+        let udf = SedonaScalarUDF::new(
+            "requires_options",
+            vec![Arc::new(imported_kernel)],
+            Volatility::Immutable,
+        );
+        let tester = ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY]);
+
+        tester.invoke_scalar("POINT (0 1)").unwrap();
+    }
+
+    #[derive(Debug)]
+    struct RequiresSedonaOptions;
+
+    impl SedonaScalarKernel for RequiresSedonaOptions {
+        fn return_type(&self, _args: &[SedonaType]) -> Result<Option<SedonaType>> {
+            Ok(Some(WKB_GEOMETRY))
+        }
+
+        fn invoke_batch(
+            &self,
+            _arg_types: &[SedonaType],
+            _args: &[ColumnarValue],
+        ) -> Result<ColumnarValue> {
+            unreachable!()
+        }
+
+        fn invoke_batch_from_args(
+            &self,
+            _arg_types: &[SedonaType],
+            args: &[ColumnarValue],
+            _return_type: &SedonaType,
+            _num_rows: usize,
+            config_options: Option<&ConfigOptions>,
+        ) -> Result<ColumnarValue> {
+            let has_sedona_options = config_options
+                .and_then(|options| options.extensions.get::<SedonaOptions>())
+                .is_some();
+            if !has_sedona_options {
+                return exec_err!("SedonaOptions not available");
+            }
+
+            Ok(args[0].clone())
+        }
     }
 
     #[test]

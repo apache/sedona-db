@@ -20,14 +20,14 @@
 //! Similar to PostGIS's ST_FromGDALRaster. Parses binary content using GDAL driver
 //! and loads it as an in-db raster with all band data stored inline.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-use arrow_array::{cast::AsArray, Array};
+use arrow_array::{Array, cast::AsArray};
 use arrow_schema::DataType;
+use datafusion_common::ScalarValue;
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::error::Result;
-use datafusion_common::ScalarValue;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
@@ -37,7 +37,7 @@ use sedona_gdal::raster::types::DatasetOptions;
 use sedona_raster::builder::RasterBuilder;
 use sedona_raster::error::RasterResultExt;
 use sedona_raster_functions::rs_ensure_loaded::RETURNS_BYTES_METADATA_KEY;
-use sedona_schema::datatypes::{SedonaType, RASTER};
+use sedona_schema::datatypes::{RASTER, SedonaType};
 use sedona_schema::matchers::ArgMatcher;
 
 use crate::gdal_common::{convert_gdal_err, with_gdal};
@@ -182,7 +182,7 @@ impl SedonaScalarKernel for RsFromGDALRaster {
                 other => {
                     return sedona_internal_err!(
                         "RS_FromGDALRaster expected Binary or BinaryView content, got {other:?}"
-                    )
+                    );
                 }
             }
             let result = builder.finish().context("Failed to build raster")?;
@@ -205,7 +205,7 @@ mod tests {
     use sedona_raster::array::RasterStructArray;
     use sedona_schema::datatypes::RASTER;
     use sedona_testing::raster_spec::{
-        assert_raster_scalar_equals, assert_rasters_equal, RasterSpec,
+        RasterSpec, assert_raster_scalar_equals, assert_rasters_equal,
     };
     use sedona_testing::testers::ScalarUdfTester;
 

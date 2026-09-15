@@ -24,10 +24,10 @@ use datafusion::{
         file_format::parquet::ParquetFormat,
         listing::{ListingOptions, ListingTable, ListingTableConfig, ListingTableUrl},
     },
-    execution::{options::ReadOptions, SessionState},
+    execution::{SessionState, options::ReadOptions},
     prelude::{ParquetReadOptions, SessionConfig, SessionContext},
 };
-use datafusion_common::{exec_err, plan_err, Result};
+use datafusion_common::{Result, exec_err, plan_err};
 
 use crate::{
     format::GeoParquetFormat, metadata::GeoParquetColumnMetadata, options::TableGeoParquetOptions,
@@ -60,8 +60,8 @@ pub async fn geoparquet_listing_table(
         if !path_without_query.ends_with(option_extension.clone().as_str()) && !path.is_collection()
         {
             return exec_err!(
-                    "File path '{file_path}' does not match the expected extension '{option_extension}'"
-                );
+                "File path '{file_path}' does not match the expected extension '{option_extension}'"
+            );
         }
     }
 
@@ -317,7 +317,7 @@ impl ReadOptions<'_> for GeoParquetReadOptions<'_> {
 
         let mut options = self.inner.to_listing_options(config, table_options);
 
-        if let Some(parquet_format) = options.format.as_any().downcast_ref::<ParquetFormat>() {
+        if let Some(parquet_format) = options.format.downcast_ref::<ParquetFormat>() {
             let mut geoparquet_options =
                 TableGeoParquetOptions::from(parquet_format.options().clone());
             if let Some(geometry_columns) = &self.geometry_columns {
@@ -464,9 +464,10 @@ mod test {
         )
         .await
         .unwrap_err();
-        assert!(err
-            .message()
-            .ends_with("does not match the expected extension '.parquet'"));
+        assert!(
+            err.message()
+                .ends_with("does not match the expected extension '.parquet'")
+        );
 
         let err = geoparquet_listing_table(
             &ctx,
@@ -475,9 +476,10 @@ mod test {
         )
         .await
         .unwrap_err();
-        assert_eq!(
-            err.message(),
-            "Can't infer Parquet schema for zero objects. Does the input path exist?"
+        assert!(
+            err.message().contains("No files found at"),
+            "Unexpected error: {}",
+            err.message()
         );
     }
 
