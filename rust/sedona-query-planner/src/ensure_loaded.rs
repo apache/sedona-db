@@ -571,12 +571,16 @@ mod tests {
             .iter()
             .position(|r| r.name() == "sedona.wrap_async_udf")
             .expect("wrap_async_udf rule registered");
+        let hoist_async = rules
+            .iter()
+            .position(|r| r.name() == "sedona.hoist_async_join_filter")
+            .expect("hoist_async_join_filter rule registered");
         let cse = rules
             .iter()
             .position(|r| r.name() == "common_sub_expression_eliminate")
             .expect("CSE present in default optimizer");
 
-        // Order: ensure_loaded -> wrap_async_udf -> CSE
+        // Order: ensure_loaded -> wrap_async_udf -> hoist_async_join_filter -> CSE
         assert_eq!(
             ensure_loaded + 1,
             wrap_async,
@@ -584,8 +588,13 @@ mod tests {
         );
         assert_eq!(
             wrap_async + 1,
+            hoist_async,
+            "hoist_async_join_filter must follow ensure_loaded, which injects the async loaders it looks for"
+        );
+        assert_eq!(
+            hoist_async + 1,
             cse,
-            "CSE must follow wrap_async_udf so metadata wrappers dedupe in the same pass"
+            "CSE must follow the sedona rules so metadata wrappers dedupe in the same pass"
         );
     }
 
