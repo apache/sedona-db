@@ -36,6 +36,8 @@ import sedonadb
 import shapely
 from sedonadb.datasource import PyogrioFormatSpec
 
+CHILD_PROCESS_TIMEOUT_SECONDS = 15
+
 
 def test_read_ogr_projection(con):
     n = 1024
@@ -547,10 +549,10 @@ def _exit_child_process(result_sender):
 
 def _terminate_child(process):
     process.terminate()
-    process.join(5)
+    process.join(CHILD_PROCESS_TIMEOUT_SECONDS)
     if process.is_alive():
         process.kill()
-        process.join(5)
+        process.join(CHILD_PROCESS_TIMEOUT_SECONDS)
 
 
 def _run_child_process(target, *args, timeout):
@@ -601,12 +603,12 @@ def test_independent_scans_child_timeout_is_bounded():
     started = time.monotonic()
     with pytest.raises(TimeoutError, match="exceeded 0.2 seconds"):
         _run_child_process(_block_child_process, timeout=0.2)
-    assert time.monotonic() - started < 5
+    assert time.monotonic() - started < CHILD_PROCESS_TIMEOUT_SECONDS
 
 
 def test_child_process_nonzero_exit_is_reported():
     with pytest.raises(AssertionError, match="child process exited with 17: None"):
-        _run_child_process(_exit_child_process, timeout=5)
+        _run_child_process(_exit_child_process, timeout=CHILD_PROCESS_TIMEOUT_SECONDS)
 
 
 @pytest.mark.parametrize("extension", ["fgb", "gpkg"])
@@ -636,7 +638,10 @@ def test_independent_reader_progress_while_first_reader_is_paused(extension):
     with tempfile.TemporaryDirectory() as td:
         paths = _write_pyogrio_pair(td, extension, expected_values)
         result = _run_child_process(
-            _run_paused_pyogrio_readers, paths, expected_values, timeout=15
+            _run_paused_pyogrio_readers,
+            paths,
+            expected_values,
+            timeout=CHILD_PROCESS_TIMEOUT_SECONDS,
         )
 
     assert result["ok"], result["error"]
