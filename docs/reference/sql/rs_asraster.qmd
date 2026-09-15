@@ -106,10 +106,7 @@ kernels:
 Creates a single-band in-db raster by rasterizing `geometry` onto the grid
 defined by `reference_raster`.
 
-The output pixel type is controlled by `pixel_type`, which accepts the same
-spellings as [`RS_MakeEmptyRaster`](rs_makeemptyraster.qmd): `uint8` ...
-`float64`, Sedona Spark's letter codes (`D`, `F`, `I`, `UI`, `S`, `US`, `B`)
-or an `RS_BandPixelType` name. Optional arguments control
+The output pixel type is controlled by `pixel_type`. Optional arguments control
 whether pixels touched by the geometry are burned, the value burned into covered
 pixels, the nodata fill value, and whether the output extent is cropped to the
 geometry extent or kept equal to the full reference raster extent.
