@@ -608,9 +608,7 @@ def test_independent_scans_child_timeout_is_bounded():
 
 def test_child_process_nonzero_exit_is_reported():
     with pytest.raises(AssertionError, match="child process exited with 17: None"):
-        _run_child_process(
-            _exit_child_process, timeout=CHILD_PROCESS_TIMEOUT_SECONDS
-        )
+        _run_child_process(_exit_child_process, timeout=CHILD_PROCESS_TIMEOUT_SECONDS)
 
 
 @pytest.mark.parametrize("extension", ["fgb", "gpkg"])
