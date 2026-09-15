@@ -25,12 +25,13 @@ use std::{
 };
 
 use arrow_array::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
-use arrow_schema::{DataType, Field};
+use arrow_schema::{DataType, Field, Schema};
 use datafusion_common::Result;
 use datafusion_execution::{
     config::SessionConfig, runtime_env::RuntimeEnv, FunctionRegistry, TaskContext,
 };
 use datafusion_expr::{AggregateUDF, Expr, HigherOrderUDF, ScalarUDF, WindowUDF};
+use datafusion_physical_expr::PhysicalExpr;
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 
 pub use sedona_expr::placeholder_udf::{
@@ -115,6 +116,120 @@ impl<'a> ExportedExprView<'a> {
 impl<'a> From<&'a Expr> for ExportedExprView<'a> {
     fn from(expr: &'a Expr) -> Self {
         Self::new(expr)
+    }
+}
+
+/// Wrapper around a physical DataFusion expression that can be exported across FFI.
+pub struct ExportedPhysicalExprView<'a> {
+    expr: &'a Arc<dyn PhysicalExpr>,
+}
+
+impl<'a> ExportedPhysicalExprView<'a> {
+    /// Create a view over a physical expression.
+    pub fn new(expr: &'a Arc<dyn PhysicalExpr>) -> Self {
+        Self { expr }
+    }
+
+    /// Get the inner physical expression.
+    pub fn expr(&self) -> &Arc<dyn PhysicalExpr> {
+        self.expr
+    }
+
+    /// Get an FFI-compatible view of this physical expression.
+    pub fn as_ffi_view(&self) -> SedonaCExprView {
+        SedonaCExprView {
+            get_property_schema: Some(c_physical_expr_get_property_schema),
+            get_property: Some(c_physical_expr_get_property),
+            reserved: null_mut(),
+            private_data: self as *const ExportedPhysicalExprView as *const c_void,
+        }
+    }
+
+    fn get_property(&self, property: &str) -> Result<PropertyValue, String> {
+        match property {
+            "debug_string" => Ok(PropertyValue::String(format!("{:?}", self.expr))),
+            "display_string" => Ok(PropertyValue::String(format!("{}", self.expr))),
+            #[cfg(feature = "protobuf")]
+            "datafusion_physical_expr_protobuf" => {
+                use datafusion_proto::physical_plan::to_proto::serialize_physical_expr;
+                use prost::Message;
+
+                serialize_physical_expr(self.expr, &PlaceholderPhysicalExtensionCodec)
+                    .map(|protobuf| PropertyValue::Binary(protobuf.encode_to_vec()))
+                    .map_err(|e| format!("Failed to serialize physical expression: {e}"))
+            }
+            _ => Err(format!("Unknown property: {property}")),
+        }
+    }
+
+    fn get_property_data_type(property: &str) -> DataType {
+        match property {
+            "debug_string" | "display_string" => DataType::Utf8,
+            "datafusion_physical_expr_protobuf" => DataType::Binary,
+            _ => DataType::Utf8,
+        }
+    }
+}
+
+impl<'a> From<&'a Arc<dyn PhysicalExpr>> for ExportedPhysicalExprView<'a> {
+    fn from(expr: &'a Arc<dyn PhysicalExpr>) -> Self {
+        Self::new(expr)
+    }
+}
+
+unsafe extern "C" fn c_physical_expr_get_property_schema(
+    _self_: *const SedonaCExprView,
+    property: *const c_char,
+    out: *mut FFI_ArrowSchema,
+    err: *mut SedonaCError,
+) -> c_int {
+    debug_assert!(!out.is_null(), "out pointer is null");
+    let property_str = cstr_from_ptr_or_empty(property);
+    let field = Field::new(
+        "value",
+        ExportedPhysicalExprView::get_property_data_type(&property_str),
+        false,
+    );
+    match FFI_ArrowSchema::try_from(&field) {
+        Ok(ffi_schema) => {
+            std::ptr::write(out, ffi_schema);
+            ERRNO_OK
+        }
+        Err(e) => {
+            set_ffi_error!(err, "Failed to convert field to FFI schema: {}", e);
+            libc::EINVAL
+        }
+    }
+}
+
+unsafe extern "C" fn c_physical_expr_get_property(
+    self_: *const SedonaCExprView,
+    property: *const c_char,
+    _args: *const u8,
+    args_len: usize,
+    out: *mut FFI_ArrowArray,
+    err: *mut SedonaCError,
+) -> c_int {
+    debug_assert!(!self_.is_null(), "self pointer is null");
+    debug_assert!(!out.is_null(), "out pointer is null");
+    if args_len > 0 {
+        set_ffi_error!(err, "get_property does not accept arguments");
+        return libc::EINVAL;
+    }
+
+    let self_ref = &*self_;
+    debug_assert!(!self_ref.private_data.is_null(), "private_data is null");
+    let exported = &*(self_ref.private_data as *const ExportedPhysicalExprView);
+    let property_str = cstr_from_ptr_or_empty(property);
+    match exported.get_property(&property_str) {
+        Ok(value) => {
+            std::ptr::write(out, value.into_ffi_array());
+            ERRNO_OK
+        }
+        Err(e) => {
+            set_ffi_error!(err, "{}", e);
+            libc::EINVAL
+        }
     }
 }
 
@@ -251,6 +366,46 @@ impl<'a> ImportedExprView<'a> {
         }
     }
 
+    /// Import this expression as a physical [`PhysicalExpr`].
+    ///
+    /// `input_schema` is used by DataFusion to restore expression types and coercions. When no
+    /// registry is provided, unresolved scalar functions become [`PlaceholderUDF`] instances.
+    pub fn to_physical_expr(
+        &self,
+        input_schema: &Schema,
+        registry: Option<&dyn FunctionRegistry>,
+    ) -> Result<Arc<dyn PhysicalExpr>> {
+        #[cfg(feature = "protobuf")]
+        {
+            use datafusion_proto::{physical_plan::from_proto::parse_physical_expr, protobuf};
+            use prost::Message;
+
+            let bytes = self.get_bytes_property("datafusion_physical_expr_protobuf")?;
+            let context = match registry {
+                Some(registry) => task_context_from_registry(registry)?,
+                None => TaskContext::default(),
+            };
+            let protobuf = protobuf::PhysicalExprNode::decode(bytes.as_slice()).map_err(|e| {
+                sedona_internal_datafusion_err!("Error decoding physical expr as protobuf: {e}")
+            })?;
+            parse_physical_expr(
+                &protobuf,
+                &context,
+                input_schema,
+                &PlaceholderPhysicalExtensionCodec,
+            )
+            .map_err(|e| {
+                sedona_internal_datafusion_err!("Error parsing protobuf into PhysicalExpr: {e}")
+            })
+        }
+
+        #[cfg(not(feature = "protobuf"))]
+        {
+            let _ = (input_schema, registry);
+            sedona_internal_err!("sedona-expression not built with protobuf enabled")
+        }
+    }
+
     /// Get a string property from this expression view.
     pub fn get_string_property(&self, property: &str) -> Result<String> {
         get_expr_view_string_property(self.inner, property)
@@ -266,6 +421,46 @@ impl<'a> ImportedExprView<'a> {
 #[cfg(feature = "protobuf")]
 #[derive(Debug)]
 struct PlaceholderLogicalExtensionCodec;
+
+#[cfg(feature = "protobuf")]
+#[derive(Debug)]
+struct PlaceholderPhysicalExtensionCodec;
+
+#[cfg(feature = "protobuf")]
+impl datafusion_proto::physical_plan::PhysicalExtensionCodec for PlaceholderPhysicalExtensionCodec {
+    fn try_decode(
+        &self,
+        _buf: &[u8],
+        _inputs: &[Arc<dyn datafusion_physical_plan::ExecutionPlan>],
+        _ctx: &TaskContext,
+    ) -> Result<Arc<dyn datafusion_physical_plan::ExecutionPlan>> {
+        sedona_internal_err!(
+            "Physical plan extensions are not supported when importing expressions"
+        )
+    }
+
+    fn try_encode(
+        &self,
+        _node: Arc<dyn datafusion_physical_plan::ExecutionPlan>,
+        _buf: &mut Vec<u8>,
+    ) -> Result<()> {
+        sedona_internal_err!(
+            "Physical plan extensions are not supported when exporting expressions"
+        )
+    }
+
+    fn try_decode_udf(&self, name: &str, _buf: &[u8]) -> Result<Arc<ScalarUDF>> {
+        PlaceholderRegistry.udf(name)
+    }
+
+    fn try_decode_udaf(&self, name: &str, _buf: &[u8]) -> Result<Arc<AggregateUDF>> {
+        PlaceholderRegistry.udaf(name)
+    }
+
+    fn try_decode_udwf(&self, name: &str, _buf: &[u8]) -> Result<Arc<WindowUDF>> {
+        PlaceholderRegistry.udwf(name)
+    }
+}
 
 #[cfg(feature = "protobuf")]
 impl datafusion_proto::logical_plan::LogicalExtensionCodec for PlaceholderLogicalExtensionCodec {
@@ -496,6 +691,35 @@ mod tests {
     }
 
     #[test]
+    fn test_physical_expr_view_properties_and_formatting() {
+        use datafusion_physical_expr::expressions::Column;
+
+        let expr = Arc::new(Column::new("physical_col", 0)) as Arc<dyn PhysicalExpr>;
+        let exported = ExportedPhysicalExprView::new(&expr);
+        let view = exported.as_ffi_view();
+        let imported = ImportedExprView::try_new(&view).unwrap();
+
+        assert_eq!(
+            imported.get_string_property("debug_string").unwrap(),
+            format!("{expr:?}")
+        );
+        assert_eq!(
+            imported.get_string_property("display_string").unwrap(),
+            format!("{expr}")
+        );
+
+        let debug_output = format!("{imported:?}");
+        assert!(debug_output.contains("ImportedExprView"));
+        assert!(debug_output.contains("physical_col"));
+        assert_eq!(format!("{imported}"), format!("{expr}"));
+
+        let error = imported
+            .get_string_property("nonexistent_property")
+            .unwrap_err();
+        assert!(error.to_string().contains("Unknown property"));
+    }
+
+    #[test]
     fn test_expr_view_with_null_private_data_fails() {
         let invalid_view = SedonaCExprView::default();
         let result = ImportedExprView::try_new(&invalid_view);
@@ -552,5 +776,70 @@ mod tests {
             }
             other => panic!("Expected ScalarFunction, got {:?}", other),
         }
+    }
+
+    #[cfg(feature = "protobuf")]
+    #[test]
+    fn test_physical_expr_view_protobuf_roundtrip() {
+        use datafusion_common::ScalarValue;
+        use datafusion_expr::Operator;
+        use datafusion_physical_expr::expressions::{BinaryExpr, Column, Literal};
+
+        let schema = Schema::new(vec![Field::new("x", DataType::Int32, false)]);
+        let column = Arc::new(Column::new("x", 0)) as Arc<dyn PhysicalExpr>;
+        let literal = Arc::new(Literal::new(ScalarValue::Int32(Some(5)))) as Arc<dyn PhysicalExpr>;
+        let expr =
+            Arc::new(BinaryExpr::new(column, Operator::Gt, literal)) as Arc<dyn PhysicalExpr>;
+        let exported = ExportedPhysicalExprView::new(&expr);
+        let view = exported.as_ffi_view();
+        let imported = ImportedExprView::try_new(&view).unwrap();
+
+        let decoded = imported.to_physical_expr(&schema, None).unwrap();
+        assert_eq!(format!("{expr}"), format!("{decoded}"));
+        assert_eq!(
+            imported.get_string_property("display_string").unwrap(),
+            format!("{expr}")
+        );
+    }
+
+    #[cfg(feature = "protobuf")]
+    #[test]
+    fn test_physical_expr_view_function_becomes_placeholder_udf() {
+        use datafusion_common::{config::ConfigOptions, ScalarValue};
+        use datafusion_physical_expr::expressions::{Column, Literal};
+        use datafusion_physical_expr::ScalarFunctionExpr;
+
+        let schema = Schema::new(vec![Field::new("x", DataType::Int32, false)]);
+        let test_udf = Arc::new(ScalarUDF::new_from_impl(PlaceholderUDF::new(
+            "my_physical_func",
+        )));
+        let args = vec![
+            Arc::new(Column::new("x", 0)) as Arc<dyn PhysicalExpr>,
+            Arc::new(Literal::new(ScalarValue::Int32(Some(42)))) as Arc<dyn PhysicalExpr>,
+        ];
+        let expr = Arc::new(ScalarFunctionExpr::new(
+            "my_physical_func",
+            test_udf,
+            args,
+            Arc::new(Field::new("", DataType::Null, true)),
+            Arc::new(ConfigOptions::default()),
+        )) as Arc<dyn PhysicalExpr>;
+        let exported = ExportedPhysicalExprView::new(&expr);
+        let view = exported.as_ffi_view();
+        let imported = ImportedExprView::try_new(&view).unwrap();
+
+        let decoded = imported.to_physical_expr(&schema, None).unwrap();
+        let function = decoded
+            .downcast_ref::<ScalarFunctionExpr>()
+            .expect("expected ScalarFunctionExpr");
+        assert_eq!(function.name(), "my_physical_func");
+        assert!(
+            function
+                .fun()
+                .inner()
+                .downcast_ref::<PlaceholderUDF>()
+                .is_some(),
+            "expected PlaceholderUDF"
+        );
     }
 }
