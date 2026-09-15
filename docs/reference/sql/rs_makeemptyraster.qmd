@@ -1,0 +1,214 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: RS_MakeEmptyRaster
+description: >
+  Creates an in-database raster from a grid definition: a pixel count, a
+  placement (an extent geometry, or an upper-left corner with pixel size or a
+  full affine transform), and a number of zero-filled bands. Use it to define a
+  target grid for RS_AsRaster or as a template for other rasters.
+kernels:
+  - returns: raster
+    args:
+    - name: num_bands
+      type: integer
+      description: Number of zero-filled bands; 0 gives a bandless grid template.
+    - name: width
+      type: integer
+      description: Grid width in pixels.
+    - name: height
+      type: integer
+      description: Grid height in pixels.
+    - name: extent
+      type: geometry
+      description: >
+        The grid covers this geometry's envelope with north-up pixels, in the
+        geometry's CRS.
+  - returns: raster
+    args:
+    - name: num_bands
+      type: integer
+    - name: band_data_type
+      type: string
+      description: >
+        Pixel type of every band: int8, uint8, int16, uint16, int32, uint32,
+        int64, uint64, float32 or float64; Sedona Spark's letter codes (D, F,
+        I, UI, S, US, B); or an RS_BandPixelType name such as UNSIGNED_8BITS.
+    - name: width
+      type: integer
+    - name: height
+      type: integer
+    - name: extent
+      type: geometry
+  - returns: raster
+    args:
+    - name: num_bands
+      type: integer
+    - name: width
+      type: integer
+    - name: height
+      type: integer
+    - name: upper_left_x
+      type: double
+      description: X coordinate of the upper-left corner of the upper-left pixel.
+    - name: upper_left_y
+      type: double
+      description: Y coordinate of the upper-left corner of the upper-left pixel.
+    - name: cell_size
+      type: double
+      description: Square pixel size; scale_x is cell_size and scale_y is -cell_size.
+  - returns: raster
+    args:
+    - name: num_bands
+      type: integer
+    - name: band_data_type
+      type: string
+    - name: width
+      type: integer
+    - name: height
+      type: integer
+    - name: upper_left_x
+      type: double
+    - name: upper_left_y
+      type: double
+    - name: cell_size
+      type: double
+  - returns: raster
+    args:
+    - name: num_bands
+      type: integer
+    - name: width
+      type: integer
+    - name: height
+      type: integer
+    - name: upper_left_x
+      type: double
+    - name: upper_left_y
+      type: double
+    - name: scale_x
+      type: double
+    - name: scale_y
+      type: double
+      description: Negative for a north-up raster.
+    - name: skew_x
+      type: double
+    - name: skew_y
+      type: double
+    - name: srid
+      type: integer
+      description: EPSG code of the raster's CRS; 0 for no CRS.
+  - returns: raster
+    args:
+    - name: num_bands
+      type: integer
+    - name: band_data_type
+      type: string
+    - name: width
+      type: integer
+    - name: height
+      type: integer
+    - name: upper_left_x
+      type: double
+    - name: upper_left_y
+      type: double
+    - name: scale_x
+      type: double
+    - name: scale_y
+      type: double
+    - name: skew_x
+      type: double
+    - name: skew_y
+      type: double
+    - name: srid
+      type: integer
+---
+
+## Description
+
+`RS_MakeEmptyRaster` builds a raster from nothing but a grid definition. Every
+band holds `width * height` zeros of `band_data_type` (default `float64`) and
+has no nodata value. The grid can be placed three ways:
+
+- **From an extent geometry.** The raster covers the envelope of `extent` with
+  `width` x `height` north-up pixels: the upper-left corner is the envelope's
+  (xmin, ymax), the pixel size is the envelope size divided by the pixel count,
+  and the raster's CRS is the geometry's. This is the direct way to describe a
+  grid as "columns, rows, bounding box and CRS"; pair it with
+  [`ST_MakeEnvelope`](st_makeenvelope.qmd), [`ST_Envelope`](st_envelope.qmd)
+  or [`RS_Envelope`](rs_envelope.qmd). The envelope must span a positive width
+  and height.
+- **From an upper-left corner and a square cell size.** No skew and no CRS
+  (attach one with [`RS_SetSRID`](rs_setsrid.qmd) or
+  [`RS_SetCRS`](rs_setcrs.qmd)).
+- **From a full affine transform and SRID.** The six geotransform parameters
+  and an EPSG code, `0` meaning no CRS.
+
+The last two forms take the same arguments as Sedona Spark's
+`RS_MakeEmptyRaster`; the extent form is a SedonaDB extension. Where Sedona
+Spark silently falls back to `float64` for an unrecognised `band_data_type`,
+SedonaDB raises an error. `num_bands` may be `0`, which yields a raster with a
+grid but no bands: a lightweight template that reference-taking functions can
+consume without carrying pixel data.
+
+The result is an in-database raster, so each band occupies
+`width * height * bytes-per-pixel` in memory (a `float64` band of 1000 x 1000
+pixels is 8 MB). A single band is limited to 4 GiB.
+
+Null arguments yield a null raster.
+
+## Examples
+
+A 400 x 400 uint8 grid over the bounding box (0, 0)-(400, 400) in EPSG:4326:
+
+```sql
+SELECT RS_GeoReference(r), RS_SRID(r)
+FROM (
+  SELECT RS_MakeEmptyRaster(
+    1, 'uint8', 400, 400,
+    ST_MakeEnvelope(0, 0, 400, 400, 4326)
+  ) AS r
+);
+```
+
+Rasterize a geometry onto that grid:
+
+```sql
+SELECT RS_AsRaster(
+  ST_SetSRID(ST_GeomFromText('POLYGON ((10 10, 50 10, 50 50, 10 50, 10 10))'), 4326),
+  RS_MakeEmptyRaster(1, 'uint8', 400, 400, ST_MakeEnvelope(0, 0, 400, 400, 4326)),
+  'uint8', false, 1.0, 0.0, false
+);
+```
+
+A grid matching an existing raster's extent at a coarser resolution:
+
+```sql
+SELECT RS_Width(RS_MakeEmptyRaster(1, 16, 8, RS_Envelope(RS_Example())));
+```
+
+The Sedona Spark forms, from an upper-left corner and cell size:
+
+```sql
+SELECT RS_MakeEmptyRaster(2, 10, 10, 0.0, 0.0, 1.0);
+```
+
+and from a full affine transform and SRID:
+
+```sql
+SELECT RS_MakeEmptyRaster(2, 'I', 10, 10, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, 4326);
+```
