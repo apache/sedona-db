@@ -449,7 +449,7 @@ mod tests {
                 "MULTIPOLYGON (((26 125, 26 200, 126 200, 126 125, 26 125 ),\
                     ( 51 150, 101 150, 76 175, 51 150 )), (( 151 100, 151 200, 176 175, 151 100 )))",
                 0.4,
-                "POLYGON ((151 100, 176 175, 151 200, 126 200, 26 200, 26 125, 126 125, 151 100))"
+                "POLYGON ((151 100, 176 175, 151 200, 126 200, 26 200, 26 125, 126 125, 151 100))",
             ),
             // Test GEOMETRYCOLLECTION with different pctconvex values
             (
@@ -457,14 +457,14 @@ mod tests {
                     GEOMETRYCOLLECTION(POLYGON((3 3,4 4,5 5,3 3)), \
                     GEOMETRYCOLLECTION(LINESTRING(6 6,7 7), POLYGON((8 8,9 9,10 10,8 8)))))",
                 0.1,
-                "POLYGON ((10 10, 1 1, 10 10))"
+                "POLYGON ((10 10, 1 1, 10 10))",
             ),
             (
                 "GEOMETRYCOLLECTION(LINESTRING(1 1,2 2), \
                     GEOMETRYCOLLECTION(POLYGON((3 3,4 4,5 5,3 3)), \
                     GEOMETRYCOLLECTION(LINESTRING(6 6,7 7), POLYGON((8 8,9 9,10 10,8 8)))))",
                 0.6,
-                "POLYGON ((10 10, 1 1, 10 10))"
+                "POLYGON ((10 10, 1 1, 10 10))",
             ),
         ];
 

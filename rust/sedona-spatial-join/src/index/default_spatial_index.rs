@@ -28,9 +28,9 @@ use arrow_schema::SchemaRef;
 use datafusion_common::{DataFusionError, Result};
 use datafusion_common_runtime::JoinSet;
 use float_next_after::NextAfter;
-use geo::{coord, BoundingRect, Distance, Euclidean, Geometry, Rect};
+use geo::{BoundingRect, Distance, Euclidean, Geometry, Rect, coord};
 use geo_index::rtree::{
-    sort::HilbertSort, util::f64_box_to_f32, NeighborsOptions, RTree, RTreeBuilder, RTreeIndex,
+    NeighborsOptions, RTree, RTreeBuilder, RTreeIndex, sort::HilbertSort, util::f64_box_to_f32,
 };
 use parking_lot::Mutex;
 use sedona_expr::statistics::GeoStatistics;
@@ -383,12 +383,11 @@ impl SpatialIndex for DefaultSpatialIndex {
             let mut distances_with_indices: Vec<(f64, u32)> = Vec::new();
 
             for &result_idx in &final_results {
-                if (result_idx as usize) < self.inner.data_id_to_batch_pos.len() {
-                    if let Some(distance_f64) =
+                if (result_idx as usize) < self.inner.data_id_to_batch_pos.len()
+                    && let Some(distance_f64) =
                         geometry_accessor.distance(&probe_geom, result_idx as usize, use_spheroid)
-                    {
-                        distances_with_indices.push((distance_f64, result_idx));
-                    }
+                {
+                    distances_with_indices.push((distance_f64, result_idx));
                 }
             }
 
@@ -437,14 +436,14 @@ impl SpatialIndex for DefaultSpatialIndex {
                 let mut all_distances_with_indices: Vec<(f64, u32)> = Vec::new();
 
                 for &result_idx in &expanded_results {
-                    if (result_idx as usize) < self.inner.data_id_to_batch_pos.len() {
-                        if let Some(distance_f64) = geometry_accessor.distance(
+                    if (result_idx as usize) < self.inner.data_id_to_batch_pos.len()
+                        && let Some(distance_f64) = geometry_accessor.distance(
                             &probe_geom,
                             result_idx as usize,
                             use_spheroid,
-                        ) {
-                            all_distances_with_indices.push((distance_f64, result_idx));
-                        }
+                        )
+                    {
+                        all_distances_with_indices.push((distance_f64, result_idx));
                     }
                 }
 
