@@ -510,9 +510,11 @@ where
 {
     if call_fn() != 0 {
         let error_string = if let Some(get_err) = get_error_fn {
-            let err_ptr = get_err(obj_ptr);
+            let err_ptr = unsafe { get_err(obj_ptr) };
             if !err_ptr.is_null() {
-                CStr::from_ptr(err_ptr).to_string_lossy().into_owned()
+                unsafe { CStr::from_ptr(err_ptr) }
+                    .to_string_lossy()
+                    .into_owned()
             } else {
                 "Unknown error (null error message)".to_string()
             }
@@ -535,7 +537,7 @@ unsafe extern "C" fn probe_callback_wrapper(
     length: u32,
     user_data: *mut c_void,
 ) -> i32 {
-    let state = &mut *(user_data as *mut ProbeState);
+    let state = unsafe { &mut *(user_data as *mut ProbeState) };
 
     // 1. Short-circuit: If previous error exists, tell C to stop immediately.
     if state.error.is_some() {
@@ -544,8 +546,8 @@ unsafe extern "C" fn probe_callback_wrapper(
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         if length > 0 {
-            let build_slice = std::slice::from_raw_parts(build_indices, length as usize);
-            let probe_slice = std::slice::from_raw_parts(probe_indices, length as usize);
+            let build_slice = unsafe { std::slice::from_raw_parts(build_indices, length as usize) };
+            let probe_slice = unsafe { std::slice::from_raw_parts(probe_indices, length as usize) };
 
             state.results.0.extend_from_slice(build_slice);
             state.results.1.extend_from_slice(probe_slice);

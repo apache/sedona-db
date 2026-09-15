@@ -66,7 +66,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        name: [ "clippy", "docs", "test", "build" ]
+        name: [ "clippy", "build" ]
 
     name: "${{ matrix.name }}"
     runs-on: ubuntu-latest
@@ -195,6 +195,7 @@ jobs:
         run: |
           rustup toolchain install stable --no-self-update
           rustup default stable
+          rustup component add clippy
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -203,7 +204,7 @@ jobs:
       # Build WITH GPU feature to compile CUDA code
       # CUDA compilation (nvcc) works without GPU hardware
       # Only GPU runtime execution requires actual GPU
-      - name: Build libgpuspatial (with CUDA compilation)
+      - name: Check libgpuspatial (with CUDA compilation)
         run: |
           echo "=== Building libgpuspatial WITH GPU feature ==="
           echo "Compiling CUDA code using nvcc (no GPU hardware needed for compilation)"
@@ -211,9 +212,12 @@ jobs:
           echo "Subsequent builds: 10-15 minutes (cached)"
           echo ""
           echo "Build started at: $(date)"
-          # Build library only (skip tests - they require CUDA driver which isn't available)
-          # --lib builds only the library, not test binaries
-          cargo build --locked --package sedona-libgpuspatial --lib --features gpu --verbose
+          # Check the library only (skip tests - they require CUDA driver which isn't available)
+          if [[ "${{ matrix.name }}" == "clippy" ]]; then
+            cargo clippy --locked --package sedona-libgpuspatial --lib --features gpu -- -Dwarnings
+          else
+            cargo build --locked --package sedona-libgpuspatial --lib --features gpu --verbose
+          fi
 
       - name: Build libgpuspatial Tests
         run: |
