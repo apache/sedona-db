@@ -35,6 +35,24 @@ def _geometry_column_names(df):
     return {names[i] for i in df.schema.geometry_column_indices}
 
 
+def _is_floating(df, name):
+    """Whether column `name` holds scalar floating-point values, so it can hold NaN.
+
+    The Arrow datatype is checked rather than its string form: a rendered type such
+    as `list<item: double>` or `struct<x: double>` contains "float"/"double" while
+    being nothing `isnan()` can be applied to, and passing one to `isnan()` fails
+    at planning time. Dictionary encoding is unwrapped — a
+    `dictionary<values=double>` column is floating for NaN purposes, and `isnan()`
+    handles it.
+    """
+    import pyarrow as pa
+
+    dtype = pa.schema(df.schema).field(name).type
+    if pa.types.is_dictionary(dtype):
+        dtype = dtype.value_type
+    return pa.types.is_floating(dtype)
+
+
 def _expr_crs(df, expr):
     """The CRS carried by `expr`, read from a projected schema (a plan build)."""
     field = df.select(expr.alias("x")).schema.field("x")
@@ -262,7 +280,9 @@ class GeoDataFrame:
             self._ancestors = []
         else:
             self._ancestors.append(self._df)
-        self._df = self._df.mutate(**{key: expr})
+        # Positional alias rather than a keyword: a column named "self"
+        # would collide with mutate's own first parameter.
+        self._df = self._df.mutate(expr.alias(key))
 
         # Assignment can change whether the active geometry column is still a
         # geometry: replacing it with a number leaves nothing to be active, and
@@ -459,8 +479,149 @@ class GeoDataFrame:
         if self._geometry_name is None:
             raise ValueError("to_crs() requires an active geometry column")
         transformed = self._df[self._geometry_name].geo.transform(lit(crs))
-        new_df = self._df.mutate(**{self._geometry_name: transformed})
+        new_df = self._df.mutate(transformed.alias(self._geometry_name))
         return GeoDataFrame(new_df, self._geometry_name)
+
+    def dissolve(self, by=None, aggfunc="first", dropna=True):
+        """Group rows and union each group's geometry.
+
+        Args:
+            by: Column name, or list of names, to group on. With `None`, every
+                row is dissolved into one.
+            aggfunc: How to aggregate the remaining non-geometry columns.
+                Only `"first"` is currently supported.
+            dropna: Drop rows whose group key is missing, as GeoPandas does.
+
+        Returns:
+            A `GeoDataFrame` with one row per group. Unlike GeoPandas, the group
+            keys stay ordinary columns rather than becoming the index.
+
+        Three remaining differences from GeoPandas:
+
+        - `aggfunc="first"` is an unordered aggregate: it returns *some* value from
+          the group, not necessarily the one from the first row, and it does not
+          skip missing values the way GeoPandas' `first` does. A group containing a
+          null or NaN may therefore aggregate to that value.
+        - Dissolving an empty frame with `by=None` yields one row — empty geometry
+          collection, null attribute values — rather than zero rows, because that
+          is what a grouping-free SQL aggregate returns. Detecting emptiness would
+          require executing the query first.
+        - A group mixing 2D and 3D geometries raises, because the collect step
+          rejects mixed coordinate dimensions; GeoPandas promotes to 3D with NaN.
+          Normalize the dimension first if a group can contain both.
+        - Grouping is observed-only: a categorical key contributes one group per
+          value actually present. GeoPandas defaults to `observed=False` and also
+          emits empty groups for unused categories, but the category domain does
+          not survive a relational aggregation, so those groups cannot be
+          reconstructed here.
+        """
+        if self._geometry_name is None:
+            raise ValueError("dissolve() requires an active geometry column")
+        if aggfunc != "first":
+            raise NotImplementedError(
+                f"dissolve() currently supports aggfunc='first' only, got "
+                f"{aggfunc!r}. Aggregate explicitly with group_by/agg on the "
+                f"underlying SedonaDB DataFrame if you need something else."
+            )
+
+        if by is None:
+            keys = []
+        elif isinstance(by, str):
+            keys = [by]
+        else:
+            keys = list(by)
+            if not keys:
+                # Matches GeoPandas: an explicit empty iterable is almost
+                # certainly a bug, unlike by=None which means dissolve-all.
+                raise ValueError("No group keys passed!")
+
+        unknown = [k for k in keys if k not in self.columns]
+        if unknown:
+            raise KeyError(f"Column(s) {unknown} not found. Columns: {self.columns}")
+
+        import pyarrow as pa
+
+        schema = pa.schema(self._df.schema)
+        for key in keys:
+            ktype = schema.field(key).type
+            if pa.types.is_duration(ktype) or pa.types.is_timestamp(ktype):
+                # pandas missing values arrive from numpy-backed frames as a
+                # sentinel tick that must group as missing, not as a value;
+                # that needs the dedicated temporal handling that arrives as
+                # its own change.
+                raise NotImplementedError(
+                    "dissolve() by a temporal key is not supported yet; "
+                    "temporal support arrives in a follow-up change"
+                )
+
+        source = self._df
+        # "Missing" has to cover IEEE NaN as well as SQL null: a float column
+        # read from pandas carries NaN, and grouping treats it as an ordinary
+        # value, so a key column holding both would form two missing groups
+        # (and dropna would drop only one of them). NaN is normalized to null
+        # first, in both modes, so the two representations group as one
+        # missing key the way they do in pandas. The gate is null where the
+        # key is NaN and zero elsewhere, and adding it keeps real values and
+        # null keys unchanged.
+        schema = pa.schema(source.schema)
+        normalized = []
+        for key in keys:
+            if _is_floating(source, key):
+                # The gate takes the key's own float type, so a Float32 key
+                # stays Float32 rather than being widened by the addition.
+                ktype = schema.field(key).type
+                if pa.types.is_dictionary(ktype):
+                    ktype = ktype.value_type
+                gate = source[key].funcs.isnan().funcs.nullif(lit(True)).cast(ktype)
+                normalized.append((source[key] + gate).alias(key))
+        if normalized:
+            # Positional aliases rather than keywords: a key named "self"
+            # would collide with mutate's own first parameter.
+            source = source.mutate(*normalized)
+        if keys and dropna:
+            # GeoPandas drops rows with a missing group key by default.
+            for key in keys:
+                source = source.filter(source[key].is_not_null())
+
+        # Collect each group into one geometry and union it afterwards, rather than
+        # using ST_Union_Agg: that aggregate only initializes for polygonal input,
+        # so a group of points or linestrings dissolves to NULL
+        # (apache/sedona-db#1093). Collect-then-unary-union is geometry-general and
+        # also produces the geometry types GeoPandas produces.
+        #
+        # The union is a separate projection because a scalar function wrapped
+        # around an aggregate is not a valid aggregate expression.
+        aggregates = [
+            source[self._geometry_name].geo.collect_agg().alias(self._geometry_name)
+        ]
+        for name in self.columns:
+            if name == self._geometry_name or name in keys:
+                continue
+            aggregates.append(source[name].funcs.first_value().alias(name))
+
+        if keys:
+            collected = source.group_by(*keys).agg(*aggregates)
+        else:
+            collected = source.agg(*aggregates)
+
+        # A group whose geometries are all null unions to null; GeoPandas yields an
+        # empty geometry collection, which behaves differently for isna, is_empty,
+        # predicates, and serialization. Coalescing loses the geometry type, so the
+        # result is re-typed and the source column's CRS re-applied.
+        ctx = self._df._ctx
+        crs = self._df.schema.field(self._geometry_name).type.crs
+        empty = ctx.lit("GEOMETRYCOLLECTION EMPTY").funcs.st_geomfromwkt()
+        geometry_expr = (
+            collected[self._geometry_name]
+            .geo.unary_union()
+            .funcs.coalesce(empty)
+            .funcs.st_geomfromwkb()
+        )
+        if crs is not None:
+            geometry_expr = geometry_expr.funcs.st_setcrs(ctx.lit(crs.to_json()))
+
+        unioned = collected.mutate(geometry_expr.alias(self._geometry_name))
+        return GeoDataFrame(unioned, self._geometry_name)
 
     def to_geopandas(self):
         """Execute and return a `geopandas.GeoDataFrame` (or plain DataFrame).

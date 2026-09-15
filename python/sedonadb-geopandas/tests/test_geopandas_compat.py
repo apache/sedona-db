@@ -1310,3 +1310,302 @@ def test_nat_assigns_as_datetime_missing():
     gdf["geometry"] = pd.NaT
     assert gdf._geometry_name == "geometry"
     assert gdf.to_geopandas()["geometry"].isna().all()
+
+
+def points():
+    """A small frame in a projected CRS, shared across the tests."""
+    return gpd.GeoDataFrame(
+        {"name": ["A", "B", "C"], "v": [1, 2, 3]},
+        geometry=gpd.GeoSeries.from_wkt(["POINT (0 0)", "POINT (5 5)", "POINT (9 9)"]),
+        crs="EPSG:3857",
+    )
+
+
+def parcels():
+    """Overlapping polygons per zone, so a dissolve has something to union."""
+    return gpd.GeoDataFrame(
+        {"zone": ["A", "A", "B"], "v": [1, 2, 3]},
+        geometry=gpd.GeoSeries.from_wkt(
+            [
+                "POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))",
+                "POLYGON ((1 1, 3 1, 3 3, 1 3, 1 1))",
+                "POLYGON ((5 5, 7 5, 7 7, 5 7, 5 5))",
+            ]
+        ),
+        crs="EPSG:3857",
+    )
+
+
+def test_dissolve_matches_geopandas():
+    parcels = gpd.GeoDataFrame(
+        {"zone": ["A", "A", "B"], "v": [1, 2, 3]},
+        geometry=gpd.GeoSeries.from_wkt(
+            [
+                "POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))",
+                "POLYGON ((1 1, 3 1, 3 3, 1 3, 1 1))",
+                "POLYGON ((5 5, 7 5, 7 7, 5 7, 5 5))",
+            ]
+        ),
+        crs="EPSG:3857",
+    )
+    got = (
+        sgpd.from_geopandas(parcels)
+        .dissolve(by="zone")
+        .to_geopandas()
+        .sort_values("zone")
+    )
+    expected = parcels.dissolve(by="zone")
+    # Unioned geometry per group, and non-geometry columns aggregated as "first",
+    # both matching GeoPandas.
+    assert got.area.round(6).tolist() == expected.area.round(6).tolist()
+    assert got["v"].tolist() == expected["v"].tolist()
+    # The group key stays a column here rather than becoming the index.
+    assert "zone" in got.columns
+
+
+def test_dissolve_without_by():
+    parcels = gpd.GeoDataFrame(
+        {"zone": ["A", "A", "B"], "v": [1, 2, 3]},
+        geometry=gpd.GeoSeries.from_wkt(
+            [
+                "POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))",
+                "POLYGON ((1 1, 3 1, 3 3, 1 3, 1 1))",
+                "POLYGON ((5 5, 7 5, 7 7, 5 7, 5 5))",
+            ]
+        ),
+        crs="EPSG:3857",
+    )
+    got = sgpd.from_geopandas(parcels).dissolve().to_geopandas()
+    assert len(got) == len(parcels.dissolve()) == 1
+
+
+def test_dissolve_multiple_keys():
+    parcels = gpd.GeoDataFrame(
+        {"zone": ["A", "A", "B"], "v": [1, 2, 3]},
+        geometry=gpd.GeoSeries.from_wkt(
+            [
+                "POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))",
+                "POLYGON ((1 1, 3 1, 3 3, 1 3, 1 1))",
+                "POLYGON ((5 5, 7 5, 7 7, 5 7, 5 5))",
+            ]
+        ),
+        crs="EPSG:3857",
+    )
+    got = sgpd.from_geopandas(parcels).dissolve(by=["zone"]).to_geopandas()
+    assert sorted(got["zone"]) == ["A", "B"]
+
+
+def test_dissolve_validation():
+    parcels = gpd.GeoDataFrame(
+        {"zone": ["A", "A", "B"], "v": [1, 2, 3]},
+        geometry=gpd.GeoSeries.from_wkt(
+            [
+                "POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))",
+                "POLYGON ((1 1, 3 1, 3 3, 1 3, 1 1))",
+                "POLYGON ((5 5, 7 5, 7 7, 5 7, 5 5))",
+            ]
+        ),
+        crs="EPSG:3857",
+    )
+    gdf = sgpd.from_geopandas(parcels)
+    with pytest.raises(NotImplementedError, match="aggfunc"):
+        gdf.dissolve(by="zone", aggfunc="sum")
+    with pytest.raises(KeyError, match="not found"):
+        gdf.dissolve(by="nope")
+    with pytest.raises(ValueError, match="active geometry"):
+        gdf[["zone", "v"]].dissolve(by="zone")
+
+
+@pytest.mark.parametrize(
+    "wkts",
+    [
+        ["POINT (0 0)", "POINT (1 1)"],
+        ["LINESTRING (0 0, 1 1)", "LINESTRING (1 1, 2 2)"],
+        ["POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))", "POLYGON ((1 1, 3 1, 3 3, 1 3, 1 1))"],
+    ],
+    ids=["points", "lines", "polygons"],
+)
+def test_dissolve_handles_every_geometry_type(wkts):
+    # ST_Union_Agg only initializes for polygonal input, so points and linestrings
+    # used to dissolve to NULL geometry.
+    g = gpd.GeoDataFrame(
+        {"zone": ["A", "A"]},
+        geometry=gpd.GeoSeries.from_wkt(wkts),
+        crs="EPSG:3857",
+    )
+    got = sgpd.from_geopandas(g).dissolve(by="zone").to_geopandas()
+    expected = g.dissolve(by="zone")
+    assert got.geometry.iloc[0] is not None
+    assert got.geometry.iloc[0].geom_type == expected.geometry.iloc[0].geom_type
+    assert got.geometry.iloc[0].equals(expected.geometry.iloc[0])
+
+
+def test_dissolve_dropna_matches_geopandas():
+    g = gpd.GeoDataFrame(
+        {"zone": ["A", None], "v": [1, 2]},
+        geometry=gpd.GeoSeries.from_wkt(
+            [
+                "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
+                "POLYGON ((2 2, 3 2, 3 3, 2 3, 2 2))",
+            ]
+        ),
+        crs="EPSG:3857",
+    )
+    gdf = sgpd.from_geopandas(g)
+    # GeoPandas drops the missing key by default; dropna=False keeps it.
+    assert len(gdf.dissolve(by="zone").to_geopandas()) == len(g.dissolve(by="zone"))
+    assert len(gdf.dissolve(by="zone", dropna=False).to_geopandas()) == 2
+
+
+def test_dissolve_drops_nan_group_keys():
+    # dropna has to cover IEEE NaN as well as SQL null: a float key read from
+    # pandas carries NaN, which grouping otherwise treats as its own group.
+    df = sgpd.default_context().sql(
+        "SELECT CAST('NaN' AS DOUBLE) k, ST_Point(0.0, 0.0) geometry "
+        "UNION ALL SELECT 1.0, ST_Point(1.0, 1.0)"
+    )
+    assert len(GeoDataFrame(df).dissolve(by="k").to_geopandas()) == 1
+    assert len(GeoDataFrame(df).dissolve(by="k", dropna=False).to_geopandas()) == 2
+
+
+def test_dissolve_groups_null_and_nan_keys_together():
+    # Missing-key handling only ran with dropna=True, so with dropna=False a
+    # SQL NULL and an IEEE NaN in the same float key column formed two
+    # missing groups where pandas forms one. NaN is normalized to null before
+    # grouping, in both modes.
+    tbl = pa.table(
+        {
+            "k": pa.array([None, float("nan"), 1.0], pa.float64()),
+            "geometry": ga.as_wkb(["POINT (0 0)", "POINT (1 1)", "POINT (2 2)"]),
+        }
+    )
+    gdf = GeoDataFrame(sgpd.default_context().create_data_frame(tbl))
+    kept = gdf.dissolve(by="k", dropna=False).to_geopandas()
+    assert len(kept) == 2
+    assert kept["k"].isna().sum() == 1
+    missing = kept[kept["k"].isna()].geometry.iloc[0]
+    assert missing.geom_type == "MultiPoint" and len(missing.geoms) == 2
+    dropped = gdf.dissolve(by="k").to_geopandas()
+    assert dropped["k"].tolist() == [1.0]
+
+
+def test_dissolve_float32_keys_keep_their_type():
+    # The NaN gate was built as Float64, so adding it widened every Float32
+    # key column, missing values or not; the gate now takes the key's type.
+    tbl = pa.table(
+        {
+            "k": pa.array([1.0, 1.0, float("nan")], pa.float32()),
+            "geometry": ga.as_wkb(["POINT (0 0)", "POINT (1 1)", "POINT (2 2)"]),
+        }
+    )
+    gdf = GeoDataFrame(sgpd.default_context().create_data_frame(tbl))
+    out = gdf.dissolve(by="k", dropna=False)
+    assert pa.schema(out._df.schema).field("k").type == pa.float32()
+    assert len(out.to_geopandas()) == 2
+
+
+def test_columns_named_self_work_everywhere():
+    # Keyword-form mutate(**{name: expr}) collides with mutate's own first
+    # parameter when the column is named "self"; every site now passes a
+    # positional alias. Covers assignment, reprojection, and dissolve keys.
+    tbl = pa.table(
+        {
+            "self": pa.array([1.0, 1.0], pa.float64()),
+            "geometry": ga.as_wkb(["POINT (0 0)", "POINT (1 1)"]),
+        }
+    )
+    gdf = GeoDataFrame(sgpd.default_context().create_data_frame(tbl))
+    gdf["self"] = gdf["self"]
+    assert len(gdf.dissolve(by="self").to_geopandas()) == 1
+    reproj = GeoDataFrame(
+        sgpd.default_context().sql(
+            "SELECT ST_SetSRID(ST_Point(0.0, 0.0), 4326) AS self"
+        ),
+        geometry="self",
+    ).to_crs("EPSG:3857")
+    assert "3857" in str(reproj.crs)
+
+
+def test_dissolve_by_nested_float_column():
+    # _is_floating used to match the rendered type string, so `list<item: double>`
+    # looked like a float column and dropna called isnan() on it, failing at
+    # planning time.
+    df = sgpd.default_context().sql(
+        "SELECT [1.0, 2.0] AS k, ST_Point(0.0, 0.0) AS geometry"
+    )
+    got = GeoDataFrame(df).dissolve(by="k").to_geopandas()
+    assert len(got) == 1
+
+
+def test_dissolve_all_null_group_is_empty_geometry():
+    # GeoPandas returns GEOMETRYCOLLECTION EMPTY rather than None, which behaves
+    # differently for isna, is_empty, predicates and serialization.
+    df = sgpd.default_context().sql(
+        "SELECT 'A' AS z, "
+        "ST_SetSRID(ST_GeomFromText(CAST(NULL AS VARCHAR)), 3857) AS geometry "
+        "UNION ALL SELECT 'A', "
+        "ST_SetSRID(ST_GeomFromText(CAST(NULL AS VARCHAR)), 3857)"
+    )
+    got = GeoDataFrame(df).dissolve(by="z").to_geopandas()
+    expected = gpd.GeoDataFrame(
+        {"z": ["A", "A"]},
+        geometry=gpd.GeoSeries.from_wkt([None, None]),
+        crs="EPSG:3857",
+    ).dissolve(by="z")
+    assert got.geometry.iloc[0].equals(expected.geometry.iloc[0])
+    assert got.geometry.iloc[0].is_empty
+    assert not got.geometry.isna().any()
+
+
+def test_dissolve_rejects_empty_key_list():
+    # Matches GeoPandas: an explicit empty iterable is an error, unlike by=None.
+    points = gpd.GeoDataFrame(
+        {"name": ["A", "B", "C"], "v": [1, 2, 3]},
+        geometry=gpd.points_from_xy([0, 5, 9], [0, 5, 9]),
+        crs=3857,
+    )
+    gdf = sgpd.from_geopandas(points)
+    with pytest.raises(ValueError, match="No group keys"):
+        gdf.dissolve(by=[])
+    assert len(gdf.dissolve().to_geopandas()) == 1
+
+
+def test_dissolve_categorical_is_observed_only():
+    # Documented divergence: unused categories do not produce empty groups (the
+    # category domain does not survive a relational aggregation).
+
+    cat = gpd.GeoDataFrame(
+        {"z": pd.Categorical(["A"], categories=["A", "B"])},
+        geometry=gpd.GeoSeries.from_wkt(["POINT (0 0)"]),
+        crs="EPSG:3857",
+    )
+    assert len(cat.dissolve(by="z")) == 2  # GeoPandas observed=False default
+    assert len(sgpd.from_geopandas(cat).dissolve(by="z").to_geopandas()) == 1
+
+
+def test_is_floating_unwraps_dictionary_encoding():
+    from sedonadb_geopandas._frame import _is_floating
+
+    tbl = pa.table(
+        {
+            "k": pa.DictionaryArray.from_arrays(
+                pa.array([0, 1], type=pa.int8()), pa.array([1.0, float("nan")])
+            ),
+            "x": [1, 2],
+        }
+    )
+    df = sgpd.default_context().create_data_frame(tbl)
+    assert _is_floating(df, "k")
+
+
+def test_dissolve_temporal_keys_are_deferred():
+    # pandas missing values arrive from numpy-backed frames as a sentinel
+    # tick that must group as missing rather than as a value; temporal keys
+    # are rejected until the dedicated temporal handling lands.
+    gdf = GeoDataFrame(
+        sgpd.default_context().sql(
+            "SELECT TIMESTAMP '2026-01-01' AS ts, ST_Point(0.0, 0.0) AS geometry"
+        )
+    )
+    with pytest.raises(NotImplementedError, match="not supported yet"):
+        gdf.dissolve(by="ts")
