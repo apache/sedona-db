@@ -81,14 +81,10 @@ def test_rs_setgeoreference_skew(args, tmp_path):
     compare(sql, sedona, spark, expected=anchor)
 
 
-@pytest.mark.xfail(
-    reason="SedonaDB has no numeric 7-argument overload of RS_SetGeoReference "
-    "(it raises 'No kernel matching arguments'); Sedona Spark re-grids from "
-    "(upperLeftX, upperLeftY, scaleX, scaleY, skewX, skewY)"
-)
 def test_rs_setgeoreference_numeric_overload(tmp_path):
-    """The numeric argument form re-grids the raster identically on both
-    engines, pixels untouched."""
+    """The numeric argument form (raster, upperLeftX, upperLeftY, scaleX,
+    scaleY, skewX, skewY) re-grids the raster identically on both engines,
+    pixels untouched."""
     sedona, spark = SedonaDB(), SedonaSpark()
     for eng in (sedona, spark):
         eng.create_random_raster_view("geo_num_src", tmp_path / "geo_num_src.tif")

@@ -20,6 +20,7 @@
 //! ```text
 //! RS_SetGeoReference(raster, georef)          -> Raster  -- GDAL format
 //! RS_SetGeoReference(raster, georef, format)  -> Raster
+//! RS_SetGeoReference(raster, upperLeftX, upperLeftY, scaleX, scaleY, skewX, skewY) -> Raster
 //! ```
 //!
 //! The setter companion to [`rs_georeference`](crate::rs_georeference): `georef`
@@ -30,6 +31,10 @@
 //! the upper-left pixel and are shifted back to the pixel corner on the way in.
 //! The shift uses the full affine (scale and skew halves), so it is exact for
 //! skewed rasters and round-trips with the getter.
+//!
+//! The numeric 7-argument form (Sedona Spark parity) takes the transform
+//! components directly — `upperLeftX, upperLeftY, scaleX, scaleY, skewX, skewY`
+//! — always as GDAL/corner coordinates (no ESRI center convention).
 //!
 //! This is a top-level metadata change, so the raster is edited at the array
 //! level: only the transform column is rebuilt and every other column — the
@@ -42,7 +47,7 @@ use std::sync::Arc;
 use arrow_array::{Array, ArrayRef, Float64Array, ListArray, StructArray};
 use arrow_buffer::{NullBuffer, OffsetBuffer};
 use arrow_schema::DataType;
-use datafusion_common::cast::as_string_array;
+use datafusion_common::cast::{as_float64_array, as_string_array};
 use datafusion_common::error::Result;
 use datafusion_common::{exec_datafusion_err, exec_err};
 use datafusion_expr::{ColumnarValue, Volatility};
@@ -66,6 +71,7 @@ pub fn rs_set_georeference_udf() -> SedonaScalarUDF {
         vec![
             Arc::new(RsSetGeoReference { with_format: false }),
             Arc::new(RsSetGeoReference { with_format: true }),
+            Arc::new(RsSetGeoReferenceNumeric),
         ],
         Volatility::Immutable,
     )
@@ -164,27 +170,132 @@ impl SedonaScalarKernel for RsSetGeoReference {
             row_valid.push(true);
         }
 
-        let DataType::List(transform_field) = RasterSchema::transform_type() else {
-            return sedona_internal_err!("Expected list type for transform");
-        };
-        let transform: ArrayRef = Arc::new(ListArray::new(
-            transform_field,
-            OffsetBuffer::from_lengths(std::iter::repeat_n(6usize, n)),
-            Arc::new(Float64Array::from(values)),
-            None,
-        ));
-
-        let out = with_column_overrides(
-            raster_struct,
-            RasterColumnOverrides {
-                transform: Override::Set(transform),
-                ..Default::default()
-            },
-            Some(&NullBuffer::from(row_valid)),
-        )?;
-
-        executor.finish(Arc::new(out))
+        finish_transform(&executor, raster_struct, values, row_valid, n)
     }
+}
+
+/// Kernel for the numeric form `RS_SetGeoReference(raster, upperLeftX,
+/// upperLeftY, scaleX, scaleY, skewX, skewY)` — Sedona Spark parity.
+///
+/// The six components map straight onto the GDAL geotransform, always as
+/// corner coordinates (there is no ESRI/center convention on the numeric
+/// form). A null in any numeric argument makes that row a null raster, as a
+/// null georef string does for the string forms.
+#[derive(Debug)]
+struct RsSetGeoReferenceNumeric;
+
+impl SedonaScalarKernel for RsSetGeoReferenceNumeric {
+    fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
+        let matcher = ArgMatcher::new(
+            vec![
+                ArgMatcher::is_raster(),
+                ArgMatcher::is_numeric(), // upperLeftX
+                ArgMatcher::is_numeric(), // upperLeftY
+                ArgMatcher::is_numeric(), // scaleX
+                ArgMatcher::is_numeric(), // scaleY
+                ArgMatcher::is_numeric(), // skewX
+                ArgMatcher::is_numeric(), // skewY
+            ],
+            SedonaType::Raster,
+        );
+        matcher.match_args(args)
+    }
+
+    fn invoke_batch(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+    ) -> Result<ColumnarValue> {
+        let executor = RasterExecutor::new(arg_types, args);
+        let n = executor.num_iterations();
+
+        // The six transform components as Float64 row arrays, in argument order:
+        // upperLeftX, upperLeftY, scaleX, scaleY, skewX, skewY.
+        let component_arrays = (1..=6)
+            .map(|i| {
+                args[i]
+                    .clone()
+                    .cast_to(&DataType::Float64, None)?
+                    .into_array(n)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let components = component_arrays
+            .iter()
+            .map(|a| as_float64_array(a))
+            .collect::<Result<Vec<_>>>()?;
+
+        let raster_array = args[0].clone().into_array(n)?;
+        let raster_struct = raster_array
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .ok_or_else(|| {
+                sedona_internal_datafusion_err!("Expected StructArray for raster data")
+            })?;
+
+        let mut values: Vec<f64> = Vec::with_capacity(n * 6);
+        let mut row_valid: Vec<bool> = Vec::with_capacity(n);
+
+        for i in 0..n {
+            // A null in any numeric component, or a null raster, makes the row a
+            // null raster (matching the string form's null-georef behaviour).
+            if components.iter().any(|c| c.is_null(i)) || raster_struct.is_null(i) {
+                values.extend_from_slice(&[0.0; 6]);
+                row_valid.push(false);
+                continue;
+            }
+            let (ulx, uly) = (components[0].value(i), components[1].value(i));
+            let (scale_x, scale_y) = (components[2].value(i), components[3].value(i));
+            let (skew_x, skew_y) = (components[4].value(i), components[5].value(i));
+            // GDAL geotransform order.
+            values.extend_from_slice(&[ulx, scale_x, skew_x, uly, skew_y, scale_y]);
+            row_valid.push(true);
+        }
+
+        finish_transform(&executor, raster_struct, values, row_valid, n)
+    }
+
+    fn invoke_batch_from_args(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+        _return_type: &SedonaType,
+        _num_rows: usize,
+        _config_options: Option<&datafusion_common::config::ConfigOptions>,
+    ) -> Result<ColumnarValue> {
+        self.invoke_batch(arg_types, args)
+    }
+}
+
+/// Rebuild the raster column with `values` (six transform components per row)
+/// as the new geotransform, carrying every other column across unchanged.
+/// `row_valid` is the per-row validity of the output raster.
+fn finish_transform(
+    executor: &RasterExecutor,
+    raster_struct: &StructArray,
+    values: Vec<f64>,
+    row_valid: Vec<bool>,
+    n: usize,
+) -> Result<ColumnarValue> {
+    let DataType::List(transform_field) = RasterSchema::transform_type() else {
+        return sedona_internal_err!("Expected list type for transform");
+    };
+    let transform: ArrayRef = Arc::new(ListArray::new(
+        transform_field,
+        OffsetBuffer::from_lengths(std::iter::repeat_n(6usize, n)),
+        Arc::new(Float64Array::from(values)),
+        None,
+    ));
+
+    let out = with_column_overrides(
+        raster_struct,
+        RasterColumnOverrides {
+            transform: Override::Set(transform),
+            ..Default::default()
+        },
+        Some(&NullBuffer::from(row_valid)),
+    )?;
+
+    executor.finish(Arc::new(out))
 }
 
 /// Parse a world-file georeference string into a GDAL-order transform
@@ -424,6 +535,63 @@ mod tests {
         // format string is validated — a null-driving input never errors.
         let result = tester_3arg()
             .invoke_array_scalar_scalar(Arc::new(base().build()), ScalarValue::Utf8(None), "NOPE")
+            .unwrap();
+        assert_rasters_equal(&result, &[None]);
+    }
+
+    fn tester_numeric() -> ScalarUdfTester {
+        let udf: ScalarUDF = rs_set_georeference_udf().into();
+        let f64t = SedonaType::Arrow(DataType::Float64);
+        ScalarUdfTester::new(
+            udf,
+            vec![
+                RASTER,
+                f64t.clone(),
+                f64t.clone(),
+                f64t.clone(),
+                f64t.clone(),
+                f64t.clone(),
+                f64t,
+            ],
+        )
+    }
+
+    #[test]
+    fn numeric_form_sets_gdal_transform() {
+        // RS_SetGeoReference(raster, ulX, ulY, scaleX, scaleY, skewX, skewY)
+        // maps onto the GDAL transform [ulX, scaleX, skewX, ulY, skewY, scaleY];
+        // CRS, band name and pixels are untouched.
+        let num = |v: f64| Arc::new(Float64Array::from(vec![v])) as ArrayRef;
+        let result = tester_numeric()
+            .invoke_arrays(vec![
+                Arc::new(base().build()),
+                num(10.0),
+                num(20.0),
+                num(2.0),
+                num(-2.0),
+                num(0.1),
+                num(0.2),
+            ])
+            .unwrap();
+        let expected = base().transform([10.0, 2.0, 0.1, 20.0, 0.2, -2.0]);
+        assert_rasters_equal(&result, &[Some(expected)]);
+    }
+
+    #[test]
+    fn numeric_form_null_component_nulls_raster() {
+        // A null in any transform component makes the row a null raster, like a
+        // null georef string does for the string forms.
+        let num = |v: Option<f64>| Arc::new(Float64Array::from(vec![v])) as ArrayRef;
+        let result = tester_numeric()
+            .invoke_arrays(vec![
+                Arc::new(base().build()),
+                num(Some(10.0)),
+                num(None),
+                num(Some(2.0)),
+                num(Some(-2.0)),
+                num(Some(0.1)),
+                num(Some(0.2)),
+            ])
             .unwrap();
         assert_rasters_equal(&result, &[None]);
     }
