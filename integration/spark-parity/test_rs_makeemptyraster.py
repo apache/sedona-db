@@ -20,7 +20,11 @@
 Only the two Spark-shaped forms (cell size; full affine + SRID) are compared:
 the extent-geometry form is a SedonaDB extension with no Spark counterpart.
 Anchored expectations are literal zero grids, so a shared no-op on both sides
-cannot pass. Same construction and xfail policy as the other raster modules.
+cannot pass. Same construction and xfail policy as the other raster modules:
+the two known divergences (an unknown band type, which Sedona Spark silently
+maps to double and SedonaDB rejects; and ``num_bands = 0``, which SedonaDB
+allows as a bandless grid template and Sedona Spark rejects) are
+xfail-cataloged, the raising engine's error tripping the xfail.
 """
 
 import numpy as np
@@ -99,3 +103,24 @@ def test_scalar_metadata(sql, expected):
     band count and type) are compared as scalars."""
     sedona, spark = SedonaDB(), SedonaSpark()
     compare(sql, sedona, spark, expected=[(expected,)])
+
+
+@pytest.mark.xfail(
+    reason="Sedona Spark silently defaults an unknown bandDataType to double "
+    "(RasterUtils.getDataTypeCode falls through to 5); SedonaDB raises "
+    "'Unsupported pixelType'"
+)
+def test_unknown_band_type():
+    sedona, spark = SedonaDB(), SedonaSpark()
+    sql = "SELECT RS_BandPixelType(RS_MakeEmptyRaster(1, 'complex128', 2, 2, 0.0, 0.0, 1.0), 1)"
+    compare(sql, sedona, spark, expected=[("REAL_64BITS",)])
+
+
+@pytest.mark.xfail(
+    reason="SedonaDB allows num_bands = 0, a bandless grid template; Sedona "
+    "Spark's RasterFactory.createBandedRaster raises for zero bands"
+)
+def test_zero_bands():
+    sedona, spark = SedonaDB(), SedonaSpark()
+    sql = "SELECT RS_NumBands(RS_MakeEmptyRaster(0, 2, 2, 0.0, 0.0, 1.0))"
+    compare(sql, sedona, spark, expected=[("0",)])
