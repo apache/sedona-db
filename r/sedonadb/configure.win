@@ -121,10 +121,71 @@ case "$($CC -dumpmachine)" in
 esac
 echo "using Rust target: '${TARGET}'"
 
+# sedona-s2geography needs OpenSSL, Abseil, and s2geometry built with the same
+# MinGW/gnullvm compiler and flags as R. The usual vcpkg Windows triplets use
+# MSVC, whose C++ ABI is not compatible with Rtools.
+S2_VCPKG_ROOT=""
+S2_VCPKG_TARGET_TRIPLET=""
+S2_VCPKG_OVERLAY_TRIPLETS=""
+S2_CMAKE_TOOLCHAIN_FILE=""
+S2_CMAKE_PREFIX_PATH=""
+S2_OPENSSL_ROOT_DIR=""
+SAVVY_FEATURE_WORDS="$(printf '%s' "${SAVVY_FEATURES}" | tr ',' ' ')"
+case " ${SAVVY_FEATURE_WORDS} " in
+  *" s2geography "*)
+    if [ -z "${VCPKG_ROOT}" ] || [ ! -x "${VCPKG_ROOT}/vcpkg.exe" ]; then
+      echo "-------------- ERROR: CONFIGURATION FAILED --------------------"
+      echo ""
+      echo "Building with SAVVY_FEATURES=s2geography on Windows requires"
+      echo "VCPKG_ROOT to point to a bootstrapped vcpkg checkout."
+      echo ""
+      echo "---------------------------------------------------------------"
+      exit 1
+    fi
+
+    VCPKG_ROOT="$(cygpath -m "${VCPKG_ROOT}")"
+    CXX="$("${R_HOME}/bin/R" CMD config CXX17)"
+    CPPFLAGS="$("${R_HOME}/bin/R" CMD config CPPFLAGS)"
+    CFLAGS="$("${R_HOME}/bin/R" CMD config CFLAGS)"
+    CXXFLAGS="$("${R_HOME}/bin/R" CMD config CXX17FLAGS)"
+    LDFLAGS="$("${R_HOME}/bin/R" CMD config LDFLAGS)"
+
+    case "${TARGET}" in
+      aarch64-*) S2_VCPKG_TARGET_TRIPLET="sedonadb-arm64-mingw-static-release" ;;
+      *) S2_VCPKG_TARGET_TRIPLET="sedonadb-x64-mingw-static-release" ;;
+    esac
+
+    S2_VCPKG_ROOT="${VCPKG_ROOT}"
+    S2_VCPKG_OVERLAY_TRIPLETS="$(pwd)/tools/vcpkg-triplets"
+    export SEDONADB_R_CC="${CC}"
+    export SEDONADB_R_CXX="${CXX}"
+    export SEDONADB_R_CFLAGS="${CPPFLAGS} ${CFLAGS}"
+    export SEDONADB_R_CXXFLAGS="${CPPFLAGS} ${CXXFLAGS}"
+    export SEDONADB_R_LDFLAGS="${LDFLAGS}"
+
+    echo "building s2geography dependencies with R's compiler (${CC}, ${CXX})"
+    "${VCPKG_ROOT}/vcpkg.exe" \
+      --overlay-triplets="${S2_VCPKG_OVERLAY_TRIPLETS}" \
+      --triplet="${S2_VCPKG_TARGET_TRIPLET}" \
+      install openssl abseil s2geometry || exit 1
+
+    S2_VCPKG_OVERLAY_TRIPLETS="$(cygpath -m "${S2_VCPKG_OVERLAY_TRIPLETS}")"
+    S2_CMAKE_TOOLCHAIN_FILE="${S2_VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+    S2_CMAKE_PREFIX_PATH="${S2_VCPKG_ROOT}/installed/${S2_VCPKG_TARGET_TRIPLET}"
+    S2_OPENSSL_ROOT_DIR="${S2_CMAKE_PREFIX_PATH}"
+    ;;
+esac
+
 sed \
   -e "s/@TARGET@/${TARGET}/" \
   -e "s/@PROFILE@/${PROFILE}/" \
   -e "s|@TARGET_DIR@|${TARGET_DIR}|" \
   -e "s/@FEATURE_FLAGS@/${FEATURE_FLAGS}/" \
+  -e "s|@VCPKG_ROOT@|${S2_VCPKG_ROOT}|" \
+  -e "s|@VCPKG_TARGET_TRIPLET@|${S2_VCPKG_TARGET_TRIPLET}|" \
+  -e "s|@VCPKG_OVERLAY_TRIPLETS@|${S2_VCPKG_OVERLAY_TRIPLETS}|" \
+  -e "s|@CMAKE_TOOLCHAIN_FILE@|${S2_CMAKE_TOOLCHAIN_FILE}|" \
+  -e "s|@CMAKE_PREFIX_PATH@|${S2_CMAKE_PREFIX_PATH}|" \
+  -e "s|@OPENSSL_ROOT_DIR@|${S2_OPENSSL_ROOT_DIR}|" \
   -e "s|@PKG_LIBS@|${PKG_LIBS}|" \
   src/Makevars.win.in > src/Makevars.win

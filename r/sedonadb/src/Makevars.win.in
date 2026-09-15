@@ -20,6 +20,19 @@ TARGET = @TARGET@
 PROFILE = @PROFILE@
 FEATURE_FLAGS = @FEATURE_FLAGS@
 
+VCPKG_ROOT = @VCPKG_ROOT@
+VCPKG_TARGET_TRIPLET = @VCPKG_TARGET_TRIPLET@
+VCPKG_OVERLAY_TRIPLETS = @VCPKG_OVERLAY_TRIPLETS@
+VCPKG_MANIFEST_MODE = OFF
+CMAKE_TOOLCHAIN_FILE = @CMAKE_TOOLCHAIN_FILE@
+CMAKE_PREFIX_PATH = @CMAKE_PREFIX_PATH@
+OPENSSL_ROOT_DIR = @OPENSSL_ROOT_DIR@
+SEDONADB_R_CC = $(strip $(CC))
+SEDONADB_R_CXX = $(strip $(CXX17))
+SEDONADB_R_CFLAGS = $(CPPFLAGS) $(CFLAGS)
+SEDONADB_R_CXXFLAGS = $(CPPFLAGS) $(CXX17FLAGS)
+SEDONADB_R_LDFLAGS = $(LDFLAGS)
+
 # Add flags if necessary
 RUSTFLAGS =
 
@@ -27,7 +40,9 @@ RUSTFLAGS =
 TARGET_DIR = @TARGET_DIR@
 LIBDIR = $(TARGET_DIR)/$(TARGET)/$(subst dev,debug,$(PROFILE))
 STATLIB = $(LIBDIR)/libsedonadbr.a
-PKG_LIBS = -L$(LIBDIR) -lsedonadbr -lws2_32 -ladvapi32 -luserenv -lbcrypt -lntdll -lole32 @PKG_LIBS@
+S2_R_LINK_FLAGS = $(LIBDIR)/sedonadb-s2-r-link-flags.txt
+S2_NATIVE_LIBS = $(if $(findstring s2geography,$(FEATURE_FLAGS)),$(shell test ! -f "$(S2_R_LINK_FLAGS)" || cat "$(S2_R_LINK_FLAGS)"))
+PKG_LIBS = -L$(LIBDIR) -lsedonadbr $(S2_NATIVE_LIBS) -lws2_32 -ladvapi32 -luserenv -lbcrypt -lntdll -lole32 @PKG_LIBS@
 
 # Rtools doesn't have the linker in the location that cargo expects, so we need
 # to overwrite it via configuration.
@@ -56,6 +71,23 @@ $(STATLIB):
 	export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER="$(CARGO_LINKER)" && \
 	  export LIBRARY_PATH="$${LIBRARY_PATH};$(LIBDIR)/libgcc_mock" && \
 	  export PKG_CONFIG_SYSROOT_DIR="$(PKG_CONFIG_SYSROOT_DIR)" && \
+	  if [ -n "$(VCPKG_ROOT)" ]; then \
+	    export VCPKG_ROOT="$(VCPKG_ROOT)"; \
+	    export VCPKG_DEFAULT_TRIPLET="$(VCPKG_TARGET_TRIPLET)"; \
+	    export VCPKG_TARGET_TRIPLET="$(VCPKG_TARGET_TRIPLET)"; \
+	    export VCPKG_OVERLAY_TRIPLETS="$(VCPKG_OVERLAY_TRIPLETS)"; \
+	    export VCPKG_MANIFEST_MODE="$(VCPKG_MANIFEST_MODE)"; \
+	    export CMAKE_TOOLCHAIN_FILE="$(CMAKE_TOOLCHAIN_FILE)"; \
+	    export CMAKE_PREFIX_PATH="$(CMAKE_PREFIX_PATH)"; \
+	    export OPENSSL_ROOT_DIR="$(OPENSSL_ROOT_DIR)"; \
+	    export CMAKE_GENERATOR="Unix Makefiles"; \
+	    export SEDONADB_R_CC="$(SEDONADB_R_CC)"; \
+	    export SEDONADB_R_CXX="$(SEDONADB_R_CXX)"; \
+	    export SEDONADB_R_CFLAGS="$(SEDONADB_R_CFLAGS)"; \
+	    export SEDONADB_R_CXXFLAGS="$(SEDONADB_R_CXXFLAGS)"; \
+	    export SEDONADB_R_LDFLAGS="$(SEDONADB_R_LDFLAGS)"; \
+	    export SEDONADB_R_LINK_FLAGS_FILE="$(S2_R_LINK_FLAGS)"; \
+	  fi && \
 	  export CC="$(CC)" && \
 	  export CFLAGS="$(CFLAGS_TWEAKED)" && \
 	  export RUSTFLAGS="$(RUSTFLAGS)" && \

@@ -29,6 +29,23 @@ fn main() {
     // target like a Python package.
     let mut cmake_config = cmake::Config::new(".");
 
+    // cmake-rs forwards CMAKE_TOOLCHAIN_FILE, but vcpkg's CMake integration
+    // does not infer a custom triplet from VCPKG_DEFAULT_TRIPLET. Pass these
+    // through explicitly so a MinGW build cannot silently install/use the
+    // default MSVC x64-windows dependencies.
+    for key in [
+        "VCPKG_TARGET_TRIPLET",
+        "VCPKG_OVERLAY_TRIPLETS",
+        "VCPKG_MANIFEST_MODE",
+    ] {
+        println!("cargo:rerun-if-env-changed={key}");
+        if let Ok(value) = std::env::var(key)
+            && !value.is_empty()
+        {
+            cmake_config.define(key, value);
+        }
+    }
+
     // Use RelWithDebInfo if building release with debug symbols
     if std::env::var("PROFILE").unwrap_or_default() == "release"
         && std::env::var("CARGO_PROFILE_RELEASE_DEBUG").is_ok()
@@ -72,10 +89,11 @@ fn main() {
 
     // Parse the output we wrote from CMake that is the linker flags
     // that CMake thinks we need for Abseil and OpenSSL.
-    parse_cmake_linker_flags(&dst);
+    let r_link_flags = parse_cmake_linker_flags(&dst);
+    write_r_link_flags(&r_link_flags);
 }
 
-fn parse_cmake_linker_flags(binary_dir: &Path) {
+fn parse_cmake_linker_flags(binary_dir: &Path) -> Vec<String> {
     // e.g., libabsl_base.a
     let re_lib = Regex::new("^(lib|)([^.]+).*?(LIB|lib|a|dylib|so|dll)(?:\\..*)?$").unwrap();
     // e.g., -L/path/to/lib (CMake doesn't usually output this, preferrig instead
@@ -91,6 +109,7 @@ fn parse_cmake_linker_flags(binary_dir: &Path) {
     println!("Parsing CMake linker flags: {linker_flags_string}");
 
     let mut last_lib_dir = "".to_string();
+    let mut r_link_flags = Vec::new();
 
     // Split flags on whitespace. This probably won't work if library paths
     // contain spaces.
@@ -102,10 +121,15 @@ fn parse_cmake_linker_flags(binary_dir: &Path) {
         if let Some(dir_match) = re_linker_dir.captures(item) {
             let (_, [dir]) = dir_match.extract();
             println!("cargo:rustc-link-search=native={dir}");
+            r_link_flags.push(item.to_string());
             continue;
         } else if let Some(lib_match) = re_linker_lib.captures(item) {
             let (_, [lib]) = lib_match.extract();
             println!("cargo:rustc-link-lib={lib}");
+            r_link_flags.push(item.to_string());
+            continue;
+        } else if item.starts_with("-Wl,") || item == "-pthread" {
+            r_link_flags.push(item.to_string());
             continue;
         }
 
@@ -136,6 +160,15 @@ fn parse_cmake_linker_flags(binary_dir: &Path) {
                         "a" => println!("cargo:rustc-link-lib=static={lib}"),
                         _ => println!("cargo:rustc-link-lib=dylib={lib}"),
                     }
+
+                    // A Rust staticlib does not propagate its dynamic native
+                    // dependencies to the program that consumes it. Preserve
+                    // the resolved library path for R's final shared-object
+                    // link; this is especially important for Homebrew's S2 and
+                    // Abseil dylibs.
+                    if suffix != "a" && suffix != "lib" && suffix != "LIB" {
+                        r_link_flags.push(path.to_string_lossy().into_owned());
+                    }
                 }
             }
             _ => {
@@ -143,6 +176,20 @@ fn parse_cmake_linker_flags(binary_dir: &Path) {
             }
         }
     }
+
+    r_link_flags
+}
+
+fn write_r_link_flags(flags: &[String]) {
+    println!("cargo:rerun-if-env-changed=SEDONADB_R_LINK_FLAGS_FILE");
+    let Ok(path) = std::env::var("SEDONADB_R_LINK_FLAGS_FILE") else {
+        return;
+    };
+    if path.is_empty() {
+        return;
+    }
+
+    std::fs::write(path, flags.join(" ")).expect("Write R native linker flags");
 }
 
 fn find_cmake_linker_flags(binary_dir: &Path) -> PathBuf {

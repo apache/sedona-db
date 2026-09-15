@@ -129,7 +129,12 @@ install(FILES "${CMAKE_BINARY_DIR}/openssl_libraries.txt"
 # .a file (but this might not work if the absl libraries weren't static,
 # as they aren't on Homebrew and linux distributions).
 
-if(NOT WIN32)
+if(NOT MSVC)
+  # The vcpkg toolchain adds DLL deployment commands to executable targets on
+  # Windows. linker_flags is a synthetic .txt target, not an executable, and
+  # all libraries in the Rtools triplet are static.
+  set(VCPKG_APPLOCAL_DEPS OFF)
+
   if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set(LINK_CXX_STANDARD_LIB "-lc++")
   elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
