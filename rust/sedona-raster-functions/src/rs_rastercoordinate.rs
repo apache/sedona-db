@@ -128,36 +128,15 @@ impl SedonaScalarKernel for RsCoordinateMapper {
         let executor = RasterExecutor::new(arg_types, args);
         let mut builder = Int64Builder::with_capacity(executor.num_iterations());
 
-        if self.from_point {
-            executor.execute_raster_wkb_crs_void(|raster_opt, wkb_opt, _crs| {
-                match (raster_opt, point_xy(wkb_opt)?) {
-                    (Some(raster), Some((x, y))) => {
-                        let (raster_x, raster_y) = to_raster_coordinate(raster, x, y)?;
-                        builder.append_value(self.coord.pick(raster_x, raster_y));
-                    }
-                    _ => builder.append_null(),
+        for_each_raster_coordinate(&executor, args, self.from_point, |coord| {
+            match coord {
+                Some((raster_x, raster_y)) => {
+                    builder.append_value(self.coord.pick(raster_x, raster_y))
                 }
-                Ok(())
-            })?;
-        } else {
-            let (world_x, world_y) = world_xy_arrays(args, executor.num_iterations())?;
-            let mut world_x_iter = world_x.iter();
-            let mut world_y_iter = world_y.iter();
-            executor.execute_raster_void(|_i, raster_opt| {
-                match (
-                    raster_opt,
-                    world_x_iter.next().unwrap(),
-                    world_y_iter.next().unwrap(),
-                ) {
-                    (Some(raster), Some(x), Some(y)) => {
-                        let (raster_x, raster_y) = to_raster_coordinate(raster, x, y)?;
-                        builder.append_value(self.coord.pick(raster_x, raster_y));
-                    }
-                    (_, _, _) => builder.append_null(),
-                }
-                Ok(())
-            })?;
-        }
+                None => builder.append_null(),
+            }
+            Ok(())
+        })?;
 
         executor.finish(Arc::new(builder.finish()))
     }
@@ -193,42 +172,62 @@ impl SedonaScalarKernel for RsCoordinatePoint {
             item.len() * executor.num_iterations(),
         );
 
-        if self.from_point {
-            executor.execute_raster_wkb_crs_void(|raster_opt, wkb_opt, _crs| {
-                match (raster_opt, point_xy(wkb_opt)?) {
-                    (Some(raster), Some((x, y))) => {
-                        let (raster_x, raster_y) = to_raster_coordinate(raster, x, y)?;
-                        item[5..13].copy_from_slice(&(raster_x as f64).to_le_bytes());
-                        item[13..21].copy_from_slice(&(raster_y as f64).to_le_bytes());
-                        builder.append_value(item);
-                    }
-                    _ => builder.append_null(),
+        for_each_raster_coordinate(&executor, args, self.from_point, |coord| {
+            match coord {
+                Some((raster_x, raster_y)) => {
+                    item[5..13].copy_from_slice(&(raster_x as f64).to_le_bytes());
+                    item[13..21].copy_from_slice(&(raster_y as f64).to_le_bytes());
+                    builder.append_value(item);
                 }
-                Ok(())
-            })?;
-        } else {
-            let (world_x, world_y) = world_xy_arrays(args, executor.num_iterations())?;
-            let mut world_x_iter = world_x.iter();
-            let mut world_y_iter = world_y.iter();
-            executor.execute_raster_void(|_i, raster_opt| {
-                match (
-                    raster_opt,
-                    world_x_iter.next().unwrap(),
-                    world_y_iter.next().unwrap(),
-                ) {
-                    (Some(raster), Some(world_x), Some(world_y)) => {
-                        let (raster_x, raster_y) = to_raster_coordinate(raster, world_x, world_y)?;
-                        item[5..13].copy_from_slice(&(raster_x as f64).to_le_bytes());
-                        item[13..21].copy_from_slice(&(raster_y as f64).to_le_bytes());
-                        builder.append_value(item);
-                    }
-                    (_, _, _) => builder.append_null(),
-                }
-                Ok(())
-            })?;
-        }
+                None => builder.append_null(),
+            }
+            Ok(())
+        })?;
 
         executor.finish(Arc::new(builder.finish()))
+    }
+}
+
+/// Map each row's world coordinate to a raster coordinate, from whichever
+/// input form the kernel takes, and hand it to `emit`.
+///
+/// This is the whole difference between the two input forms — the numeric
+/// `(raster, worldX, worldY)` and the `(raster, point)` overload — so the
+/// kernels differ only in what they build from the result. `emit` receives
+/// `None` for a row with no coordinate to map: a null raster, a null or empty
+/// point, or a null ordinate.
+fn for_each_raster_coordinate<F>(
+    executor: &RasterExecutor,
+    args: &[ColumnarValue],
+    from_point: bool,
+    mut emit: F,
+) -> Result<()>
+where
+    F: FnMut(Option<(i64, i64)>) -> Result<()>,
+{
+    if from_point {
+        executor.execute_raster_wkb_crs_void(|raster_opt, wkb_opt, _crs| {
+            match (raster_opt, point_xy(wkb_opt)?) {
+                (Some(raster), Some((x, y))) => emit(Some(to_raster_coordinate(raster, x, y)?)),
+                _ => emit(None),
+            }
+        })
+    } else {
+        let (world_x, world_y) = world_xy_arrays(args, executor.num_iterations())?;
+        let mut world_x_iter = world_x.iter();
+        let mut world_y_iter = world_y.iter();
+        executor.execute_raster_void(|_i, raster_opt| {
+            // Both ordinate iterators advance every row, null raster included,
+            // so they stay in lockstep with the row index.
+            match (
+                raster_opt,
+                world_x_iter.next().unwrap(),
+                world_y_iter.next().unwrap(),
+            ) {
+                (Some(raster), Some(x), Some(y)) => emit(Some(to_raster_coordinate(raster, x, y)?)),
+                (_, _, _) => emit(None),
+            }
+        })
     }
 }
 
