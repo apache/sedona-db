@@ -293,13 +293,19 @@ class DBEngine:
         generally asserting a query result or verifying results between engines
         that have (e.g.) differing integer handling.
 
-        Geometry columns are rendered as WKT strings — including SedonaDB's
-        item-level-CRS geometry (``struct<item: geoarrow.wkb, crs>``, returned
-        by RS_Envelope and friends whose output CRS can vary per row), which is
-        unwrapped to its geometry child first. This representation carries the
-        geometry but not its CRS; the CRS is a separate parity dimension that
-        `compare` checks with a normalizing comparator (see
-        `_assert_geometry_crs_equal`), so it is verified rather than dropped.
+        Geometry columns are rendered as WKT strings, with one exception:
+        geometry that carries a **row-level** CRS renders as a
+        ``(crs, wkt)`` tuple, so the CRS travels with the value instead of
+        being dropped. Two representations produce a row-level CRS —
+        SedonaDB's item-level ``struct<item: geoarrow.wkb, crs>`` (returned by
+        RS_Envelope and friends, whose CRS can vary per row) and a
+        per-geometry SRID embedded in the WKB (how Sedona Spark encodes it).
+
+        A **column-level** (type) CRS is deliberately *not* folded in: such a
+        column keeps rendering as bare WKT. Keeping the two distinct is the
+        point — a kernel that attaches the CRS at the wrong level is an easy
+        mistake to make, and collapsing them here would hide it.
+
         List columns (e.g. the `List<Double>` returned by `RS_Values`) can't be
         cast to string, so they pass through as Python lists and are compared
         by value — assert them with an expected cell that is itself a list,
@@ -310,10 +316,19 @@ class DBEngine:
         for col in tab.columns:
             # isinstance() does not always work with pyarrow in pytest
             unwrapped = _unwrap_item_crs_geometry(col)
-            if unwrapped is not None:
-                col = unwrapped
-            if _type_is_geoarrow(col.type):
-                columns.append(ga.format_wkt(col, precision=wkt_precision).to_pylist())
+            geometry = unwrapped if unwrapped is not None else col
+            if _type_is_geoarrow(geometry.type):
+                wkt = ga.format_wkt(geometry, precision=wkt_precision).to_pylist()
+                row_crs = _row_level_crs(col)
+                if row_crs is None:
+                    columns.append(wkt)
+                else:
+                    columns.append(
+                        [
+                            None if w is None else (None if c is None else RowCrs(c), w)
+                            for c, w in zip(row_crs, wkt)
+                        ]
+                    )
             elif pa.types.is_list(col.type) or pa.types.is_large_list(col.type):
                 columns.append(col.to_pylist())
             else:
@@ -1066,19 +1081,10 @@ def compare(sql, *engines, expected=None):
         if expected is not None:
             subject.assert_result(result, expected)
         for reference in references:
-            reference_result = reference.execute_and_collect(sql)
-            subject.assert_result(result, reference.result_to_tuples(reference_result))
-            # Geometry parity is split into two independent dimensions: the
-            # geometry itself (WKT, above) and its CRS (below). Keeping them
-            # separate lets WKT anchors stay plain WKT strings while the CRS
-            # is still verified rather than silently dropped. `result_to_table`
-            # takes a lazy result, so re-collect for each engine — the fixtures
-            # are tiny and deterministic.
-            _assert_geometry_crs_equal(
-                subject.result_to_table(subject.execute_and_collect(sql)),
-                reference.result_to_table(reference.execute_and_collect(sql)),
-                context=sql,
+            reference_tuples = reference.result_to_tuples(
+                reference.execute_and_collect(sql)
             )
+            subject.assert_result(result, reference_tuples)
 
 
 def geom_or_null(arg, srid=None):
@@ -1201,8 +1207,8 @@ def _ewkb_srid(blob):
 
     The scalar, per-row dual of `_unique_srid_from_ewkb` (which vectorizes the
     same EWKB format over a column and collapses to one SRID, raising on a
-    mixed column). The per-row form is what keeps `_geometry_crs_per_row`
-    agnostic to whether an engine attaches CRS per row or per column.
+    mixed column). The per-row form is what lets `_row_level_crs` surface a
+    per-geometry CRS without collapsing it to the column.
 
     EWKB tags the geometry-type word with 0x20000000 when an SRID follows it;
     the word and the SRID share the leading byte's endianness. Sedona Spark
@@ -1220,21 +1226,57 @@ def _ewkb_srid(blob):
     return struct.unpack(fmt, blob[5:9])[0] or None
 
 
-def _geometry_crs_per_row(col):
-    """Per-row normalized CRS for a geometry column, or None if `col` is not
-    geometry.
+class RowCrs:
+    """The CRS half of a ``(crs, wkt)`` geometry cell from `result_to_tuples`.
 
-    Agnostic to how an engine attaches CRS — it reads whichever source is
-    present, per row, so a row-level and a column-level SRID compare the same:
+    Compares semantically: any spelling pyproj resolves to the same CRS is
+    equal, so a test can anchor a readable ``("EPSG:3857", "POLYGON ...")``
+    against an engine that emitted PROJJSON, and two engines that spell the
+    same CRS differently still agree. Prints compactly so an assertion failure
+    stays readable (a bare `pyproj.CRS` repr runs to twenty lines).
+    """
+
+    __slots__ = ("crs",)
+
+    def __init__(self, crs):
+        self.crs = crs
+
+    def __eq__(self, other):
+        if isinstance(other, RowCrs):
+            other = other.crs
+        try:
+            return _crs_equal(self.crs, _normalize_crs(other))
+        except Exception:
+            return NotImplemented
+
+    def __hash__(self):
+        return hash(self.crs.to_epsg() or self.crs.to_wkt())
+
+    def __repr__(self):
+        epsg = self.crs.to_epsg()
+        return f"CRS({f'EPSG:{epsg}' if epsg else self.crs.name})"
+
+
+def _row_level_crs(col):
+    """Per-row normalized CRS for a geometry column that carries one, else
+    None (meaning "no row-level CRS" — render this column as bare WKT).
+
+    Only the two **row-level** representations count:
 
     - SedonaDB's item-level ``struct<item: geoarrow.wkb, crs>`` — the per-row
       `crs` field;
-    - a per-geometry SRID embedded in the WKB (Sedona Spark encodes CRS this
-      way, and it survives our transport as EWKB in the column's bytes);
-    - the geoarrow column's ``type.crs``, as the column-level fallback (where
-      SedonaDB puts a plain geometry's CRS).
+    - a per-geometry SRID embedded in the WKB (how Sedona Spark encodes it;
+      it survives our transport as EWKB in the column's bytes).
 
-    A null geometry carries no CRS, so its cell is None.
+    A column-level (type) CRS is deliberately excluded, so an engine that
+    attaches the CRS at the wrong level renders differently here rather than
+    being silently normalized into agreement. A column whose every cell turns
+    out to have no CRS also returns None: there is no CRS to misplace, so it
+    renders as plain WKT and stays comparable with any other engine's.
+
+    Engines that hand us a column-level CRS with plain ISO WKB bytes — PostGIS
+    lifts the EWKB SRID to the column in `result_to_table`, and SedonaDB's own
+    plain geometry never embeds one — are unaffected.
     """
     if pa.types.is_struct(col.type):
         geometry = _unwrap_item_crs_geometry(col)
@@ -1244,57 +1286,16 @@ def _geometry_crs_per_row(col):
 
         per_row = pc.struct_field(col, "crs").to_pylist()
         geoms = geometry.to_pylist()
-        return [
-            None if g is None else _normalize_crs(c) for g, c in zip(geoms, per_row)
+        crs = [None if g is None else _normalize_crs(c) for g, c in zip(geoms, per_row)]
+    elif _type_is_geoarrow(col.type):
+        crs = [
+            None if blob is None else _normalize_crs(_ewkb_srid(bytes(blob)))
+            for blob in col.to_pylist()
         ]
-    if _type_is_geoarrow(col.type):
-        column_crs = _normalize_crs(col.type.crs)
-        out = []
-        for blob in col.to_pylist():
-            if blob is None:
-                out.append(None)
-                continue
-            srid = _ewkb_srid(bytes(blob))
-            out.append(_normalize_crs(srid) if srid is not None else column_crs)
-        return out
-    return None
+    else:
+        return None
 
-
-def _assert_geometry_crs_equal(got, expected, context=None):
-    """Assert two result tables carry the same CRS on every geometry column.
-
-    The companion to the WKT comparison in `compare`: geometry values travel
-    as CRS-less WKT there, so this is where an output's CRS is actually
-    verified. Columns are matched by position; a column that is geometry in
-    one table and not the other counts as a CRS of None on the non-geometry
-    side.
-    """
-    where = f" for `{context}`" if context else ""
-    for i in range(got.num_columns):
-        got_crs = _geometry_crs_per_row(got.column(i))
-        expected_crs = (
-            _geometry_crs_per_row(expected.column(i))
-            if i < expected.num_columns
-            else None
-        )
-        if got_crs is None and expected_crs is None:
-            continue
-        got_crs = got_crs if got_crs is not None else [None] * got.num_rows
-        expected_crs = (
-            expected_crs if expected_crs is not None else [None] * expected.num_rows
-        )
-        if len(got_crs) != len(expected_crs):
-            raise AssertionError(
-                f"Row count mismatch on geometry column {i}{where}: "
-                f"got {len(got_crs)}, expected {len(expected_crs)}"
-            )
-        for row, (a, b) in enumerate(zip(got_crs, expected_crs)):
-            if not _crs_equal(a, b):
-                raise AssertionError(
-                    f"CRS mismatch on geometry column {i}, row {row}{where}:\n"
-                    f"  got:      {a}\n"
-                    f"  expected: {b}"
-                )
+    return crs if any(c is not None for c in crs) else None
 
 
 def _paths(paths):

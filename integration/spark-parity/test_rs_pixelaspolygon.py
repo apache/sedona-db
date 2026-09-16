@@ -68,4 +68,5 @@ def test_rs_pixelaspolygon(col, row, polygon, crs, tmp_path):
             "papoly_src", tmp_path / "papoly_src.tif", crs=crs
         )
     sql = f"SELECT RS_PixelAsPolygon(rast, {col}, {row}) FROM papoly_src"
-    compare(sql, sedona, spark, expected=polygon)
+    expected = polygon if crs is None else [((crs, polygon),)]
+    compare(sql, sedona, spark, expected=expected)

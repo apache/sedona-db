@@ -23,6 +23,7 @@ import pandas as pd
 import pyarrow as pa
 import pyproj
 import pytest
+import shapely
 from sedonadb.testing import DuckDB, PostGIS, SedonaDB
 
 
@@ -271,25 +272,33 @@ def test_table_parquet(eng):
 
 
 def _ewkb_point(x, y, srid):
-    """A little-endian EWKB point carrying `srid` (0 for no SRID)."""
-    import struct
+    """A little-endian EWKB point carrying `srid` (0 for no SRID).
 
-    geometry_type = 0x00000001 | (0x20000000 if srid else 0)
-    header = struct.pack("<BI", 1, geometry_type)
-    srid_part = struct.pack("<I", srid) if srid else b""
-    return header + srid_part + struct.pack("<dd", x, y)
+    Written with shapely, like the ST_AsEWKB tests in
+    `tests/functions/test_wkb.py`, rather than packing the bytes by hand.
+    """
+
+    point = shapely.Point(x, y)
+    if srid:
+        point = shapely.set_srid(point, srid)
+    return shapely.to_wkb(
+        point, byte_order=1, flavor="extended", include_srid=bool(srid)
+    )
 
 
-def test_geometry_crs_per_row_is_representation_agnostic():
-    """The CRS comparator reads a per-row CRS from any of the three shapes an
-    engine uses — a per-geometry SRID in the WKB bytes (Sedona Spark), an
-    item-level ``struct<item, crs>`` (SedonaDB raster geometry), or the
-    geoarrow column metadata (SedonaDB plain geometry) — so a row-level and a
-    column-level SRID land on the same answer."""
-    from sedonadb.testing import _geometry_crs_per_row
+def test_row_level_crs_is_distinct_from_column_crs():
+    """Only a *row-level* CRS is surfaced per row — a per-geometry SRID in the
+    WKB bytes (how Sedona Spark encodes it) or SedonaDB's item-level
+    ``struct<item, crs>``. A column-level (type) CRS is deliberately excluded,
+    so geometry that carries its CRS at the wrong level renders differently
+    instead of being normalized into agreement."""
+    if shapely.geos_version < (3, 12, 0):
+        pytest.skip("GEOS version 3.12+ required for EWKB tests")
+
+    from sedonadb.testing import _row_level_crs
 
     def epsg(col):
-        return [c.to_epsg() if c else None for c in _geometry_crs_per_row(col)]
+        return [c.to_epsg() if c else None for c in _row_level_crs(col)]
 
     # 1. Per-geometry SRID in the WKB bytes, differing per row (+ a bare row).
     ewkb = ga.wkb().wrap_array(
@@ -304,18 +313,20 @@ def test_geometry_crs_per_row_is_representation_agnostic():
     )
     assert epsg(ewkb) == [4326, 3857, None]
 
-    # 2. Column-level geoarrow metadata, broadcast to every row.
-    column = ga.with_crs(
-        ga.as_wkb(["POINT (0 1)", "POINT (2 3)"]), pyproj.CRS("EPSG:3857").to_json()
-    )
-    assert epsg(column) == [3857, 3857]
-
-    # 3. SedonaDB's item-level struct<item, crs>, per row.
+    # 2. SedonaDB's item-level struct<item, crs>, per row ('0' means no CRS).
     item = ga.as_wkb(["POINT (0 1)", "POINT (2 3)"])
     struct = pa.StructArray.from_arrays(
         [item, pa.array(["EPSG:4326", "0"])], names=["item", "crs"]
     )
     assert epsg(struct) == [4326, None]
 
-    # A non-geometry column is not CRS-bearing.
-    assert _geometry_crs_per_row(pa.chunked_array([pa.array([1, 2])])) is None
+    # 3. A column-level geoarrow CRS is NOT a row-level CRS: this column has
+    # no per-geometry CRS, so it renders as bare WKT rather than (crs, wkt).
+    column = ga.with_crs(
+        ga.as_wkb(["POINT (0 1)", "POINT (2 3)"]), pyproj.CRS("EPSG:3857").to_json()
+    )
+    assert _row_level_crs(column) is None
+
+    # ...as does geometry with no CRS anywhere, and a non-geometry column.
+    assert _row_level_crs(ga.as_wkb(["POINT (0 1)"])) is None
+    assert _row_level_crs(pa.chunked_array([pa.array([1, 2])])) is None

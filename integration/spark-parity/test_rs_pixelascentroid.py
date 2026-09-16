@@ -48,4 +48,5 @@ def test_rs_pixelascentroid(col, row, point, crs, tmp_path):
     for eng in (sedona, spark):
         eng.create_random_raster_view("pac_src", tmp_path / "pac_src.tif", crs=crs)
     sql = f"SELECT RS_PixelAsCentroid(rast, {col}, {row}) FROM pac_src"
-    compare(sql, sedona, spark, expected=point)
+    expected = point if crs is None else [((crs, point),)]
+    compare(sql, sedona, spark, expected=expected)

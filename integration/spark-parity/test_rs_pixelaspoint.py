@@ -57,7 +57,8 @@ def test_rs_pixelaspoint(col, row, point, crs, tmp_path):
     engines; the raster's CRS (when set) rides along on the point."""
     sedona, spark = _engines("pap_src", tmp_path, crs=crs)
     sql = f"SELECT RS_PixelAsPoint(rast, {col}, {row}) FROM pap_src"
-    compare(sql, sedona, spark, expected=point)
+    expected = point if crs is None else [((crs, point),)]
+    compare(sql, sedona, spark, expected=expected)
 
 
 @pytest.mark.parametrize(

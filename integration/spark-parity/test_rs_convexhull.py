@@ -38,8 +38,15 @@ HULL = "POLYGON ((100 500, 114 500, 114 482, 100 482, 100 500))"
 )
 def test_rs_convexhull(crs, tmp_path):
     """The footprint hull reads identically from both engines, with or
-    without a raster CRS."""
+    without a raster CRS.
+
+    With a CRS both engines carry it at row level — SedonaDB as an item-level
+    CRS, Sedona Spark as a per-geometry SRID — so the cell is a `(crs, wkt)`
+    tuple and the anchor names both halves."""
     sedona, spark = SedonaDB(), SedonaSpark()
     for eng in (sedona, spark):
         eng.create_random_raster_view("hull_src", tmp_path / "hull_src.tif", crs=crs)
-    compare("SELECT RS_ConvexHull(rast) FROM hull_src", sedona, spark, expected=HULL)
+    expected = HULL if crs is None else [((crs, HULL),)]
+    compare(
+        "SELECT RS_ConvexHull(rast) FROM hull_src", sedona, spark, expected=expected
+    )
