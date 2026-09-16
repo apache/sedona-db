@@ -306,6 +306,12 @@ class DBEngine:
         point — a kernel that attaches the CRS at the wrong level is an easy
         mistake to make, and collapsing them here would hide it.
 
+        The CRS half is a `pyproj.CRS`, so comparison is pyproj's: any spelling
+        it resolves to the same CRS is equal, in either direction. A test can
+        therefore anchor the readable ``("EPSG:3857", "POLYGON ...")`` against
+        an engine that emitted PROJJSON, and two engines that spell the same
+        CRS differently still agree.
+
         List columns (e.g. the `List<Double>` returned by `RS_Values`) can't be
         cast to string, so they pass through as Python lists and are compared
         by value — assert them with an expected cell that is itself a list,
@@ -324,10 +330,7 @@ class DBEngine:
                     columns.append(wkt)
                 else:
                     columns.append(
-                        [
-                            None if w is None else (None if c is None else RowCrs(c), w)
-                            for c, w in zip(row_crs, wkt)
-                        ]
+                        [None if w is None else (c, w) for c, w in zip(row_crs, wkt)]
                     )
             elif pa.types.is_list(col.type) or pa.types.is_large_list(col.type):
                 columns.append(col.to_pylist())
@@ -1202,61 +1205,6 @@ def _normalize_crs(raw):
     return pyproj.CRS(raw)
 
 
-def _ewkb_srid(blob):
-    """The SRID embedded in a single EWKB blob, or None.
-
-    The scalar, per-row dual of `_unique_srid_from_ewkb` (which vectorizes the
-    same EWKB format over a column and collapses to one SRID, raising on a
-    mixed column). The per-row form is what lets `_row_level_crs` surface a
-    per-geometry CRS without collapsing it to the column.
-
-    EWKB tags the geometry-type word with 0x20000000 when an SRID follows it;
-    the word and the SRID share the leading byte's endianness. Sedona Spark
-    encodes each geometry's CRS this way (a per-row SRID); SedonaDB's WKB
-    carries no SRID, so this returns None there and the CRS is read elsewhere.
-    """
-    import struct
-
-    if blob is None or len(blob) < 5:
-        return None
-    fmt = "<I" if blob[0] == 1 else ">I"
-    geometry_type = struct.unpack(fmt, blob[1:5])[0]
-    if not geometry_type & 0x20000000:
-        return None
-    return struct.unpack(fmt, blob[5:9])[0] or None
-
-
-class RowCrs:
-    """The CRS half of a ``(crs, wkt)`` geometry cell from `result_to_tuples`.
-
-    Compares semantically: any spelling pyproj resolves to the same CRS is
-    equal, so a test can anchor a readable ``("EPSG:3857", "POLYGON ...")``
-    against an engine that emitted PROJJSON, and two engines that spell the
-    same CRS differently still agree. Prints compactly so an assertion failure
-    stays readable (a bare `pyproj.CRS` repr runs to twenty lines).
-    """
-
-    __slots__ = ("crs",)
-
-    def __init__(self, crs):
-        self.crs = crs
-
-    def __eq__(self, other):
-        if isinstance(other, RowCrs):
-            other = other.crs
-        try:
-            return _crs_equal(self.crs, _normalize_crs(other))
-        except Exception:
-            return NotImplemented
-
-    def __hash__(self):
-        return hash(self.crs.to_epsg() or self.crs.to_wkt())
-
-    def __repr__(self):
-        epsg = self.crs.to_epsg()
-        return f"CRS({f'EPSG:{epsg}' if epsg else self.crs.name})"
-
-
 def _row_level_crs(col):
     """Per-row normalized CRS for a geometry column that carries one, else
     None (meaning "no row-level CRS" — render this column as bare WKT).
@@ -1288,8 +1236,15 @@ def _row_level_crs(col):
         geoms = geometry.to_pylist()
         crs = [None if g is None else _normalize_crs(c) for g, c in zip(geoms, per_row)]
     elif _type_is_geoarrow(col.type):
+        # An SRID embedded in the bytes (EWKB); shapely reads it back, and
+        # reports 0 for plain ISO WKB, which `_normalize_crs` folds to None.
+        import shapely
+
         crs = [
-            None if blob is None else _normalize_crs(_ewkb_srid(bytes(blob)))
+            None
+            if blob is None
+            # int(): shapely hands back a numpy integer, which is not an `int`.
+            else _normalize_crs(int(shapely.get_srid(shapely.from_wkb(bytes(blob)))))
             for blob in col.to_pylist()
         ]
     else:
