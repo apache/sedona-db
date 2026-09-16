@@ -330,3 +330,27 @@ def test_row_level_crs_is_distinct_from_column_crs():
     # ...as does geometry with no CRS anywhere, and a non-geometry column.
     assert _row_level_crs(ga.as_wkb(["POINT (0 1)"])) is None
     assert _row_level_crs(pa.chunked_array([pa.array([1, 2])])) is None
+
+
+def test_row_level_crs_tolerates_geos_invalid_wkb():
+    """Reading the CRS must not parse the geometry.
+
+    Some geometry this harness compares happily as WKT is rejected by GEOS —
+    e.g. the unclosed LinearRing ST_TessellateGeog can produce. Constructing
+    it (shapely.from_wkb) raises there and would fail the whole comparison,
+    so the SRID is read from the EWKB header instead.
+    """
+    import struct
+
+    from sedonadb.testing import _row_level_crs
+
+    # A polygon whose ring is not closed: GEOS refuses to construct it.
+    unclosed_ring = struct.pack("<BIII", 1, 3, 1, 3) + b"".join(
+        struct.pack("<dd", x, y) for x, y in [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)]
+    )
+    with pytest.raises(shapely.errors.GEOSException):
+        shapely.from_wkb(unclosed_ring)
+
+    col = ga.wkb().wrap_array(pa.array([unclosed_ring], pa.binary()))
+    # No SRID in these bytes — and crucially, no exception.
+    assert _row_level_crs(col) is None
