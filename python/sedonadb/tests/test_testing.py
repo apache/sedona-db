@@ -333,12 +333,12 @@ def test_row_level_crs_is_distinct_from_column_crs():
 
 
 def test_row_level_crs_tolerates_geos_invalid_wkb():
-    """Reading the CRS must not parse the geometry.
+    """Reading the CRS must not blow up on geometry GEOS rejects.
 
-    Some geometry this harness compares happily as WKT is rejected by GEOS —
-    e.g. the unclosed LinearRing ST_TessellateGeog can produce. Constructing
-    it (shapely.from_wkb) raises there and would fail the whole comparison,
-    so the SRID is read from the EWKB header instead.
+    Some geometry this harness compares happily as WKT is invalid to GEOS —
+    e.g. the unclosed LinearRing ST_TessellateGeog can produce. A plain
+    shapely.from_wkb raises there and failed the whole comparison, hence
+    on_invalid="fix", which still yields the SRID.
     """
     import struct
 

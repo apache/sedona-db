@@ -44,6 +44,9 @@ test = [
     "pyyaml",
     "rasterio",
     "sedonadb-expr",
+    # >=2.1 for from_wkb(on_invalid="fix"), used to read a row-level SRID
+    # without raising on geometry GEOS rejects (see testing._row_level_crs).
+    "shapely>=2.1",
 ]
 geopandas = [
     "adbc-driver-manager[dbapi]",

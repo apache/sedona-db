@@ -1205,35 +1205,6 @@ def _normalize_crs(raw):
     return pyproj.CRS(raw)
 
 
-def _ewkb_srid(blob):
-    """The SRID embedded in a single EWKB blob, or None — read from the
-    header, without constructing the geometry.
-
-    Deliberately not `shapely.from_wkb` + `get_srid`: that builds the geometry,
-    and GEOS rejects geometries this harness is otherwise happy to render as
-    WKT (an unclosed `LinearRing` out of `ST_TessellateGeog`, for one, which
-    raised `IllegalArgumentException` here and failed the whole comparison).
-    `on_invalid="ignore"` only trades the exception for a silently dropped
-    SRID. The SRID is four bytes of header, so read those.
-
-    The scalar, per-row counterpart of `_unique_srid_from_ewkb`, which decodes
-    the same format vectorized over a column and collapses it to one SRID.
-    EWKB tags the geometry-type word with 0x20000000 when an SRID follows it;
-    the word and the SRID share the leading byte's endianness. Sedona Spark
-    encodes each geometry's CRS this way; plain ISO WKB carries none, so this
-    returns None there.
-    """
-    import struct
-
-    if blob is None or len(blob) < 9:
-        return None
-    fmt = "<I" if blob[0] == 1 else ">I"
-    geometry_type = struct.unpack(fmt, blob[1:5])[0]
-    if not geometry_type & 0x20000000:
-        return None
-    return struct.unpack(fmt, blob[5:9])[0] or None
-
-
 def _row_level_crs(col):
     """Per-row normalized CRS for a geometry column that carries one, else
     None (meaning "no row-level CRS" — render this column as bare WKT).
@@ -1265,11 +1236,20 @@ def _row_level_crs(col):
         geoms = geometry.to_pylist()
         crs = [None if g is None else _normalize_crs(c) for g, c in zip(geoms, per_row)]
     elif _type_is_geoarrow(col.type):
-        # An SRID embedded in the bytes (EWKB), read from the header only —
-        # see `_ewkb_srid` for why this does not parse the geometry.
+        # An SRID embedded in the bytes (EWKB). `on_invalid="fix"` matters:
+        # GEOS rejects geometry this harness otherwise compares happily as WKT
+        # (an unclosed LinearRing out of ST_TessellateGeog, say), and the
+        # default would raise on it; "fix" still yields the SRID. The repaired
+        # geometry is discarded — the WKT comes from geoarrow on the original
+        # bytes, so nothing here can alter a compared value.
+        import shapely
+
+        blobs = col.to_pylist()
+        srids = shapely.get_srid(shapely.from_wkb(blobs, on_invalid="fix"))
+        # 0 is "no SRID"; -1 is shapely's missing-geometry sentinel.
         crs = [
-            None if blob is None else _normalize_crs(_ewkb_srid(bytes(blob)))
-            for blob in col.to_pylist()
+            None if blob is None or srid <= 0 else _normalize_crs(int(srid))
+            for blob, srid in zip(blobs, srids)
         ]
     else:
         return None
