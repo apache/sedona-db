@@ -33,6 +33,16 @@ pub(crate) struct KnnComponents {
     estimated_memory_usage: usize,
 }
 
+/// Heap bytes of the eagerly-allocated `geometry_cache` backbone: one `OnceCell`
+/// slot per indexed geometry, allocated up front in [`KnnComponents::new`]. Each
+/// slot reserves inline space for the decoded `Geometry`, so this term is exact
+/// and independent of how many geometries are later decoded on demand. The
+/// nested coordinate buffers of decoded geometries are allocated lazily and are
+/// not counted here.
+fn cache_backbone_bytes(cache_size: usize) -> usize {
+    cache_size * std::mem::size_of::<OnceCell<Geometry<f64>>>()
+}
+
 impl KnnComponents {
     pub fn new(
         cache_size: usize,
@@ -49,13 +59,14 @@ impl KnnComponents {
 
         Ok(Self {
             geometry_cache,
-            estimated_memory_usage: total_wkb_size,
+            estimated_memory_usage: total_wkb_size + cache_backbone_bytes(cache_size),
         })
     }
 
     /// Estimate the maximum memory usage for decoded geometries based on statistics
     pub fn estimate_max_memory_usage(build_stats: &GeoStatistics) -> usize {
-        build_stats.total_size_bytes().unwrap_or(0) as usize
+        let geom_count = build_stats.total_geometries().unwrap_or(0) as usize;
+        build_stats.total_size_bytes().unwrap_or(0) as usize + cache_backbone_bytes(geom_count)
     }
 
     pub fn estimated_memory_usage(&self) -> usize {
@@ -132,5 +143,37 @@ impl<'a> SedonaKnnAdapter<'a> {
         } else {
             Some(Euclidean.distance(probe, item))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn estimated_memory_usage_includes_cache_backbone() {
+        let slot = std::mem::size_of::<OnceCell<Geometry<f64>>>();
+
+        // Empty cache: no slots and no decoded geometries.
+        let empty = KnnComponents::new(0, &[]).unwrap();
+        assert_eq!(empty.estimated_memory_usage(), 0);
+
+        // With N slots and no build batches, the estimate is exactly the eager
+        // backbone (one OnceCell slot per indexed geometry), with no WKB bytes.
+        let n = 1000;
+        let components = KnnComponents::new(n, &[]).unwrap();
+        assert_eq!(components.estimated_memory_usage(), n * slot);
+    }
+
+    #[test]
+    fn estimate_max_memory_usage_includes_cache_backbone() {
+        let slot = std::mem::size_of::<OnceCell<Geometry<f64>>>();
+        let stats = GeoStatistics::empty()
+            .with_total_geometries(1000)
+            .with_total_size_bytes(4096);
+        assert_eq!(
+            KnnComponents::estimate_max_memory_usage(&stats),
+            4096 + 1000 * slot
+        );
     }
 }
