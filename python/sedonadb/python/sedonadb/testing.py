@@ -1236,21 +1236,7 @@ def _row_level_crs(col):
         geoms = geometry.to_pylist()
         crs = [None if g is None else _normalize_crs(c) for g, c in zip(geoms, per_row)]
     elif _type_is_geoarrow(col.type):
-        # An SRID embedded in the bytes (EWKB). `on_invalid="fix"` matters:
-        # GEOS rejects geometry this harness otherwise compares happily as WKT
-        # (an unclosed LinearRing out of ST_TessellateGeog, say), and the
-        # default would raise on it; "fix" still yields the SRID. The repaired
-        # geometry is discarded — the WKT comes from geoarrow on the original
-        # bytes, so nothing here can alter a compared value.
-        import shapely
-
-        blobs = col.to_pylist()
-        srids = shapely.get_srid(shapely.from_wkb(blobs, on_invalid="fix"))
-        # 0 is "no SRID"; -1 is shapely's missing-geometry sentinel.
-        crs = [
-            None if blob is None or srid <= 0 else _normalize_crs(int(srid))
-            for blob, srid in zip(blobs, srids)
-        ]
+        crs = [_normalize_crs(_ewkb_srid(wkb)) for wkb in col.to_pylist()]
     else:
         return None
 
@@ -1264,43 +1250,41 @@ def _paths(paths):
         return str(paths)
 
 
-# Original source:
-# https://github.com/apache/sedona/blob/547faa30cd1b3a748232fd1da37123a8d25137ce/python/sedona/spark/geoarrow/geoarrow.py#L190-L225
+def _ewkb_srid(wkb):
+    """The SRID embedded in EWKB bytes, or `None` for plain WKB.
+
+    Reading the header bytes keeps this independent of GEOS, which rejects
+    geometry this harness otherwise compares happily as WKT (an unclosed
+    LinearRing out of ST_TessellateGeog, say) — parsing to reach the SRID would
+    raise on rows that are perfectly comparable. It is independent of Arrow's
+    compute kernels too: `binary_slice` has none for the `binary_view` storage
+    SedonaDB hands back.
+    """
+    if wkb is None or len(wkb) < 9:
+        return None
+
+    # EWKB tags the geometry-type word with 0x20 and follows it with a
+    # four-byte SRID. Z is tagged 0x80 and M 0x40, so the high byte of a
+    # geometry carrying an SRID is one of 0x20, 0x60, 0xa0, 0xe0.
+    little_endian = wkb[0] == 1
+    high_byte = wkb[4] if little_endian else wkb[1]
+    if not high_byte & 0x20:
+        return None
+
+    # SRID 0 means "unset".
+    return int.from_bytes(wkb[5:9], "little" if little_endian else "big") or None
+
+
 def _unique_srid_from_ewkb(obj):
-    import pyarrow.compute as pc
+    """The single SRID shared by every row, or `None` if no row carries one.
 
-    if len(obj) == 0:
-        return None
-
-    # Output shouldn't have mixed endian here
-    endian = pc.binary_slice(obj, 0, 1).unique()
-    if len(endian) != 1:
-        raise ValueError("Can't infer column-level CRS from mixed-endian EWKB")
-
-    # WKB Z high byte is 0x80
-    # WKB M high byte is is 0x40
-    # EWKB SRID high byte is 0x20
-    # High bytes where the SRID is set would be
-    # [0x20, 0x20 | 0x40, 0x20 | 0x80, 0x20 | 0x40 | 0x80]
-    # == [0x20, 0x60, 0xa0, 0xe0]
-    is_little_endian = endian[0].as_py() == b"\x01"
-    high_byte = (
-        pc.binary_slice(obj, 4, 5) if is_little_endian else pc.binary_slice(obj, 1, 2)
-    )
-    has_srid = pc.is_in(high_byte, pa.array([b"\x20", b"\x60", b"\xa0", b"\xe0"]))
-    unique_srids = (
-        pc.if_else(has_srid, pc.binary_slice(obj, 5, 9), None).unique().drop_null()
-    )
-    if len(unique_srids) == 0:
-        return None
-
-    if len(unique_srids) > 1:
+    Each blob is read in its own byte order, so a column of mixed endianness
+    needs no special handling.
+    """
+    srids = {_ewkb_srid(wkb) for wkb in obj.to_pylist()} - {None}
+    if len(srids) > 1:
         raise ValueError(
-            f"Can't infer column-level CRS from output with multiple SRIDs: {unique_srids}"
+            f"Can't infer column-level CRS from output with multiple SRIDs: {sorted(srids)}"
         )
 
-    srid_bytes = unique_srids[0].as_py()
-    endian = "little" if is_little_endian else "big"
-    epsg_code = int.from_bytes(srid_bytes, endian)
-
-    return epsg_code
+    return srids.pop() if srids else None

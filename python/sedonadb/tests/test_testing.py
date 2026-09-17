@@ -14,6 +14,7 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+import struct
 import tempfile
 from pathlib import Path
 
@@ -24,7 +25,7 @@ import pyarrow as pa
 import pyproj
 import pytest
 import shapely
-from sedonadb.testing import DuckDB, PostGIS, SedonaDB
+from sedonadb.testing import DuckDB, PostGIS, SedonaDB, _row_level_crs
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS, DuckDB])
@@ -295,8 +296,6 @@ def test_row_level_crs_is_distinct_from_column_crs():
     if shapely.geos_version < (3, 12, 0):
         pytest.skip("GEOS version 3.12+ required for EWKB tests")
 
-    from sedonadb.testing import _row_level_crs
-
     def epsg(col):
         return [c.to_epsg() if c else None for c in _row_level_crs(col)]
 
@@ -340,10 +339,6 @@ def test_row_level_crs_tolerates_geos_invalid_wkb():
     shapely.from_wkb raises there and failed the whole comparison, hence
     on_invalid="fix", which still yields the SRID.
     """
-    import struct
-
-    from sedonadb.testing import _row_level_crs
-
     # A polygon whose ring is not closed: GEOS refuses to construct it.
     unclosed_ring = struct.pack("<BIII", 1, 3, 1, 3) + b"".join(
         struct.pack("<dd", x, y) for x, y in [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)]
