@@ -28,7 +28,7 @@ use arrow_array::ffi::FFI_ArrowArray;
 use arrow_schema::{ffi::FFI_ArrowSchema, DataType, Schema, SchemaRef};
 use async_trait::async_trait;
 use datafusion_catalog::{Session, TableProvider};
-use datafusion_common::{exec_err, plan_err, Result, Statistics};
+use datafusion_common::{exec_err, plan_err, Result, Statistics, TableReference};
 use datafusion_execution::FunctionRegistry;
 use datafusion_expr::{Expr, HigherOrderUDF, ScalarUDF, TableProviderFilterPushDown, TableType};
 use datafusion_physical_plan::ExecutionPlan;
@@ -57,6 +57,7 @@ use crate::{
 pub struct ExportedTableProvider {
     inner: Arc<dyn TableProvider>,
     session: Arc<dyn Session>,
+    table_reference: Option<TableReference>,
     /// We hold Arc<RuntimeHandle> instead of just Handle to keep the runtime
     /// alive as long as this provider exists.
     runtime: Arc<RuntimeHandle>,
@@ -86,8 +87,18 @@ impl ExportedTableProvider {
         Self {
             inner,
             session,
+            table_reference: None,
             runtime,
         }
+    }
+
+    /// Set the table reference to use for logical scans of this provider.
+    ///
+    /// The reference is propagated across the extension boundary and can be
+    /// used by consumers instead of DataFusion's default `?table?` name.
+    pub fn with_table_reference(mut self, table_reference: impl Into<TableReference>) -> Self {
+        self.table_reference = Some(table_reference.into());
+        self
     }
 
     fn scan(
@@ -120,6 +131,12 @@ impl ExportedTableProvider {
                     TableType::Temporary => "Temporary",
                 };
                 Ok(type_str.to_string())
+            }
+            "table_reference" => {
+                let Some(table_reference) = &self.table_reference else {
+                    return exec_err!("Table provider does not have a table reference");
+                };
+                serialize_table_reference(table_reference)
             }
             _ => exec_err!("Unknown property: {}", property),
         }
@@ -418,6 +435,7 @@ pub struct ImportedTableProvider {
     inner: SedonaCTableProvider,
     schema: SchemaRef,
     table_type: TableType,
+    table_reference: Option<TableReference>,
     /// Stored as Arc so it can be cloned for each scan execution.
     cancel_checker: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     /// Interval for periodic cancellation checking during stream consumption.
@@ -453,14 +471,21 @@ impl ImportedTableProvider {
 
         // Get table type via get_property
         let table_type = Self::get_table_type(&inner)?;
+        let table_reference = Self::get_table_reference(&inner)?;
 
         Ok(Self {
             inner,
             schema,
             table_type,
+            table_reference,
             cancel_checker: None,
             check_interval: None,
         })
+    }
+
+    /// Return the table reference supplied by the exporting provider, if any.
+    pub fn table_reference(&self) -> Option<&TableReference> {
+        self.table_reference.as_ref()
     }
 
     /// Set a cancellation checker for this table provider.
@@ -498,6 +523,46 @@ impl ImportedTableProvider {
             "Temporary" => Ok(TableType::Temporary),
             _ => Ok(TableType::Base), // Default to Base for unknown types
         }
+    }
+
+    fn get_table_reference(provider: &SedonaCTableProvider) -> Result<Option<TableReference>> {
+        let serialized = match get_table_provider_string_property(provider, "table_reference") {
+            Ok(value) => value,
+            Err(_) => return Ok(None),
+        };
+
+        deserialize_table_reference(&serialized).map(Some)
+    }
+}
+
+fn serialize_table_reference(table_reference: &TableReference) -> Result<String> {
+    let parts: Vec<&str> = match table_reference {
+        TableReference::Bare { table } => vec![table],
+        TableReference::Partial { schema, table } => vec![schema, table],
+        TableReference::Full {
+            catalog,
+            schema,
+            table,
+        } => vec![catalog, schema, table],
+    };
+
+    serde_json::to_string(&parts)
+        .map_err(|e| datafusion_common::DataFusionError::External(Box::new(e)))
+}
+
+fn deserialize_table_reference(serialized: &str) -> Result<TableReference> {
+    let parts: Vec<String> = serde_json::from_str(serialized)
+        .map_err(|e| datafusion_common::DataFusionError::External(Box::new(e)))?;
+
+    match parts.as_slice() {
+        [table] => Ok(TableReference::bare(table.clone())),
+        [schema, table] => Ok(TableReference::partial(schema.clone(), table.clone())),
+        [catalog, schema, table] => Ok(TableReference::full(
+            catalog.clone(),
+            schema.clone(),
+            table.clone(),
+        )),
+        _ => plan_err!("Invalid serialized table reference: expected 1 to 3 parts"),
     }
 }
 
@@ -1180,5 +1245,32 @@ mod tests {
             let (imported, _runtime) = setup_imported_provider_with(table_type);
             assert_eq!(imported.table_type(), table_type);
         }
+    }
+
+    #[test]
+    fn test_table_provider_roundtrip_table_reference() {
+        for table_reference in [
+            TableReference::bare("table.with.dots"),
+            TableReference::partial("schema", "table"),
+            TableReference::full("catalog", "schema", "table"),
+        ] {
+            let dummy = Arc::new(DummyTableProvider::with_table_type(TableType::Base));
+            let ctx = SessionContext::new();
+            let runtime = test_runtime();
+            let session = Arc::new(ctx.state());
+            let exported = ExportedTableProvider::new(dummy, session, runtime.clone())
+                .with_table_reference(table_reference.clone());
+            let ffi_provider: SedonaCTableProvider = exported.into();
+            let imported = ImportedTableProvider::try_new(ffi_provider)
+                .expect("Failed to import table provider");
+
+            assert_eq!(imported.table_reference(), Some(&table_reference));
+        }
+    }
+
+    #[test]
+    fn test_table_provider_roundtrip_without_table_reference() {
+        let (imported, _runtime) = setup_imported_provider_with(TableType::Base);
+        assert_eq!(imported.table_reference(), None);
     }
 }

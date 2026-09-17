@@ -20,6 +20,8 @@ use std::{
 };
 
 use arrow_schema::DataType;
+use datafusion::{dataframe::DataFrame, datasource::provider_as_source};
+use datafusion_expr::LogicalPlanBuilder;
 use datafusion_expr::ScalarUDFImpl;
 use pyo3::prelude::*;
 use sedona::context::SedonaContext;
@@ -122,8 +124,16 @@ impl InternalContext {
         obj: &Bound<PyAny>,
         requested_schema: Option<&Bound<PyAny>>,
     ) -> Result<InternalDataFrame, PySedonaError> {
-        let provider = import_table_provider_from_any(py, obj, requested_schema)?;
-        let df = self.inner.ctx.read_table(provider)?;
+        let (provider, table_reference) =
+            import_table_provider_from_any(py, obj, requested_schema)?;
+        let df = if let Some(table_reference) = table_reference {
+            let plan =
+                LogicalPlanBuilder::scan(table_reference, provider_as_source(provider), None)?
+                    .build()?;
+            DataFrame::new(self.inner.ctx.state(), plan)
+        } else {
+            self.inner.ctx.read_table(provider)?
+        };
         Ok(InternalDataFrame::new(df, self.runtime.clone()))
     }
 

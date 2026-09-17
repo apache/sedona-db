@@ -27,7 +27,7 @@ use arrow_array::{
 };
 use arrow_schema::{Field, Schema};
 use datafusion::catalog::TableProvider;
-use datafusion_common::{metadata::ScalarAndMetadata, ScalarValue};
+use datafusion_common::{metadata::ScalarAndMetadata, ScalarValue, TableReference};
 use datafusion_expr::expr::FieldMetadata;
 use pyo3::{
     types::{PyAnyMethods, PyCapsule, PyCapsuleMethods},
@@ -50,13 +50,12 @@ pub fn import_table_provider_from_any<'py>(
     py: Python<'py>,
     obj: &Bound<PyAny>,
     requested_schema: Option<&Bound<PyAny>>,
-) -> Result<Arc<dyn TableProvider>, PySedonaError> {
+) -> Result<(Arc<dyn TableProvider>, Option<TableReference>), PySedonaError> {
     if obj.hasattr("__sedonadb_table_provider__")? {
-        let provider = import_sedona_ffi_table_provider(obj)?;
-        Ok(provider)
+        import_sedona_ffi_table_provider(obj)
     } else if obj.hasattr("__arrow_c_stream__")? {
         let reader = import_arrow_array_stream(py, obj, requested_schema)?;
-        Ok(Arc::new(RecordBatchReaderProvider::new(reader)))
+        Ok((Arc::new(RecordBatchReaderProvider::new(reader)), None))
     } else {
         Err(PySedonaError::SedonaPython(
             "Can't create SedonaDB table from object".to_string(),
@@ -66,7 +65,7 @@ pub fn import_table_provider_from_any<'py>(
 
 pub fn import_sedona_ffi_table_provider(
     obj: &Bound<PyAny>,
-) -> Result<Arc<dyn TableProvider>, PySedonaError> {
+) -> Result<(Arc<dyn TableProvider>, Option<TableReference>), PySedonaError> {
     let capsule = obj.getattr("__sedonadb_table_provider__")?.call0()?;
     let contents =
         check_pycapsule(&capsule, "sedonadb_table_provider")? as *mut SedonaCTableProvider;
@@ -95,8 +94,9 @@ pub fn import_sedona_ffi_table_provider(
             })
         })
         .with_check_interval(Duration::from_millis(2_000));
+    let table_reference = provider.table_reference().cloned();
 
-    Ok(Arc::new(provider))
+    Ok((Arc::new(provider), table_reference))
 }
 
 /// Import a natively-compiled scalar kernel from a `PyCapsule` wrapping a
