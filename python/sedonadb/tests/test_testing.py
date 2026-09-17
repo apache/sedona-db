@@ -14,6 +14,7 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+import struct
 import tempfile
 from pathlib import Path
 
@@ -23,7 +24,8 @@ import pandas as pd
 import pyarrow as pa
 import pyproj
 import pytest
-from sedonadb.testing import DuckDB, PostGIS, SedonaDB
+import shapely
+from sedonadb.testing import DuckDB, PostGIS, SedonaDB, _row_level_crs
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS, DuckDB])
@@ -268,3 +270,82 @@ def test_table_parquet(eng):
             eng.assert_query_result(
                 "SELECT * FROM test_df ORDER BY idx", df, check_crs=check_crs
             )
+
+
+def _ewkb_point(x, y, srid):
+    """A little-endian EWKB point carrying `srid` (0 for no SRID).
+
+    Written with shapely, like the ST_AsEWKB tests in
+    `tests/functions/test_wkb.py`, rather than packing the bytes by hand.
+    """
+
+    point = shapely.Point(x, y)
+    if srid:
+        point = shapely.set_srid(point, srid)
+    return shapely.to_wkb(
+        point, byte_order=1, flavor="extended", include_srid=bool(srid)
+    )
+
+
+def test_row_level_crs_is_distinct_from_column_crs():
+    """Only a *row-level* CRS is surfaced per row — a per-geometry SRID in the
+    WKB bytes (how Sedona Spark encodes it) or SedonaDB's item-level
+    ``struct<item, crs>``. A column-level (type) CRS is deliberately excluded,
+    so geometry that carries its CRS at the wrong level renders differently
+    instead of being normalized into agreement."""
+    if shapely.geos_version < (3, 12, 0):
+        pytest.skip("GEOS version 3.12+ required for EWKB tests")
+
+    def epsg(col):
+        return [c.to_epsg() if c else None for c in _row_level_crs(col)]
+
+    # 1. Per-geometry SRID in the WKB bytes, differing per row (+ a bare row).
+    ewkb = ga.wkb().wrap_array(
+        pa.array(
+            [
+                _ewkb_point(1.0, 2.0, 4326),
+                _ewkb_point(3.0, 4.0, 3857),
+                _ewkb_point(5.0, 6.0, 0),
+            ],
+            pa.binary(),
+        )
+    )
+    assert epsg(ewkb) == [4326, 3857, None]
+
+    # 2. SedonaDB's item-level struct<item, crs>, per row ('0' means no CRS).
+    item = ga.as_wkb(["POINT (0 1)", "POINT (2 3)"])
+    struct = pa.StructArray.from_arrays(
+        [item, pa.array(["EPSG:4326", "0"])], names=["item", "crs"]
+    )
+    assert epsg(struct) == [4326, None]
+
+    # 3. A column-level geoarrow CRS is NOT a row-level CRS: this column has
+    # no per-geometry CRS, so it renders as bare WKT rather than (crs, wkt).
+    column = ga.with_crs(
+        ga.as_wkb(["POINT (0 1)", "POINT (2 3)"]), pyproj.CRS("EPSG:3857").to_json()
+    )
+    assert _row_level_crs(column) is None
+
+    # ...as does geometry with no CRS anywhere, and a non-geometry column.
+    assert _row_level_crs(ga.as_wkb(["POINT (0 1)"])) is None
+    assert _row_level_crs(pa.chunked_array([pa.array([1, 2])])) is None
+
+
+def test_row_level_crs_tolerates_geos_invalid_wkb():
+    """Reading the CRS must not blow up on geometry GEOS rejects.
+
+    Some geometry this harness compares happily as WKT is invalid to GEOS —
+    e.g. the unclosed LinearRing ST_TessellateGeog can produce. Anything that
+    constructs the geometry to reach its SRID raises there and fails the whole
+    comparison, so the SRID is read out of the header bytes instead.
+    """
+    # A polygon whose ring is not closed: GEOS refuses to construct it.
+    unclosed_ring = struct.pack("<BIII", 1, 3, 1, 3) + b"".join(
+        struct.pack("<dd", x, y) for x, y in [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)]
+    )
+    with pytest.raises(shapely.errors.GEOSException):
+        shapely.from_wkb(unclosed_ring)
+
+    col = ga.wkb().wrap_array(pa.array([unclosed_ring], pa.binary()))
+    # No SRID in these bytes — and crucially, no exception.
+    assert _row_level_crs(col) is None

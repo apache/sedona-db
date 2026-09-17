@@ -205,6 +205,7 @@ class DBEngine:
         gdal_transform=None,
         nodata=None,
         plants=None,
+        crs=None,
     ) -> "DBEngine":
         """Write a random GeoTIFF at `path` and register it as view `name`
         (see `create_raster_view`).
@@ -214,10 +215,12 @@ class DBEngine:
         cannot drift from the expectation. The grid defaults to
         `RANDOM_GRID_BBOX` on the 7x6 grid (2x3 pixels; override with `bbox`
         or, for grids a bbox cannot express, a raw GDAL `gdal_transform` —
-        at most one). It is small and north-up/CRS-less so nothing reprojects
-        and results stay bit-comparable across engines, and the pixels are
+        at most one). It is small and north-up so nothing reprojects and
+        results stay bit-comparable across engines, and the pixels are
         seeded, so registering the same `path` on several engines rewrites
-        identical bytes and every engine sees the same raster.
+        identical bytes and every engine sees the same raster. `crs` defaults
+        to none (nothing reprojects); pass one when a test needs the output to
+        carry a CRS.
         """
         from sedonadb.raster_testing import DecodedRaster
 
@@ -230,7 +233,7 @@ class DBEngine:
             gdal_transform=gdal_transform,
             nodata=nodata,
             plants=plants,
-        ).write_geotiff(path)
+        ).write_geotiff(path, crs=crs)
         return self.create_raster_view(name, path)
 
     def decode_raster_result(self, sql):
@@ -290,17 +293,45 @@ class DBEngine:
         generally asserting a query result or verifying results between engines
         that have (e.g.) differing integer handling.
 
-        Geometry columns are rendered as WKT strings. List columns (e.g. the
-        `List<Double>` returned by `RS_Values`) can't be cast to string, so they
-        pass through as Python lists and are compared by value — assert them with
-        an expected cell that is itself a list, e.g. ``[([1.0, None],)]``.
+        Geometry columns are rendered as WKT strings, with one exception:
+        geometry that carries a **row-level** CRS renders as a
+        ``(crs, wkt)`` tuple, so the CRS travels with the value instead of
+        being dropped. Two representations produce a row-level CRS —
+        SedonaDB's item-level ``struct<item: geoarrow.wkb, crs>`` (returned by
+        RS_Envelope and friends, whose CRS can vary per row) and a
+        per-geometry SRID embedded in the WKB (how Sedona Spark encodes it).
+
+        A **column-level** (type) CRS is deliberately *not* folded in: such a
+        column keeps rendering as bare WKT. Keeping the two distinct is the
+        point — a kernel that attaches the CRS at the wrong level is an easy
+        mistake to make, and collapsing them here would hide it.
+
+        The CRS half is a `pyproj.CRS`, so comparison is pyproj's: any spelling
+        it resolves to the same CRS is equal, in either direction. A test can
+        therefore anchor the readable ``("EPSG:3857", "POLYGON ...")`` against
+        an engine that emitted PROJJSON, and two engines that spell the same
+        CRS differently still agree.
+
+        List columns (e.g. the `List<Double>` returned by `RS_Values`) can't be
+        cast to string, so they pass through as Python lists and are compared
+        by value — assert them with an expected cell that is itself a list,
+        e.g. ``[([1.0, None],)]``.
         """
         tab = self.result_to_table(result)
         columns = []
         for col in tab.columns:
             # isinstance() does not always work with pyarrow in pytest
-            if _type_is_geoarrow(col.type):
-                columns.append(ga.format_wkt(col, precision=wkt_precision).to_pylist())
+            unwrapped = _unwrap_item_crs_geometry(col)
+            geometry = unwrapped if unwrapped is not None else col
+            if _type_is_geoarrow(geometry.type):
+                wkt = ga.format_wkt(geometry, precision=wkt_precision).to_pylist()
+                row_crs = _row_level_crs(col)
+                if row_crs is None:
+                    columns.append(wkt)
+                else:
+                    columns.append(
+                        [None if w is None else (c, w) for c, w in zip(row_crs, wkt)]
+                    )
             elif pa.types.is_list(col.type) or pa.types.is_large_list(col.type):
                 columns.append(col.to_pylist())
             else:
@@ -1109,6 +1140,31 @@ def _type_is_geoarrow(type):
     )
 
 
+def _unwrap_item_crs_geometry(col):
+    """The geometry child of an item-level-CRS column, or None.
+
+    SedonaDB returns geometry whose CRS can vary per row (RS_Envelope,
+    RS_PixelAsPoint, ...) as ``struct<item: geoarrow.wkb, crs>``. Tuple
+    comparison wants the geometry values; parent-level nulls are propagated
+    into the child.
+    """
+    import pyarrow.compute as pc
+
+    if not pa.types.is_struct(col.type):
+        return None
+    fields = {
+        col.type.field(i).name: col.type.field(i).type
+        for i in range(col.type.num_fields)
+    }
+    if set(fields) != {"item", "crs"} or not _type_is_geoarrow(fields["item"]):
+        return None
+    child = pc.struct_field(col, "item")
+    if not _type_is_geoarrow(child.type):
+        # struct_field can strip the extension type; re-wrap its storage.
+        child = fields["item"].wrap_array(child)
+    return child
+
+
 def _crs_equal(actual, expected):
     import pyproj
 
@@ -1122,6 +1178,71 @@ def _crs_equal(actual, expected):
         return pyproj.CRS(actual) == pyproj.CRS(expected)
 
 
+def _normalize_crs(raw):
+    """A raw CRS as a `pyproj.CRS`, or None when the value means "no CRS".
+
+    The per-row CRS arrives in whatever form its source uses — a geoarrow
+    ``Crs`` object (from a column's ``type.crs``), a PROJJSON or authority
+    string (SedonaDB's item ``crs`` field), or an integer SRID (parsed from
+    EWKB) — and an absent CRS as ``None``, ``""``, or ``"0"`` (SedonaDB's
+    SRID-0 sentinel). Fold the absent forms to None and hand every present
+    form to pyproj, which decides semantic equality across the spellings.
+    """
+    import pyproj
+
+    if raw is None:
+        return None
+    if isinstance(raw, (bytes, bytearray)):
+        raw = raw.decode()
+    if isinstance(raw, int):
+        return None if raw == 0 else pyproj.CRS.from_epsg(raw)
+    if isinstance(raw, str):
+        text = raw.strip()
+        if text in ("", "0"):
+            return None
+        return pyproj.CRS.from_user_input(text)
+    # A geoarrow Crs object (or anything else pyproj accepts directly).
+    return pyproj.CRS(raw)
+
+
+def _row_level_crs(col):
+    """Per-row normalized CRS for a geometry column that carries one, else
+    None (meaning "no row-level CRS" — render this column as bare WKT).
+
+    Only the two **row-level** representations count:
+
+    - SedonaDB's item-level ``struct<item: geoarrow.wkb, crs>`` — the per-row
+      `crs` field;
+    - a per-geometry SRID embedded in the WKB (how Sedona Spark encodes it;
+      it survives our transport as EWKB in the column's bytes).
+
+    A column-level (type) CRS is deliberately excluded, so an engine that
+    attaches the CRS at the wrong level renders differently here rather than
+    being silently normalized into agreement. A column whose every cell turns
+    out to have no CRS also returns None: there is no CRS to misplace, so it
+    renders as plain WKT and stays comparable with any other engine's.
+
+    Engines that hand us a column-level CRS with plain ISO WKB bytes — PostGIS
+    lifts the EWKB SRID to the column in `result_to_table`, and SedonaDB's own
+    plain geometry never embeds one — are unaffected.
+    """
+    if pa.types.is_struct(col.type):
+        geometry = _unwrap_item_crs_geometry(col)
+        if geometry is None:
+            return None
+        import pyarrow.compute as pc
+
+        per_row = pc.struct_field(col, "crs").to_pylist()
+        geoms = geometry.to_pylist()
+        crs = [None if g is None else _normalize_crs(c) for g, c in zip(geoms, per_row)]
+    elif _type_is_geoarrow(col.type):
+        crs = [_normalize_crs(_ewkb_srid(wkb)) for wkb in col.to_pylist()]
+    else:
+        return None
+
+    return crs if any(c is not None for c in crs) else None
+
+
 def _paths(paths):
     if isinstance(paths, list):
         return [str(p) for p in paths]
@@ -1129,43 +1250,41 @@ def _paths(paths):
         return str(paths)
 
 
-# Original source:
-# https://github.com/apache/sedona/blob/547faa30cd1b3a748232fd1da37123a8d25137ce/python/sedona/spark/geoarrow/geoarrow.py#L190-L225
+def _ewkb_srid(wkb):
+    """The SRID embedded in EWKB bytes, or `None` for plain WKB.
+
+    Reading the header bytes keeps this independent of GEOS, which rejects
+    geometry this harness otherwise compares happily as WKT (an unclosed
+    LinearRing out of ST_TessellateGeog, say) — parsing to reach the SRID would
+    raise on rows that are perfectly comparable. It is independent of Arrow's
+    compute kernels too: `binary_slice` has none for the `binary_view` storage
+    SedonaDB hands back.
+    """
+    if wkb is None or len(wkb) < 9:
+        return None
+
+    # EWKB tags the geometry-type word with 0x20 and follows it with a
+    # four-byte SRID. Z is tagged 0x80 and M 0x40, so the high byte of a
+    # geometry carrying an SRID is one of 0x20, 0x60, 0xa0, 0xe0.
+    little_endian = wkb[0] == 1
+    high_byte = wkb[4] if little_endian else wkb[1]
+    if not high_byte & 0x20:
+        return None
+
+    # SRID 0 means "unset".
+    return int.from_bytes(wkb[5:9], "little" if little_endian else "big") or None
+
+
 def _unique_srid_from_ewkb(obj):
-    import pyarrow.compute as pc
+    """The single SRID shared by every row, or `None` if no row carries one.
 
-    if len(obj) == 0:
-        return None
-
-    # Output shouldn't have mixed endian here
-    endian = pc.binary_slice(obj, 0, 1).unique()
-    if len(endian) != 1:
-        raise ValueError("Can't infer column-level CRS from mixed-endian EWKB")
-
-    # WKB Z high byte is 0x80
-    # WKB M high byte is is 0x40
-    # EWKB SRID high byte is 0x20
-    # High bytes where the SRID is set would be
-    # [0x20, 0x20 | 0x40, 0x20 | 0x80, 0x20 | 0x40 | 0x80]
-    # == [0x20, 0x60, 0xa0, 0xe0]
-    is_little_endian = endian[0].as_py() == b"\x01"
-    high_byte = (
-        pc.binary_slice(obj, 4, 5) if is_little_endian else pc.binary_slice(obj, 1, 2)
-    )
-    has_srid = pc.is_in(high_byte, pa.array([b"\x20", b"\x60", b"\xa0", b"\xe0"]))
-    unique_srids = (
-        pc.if_else(has_srid, pc.binary_slice(obj, 5, 9), None).unique().drop_null()
-    )
-    if len(unique_srids) == 0:
-        return None
-
-    if len(unique_srids) > 1:
+    Each blob is read in its own byte order, so a column of mixed endianness
+    needs no special handling.
+    """
+    srids = {_ewkb_srid(wkb) for wkb in obj.to_pylist()} - {None}
+    if len(srids) > 1:
         raise ValueError(
-            f"Can't infer column-level CRS from output with multiple SRIDs: {unique_srids}"
+            f"Can't infer column-level CRS from output with multiple SRIDs: {sorted(srids)}"
         )
 
-    srid_bytes = unique_srids[0].as_py()
-    endian = "little" if is_little_endian else "big"
-    epsg_code = int.from_bytes(srid_bytes, endian)
-
-    return epsg_code
+    return srids.pop() if srids else None
