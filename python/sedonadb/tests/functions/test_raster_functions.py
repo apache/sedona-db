@@ -150,6 +150,39 @@ def test_rs_value_default_band_requires_single_band(con):
         ).to_arrow_table()
 
 
+# RS_WorldToRasterCoord and its X/Y variants map a world coordinate into the
+# raster's pixel space. The two argument forms — a pair of ordinates, or a
+# single point geometry — are the same mapping, so both are exercised against
+# the same expectation. RS_Example is skewed (scale 2, skew 1), and (10, 20)
+# maps outside the grid: the mapping extrapolates rather than clamping.
+@pytest.mark.parametrize(
+    "coord",
+    [
+        pytest.param("10.0, 20.0", id="ordinates"),
+        pytest.param("ST_Point(10.0, 20.0)", id="point"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("fn", "expected"),
+    [
+        ("RS_WorldToRasterCoordX", -2),
+        ("RS_WorldToRasterCoordY", -28),
+        ("RS_WorldToRasterCoord", "POINT (-2 -28)"),
+    ],
+)
+def test_rs_worldtorastercoord(fn, expected, coord):
+    SedonaDB().assert_query_result(f"SELECT {fn}(RS_Example(), {coord})", expected)
+
+
+def test_rs_worldtorastercoord_empty_point_is_null():
+    # POINT EMPTY has no location to map, so it yields NULL rather than an
+    # error — matching how the two-ordinate form treats a null ordinate.
+    SedonaDB().assert_query_result(
+        "SELECT RS_WorldToRasterCoordX(RS_Example(), ST_GeomFromText('POINT EMPTY'))",
+        None,
+    )
+
+
 def test_rs_value_matches_rasterio(con):
     """Cross-check RS_Value against rasterio on a random raster.
 
