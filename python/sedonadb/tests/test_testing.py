@@ -335,9 +335,9 @@ def test_row_level_crs_tolerates_geos_invalid_wkb():
     """Reading the CRS must not blow up on geometry GEOS rejects.
 
     Some geometry this harness compares happily as WKT is invalid to GEOS —
-    e.g. the unclosed LinearRing ST_TessellateGeog can produce. A plain
-    shapely.from_wkb raises there and failed the whole comparison, hence
-    on_invalid="fix", which still yields the SRID.
+    e.g. the unclosed LinearRing ST_TessellateGeog can produce. Anything that
+    constructs the geometry to reach its SRID raises there and fails the whole
+    comparison, so the SRID is read out of the header bytes instead.
     """
     # A polygon whose ring is not closed: GEOS refuses to construct it.
     unclosed_ring = struct.pack("<BIII", 1, 3, 1, 3) + b"".join(
