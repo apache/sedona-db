@@ -241,13 +241,34 @@ def test_rs_value_matches_rasterio(con):
     assert got == expected
 
 
-def test_rs_setgeoreference_roundtrips_with_getter():
-    # RS_GeoReference emits scaleX, skewY, skewX, scaleY, upperLeftX, upperLeftY;
-    # RS_SetGeoReference accepts the same six values back (GDAL order).
+@pytest.mark.parametrize(
+    "georeference",
+    [
+        # The string form: scaleX, skewY, skewX, scaleY, upperLeftX, upperLeftY
+        # — the same order RS_GeoReference emits, so the pair round-trips.
+        pytest.param("'2 0 0 -3 100 200'", id="string"),
+        # The numeric form takes the components directly, in a different order:
+        # upperLeftX, upperLeftY, scaleX, scaleY, skewX, skewY.
+        pytest.param("100, 200, 2, -3, 0, 0", id="numeric"),
+    ],
+)
+def test_rs_setgeoreference_roundtrips_with_getter(georeference):
+    # Both argument forms set the same transform, and RS_GeoReference reads it
+    # back in world-file order.
     eng = SedonaDB()
     eng.assert_query_result(
-        "SELECT RS_GeoReference(RS_SetGeoReference(RS_Example(), '2 0 0 -3 100 200'))",
+        f"SELECT RS_GeoReference(RS_SetGeoReference(RS_Example(), {georeference}))",
         "2.0000000000\n0.0000000000\n0.0000000000\n-3.0000000000\n100.0000000000\n200.0000000000",
+    )
+
+
+def test_rs_setgeoreference_numeric_skew():
+    # The numeric form carries skew into the right slots: the getter emits
+    # scaleX, skewY, skewX, scaleY, upperLeftX, upperLeftY.
+    eng = SedonaDB()
+    eng.assert_query_result(
+        "SELECT RS_GeoReference(RS_SetGeoReference(RS_Example(), 100, 200, 2, -3, 0.25, 0.5))",
+        "2.0000000000\n0.5000000000\n0.2500000000\n-3.0000000000\n100.0000000000\n200.0000000000",
     )
 
 

@@ -22,8 +22,10 @@ description: >
   of six whitespace-separated numbers in the order scalex, skewy, skewx, scaley,
   upperleftx, upperlefty — the same order RS_GeoReference emits. The format is
   'GDAL' (default) or 'ESRI'; in GDAL the upper-left coordinates refer to the
-  corner of the upper-left pixel, while in ESRI they refer to its center. This is
-  metadata-only: raster cell values are not resampled.
+  corner of the upper-left pixel, while in ESRI they refer to its center. The
+  transform can also be given as six numeric arguments instead of a string,
+  always as GDAL/corner coordinates. This is metadata-only: raster cell values
+  are not resampled.
 kernels:
   - returns: raster
     args:
@@ -48,6 +50,27 @@ kernels:
         'PIXEL') places them at the pixel corner, 'ESRI' (alias 'NODE') at the
         pixel center. The center-to-corner shift maps through the full affine
         transform, so it is exact for skewed (rotated) rasters too.
+  - returns: raster
+    args:
+    - raster
+    - name: upperleftx
+      type: numeric
+      description: X of the upper-left pixel's corner.
+    - name: upperlefty
+      type: numeric
+      description: Y of the upper-left pixel's corner.
+    - name: scalex
+      type: numeric
+      description: Pixel width.
+    - name: scaley
+      type: numeric
+      description: Pixel height (negative for a north-up raster).
+    - name: skewx
+      type: numeric
+      description: Row rotation term.
+    - name: skewy
+      type: numeric
+      description: Column rotation term.
 ---
 
 See [Coordinate Reference Systems](../../concepts/crs.md) for how SedonaDB represents and compares CRS.
@@ -60,4 +83,11 @@ SELECT RS_GeoReference(RS_SetGeoReference(RS_Example(), '2 0 0 -3 100 200'));
 
 ```sql
 SELECT RS_GeoReference(RS_SetGeoReference(RS_Example(), '2 0 0 -3 101 198.5', 'ESRI'));
+```
+
+The numeric form takes the transform components directly, in the order
+upperleftx, upperlefty, scalex, scaley, skewx, skewy:
+
+```sql
+SELECT RS_GeoReference(RS_SetGeoReference(RS_Example(), 100, 200, 2, -3, 0, 0));
 ```
