@@ -203,6 +203,24 @@ pub fn object_store_for_uri(uri: &str) -> Result<Arc<dyn ObjectStore>, ArrowErro
     }
 }
 
+/// Identity of the `ObjectStore` client [`object_store_for_uri`] builds for
+/// `uri`: its scheme and authority. The client never depends on the path
+/// ([`open_storage_from_uri`] applies that as a prefix), so every group in
+/// one bucket or on one host shares a client and its connection pool.
+pub fn store_client_key(uri: &str) -> Result<String, ArrowError> {
+    if uri.starts_with("file://") || !uri.contains("://") {
+        return Ok("file://".to_string());
+    }
+    let url = Url::parse(uri).map_err(|e| {
+        ArrowError::InvalidArgumentError(format!("group URI {uri:?} is not a valid URL: {e}"))
+    })?;
+    Ok(format!(
+        "{}://{}",
+        url.scheme().to_ascii_lowercase(),
+        url.authority()
+    ))
+}
+
 pub fn open_storage_from_uri(
     uri: &str,
     store: Arc<dyn ObjectStore>,
@@ -249,6 +267,28 @@ mod tests {
         assert_eq!(
             uri,
             "s3://bucket/foo.zarr/2024#array=subgroup/B01&chunk=1,5"
+        );
+    }
+
+    #[test]
+    fn store_client_key_is_scheme_and_authority() {
+        assert_eq!(store_client_key("file:///tmp/a.zarr").unwrap(), "file://");
+        assert_eq!(store_client_key("/tmp/a.zarr").unwrap(), "file://");
+        assert_eq!(
+            store_client_key("s3://bucket/a/b.zarr").unwrap(),
+            "s3://bucket"
+        );
+        assert_eq!(
+            store_client_key("s3://bucket/other.zarr").unwrap(),
+            "s3://bucket"
+        );
+        assert_eq!(
+            store_client_key("HTTPS://Host.example:8443/x/y.zarr").unwrap(),
+            "https://host.example:8443"
+        );
+        assert_ne!(
+            store_client_key("s3://a/x.zarr").unwrap(),
+            store_client_key("s3://b/x.zarr").unwrap()
         );
     }
 
