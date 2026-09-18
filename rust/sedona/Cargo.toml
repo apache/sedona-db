@@ -64,6 +64,9 @@ comfy-table = { workspace = true }
 datafusion = { workspace = true, default_features = false, features = ["sql", "parquet", "nested_expressions"] }
 datafusion-catalog = { workspace = true }
 datafusion-common = { workspace = true }
+# `arrow_buffer_pool` exposes the adapter that lets Arrow buffers claim
+# their allocation from DataFusion's memory pool (the raster chunk cache).
+datafusion-execution = { workspace = true, features = ["arrow_buffer_pool"] }
 datafusion-expr = { workspace = true, features = ["sql"] }
 datafusion-ffi = { workspace = true }
 datafusion-optimizer = { workspace = true }
