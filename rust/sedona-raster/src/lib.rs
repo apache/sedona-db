@@ -19,6 +19,7 @@ pub mod affine_transformation;
 pub mod array;
 pub mod band_builder;
 pub mod builder;
+pub mod chunk_cache;
 pub mod display;
 pub mod error;
 pub mod geo_transform;
