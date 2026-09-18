@@ -932,6 +932,31 @@ impl<'a> RasterStructArray<'a> {
     pub fn band_data_row(&self, raster_idx: usize, band_idx: usize) -> usize {
         self.bands_list.value_offsets()[raster_idx] as usize + band_idx
     }
+
+    /// Rows of `raster_idx`'s bands in the flattened band columns. Lets
+    /// metadata-only passes (e.g. `crate::size`) walk every band without
+    /// constructing a `RasterRef` / boxed `BandRef` per row.
+    pub(crate) fn band_rows(&self, raster_idx: usize) -> std::ops::Range<usize> {
+        let offsets = self.bands_list.value_offsets();
+        offsets[raster_idx] as usize..offsets[raster_idx + 1] as usize
+    }
+
+    /// Raw source shape of the band at flattened row `band_row`.
+    pub(crate) fn band_source_shape_at(&self, band_row: usize) -> &[i64] {
+        let offsets = self.band_source_shape_list.value_offsets();
+        &self.band_source_shape_values.values()
+            [offsets[band_row] as usize..offsets[band_row + 1] as usize]
+    }
+
+    /// Pixel type of the band at flattened row `band_row`.
+    pub(crate) fn band_data_type_at(&self, band_row: usize) -> Result<BandDataType, RasterError> {
+        let code = self.band_datatype_array.value(band_row);
+        BandDataType::try_from_u32(code).ok_or_else(|| {
+            RasterError::Invalid(format!(
+                "invalid band data type code {code} at band row {band_row}"
+            ))
+        })
+    }
 }
 
 #[cfg(test)]

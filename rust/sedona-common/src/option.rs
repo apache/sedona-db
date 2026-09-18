@@ -48,6 +48,51 @@ config_namespace! {
 
         /// Options for configuring GDAL usage
         pub gdal: GdalOptions, default = GdalOptions::default()
+
+        /// Options for raster execution
+        pub raster: RasterOptions, default = RasterOptions::default()
+    }
+}
+
+/// Default byte budget for a batch of materialized rasters when no memory
+/// limit is configured. `SedonaContext` lowers it to a fraction of the
+/// per-partition memory limit when one is.
+pub const DEFAULT_RASTER_MAX_BATCH_BYTES: usize = 256 * 1024 * 1024;
+
+config_namespace! {
+    /// Configuration options for raster execution.
+    pub struct RasterOptions {
+        /// Byte budget for one batch of materialized rasters, **per partition**.
+        /// `RS_EnsureLoaded` slices each input batch so that the estimated bytes
+        /// of the rasters it materializes (sum over bands of source shape × pixel
+        /// size, taken from band metadata) stay within this budget, emitting each
+        /// slice as its own batch instead of trusting the row-count
+        /// `datafusion.execution.batch_size`. A single row larger than the budget
+        /// is still processed, on its own. `0` disables the slicing.
+        ///
+        /// It is not a global cap: every partition streams its own batches, and a
+        /// pipeline typically holds two or three of them at once (the one being
+        /// built, the one the consumer is working on, and whatever a downstream
+        /// operator buffers), so the loaded pixels in flight across a query are
+        /// roughly `target_partitions × 3 × max_batch_bytes`.
+        ///
+        /// The default is 256 MiB. When a memory limit is configured,
+        /// `SedonaContext` derives a lower default at session construction:
+        /// `min(256 MiB, max(16 MiB, (memory_limit / target_partitions) / 8))`,
+        /// i.e. one eighth of each partition's share of the limit, floored at
+        /// 16 MiB. For example:
+        ///
+        /// | memory limit | target_partitions | per-partition share | budget  |
+        /// |--------------|-------------------|---------------------|---------|
+        /// | none         | any               | —                   | 256 MiB |
+        /// | 16 GiB       | 8                 | 2 GiB               | 256 MiB |
+        /// | 16 GiB       | 16                | 1 GiB               | 128 MiB |
+        /// | 16 GiB       | 64                | 256 MiB             | 32 MiB  |
+        /// | 2 GiB        | 16                | 128 MiB             | 16 MiB  |
+        ///
+        /// A `SET sedona.raster.max_batch_bytes = …` after connecting overrides
+        /// whichever default was derived.
+        pub max_batch_bytes: usize, default = DEFAULT_RASTER_MAX_BATCH_BYTES
     }
 }
 
