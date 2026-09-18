@@ -38,6 +38,7 @@ async-trait = { workspace = true }
 datafusion-common = { workspace = true }
 futures = { workspace = true }
 log = { workspace = true }
+lru = { workspace = true }
 object_store = { workspace = true, features = ["aws", "fs", "http"] }
 sedona-common = { workspace = true }
 sedona-raster = { workspace = true }
@@ -50,9 +51,14 @@ zarrs = { workspace = true, features = ["async", "gzip", "zlib", "zstd", "blosc"
 zarrs_object_store = { workspace = true }
 
 [dev-dependencies]
+criterion = { workspace = true }
 object_store = { workspace = true, features = ["aws", "http"] }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 # Test fixtures write Zarr groups to a temp dir; the loader itself
 # reads everything through object_store, so this is dev-only.
 zarrs_filesystem = { workspace = true }
+
+[[bench]]
+name = "zarr_loader"
+harness = false

@@ -35,5 +35,8 @@ mod raster_loader;
 mod source_uri;
 
 pub use loader::ZarrChunkReader;
-pub use raster_loader::{ZARR_FORMAT, ZarrLoader};
+pub use raster_loader::{
+    DEFAULT_ARRAY_HANDLE_CAPACITY, DEFAULT_ARRAY_HANDLE_TTL, DEFAULT_LOAD_CONCURRENCY, HandleStats,
+    ZARR_FORMAT, ZarrLoader,
+};
 pub use source_uri::{object_store_for_uri, open_storage_from_uri};
