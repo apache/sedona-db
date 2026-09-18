@@ -371,3 +371,93 @@ def test_sql_text_smoke(con, tmp_path):
         params=(str(path), GEOM_RECT),
     ).to_arrow_table()
     assert everything["r"][0].as_py()["count"] == expected["count"]
+
+
+def _register_zonal_join_views(con, tmp_path):
+    """Views for join tests: `zonal_dem` (one materialised raster row) and
+    `zonal_zones` (three polygons). The rect selects pixels; the sliver
+    intersects the raster but covers no pixel centre (count 0); the disjoint
+    zone never intersects. Returns the raster band for the numpy reference."""
+    path, band = fixture_raster(tmp_path)
+    con.create_data_frame(
+        con.sql("SELECT RS_FromPath($1) AS rast", params=(str(path),)).to_arrow_table()
+    ).to_view("zonal_dem", overwrite=True)
+    zones = con.create_data_frame(
+        pa.table(
+            {
+                "name": ["rect", "sliver", "disjoint"],
+                "wkt": [GEOM_RECT, GEOM_SLIVER, GEOM_DISJOINT],
+            }
+        )
+    )
+    zones.select(
+        name=zones.name, geometry=con.funcs.st_geomfromtext(zones.wkt)
+    ).to_view("zonal_zones", overwrite=True)
+    return band
+
+
+@pytest.mark.parametrize("join", ["JOIN", "LEFT JOIN"])
+def test_where_on_struct_field_over_a_join(con, tmp_path, join):
+    """apache/sedona-db#1265: a WHERE on a field of the struct RS_ZonalStatsAll
+    returns, over a join, used to fail with 'async functions should not be
+    called directly'. DataFusion pushes the predicate into an inner join's
+    filter, which the join evaluates synchronously, so the async
+    RS_EnsureLoaded the planner injects around the raster argument was never
+    hoisted. Over an outer join the predicate stays above the join and always
+    worked. Filtering in SQL must match filtering the unfiltered result."""
+    band = _register_zonal_join_views(con, tmp_path)
+    inner = (
+        "SELECT z.name, RS_ZonalStatsAll(d.rast, z.geometry) AS s "
+        f"FROM zonal_zones z {join} zonal_dem d ON RS_Intersects(d.rast, z.geometry)"
+    )
+    expected = numpy_reference(band, GEOM_RECT, all_touched=False, exclude_no_data=True)
+
+    unfiltered = con.sql(
+        f"SELECT name, s.count AS count FROM ({inner}) ORDER BY name"
+    ).to_arrow_table()
+    rows = list(zip(unfiltered["name"].to_pylist(), unfiltered["count"].to_pylist()))
+    joined = [("rect", expected["count"]), ("sliver", 0)]
+    assert rows == ([("disjoint", None)] if join == "LEFT JOIN" else []) + joined
+
+    filtered = con.sql(
+        f"SELECT name, s.count AS count FROM ({inner}) WHERE s.count > 0 ORDER BY name"
+    ).to_arrow_table()
+    assert list(zip(filtered["name"].to_pylist(), filtered["count"].to_pylist())) == [
+        ("rect", expected["count"])
+    ]
+
+
+@pytest.mark.parametrize(
+    "join",
+    [
+        "JOIN",
+        pytest.param(
+            "LEFT JOIN",
+            marks=pytest.mark.xfail(
+                strict=True,
+                raises=Exception,
+                reason="an async call in an outer join's ON clause is evaluated "
+                "synchronously by the join; hoisting it would change which rows "
+                "are null-extended (apache/datafusion#16520, 'Join expression')",
+            ),
+        ),
+    ],
+)
+def test_async_call_in_join_on_clause(con, tmp_path, join):
+    """An RS_ZonalStatsAll call written directly in the ON clause. For an inner
+    join it is a post-join predicate and is planned above the join; for an
+    outer join it must stay in the join and is unsupported for now."""
+    _register_zonal_join_views(con, tmp_path)
+
+    matched = con.sql(
+        "SELECT z.name, d.rast IS NOT NULL AS matched "
+        f"FROM zonal_zones z {join} zonal_dem d "
+        "ON RS_Intersects(d.rast, z.geometry) "
+        "AND RS_ZonalStatsAll(d.rast, z.geometry)['count'] > 0 "
+        "ORDER BY name"
+    ).to_arrow_table()
+    rows = list(zip(matched["name"].to_pylist(), matched["matched"].to_pylist()))
+    if join == "LEFT JOIN":
+        assert rows == [("disjoint", False), ("rect", True), ("sliver", False)]
+    else:
+        assert rows == [("rect", True)]
