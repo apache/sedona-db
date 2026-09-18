@@ -293,7 +293,7 @@ impl Accumulator for ItemCrsAccumulator {
         // If the output type is not geometry or geography we can just return it
         if !matches!(
             self.item_output_type,
-            SedonaType::Wkb(_, _) | SedonaType::WkbView(_, _)
+            SedonaType::Wkb(_, _) | SedonaType::WkbLarge(_, _) | SedonaType::WkbView(_, _)
         ) {
             return Ok(inner_result);
         }
@@ -579,6 +579,7 @@ pub fn parse_item_crs_arg_type_strip_crs(
 ) -> Result<(SedonaType, Option<SedonaType>)> {
     match sedona_type {
         SedonaType::Wkb(edges, _) => Ok((SedonaType::Wkb(*edges, None), None)),
+        SedonaType::WkbLarge(edges, _) => Ok((SedonaType::WkbLarge(*edges, None), None)),
         SedonaType::WkbView(edges, _) => Ok((SedonaType::WkbView(*edges, None), None)),
         SedonaType::Arrow(DataType::Struct(fields)) if sedona_type.is_item_crs() => {
             let item = SedonaType::from_storage_field(&fields[0])?;
@@ -624,7 +625,7 @@ pub fn parse_item_crs_arg(
     }
 
     match item_type {
-        SedonaType::Wkb(_, crs) | SedonaType::WkbView(_, crs) => {
+        SedonaType::Wkb(_, crs) | SedonaType::WkbLarge(_, crs) | SedonaType::WkbView(_, crs) => {
             // Store the round-trippable definition (the item-level CRS column is
             // read back through deserialize_crs), preserving a full PROJJSON/WKT
             // rather than collapsing it to its embedded authority code.

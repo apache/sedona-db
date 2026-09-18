@@ -106,7 +106,7 @@ impl RsFromGDALRaster {
 
     /// Decode each input row into `builder`: a NULL row appends a NULL raster, a
     /// non-null row is decoded to an in-db raster. Generic over the binary array
-    /// flavour so `Binary` and `BinaryView` iterate through the same path.
+    /// flavour so `Binary`, `LargeBinary`, and `BinaryView` iterate through the same path.
     fn append_rows<'a>(
         gdal: &Gdal,
         rows: impl Iterator<Item = Option<&'a [u8]>>,
@@ -168,20 +168,23 @@ impl SedonaScalarKernel for RsFromGDALRaster {
             };
 
             // Decode every row into one raster array. The binary matcher accepts
-            // both `Binary` and `BinaryView` (`RS_AsGeoTiff` produces the latter),
-            // so read each flavour directly rather than narrowing `BinaryView`
-            // offsets into `Binary`'s i32 range.
+            // `Binary`, `LargeBinary`, and `BinaryView` (`RS_AsGeoTiff` produces
+            // the latter), so read each flavour directly rather than narrowing
+            // i64 or view offsets into `Binary`'s i32 range.
             let mut builder = RasterBuilder::new(content_array.len());
             match content_array.data_type() {
                 DataType::Binary => {
                     Self::append_rows(gdal, content_array.as_binary::<i32>().iter(), &mut builder)?
+                }
+                DataType::LargeBinary => {
+                    Self::append_rows(gdal, content_array.as_binary::<i64>().iter(), &mut builder)?
                 }
                 DataType::BinaryView => {
                     Self::append_rows(gdal, content_array.as_binary_view().iter(), &mut builder)?
                 }
                 other => {
                     return sedona_internal_err!(
-                        "RS_FromGDALRaster expected Binary or BinaryView content, got {other:?}"
+                        "RS_FromGDALRaster expected Binary, LargeBinary, or BinaryView content, got {other:?}"
                     );
                 }
             }
@@ -200,7 +203,7 @@ impl SedonaScalarKernel for RsFromGDALRaster {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::{ArrayRef, BinaryArray, BinaryViewArray};
+    use arrow_array::{ArrayRef, BinaryArray, BinaryViewArray, LargeBinaryArray};
     use sedona_gdal::raster::types::Buffer;
     use sedona_raster::array::RasterStructArray;
     use sedona_schema::datatypes::RASTER;
@@ -292,6 +295,13 @@ mod tests {
         )
     }
 
+    fn from_gdal_tester_large_binary() -> ScalarUdfTester {
+        ScalarUdfTester::new(
+            rs_from_gdal_raster_udf().into(),
+            vec![SedonaType::Arrow(DataType::LargeBinary)],
+        )
+    }
+
     /// The single-band fixture's declarative expectation, derived from the
     /// fixture's construction: 4x4 UInt8 spanning the bbox (0, 0)-(4, 4)
     /// (north-up unit pixels), sequential values 0..16, no nodata, in-db.
@@ -370,6 +380,16 @@ mod tests {
         let (bytes, crs) = with_gdal(|gdal| Ok(make_geotiff_fixture(gdal))).unwrap();
         let input: ArrayRef = Arc::new(BinaryViewArray::from(vec![Some(bytes.as_slice())]));
         let result = from_gdal_tester_binary_view()
+            .invoke_arrays(vec![input])
+            .unwrap();
+        assert_rasters_equal(&result, &[Some(single_band_spec(crs.as_deref()))]);
+    }
+
+    #[test]
+    fn from_gdal_raster_decodes_large_binary_input() {
+        let (bytes, crs) = with_gdal(|gdal| Ok(make_geotiff_fixture(gdal))).unwrap();
+        let input: ArrayRef = Arc::new(LargeBinaryArray::from(vec![Some(bytes.as_slice())]));
+        let result = from_gdal_tester_large_binary()
             .invoke_arrays(vec![input])
             .unwrap();
         assert_rasters_equal(&result, &[Some(single_band_spec(crs.as_deref()))]);

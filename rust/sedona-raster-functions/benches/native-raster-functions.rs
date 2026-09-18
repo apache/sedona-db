@@ -49,10 +49,15 @@ impl SedonaScalarKernel for SDApplyDefaultCRS {
             SedonaType::Wkb(edges, crs) if crs.is_none() => {
                 Ok(Some(SedonaType::Wkb(*edges, self.crs.clone())))
             }
+            SedonaType::WkbLarge(edges, crs) if crs.is_none() => {
+                Ok(Some(SedonaType::WkbLarge(*edges, self.crs.clone())))
+            }
             SedonaType::WkbView(edges, crs) if crs.is_none() => {
                 Ok(Some(SedonaType::WkbView(*edges, self.crs.clone())))
             }
-            SedonaType::Wkb(..) | SedonaType::WkbView(..) => Ok(Some(args[0].clone())),
+            SedonaType::Wkb(..) | SedonaType::WkbLarge(..) | SedonaType::WkbView(..) => {
+                Ok(Some(args[0].clone()))
+            }
             _ => Ok(None),
         }
     }

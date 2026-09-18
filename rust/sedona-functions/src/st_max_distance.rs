@@ -172,7 +172,9 @@ mod tests {
     use arrow_array::{ArrayRef, create_array as arrow_array};
     use datafusion_common::ScalarValue;
     use rstest::rstest;
-    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{
+        WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS, WKB_LARGE_GEOMETRY, WKB_VIEW_GEOMETRY,
+    };
     use sedona_testing::compare::assert_array_equal;
     use sedona_testing::create::create_array;
     use sedona_testing::testers::ScalarUdfTester;
@@ -180,7 +182,7 @@ mod tests {
     use super::*;
 
     #[rstest]
-    fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+    fn udf(#[values(WKB_GEOMETRY, WKB_LARGE_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
         let tester = ScalarUdfTester::new(
             st_max_distance_udf().into(),
             vec![sedona_type.clone(), sedona_type],

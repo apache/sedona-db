@@ -441,7 +441,9 @@ impl SpatialFilterFactory {
         };
 
         match sedona_type {
-            SedonaType::Wkb(edges, _) | SedonaType::WkbView(edges, _) => {
+            SedonaType::Wkb(edges, _)
+            | SedonaType::WkbLarge(edges, _)
+            | SedonaType::WkbView(edges, _) => {
                 self.bounder_factory.bounder_for_edge_type(edges).is_some()
             }
             _ => false,
@@ -456,7 +458,9 @@ impl SpatialFilterFactory {
         let sedona_type = SedonaType::from_storage_field(&literal_field)?;
 
         let edges = match sedona_type {
-            SedonaType::Wkb(edges, _) | SedonaType::WkbView(edges, _) => edges,
+            SedonaType::Wkb(edges, _)
+            | SedonaType::WkbLarge(edges, _)
+            | SedonaType::WkbView(edges, _) => edges,
             _ => {
                 return sedona_internal_err!(
                     "Unexpected scalar type in filter expression ({sedona_type:?})"
@@ -469,7 +473,9 @@ impl SpatialFilterFactory {
         };
 
         let wkb_bytes = match literal.value() {
-            ScalarValue::Binary(maybe_vec) | ScalarValue::BinaryView(maybe_vec) => {
+            ScalarValue::Binary(maybe_vec)
+            | ScalarValue::LargeBinary(maybe_vec)
+            | ScalarValue::BinaryView(maybe_vec) => {
                 if let Some(vec) = maybe_vec {
                     vec
                 } else {

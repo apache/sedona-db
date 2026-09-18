@@ -136,7 +136,7 @@ mod tests {
     use datafusion_common::ScalarValue;
     use datafusion_expr::{ColumnarValue, ScalarUDF};
     use rstest::rstest;
-    use sedona_schema::datatypes::{WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{WKB_GEOMETRY_ITEM_CRS, WKB_LARGE_GEOMETRY, WKB_VIEW_GEOMETRY};
     use sedona_testing::{
         compare::assert_array_equal, create::create_array, create::create_scalar,
         testers::ScalarUdfTester,
@@ -152,7 +152,9 @@ mod tests {
     }
 
     #[rstest]
-    fn udf_2d(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+    fn udf_2d(
+        #[values(WKB_GEOMETRY, WKB_LARGE_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+    ) {
         let tester_2d = ScalarUdfTester::new(
             st_affine_udf().into(),
             vec![
@@ -258,7 +260,9 @@ mod tests {
     }
 
     #[rstest]
-    fn udf_3d(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+    fn udf_3d(
+        #[values(WKB_GEOMETRY, WKB_LARGE_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+    ) {
         let tester_3d = ScalarUdfTester::new(
             st_affine_udf().into(),
             vec![

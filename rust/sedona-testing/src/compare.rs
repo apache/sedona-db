@@ -19,7 +19,7 @@ use std::iter::zip;
 use arrow_array::{ArrayRef, StructArray};
 use arrow_schema::DataType;
 use datafusion_common::{
-    cast::{as_binary_array, as_binary_view_array},
+    cast::{as_binary_array, as_binary_view_array, as_large_binary_array},
     ScalarValue,
 };
 use datafusion_expr::ColumnarValue;
@@ -100,6 +100,12 @@ pub fn assert_array_equal(actual: &ArrayRef, expected: &ArrayRef) {
                 as_binary_array(&expected).unwrap(),
             );
         }
+        (SedonaType::WkbLarge(_, _), SedonaType::WkbLarge(_, _)) => {
+            assert_wkb_sequences_equal(
+                as_large_binary_array(&actual).unwrap(),
+                as_large_binary_array(&expected).unwrap(),
+            );
+        }
         (SedonaType::WkbView(_, _), SedonaType::WkbView(_, _)) => {
             assert_wkb_sequences_equal(
                 as_binary_view_array(&actual).unwrap(),
@@ -125,7 +131,9 @@ pub fn assert_scalar_wkb_bounds_approx_equal(
     epsilon: f64,
 ) {
     let wkb_bytes = match actual {
-        ScalarValue::Binary(Some(bytes)) | ScalarValue::BinaryView(Some(bytes)) => bytes.clone(),
+        ScalarValue::Binary(Some(bytes))
+        | ScalarValue::LargeBinary(Some(bytes))
+        | ScalarValue::BinaryView(Some(bytes)) => bytes.clone(),
         ScalarValue::Struct(struct_array) => {
             // Handle ITEM_CRS struct: extract the "item" field
             let item_col = struct_array
@@ -134,7 +142,9 @@ pub fn assert_scalar_wkb_bounds_approx_equal(
             match ScalarValue::try_from_array(item_col, 0)
                 .expect("Failed to extract scalar from struct")
             {
-                ScalarValue::Binary(Some(bytes)) | ScalarValue::BinaryView(Some(bytes)) => bytes,
+                ScalarValue::Binary(Some(bytes))
+                | ScalarValue::LargeBinary(Some(bytes))
+                | ScalarValue::BinaryView(Some(bytes)) => bytes,
                 other => panic!("Expected binary in struct 'item' field, got {other:?}"),
             }
         }
@@ -222,6 +232,7 @@ pub fn assert_scalar_equal(actual: &ScalarValue, expected: &ScalarValue) {
             }
         }
         (SedonaType::Wkb(_, _), SedonaType::Wkb(_, _))
+        | (SedonaType::WkbLarge(_, _), SedonaType::WkbLarge(_, _))
         | (SedonaType::WkbView(_, _), SedonaType::WkbView(_, _)) => {
             assert_wkb_scalar_equal(actual, expected, false);
         }
@@ -284,6 +295,10 @@ fn assert_wkb_scalar_equal(
 ) {
     match (actual, expected) {
         (ScalarValue::Binary(maybe_actual_wkb), ScalarValue::Binary(maybe_expected_wkb))
+        | (
+            ScalarValue::LargeBinary(maybe_actual_wkb),
+            ScalarValue::LargeBinary(maybe_expected_wkb),
+        )
         | (
             ScalarValue::BinaryView(maybe_actual_wkb),
             ScalarValue::BinaryView(maybe_expected_wkb),

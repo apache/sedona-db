@@ -268,6 +268,7 @@ fn determine_return_type(
 
             match item_type {
                 SedonaType::Wkb(edges, _) => Ok(Some(SedonaType::Wkb(edges, new_crs))),
+                SedonaType::WkbLarge(edges, _) => Ok(Some(SedonaType::WkbLarge(edges, new_crs))),
                 SedonaType::WkbView(edges, _) => Ok(Some(SedonaType::WkbView(edges, new_crs))),
                 _ => sedona_internal_err!("Unexpected argument types: {}, {}", args[0], args[1]),
             }
@@ -345,6 +346,7 @@ impl SedonaScalarKernel for SRIDifiedKernel {
 
             match &mut inner_result {
                 SedonaType::Wkb(_, crs) => *crs = new_crs,
+                SedonaType::WkbLarge(_, crs) => *crs = new_crs,
                 SedonaType::WkbView(_, crs) => *crs = new_crs,
                 _ => {
                     return sedona_internal_err!("Return type must be Wkb or WkbView");
@@ -358,7 +360,9 @@ impl SedonaScalarKernel for SRIDifiedKernel {
             // Assert that the output type had a Crs of None. If the inner kernel returned
             // a specific output CRS it is likely that the SRIDified kernel is not appropriate.
             match &inner_result {
-                SedonaType::Wkb(_, crs) | SedonaType::WkbView(_, crs) => {
+                SedonaType::Wkb(_, crs)
+                | SedonaType::WkbLarge(_, crs)
+                | SedonaType::WkbView(_, crs) => {
                     if crs.is_some() {
                         return sedona_internal_err!(
                             "Return type of SRIDifiedKernel inner specified an explicit CRS"
@@ -553,7 +557,9 @@ pub fn validate_crs(
 /// CRS).
 pub fn validate_crs_for_type(crs: &Crs, sedona_type: &SedonaType) -> Result<()> {
     let edges = match sedona_type {
-        SedonaType::Wkb(edges, _) | SedonaType::WkbView(edges, _) => edges,
+        SedonaType::Wkb(edges, _)
+        | SedonaType::WkbLarge(edges, _)
+        | SedonaType::WkbView(edges, _) => edges,
         _ => {
             return sedona_internal_err!(
                 "Non-geometry type in CRS--type validation: {sedona_type}"
@@ -578,7 +584,9 @@ pub fn validate_crs_for_type(crs: &Crs, sedona_type: &SedonaType) -> Result<()> 
 /// target types are valid.
 pub fn validate_crs_array_for_type(crs_array: &ArrayRef, sedona_type: &SedonaType) -> Result<()> {
     let edges = match sedona_type {
-        SedonaType::Wkb(edges, _) | SedonaType::WkbView(edges, _) => edges,
+        SedonaType::Wkb(edges, _)
+        | SedonaType::WkbLarge(edges, _)
+        | SedonaType::WkbView(edges, _) => edges,
         _ => {
             return sedona_internal_err!(
                 "Non-geometry type in CRS--type validation: {sedona_type}"

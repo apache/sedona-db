@@ -83,6 +83,9 @@ impl SedonaScalarKernel for STToGeomGeog {
         let input_type = &args[0];
         let (output_type, crs) = match input_type {
             SedonaType::Wkb(_, crs) => (SedonaType::Wkb(self.target_edges, crs.clone()), crs),
+            SedonaType::WkbLarge(_, crs) => {
+                (SedonaType::WkbLarge(self.target_edges, crs.clone()), crs)
+            }
             SedonaType::WkbView(_, crs) => {
                 (SedonaType::WkbView(self.target_edges, crs.clone()), crs)
             }
@@ -128,7 +131,7 @@ mod tests {
         crs::{deserialize_crs, lnglat},
         datatypes::{
             WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS,
-            WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY,
+            WKB_LARGE_GEOGRAPHY, WKB_LARGE_GEOMETRY, WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY,
         },
     };
     use sedona_testing::testers::ScalarUdfTester;
@@ -149,7 +152,7 @@ mod tests {
 
     #[rstest]
     fn st_togeometry_from_geometry(
-        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+        #[values(WKB_GEOMETRY, WKB_LARGE_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
     ) {
         let tester = ScalarUdfTester::new(st_togeometry_udf().into(), vec![sedona_type.clone()]);
 
@@ -165,13 +168,14 @@ mod tests {
 
     #[rstest]
     fn st_togeometry_from_geography(
-        #[values(WKB_GEOGRAPHY, WKB_VIEW_GEOGRAPHY)] sedona_type: SedonaType,
+        #[values(WKB_GEOGRAPHY, WKB_LARGE_GEOGRAPHY, WKB_VIEW_GEOGRAPHY)] sedona_type: SedonaType,
     ) {
         let tester = ScalarUdfTester::new(st_togeometry_udf().into(), vec![sedona_type.clone()]);
 
         // Geography input -> Geometry output (edges changed)
         let expected_type = match sedona_type {
             SedonaType::Wkb(_, _) => WKB_GEOMETRY,
+            SedonaType::WkbLarge(_, _) => WKB_LARGE_GEOMETRY,
             SedonaType::WkbView(_, _) => WKB_VIEW_GEOMETRY,
             _ => panic!("Unexpected type"),
         };
@@ -183,7 +187,7 @@ mod tests {
 
     #[rstest]
     fn st_togeography_from_geography(
-        #[values(WKB_GEOGRAPHY, WKB_VIEW_GEOGRAPHY)] sedona_type: SedonaType,
+        #[values(WKB_GEOGRAPHY, WKB_LARGE_GEOGRAPHY, WKB_VIEW_GEOGRAPHY)] sedona_type: SedonaType,
     ) {
         let tester = ScalarUdfTester::new(st_togeography_udf().into(), vec![sedona_type.clone()]);
 
@@ -199,13 +203,14 @@ mod tests {
 
     #[rstest]
     fn st_togeography_from_geometry(
-        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+        #[values(WKB_GEOMETRY, WKB_LARGE_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
     ) {
         let tester = ScalarUdfTester::new(st_togeography_udf().into(), vec![sedona_type.clone()]);
 
         // Geometry input -> Geography output (edges changed)
         let expected_type = match sedona_type {
             SedonaType::Wkb(_, _) => WKB_GEOGRAPHY,
+            SedonaType::WkbLarge(_, _) => WKB_LARGE_GEOGRAPHY,
             SedonaType::WkbView(_, _) => WKB_VIEW_GEOGRAPHY,
             _ => panic!("Unexpected type"),
         };
@@ -262,7 +267,9 @@ mod tests {
         assert!(
             matches!(
                 item_type,
-                SedonaType::Wkb(Edges::Planar, _) | SedonaType::WkbView(Edges::Planar, _)
+                SedonaType::Wkb(Edges::Planar, _)
+                    | SedonaType::WkbLarge(Edges::Planar, _)
+                    | SedonaType::WkbView(Edges::Planar, _)
             ),
             "Expected Planar edges, got {:?}",
             item_type
@@ -283,7 +290,9 @@ mod tests {
         assert!(
             matches!(
                 item_type,
-                SedonaType::Wkb(Edges::Spherical, _) | SedonaType::WkbView(Edges::Spherical, _)
+                SedonaType::Wkb(Edges::Spherical, _)
+                    | SedonaType::WkbLarge(Edges::Spherical, _)
+                    | SedonaType::WkbView(Edges::Spherical, _)
             ),
             "Expected Spherical edges, got {:?}",
             item_type

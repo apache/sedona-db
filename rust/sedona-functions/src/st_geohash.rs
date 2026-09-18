@@ -191,7 +191,9 @@ fn bounder_for_arg_type(
     config_options: Option<&ConfigOptions>,
 ) -> Result<Box<dyn WkbBounder2D>> {
     let edges = match arg_type {
-        SedonaType::Wkb(edges, _) | SedonaType::WkbView(edges, _) => *edges,
+        SedonaType::Wkb(edges, _)
+        | SedonaType::WkbLarge(edges, _)
+        | SedonaType::WkbView(edges, _) => *edges,
         // A literal NULL argument (e.g. ST_GeoHash(NULL, 10)) keeps its Null
         // type: every row is null, so the bounder is never used and the choice
         // of edge type doesn't matter.
@@ -238,7 +240,9 @@ fn bounder_for_arg_type(
 /// be range-checked directly.
 fn raw_bounder_for_arg_type(arg_type: &SedonaType) -> Option<Box<dyn WkbBounder2D>> {
     let edges = match arg_type {
-        SedonaType::Wkb(edges, _) | SedonaType::WkbView(edges, _) => *edges,
+        SedonaType::Wkb(edges, _)
+        | SedonaType::WkbLarge(edges, _)
+        | SedonaType::WkbView(edges, _) => *edges,
         _ => return None,
     };
 
@@ -447,7 +451,9 @@ enum LongitudeWrap {
 /// [`ensure_wgs84_crs`], so it does not wrap either.
 fn longitude_wrap_for_arg_type(arg_type: &SedonaType) -> LongitudeWrap {
     let edges = match arg_type {
-        SedonaType::Wkb(edges, _) | SedonaType::WkbView(edges, _) => *edges,
+        SedonaType::Wkb(edges, _)
+        | SedonaType::WkbLarge(edges, _)
+        | SedonaType::WkbView(edges, _) => *edges,
         // A literal NULL argument: every row is null, so this is never consulted.
         _ => return LongitudeWrap::Disabled,
     };
@@ -946,7 +952,9 @@ mod tests {
     #[rstest]
     fn wgs84_crs_is_required(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
         let edges = match &sedona_type {
-            SedonaType::Wkb(edges, _) | SedonaType::WkbView(edges, _) => *edges,
+            SedonaType::Wkb(edges, _)
+            | SedonaType::WkbLarge(edges, _)
+            | SedonaType::WkbView(edges, _) => *edges,
             _ => unreachable!(),
         };
 

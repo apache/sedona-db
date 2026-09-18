@@ -166,9 +166,9 @@ pub fn create_geoparquet_writer_physical_plan(
             let mut column_metadata = GeoParquetColumnMetadata::default();
 
             let (edge_type, crs) = match sedona_type {
-                SedonaType::Wkb(edge_type, crs) | SedonaType::WkbView(edge_type, crs) => {
-                    (edge_type, crs)
-                }
+                SedonaType::Wkb(edge_type, crs)
+                | SedonaType::WkbLarge(edge_type, crs)
+                | SedonaType::WkbView(edge_type, crs) => (edge_type, crs),
                 _ => return sedona_internal_err!("Unexpected type: {sedona_type}"),
             };
 
@@ -648,7 +648,9 @@ fn normalize_field_for_geoparquet(
             Ok(Arc::new(field.as_ref().clone().with_data_type(new_type)))
         }
         SedonaType::Arrow(_) => Ok(field.clone()),
-        SedonaType::Wkb(edges, crs) | SedonaType::WkbView(edges, crs) => match version {
+        SedonaType::Wkb(edges, crs)
+        | SedonaType::WkbLarge(edges, crs)
+        | SedonaType::WkbView(edges, crs) => match version {
             // For GeoParquet 1.0 and 1.1, strip the metadata (we write Binary storage)
             GeoParquetVersion::V1_0 | GeoParquetVersion::V1_1 => Ok(Arc::new(
                 field.as_ref().clone().with_metadata(HashMap::new()),

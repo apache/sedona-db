@@ -18,7 +18,9 @@ use std::iter::zip;
 
 use arrow_array::ArrayRef;
 use arrow_schema::DataType;
-use datafusion_common::cast::{as_binary_array, as_binary_view_array, as_struct_array};
+use datafusion_common::cast::{
+    as_binary_array, as_binary_view_array, as_large_binary_array, as_struct_array,
+};
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::error::Result;
 use datafusion_common::{DataFusionError, ScalarValue};
@@ -35,7 +37,9 @@ pub(crate) fn bounder_for_arg_type(
     function_name: &str,
 ) -> Result<Box<dyn WkbBounder2D>> {
     let edges = match arg_type {
-        SedonaType::Wkb(edges, _) | SedonaType::WkbView(edges, _) => *edges,
+        SedonaType::Wkb(edges, _)
+        | SedonaType::WkbLarge(edges, _)
+        | SedonaType::WkbView(edges, _) => *edges,
         SedonaType::Arrow(DataType::Null) => Edges::Planar,
         _ => return sedona_internal_err!("Expected geometry or geography, got {arg_type:?}"),
     };
@@ -124,9 +128,10 @@ impl<'a, 'b, Factory0: GeometryFactory, Factory1: GeometryFactory>
     /// Execute a function by iterating over [Wkb] scalars in the first argument
     ///
     /// Provides a mechanism to iterate over a geometry array by converting each to
-    /// a [Wkb] scalar. For [SedonaType::Wkb] and [SedonaType::WkbView] arrays, this
-    /// is the conversion that would normally happen. For other future supported geometry
-    /// array types, this may incur a cast of item-wise conversion overhead.
+    /// a [Wkb] scalar. For [SedonaType::Wkb], [SedonaType::WkbLarge], and
+    /// [SedonaType::WkbView] arrays, this is the conversion that would normally happen.
+    /// For other future supported geometry array types, this may incur a cast of
+    /// item-wise conversion overhead.
     pub fn execute_wkb_void<F: FnMut(Option<&Factory0::Geom<'b>>) -> Result<()>>(
         &self,
         mut func: F,
@@ -150,9 +155,9 @@ impl<'a, 'b, Factory0: GeometryFactory, Factory1: GeometryFactory>
     /// first two arguments
     ///
     /// Provides a mechanism to iterate over two geometry arrays as pairs of [Wkb]
-    /// scalars. [SedonaType::Wkb] and [SedonaType::WkbView] arrays are iterated over
-    /// in place; however, future supported geometry array types may incur conversion
-    /// overhead.
+    /// scalars. [SedonaType::Wkb], [SedonaType::WkbLarge], and [SedonaType::WkbView]
+    /// arrays are iterated over in place; however, future supported geometry array types
+    /// may incur conversion overhead.
     pub fn execute_wkb_wkb_void<
         F: FnMut(Option<&Factory0::Geom<'b>>, Option<&Factory1::Geom<'b>>) -> Result<()>,
     >(
@@ -431,6 +436,7 @@ impl IterGeo for ArrayRef {
                 Ok(())
             }
             SedonaType::Wkb(_, _) => iter_wkb_binary(as_binary_array(self)?, func),
+            SedonaType::WkbLarge(_, _) => iter_wkb_binary(as_large_binary_array(self)?, func),
             SedonaType::WkbView(_, _) => iter_wkb_binary(as_binary_view_array(self)?, func),
             SedonaType::Arrow(DataType::Struct(fields)) if sedona_type.is_item_crs() => {
                 let struct_array = as_struct_array(self)?;
@@ -504,6 +510,41 @@ fn iter_wkb_wkb_array<
             factory1,
             as_binary_array(array0)?,
             as_binary_view_array(array1)?,
+            func,
+        ),
+        (SedonaType::Wkb(_, _), SedonaType::WkbLarge(_, _)) => iter_wkb_wkb_binary(
+            factory0,
+            factory1,
+            as_binary_array(array0)?,
+            as_large_binary_array(array1)?,
+            func,
+        ),
+        (SedonaType::WkbLarge(_, _), SedonaType::Wkb(_, _)) => iter_wkb_wkb_binary(
+            factory0,
+            factory1,
+            as_large_binary_array(array0)?,
+            as_binary_array(array1)?,
+            func,
+        ),
+        (SedonaType::WkbLarge(_, _), SedonaType::WkbLarge(_, _)) => iter_wkb_wkb_binary(
+            factory0,
+            factory1,
+            as_large_binary_array(array0)?,
+            as_large_binary_array(array1)?,
+            func,
+        ),
+        (SedonaType::WkbLarge(_, _), SedonaType::WkbView(_, _)) => iter_wkb_wkb_binary(
+            factory0,
+            factory1,
+            as_large_binary_array(array0)?,
+            as_binary_view_array(array1)?,
+            func,
+        ),
+        (SedonaType::WkbView(_, _), SedonaType::WkbLarge(_, _)) => iter_wkb_wkb_binary(
+            factory0,
+            factory1,
+            as_binary_view_array(array0)?,
+            as_large_binary_array(array1)?,
             func,
         ),
         (SedonaType::WkbView(_, _), SedonaType::Wkb(_, _)) => iter_wkb_wkb_binary(
@@ -585,7 +626,7 @@ mod tests {
     use datafusion_common::{cast::as_binary_view_array, scalar::ScalarValue};
     use datafusion_expr::ColumnarValue;
     use rstest::rstest;
-    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_LARGE_GEOMETRY, WKB_VIEW_GEOMETRY};
 
     const POINT: [u8; 21] = [
         0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x3f, 0x00, 0x00,
@@ -634,6 +675,22 @@ mod tests {
             .unwrap();
         assert_eq!(wkt_out, " 0: POINT(1 2) 1: None 2: POINT(1 2)");
 
+        let wkb_large_array_ref = ColumnarValue::Array(Arc::new(wkb_array.clone()))
+            .cast_to(&DataType::LargeBinary, None)
+            .unwrap()
+            .to_array(3)
+            .unwrap();
+        let mut wkt_out = String::new();
+        let mut i = 0;
+        wkb_large_array_ref
+            .iter_as_wkb(&WKB_LARGE_GEOMETRY, 3, |maybe_geom| {
+                write_to_test_output(&mut wkt_out, i, maybe_geom).unwrap();
+                i += 1;
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(wkt_out, " 0: POINT(1 2) 1: None 2: POINT(1 2)");
+
         let wkb_view_array_ref = ColumnarValue::Array(wkb_array_ref)
             .cast_to(&DataType::BinaryView, None)
             .unwrap()
@@ -665,8 +722,13 @@ mod tests {
     fn wkb_wkb_types(
         #[values(
             (WKB_GEOMETRY, WKB_GEOMETRY),
+            (WKB_GEOMETRY, WKB_LARGE_GEOMETRY),
             (WKB_GEOMETRY, WKB_VIEW_GEOMETRY),
+            (WKB_LARGE_GEOMETRY, WKB_GEOMETRY),
+            (WKB_LARGE_GEOMETRY, WKB_LARGE_GEOMETRY),
+            (WKB_LARGE_GEOMETRY, WKB_VIEW_GEOMETRY),
             (WKB_VIEW_GEOMETRY, WKB_GEOMETRY),
+            (WKB_VIEW_GEOMETRY, WKB_LARGE_GEOMETRY),
             (WKB_VIEW_GEOMETRY, WKB_VIEW_GEOMETRY))
         ]
         types: (SedonaType, SedonaType),

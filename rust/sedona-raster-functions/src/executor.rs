@@ -15,10 +15,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use arrow_array::{Array, ArrayRef, BinaryArray, BinaryViewArray, StringViewArray, StructArray};
+use arrow_array::{
+    Array, ArrayRef, BinaryArray, BinaryViewArray, LargeBinaryArray, StringViewArray, StructArray,
+};
 use arrow_schema::DataType;
 use datafusion_common::cast::{
-    as_binary_array, as_binary_view_array, as_string_view_array, as_struct_array,
+    as_binary_array, as_binary_view_array, as_large_binary_array, as_string_view_array,
+    as_struct_array,
 };
 use datafusion_common::error::Result;
 use datafusion_common::{ScalarValue, exec_err};
@@ -49,6 +52,7 @@ pub struct RasterExecutor<'a, 'b> {
 #[derive(Clone)]
 pub(crate) enum ItemWkbAccessor {
     Binary(BinaryArray),
+    LargeBinary(LargeBinaryArray),
     BinaryView(BinaryViewArray),
 }
 
@@ -57,6 +61,13 @@ impl ItemWkbAccessor {
     fn get(&self, i: usize) -> Option<&[u8]> {
         match self {
             Self::Binary(arr) => {
+                if arr.is_null(i) {
+                    None
+                } else {
+                    Some(arr.value(i))
+                }
+            }
+            Self::LargeBinary(arr) => {
                 if arr.is_null(i) {
                     None
                 } else {
@@ -461,7 +472,7 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
     /// Execute a function by iterating over rasters and a geometry in sync.
     ///
     /// The geometry argument may be:
-    /// - A WKB Binary or BinaryView array/scalar (with type-level CRS via [SedonaType])
+    /// - A WKB Binary, LargeBinary, or BinaryView array/scalar (with type-level CRS via [SedonaType])
     /// - An item-level CRS struct column: struct(item: wkb, crs: utf8view)
     ///
     /// The closure is invoked for each row with `(raster, wkb_bytes, crs_str)`.
@@ -559,11 +570,17 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
                         SedonaType::Wkb(_, _) => {
                             ItemWkbAccessor::Binary(as_binary_array(item_col)?.clone())
                         }
+                        SedonaType::WkbLarge(_, _) => {
+                            ItemWkbAccessor::LargeBinary(as_large_binary_array(item_col)?.clone())
+                        }
                         SedonaType::WkbView(_, _) => {
                             ItemWkbAccessor::BinaryView(as_binary_view_array(item_col)?.clone())
                         }
                         SedonaType::Arrow(DataType::Binary) => {
                             ItemWkbAccessor::Binary(as_binary_array(item_col)?.clone())
+                        }
+                        SedonaType::Arrow(DataType::LargeBinary) => {
+                            ItemWkbAccessor::LargeBinary(as_large_binary_array(item_col)?.clone())
                         }
                         SedonaType::Arrow(DataType::BinaryView) => {
                             ItemWkbAccessor::BinaryView(as_binary_view_array(item_col)?.clone())
@@ -592,11 +609,17 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
                         SedonaType::Wkb(_, _) => {
                             ItemWkbAccessor::Binary(as_binary_array(item_col)?.clone())
                         }
+                        SedonaType::WkbLarge(_, _) => {
+                            ItemWkbAccessor::LargeBinary(as_large_binary_array(item_col)?.clone())
+                        }
                         SedonaType::WkbView(_, _) => {
                             ItemWkbAccessor::BinaryView(as_binary_view_array(item_col)?.clone())
                         }
                         SedonaType::Arrow(DataType::Binary) => {
                             ItemWkbAccessor::Binary(as_binary_array(item_col)?.clone())
+                        }
+                        SedonaType::Arrow(DataType::LargeBinary) => {
+                            ItemWkbAccessor::LargeBinary(as_large_binary_array(item_col)?.clone())
                         }
                         SedonaType::Arrow(DataType::BinaryView) => {
                             ItemWkbAccessor::BinaryView(as_binary_view_array(item_col)?.clone())
@@ -628,6 +651,14 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
                     SedonaType::Wkb(_, _) | SedonaType::Arrow(DataType::Binary) => {
                         Ok(GeomWkbCrsAccessor::WkbArray {
                             wkb: ItemWkbAccessor::Binary(as_binary_array(array)?.clone()),
+                            static_crs,
+                        })
+                    }
+                    SedonaType::WkbLarge(_, _) | SedonaType::Arrow(DataType::LargeBinary) => {
+                        Ok(GeomWkbCrsAccessor::WkbArray {
+                            wkb: ItemWkbAccessor::LargeBinary(
+                                as_large_binary_array(array)?.clone(),
+                            ),
                             static_crs,
                         })
                     }
@@ -720,7 +751,7 @@ mod tests {
     use sedona_geometry::types::Edges;
     use sedona_raster::traits::RasterRef;
     use sedona_schema::crs::{deserialize_crs, lnglat};
-    use sedona_schema::datatypes::{RASTER, WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{RASTER, WKB_GEOMETRY, WKB_LARGE_GEOMETRY, WKB_VIEW_GEOMETRY};
     use sedona_testing::create::{create_array, create_array_item_crs};
     use sedona_testing::rasters::generate_test_rasters;
     use std::sync::Arc;
@@ -865,6 +896,57 @@ mod tests {
 
         assert_eq!(out_has_wkb, vec![true, false]);
         assert_eq!(out_crs_matches, vec![Some(true), None]);
+    }
+
+    #[test]
+    fn test_raster_executor_execute_raster_wkb_crs_void_large_binary() {
+        let rasters = generate_test_rasters(2, None).unwrap();
+        let raster_args = ColumnarValue::Array(Arc::new(rasters));
+
+        let geom_type = SedonaType::WkbLarge(Edges::Planar, lnglat());
+        let geom_array = create_array(&[Some("POINT (0 0)"), None], &geom_type);
+        let args = [raster_args, ColumnarValue::Array(geom_array)];
+        let arg_types = vec![RASTER, geom_type];
+        let executor = RasterExecutor::new(&arg_types, &args);
+
+        let expected_crs = deserialize_crs("EPSG:4326").unwrap().unwrap();
+        let mut out = Vec::new();
+        executor
+            .execute_raster_wkb_crs_void(|_raster, wkb, crs| {
+                out.push((
+                    wkb.is_some(),
+                    crs.map(|c| c.crs_equals(expected_crs.as_ref())),
+                ));
+                Ok(())
+            })
+            .unwrap();
+
+        assert_eq!(out, vec![(true, Some(true)), (false, None)]);
+
+        let item_crs_type = SedonaType::new_item_crs(&WKB_LARGE_GEOMETRY).unwrap();
+        let item_crs_array = create_array_item_crs(
+            &[Some("POINT (0 0)"), Some("POINT (1 1)")],
+            [Some("EPSG:4326"), None],
+            &WKB_LARGE_GEOMETRY,
+        );
+        let args = [
+            ColumnarValue::Array(Arc::new(generate_test_rasters(2, None).unwrap())),
+            ColumnarValue::Array(item_crs_array),
+        ];
+        let arg_types = vec![RASTER, item_crs_type];
+        let executor = RasterExecutor::new(&arg_types, &args);
+        let expected_crs = deserialize_crs("EPSG:4326").unwrap().unwrap();
+        let mut out_crs = Vec::new();
+        executor
+            .execute_raster_wkb_crs_void(|_raster, wkb, crs| {
+                out_crs.push((
+                    wkb.is_some(),
+                    crs.map(|c| c.crs_equals(expected_crs.as_ref())),
+                ));
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(out_crs, vec![(true, Some(true)), (true, None)]);
     }
 
     #[test]

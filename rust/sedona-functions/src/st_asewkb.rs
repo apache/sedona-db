@@ -68,7 +68,9 @@ impl SedonaScalarKernel for STAsEWKB {
         );
 
         let maybe_srid = match &arg_types[0] {
-            SedonaType::Wkb(_, crs) | SedonaType::WkbView(_, crs) => match crs {
+            SedonaType::Wkb(_, crs)
+            | SedonaType::WkbLarge(_, crs)
+            | SedonaType::WkbView(_, crs) => match crs {
                 Some(crs) => match crs.srid()? {
                     Some(0) => None,
                     Some(srid) => Some(srid),

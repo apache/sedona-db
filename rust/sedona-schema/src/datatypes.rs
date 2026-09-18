@@ -33,6 +33,7 @@ use crate::raster::RasterSchema;
 pub enum SedonaType {
     Arrow(DataType),
     Wkb(Edges, Crs),
+    WkbLarge(Edges, Crs),
     WkbView(Edges, Crs),
     Raster,
     /// A column tagged with an Arrow `ARROW:extension:name` this crate
@@ -60,6 +61,11 @@ impl From<DataType> for SedonaType {
 /// matching (and `SedonaType::Wkb(...)` is verbose)
 pub const WKB_GEOMETRY: SedonaType = SedonaType::Wkb(Edges::Planar, Crs::None);
 
+/// Sentinel for [`SedonaType::WkbLarge`] with planar edges
+///
+/// See [`WKB_GEOMETRY`]
+pub const WKB_LARGE_GEOMETRY: SedonaType = SedonaType::WkbLarge(Edges::Planar, Crs::None);
+
 /// Sentinel for [`SedonaType::WkbView`] with planar edges
 ///
 /// See [`WKB_GEOMETRY`]
@@ -72,6 +78,11 @@ pub const WKB_VIEW_GEOMETRY: SedonaType = SedonaType::WkbView(Edges::Planar, Crs
 /// is likely more appropriate in many cases.
 pub const WKB_GEOGRAPHY: SedonaType = SedonaType::Wkb(Edges::Spherical, Crs::None);
 
+/// Sentinel for [`SedonaType::WkbLarge`] with spherical edges
+///
+/// See [`WKB_GEOGRAPHY`]
+pub const WKB_LARGE_GEOGRAPHY: SedonaType = SedonaType::WkbLarge(Edges::Spherical, Crs::None);
+
 /// Sentinel for [`SedonaType::WkbView`] with spherical edges
 ///
 /// See [`WKB_GEOGRAPHY`]
@@ -83,6 +94,12 @@ pub const WKB_VIEW_GEOGRAPHY: SedonaType = SedonaType::WkbView(Edges::Spherical,
 /// matching (and `SedonaType::Wkb(...)` is verbose)
 pub static WKB_GEOGRAPHY_WGS84: LazyLock<SedonaType> =
     LazyLock::new(|| SedonaType::Wkb(Edges::Spherical, lnglat()));
+
+/// Sentinel for [`SedonaType::WkbLarge`] with spherical edges and longitude, latitude CRS
+///
+/// See [`WKB_GEOGRAPHY_WGS84`]
+pub static WKB_LARGE_GEOGRAPHY_WGS84: LazyLock<SedonaType> =
+    LazyLock::new(|| SedonaType::WkbLarge(Edges::Spherical, lnglat()));
 
 /// Sentinel for [`SedonaType::WkbView`] with spherical edges and longitude, latitude CRS
 ///
@@ -98,6 +115,10 @@ pub const RASTER: SedonaType = SedonaType::Raster;
 pub static WKB_GEOMETRY_ITEM_CRS: LazyLock<SedonaType> =
     LazyLock::new(|| SedonaType::new_item_crs(&WKB_GEOMETRY).unwrap());
 
+/// Sentinel for [SedonaType::new_item_crs] containing [WKB_LARGE_GEOMETRY]
+pub static WKB_LARGE_GEOMETRY_ITEM_CRS: LazyLock<SedonaType> =
+    LazyLock::new(|| SedonaType::new_item_crs(&WKB_LARGE_GEOMETRY).unwrap());
+
 /// Sentinel for [SedonaType::new_item_crs] containing [WKB_VIEW_GEOMETRY]
 pub static WKB_VIEW_GEOMETRY_ITEM_CRS: LazyLock<SedonaType> =
     LazyLock::new(|| SedonaType::new_item_crs(&WKB_VIEW_GEOMETRY).unwrap());
@@ -105,6 +126,10 @@ pub static WKB_VIEW_GEOMETRY_ITEM_CRS: LazyLock<SedonaType> =
 /// Sentinel for [SedonaType::new_item_crs] containing [WKB_GEOGRAPHY]
 pub static WKB_GEOGRAPHY_ITEM_CRS: LazyLock<SedonaType> =
     LazyLock::new(|| SedonaType::new_item_crs(&WKB_GEOGRAPHY).unwrap());
+
+/// Sentinel for [SedonaType::new_item_crs] containing [WKB_LARGE_GEOGRAPHY]
+pub static WKB_LARGE_GEOGRAPHY_ITEM_CRS: LazyLock<SedonaType> =
+    LazyLock::new(|| SedonaType::new_item_crs(&WKB_LARGE_GEOGRAPHY).unwrap());
 
 /// Sentinel for [SedonaType::new_item_crs] containing [WKB_VIEW_GEOGRAPHY]
 pub static WKB_VIEW_GEOGRAPHY_ITEM_CRS: LazyLock<SedonaType> =
@@ -137,6 +162,7 @@ impl SedonaType {
     pub fn new_item_crs(item: &SedonaType) -> Result<SedonaType> {
         let item_sedona_type = match item {
             SedonaType::Wkb(edges, _) => SedonaType::Wkb(*edges, None),
+            SedonaType::WkbLarge(edges, _) => SedonaType::WkbLarge(*edges, None),
             SedonaType::WkbView(edges, _) => SedonaType::WkbView(*edges, None),
             _ => {
                 return sedona_internal_err!("Can't create item_crs from non-geo type");
@@ -205,6 +231,7 @@ impl SedonaType {
         match self {
             SedonaType::Arrow(data_type) => data_type,
             SedonaType::Wkb(_, _) => &DataType::Binary,
+            SedonaType::WkbLarge(_, _) => &DataType::LargeBinary,
             SedonaType::WkbView(_, _) => &DataType::BinaryView,
             SedonaType::Raster => &RASTER_DATATYPE,
             SedonaType::UnrecognizedExtension(ext) => &ext.storage_type,
@@ -219,7 +246,9 @@ impl SedonaType {
     pub fn extension_name(&self) -> Option<&str> {
         match self {
             SedonaType::Arrow(_) => None,
-            SedonaType::Wkb(_, _) | SedonaType::WkbView(_, _) => Some("geoarrow.wkb"),
+            SedonaType::Wkb(_, _) | SedonaType::WkbLarge(_, _) | SedonaType::WkbView(_, _) => {
+                Some("geoarrow.wkb")
+            }
             SedonaType::Raster => Some("sedona.raster"),
             SedonaType::UnrecognizedExtension(ext) => Some(&ext.extension_name),
         }
@@ -228,13 +257,13 @@ impl SedonaType {
     /// Construct the [`ExtensionType`] that represents this type, if any
     pub fn extension_type(&self) -> Option<ExtensionType> {
         match self {
-            SedonaType::Wkb(edges, crs) | SedonaType::WkbView(edges, crs) => {
-                Some(ExtensionType::new(
-                    self.extension_name().unwrap(),
-                    self.storage_type().clone(),
-                    Some(serialize_edges_and_crs(edges, crs)),
-                ))
-            }
+            SedonaType::Wkb(edges, crs)
+            | SedonaType::WkbLarge(edges, crs)
+            | SedonaType::WkbView(edges, crs) => Some(ExtensionType::new(
+                self.extension_name().unwrap(),
+                self.storage_type().clone(),
+                Some(serialize_edges_and_crs(edges, crs)),
+            )),
             SedonaType::Raster => Some(ExtensionType::new(
                 self.extension_name().unwrap(),
                 self.storage_type().clone(),
@@ -255,10 +284,12 @@ impl SedonaType {
     /// both Utf8 and Utf8View types render as "utf8").
     pub fn logical_type_name(&self) -> String {
         match self {
-            SedonaType::Wkb(Edges::Planar, _) | SedonaType::WkbView(Edges::Planar, _) => {
-                "geometry".to_string()
+            SedonaType::Wkb(Edges::Planar, _)
+            | SedonaType::WkbLarge(Edges::Planar, _)
+            | SedonaType::WkbView(Edges::Planar, _) => "geometry".to_string(),
+            SedonaType::Wkb(_, _) | SedonaType::WkbLarge(_, _) | SedonaType::WkbView(_, _) => {
+                "geography".to_string()
             }
-            SedonaType::Wkb(_, _) | SedonaType::WkbView(_, _) => "geography".to_string(),
             SedonaType::Raster => "raster".to_string(),
             SedonaType::UnrecognizedExtension(ext) => ext.extension_name.clone(),
             SedonaType::Arrow(data_type) => match data_type {
@@ -303,6 +334,9 @@ impl SedonaType {
                 data_type == other_data_type
             }
             (SedonaType::Wkb(edges, _), SedonaType::Wkb(other_edges, _)) => edges == other_edges,
+            (SedonaType::WkbLarge(edges, _), SedonaType::WkbLarge(other_edges, _)) => {
+                edges == other_edges
+            }
             (SedonaType::WkbView(edges, _), SedonaType::WkbView(other_edges, _)) => {
                 edges == other_edges
             }
@@ -315,7 +349,9 @@ impl SedonaType {
     /// Return the CRS associated with a geometry/geography type.
     pub fn crs(&self) -> &Crs {
         match self {
-            SedonaType::Wkb(_, crs) | SedonaType::WkbView(_, crs) => crs,
+            SedonaType::Wkb(_, crs)
+            | SedonaType::WkbLarge(_, crs)
+            | SedonaType::WkbView(_, crs) => crs,
             _ => &Crs::None,
         }
     }
@@ -347,6 +383,7 @@ impl Display for SedonaType {
         match self {
             SedonaType::Arrow(data_type) => Display::fmt(data_type, f),
             SedonaType::Wkb(edges, crs) => display_geometry("Wkb", edges, crs, f),
+            SedonaType::WkbLarge(edges, crs) => display_geometry("WkbLarge", edges, crs, f),
             SedonaType::WkbView(edges, crs) => display_geometry("WkbView", edges, crs, f),
             SedonaType::Raster => Display::fmt("Raster", f),
             SedonaType::UnrecognizedExtension(ext) => Display::fmt(&ext.extension_name, f),
@@ -388,9 +425,10 @@ fn display_geometry(
 fn sedona_type_wkb(edges: Edges, crs: Crs, storage_type: DataType) -> Result<SedonaType> {
     match storage_type {
         DataType::Binary => Ok(SedonaType::Wkb(edges, crs)),
+        DataType::LargeBinary => Ok(SedonaType::WkbLarge(edges, crs)),
         DataType::BinaryView => Ok(SedonaType::WkbView(edges, crs)),
         _ => sedona_internal_err!(
-            "Expected Wkb type with Binary storage but got {}",
+            "Expected Wkb type with Binary, LargeBinary, or BinaryView storage but got {}",
             storage_type
         ),
     }
@@ -527,6 +565,39 @@ mod tests {
     }
 
     #[test]
+    fn sedona_type_wkb_large() {
+        assert_eq!(WKB_LARGE_GEOMETRY.storage_type(), &DataType::LargeBinary);
+        assert_eq!(WKB_LARGE_GEOGRAPHY.storage_type(), &DataType::LargeBinary);
+
+        let geometry_field = ExtensionType::new(
+            "geoarrow.wkb",
+            DataType::LargeBinary,
+            Some(r#"{"crs":"EPSG:3857"}"#.to_string()),
+        )
+        .to_field("geometry", true);
+        let geometry = SedonaType::from_storage_field(&geometry_field).unwrap();
+        assert_eq!(
+            geometry,
+            SedonaType::WkbLarge(Edges::Planar, deserialize_crs("EPSG:3857").unwrap())
+        );
+        assert_eq!(
+            geometry.to_storage_field("geometry", true).unwrap(),
+            geometry_field
+        );
+
+        let geography_field = ExtensionType::new(
+            "geoarrow.wkb",
+            DataType::LargeBinary,
+            Some(r#"{"edges":"spherical","crs":"OGC:CRS84"}"#.to_string()),
+        )
+        .to_field("geography", true);
+        assert_eq!(
+            SedonaType::from_storage_field(&geography_field).unwrap(),
+            SedonaType::WkbLarge(Edges::Spherical, lnglat())
+        );
+    }
+
+    #[test]
     fn sedona_type_wkb_geography() {
         assert_eq!(WKB_GEOGRAPHY, WKB_GEOGRAPHY);
         assert_eq!(
@@ -544,6 +615,8 @@ mod tests {
         assert_eq!(SedonaType::Arrow(DataType::Int32).to_string(), "Int32");
         assert_eq!(WKB_GEOMETRY.to_string(), "Wkb");
         assert_eq!(WKB_GEOGRAPHY.to_string(), "Wkb(Spherical)");
+        assert_eq!(WKB_LARGE_GEOMETRY.to_string(), "WkbLarge");
+        assert_eq!(WKB_LARGE_GEOGRAPHY.to_string(), "WkbLarge(Spherical)");
         assert_eq!(WKB_VIEW_GEOMETRY.to_string(), "WkbView");
         assert_eq!(WKB_VIEW_GEOGRAPHY.to_string(), "WkbView(Spherical)");
         assert_eq!(
