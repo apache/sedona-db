@@ -123,10 +123,12 @@ SEXP savvy_InternalContext_new__impl(SEXP c_arg__option_keys,
   return handle_result(res);
 }
 
-SEXP savvy_InternalContext_read_parquet__impl(
-    SEXP self__, SEXP c_arg__paths, SEXP c_arg__option_keys,
-    SEXP c_arg__option_values, SEXP c_arg__geometry_columns,
-    SEXP c_arg__validate, SEXP c_arg__partitioning) {
+SEXP savvy_InternalContext_read_parquet__impl(SEXP self__, SEXP c_arg__paths,
+                                              SEXP c_arg__option_keys,
+                                              SEXP c_arg__option_values,
+                                              SEXP c_arg__geometry_columns,
+                                              SEXP c_arg__validate,
+                                              SEXP c_arg__partitioning) {
   SEXP res = savvy_InternalContext_read_parquet__ffi(
       self__, c_arg__paths, c_arg__option_keys, c_arg__option_values,
       c_arg__geometry_columns, c_arg__validate, c_arg__partitioning);
