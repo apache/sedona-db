@@ -250,6 +250,26 @@ mod tests {
         assert_array_equal(&buffer_result, &expected);
     }
 
+    #[test]
+    fn issue_1178_degenerate_interior_ring() {
+        let udf = SedonaScalarUDF::from_impl("st_buffer", st_buffer_impl());
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![WKB_GEOMETRY, SedonaType::Arrow(DataType::Float64)],
+        );
+        let wkt = concat!(
+            "POLYGON ((0 0, 208.1046 9.4235, 208.2609 6.2574, 0 0), ",
+            "(103.4778 4.061, 103.476 4.0517, 103.4742 4.0415, ",
+            "103.4706 4.0314, 103.4626 3.994, 103.4626 3.9847, ",
+            "103.4608 3.9746, 103.459 3.9465, 104.5244 3.501, ",
+            "104.5307 3.5096, 104.5477 3.522, 104.5558 3.5291, ",
+            "104.5639 3.5376, 103.4778 4.061))"
+        );
+
+        let result = tester.invoke_scalar_scalar(wkt, 10.0).unwrap();
+        assert!(!result.is_null());
+    }
+
     #[rstest]
     fn udf_invoke_item_crs(#[values(WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType) {
         let udf = SedonaScalarUDF::from_impl("st_buffer", st_buffer_impl());

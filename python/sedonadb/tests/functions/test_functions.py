@@ -606,6 +606,22 @@ def test_st_buffer(eng, geom, dist, expected_area):
     )
 
 
+def test_st_buffer_degenerate_interior_ring():
+    eng = SedonaDB.create_or_skip()
+    wkt = (
+        "POLYGON ((0 0, 208.1046 9.4235, 208.2609 6.2574, 0 0), "
+        "(103.4778 4.061, 103.476 4.0517, 103.4742 4.0415, "
+        "103.4706 4.0314, 103.4626 3.994, 103.4626 3.9847, "
+        "103.4608 3.9746, 103.459 3.9465, 104.5244 3.501, "
+        "104.5307 3.5096, 104.5477 3.522, 104.5558 3.5291, "
+        "104.5639 3.5376, 103.4778 4.061))"
+    )
+
+    eng.assert_query_result(
+        f"SELECT ST_IsValid(ST_Buffer({geom_or_null(wkt)}, 10.0))", True
+    )
+
+
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
     ("geom", "expected"),
