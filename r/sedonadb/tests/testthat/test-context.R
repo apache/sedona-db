@@ -69,6 +69,44 @@ test_that("sd_read_parquet() works", {
   expect_identical(sd_count(sd_read_parquet(c(path, path))), 243 * 2)
 })
 
+test_that("sd_read_parquet() forwards reader options", {
+  path <- system.file("files/natural-earth_cities_geo.parquet", package = "sedonadb")
+
+  expect_identical(
+    sd_count(sd_read_parquet(
+      path,
+      geometry_columns = list(geometry = list(encoding = "WKB")),
+      validate = TRUE
+    )),
+    243
+  )
+
+  expect_error(
+    sd_read_parquet(path, options = list("aws.unknown_option" = "value")),
+    "Unknown AWS option"
+  )
+  expect_error(
+    sd_read_parquet(path, geometry_columns = "not JSON"),
+    "Invalid geometry_columns JSON"
+  )
+})
+
+test_that("sd_read_parquet() configures hive partitioning", {
+  path <- system.file("files/natural-earth_cities_geo.parquet", package = "sedonadb")
+  partition_root <- withr::local_tempdir()
+  partition_dir <- file.path(partition_root, "group=a")
+  dir.create(partition_dir)
+  file.copy(path, file.path(partition_dir, "data.parquet"))
+
+  expect_true("group" %in% colnames(sd_read_parquet(partition_root)))
+  expect_true(
+    "group" %in% colnames(sd_read_parquet(partition_root, partitioning = "group"))
+  )
+  expect_false(
+    "group" %in% colnames(sd_read_parquet(partition_root, partitioning = character()))
+  )
+})
+
 test_that("views can be created and dropped", {
   df <- sd_sql("SELECT 1 as one")
   expect_true(rlang::is_reference(sd_to_view(df, "foofy"), df))

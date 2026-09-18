@@ -5,12 +5,38 @@
 \alias{sd_ctx_read_parquet}
 \title{Create a DataFrame from one or more Parquet files}
 \usage{
-sd_read_parquet(path)
+sd_read_parquet(
+  path,
+  options = NULL,
+  geometry_columns = NULL,
+  validate = FALSE,
+  partitioning = NULL
+)
 
-sd_ctx_read_parquet(ctx, path)
+sd_ctx_read_parquet(
+  ctx,
+  path,
+  options = NULL,
+  geometry_columns = NULL,
+  validate = FALSE,
+  partitioning = NULL
+)
 }
 \arguments{
 \item{path}{One or more paths or URIs to Parquet files}
+
+\item{options}{A named list of options to pass to the Parquet reader.}
+
+\item{geometry_columns}{A JSON string or named list mapping column names to
+GeoParquet column metadata. This can be used to mark binary WKB columns as
+geometry columns or override existing GeoParquet metadata.}
+
+\item{validate}{Whether to validate geometry column contents against their
+metadata. Currently, this validates WKB input.}
+
+\item{partitioning}{A character vector of column names for hive-style
+partitioning. By default (\code{NULL}), partition columns are auto-discovered.
+Use \code{character()} to disable partitioning.}
 
 \item{ctx}{A SedonaDB context.}
 }

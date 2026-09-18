@@ -123,8 +123,13 @@ SEXP savvy_InternalContext_new__impl(SEXP c_arg__option_keys,
   return handle_result(res);
 }
 
-SEXP savvy_InternalContext_read_parquet__impl(SEXP self__, SEXP c_arg__paths) {
-  SEXP res = savvy_InternalContext_read_parquet__ffi(self__, c_arg__paths);
+SEXP savvy_InternalContext_read_parquet__impl(
+    SEXP self__, SEXP c_arg__paths, SEXP c_arg__option_keys,
+    SEXP c_arg__option_values, SEXP c_arg__geometry_columns,
+    SEXP c_arg__validate, SEXP c_arg__partitioning) {
+  SEXP res = savvy_InternalContext_read_parquet__ffi(
+      self__, c_arg__paths, c_arg__option_keys, c_arg__option_values,
+      c_arg__geometry_columns, c_arg__validate, c_arg__partitioning);
   return handle_result(res);
 }
 
@@ -398,7 +403,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"savvy_InternalContext_new__impl",
      (DL_FUNC)&savvy_InternalContext_new__impl, 2},
     {"savvy_InternalContext_read_parquet__impl",
-     (DL_FUNC)&savvy_InternalContext_read_parquet__impl, 2},
+     (DL_FUNC)&savvy_InternalContext_read_parquet__impl, 7},
     {"savvy_InternalContext_register_scalar_udf__impl",
      (DL_FUNC)&savvy_InternalContext_register_scalar_udf__impl, 2},
     {"savvy_InternalContext_scalar_udf_xptr__impl",
