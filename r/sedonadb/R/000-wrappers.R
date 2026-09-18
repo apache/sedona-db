@@ -129,6 +129,19 @@ NULL
   }
 }
 
+`InternalContext_read` <- function(self) {
+  function(`paths`, `option_keys`, `option_values`, `format` = NULL) {
+    .savvy_wrap_InternalDataFrame(.Call(
+      savvy_InternalContext_read__impl,
+      `self`,
+      `paths`,
+      `option_keys`,
+      `option_values`,
+      `format`
+    ))
+  }
+}
+
 `InternalContext_read_parquet` <- function(self) {
   function(`paths`) {
     .savvy_wrap_InternalDataFrame(.Call(
@@ -180,6 +193,7 @@ NULL
   )
   e$`deregister_table` <- `InternalContext_deregister_table`(ptr)
   e$`list_functions` <- `InternalContext_list_functions`(ptr)
+  e$`read` <- `InternalContext_read`(ptr)
   e$`read_parquet` <- `InternalContext_read_parquet`(ptr)
   e$`register_scalar_udf` <- `InternalContext_register_scalar_udf`(ptr)
   e$`scalar_udf_xptr` <- `InternalContext_scalar_udf_xptr`(ptr)

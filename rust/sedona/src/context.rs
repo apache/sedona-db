@@ -21,6 +21,7 @@ use std::{
 
 use crate::exec::create_plan_from_sql;
 use crate::object_storage::ensure_object_store_registered_with_options;
+use crate::read::read_provider;
 use crate::url_table::install_sedona_url_table;
 use crate::{
     catalog::DynamicObjectStoreCatalog,
@@ -627,6 +628,37 @@ impl SedonaContext {
         let provider = geoparquet_listing_table(&self.ctx, urls, options).await?;
 
         self.ctx.read_table(Arc::new(provider))
+    }
+
+    /// Creates a [`DataFrame`] by resolving a registered file format.
+    ///
+    /// When `format` is `None`, the format is inferred from the path extension.
+    /// Reader options are passed to the registered file format factory; object
+    /// store options such as `aws.*` are used while registering the path's
+    /// object store. Formats that declare themselves single-object formats are
+    /// scanned without listing their contents.
+    pub async fn read<P: DataFilePaths>(
+        &self,
+        table_paths: P,
+        options: &HashMap<String, String>,
+        format: Option<&str>,
+    ) -> Result<DataFrame> {
+        self.read_with_partitioning(table_paths, options, format, None)
+            .await
+    }
+
+    /// Internal variant of [`Self::read`] retaining the bindings' existing
+    /// hive-partitioning override.
+    pub async fn read_with_partitioning<P: DataFilePaths>(
+        &self,
+        table_paths: P,
+        options: &HashMap<String, String>,
+        format: Option<&str>,
+        partitioning: Option<Vec<(String, DataType)>>,
+    ) -> Result<DataFrame> {
+        let urls = table_paths.to_urls()?;
+        let provider = read_provider(&self.ctx, urls, options, format, partitioning).await?;
+        self.ctx.read_table(provider)
     }
 
     /// Creates a [`DataFrame`] for reading a [ExternalFormatSpec]
@@ -1374,6 +1406,43 @@ mod tests {
         assert_eq!(
             sedona_types[1],
             SedonaType::WkbView(Edges::Planar, lnglat())
+        );
+
+        // The generic read path resolves the same registered GeoParquet
+        // factory used by SQL URL tables.
+        let df = ctx.read(example, &HashMap::new(), None).await.unwrap();
+        assert_eq!(
+            df.schema().sedona_types().nth(1).unwrap().unwrap(),
+            SedonaType::WkbView(Edges::Planar, lnglat())
+        );
+    }
+
+    #[tokio::test]
+    async fn read_csv_with_format_options() {
+        let tmpdir = tempdir().unwrap();
+        let csv = tmpdir.path().join("values.csv");
+        std::fs::write(&csv, "id;value\n1;one\n2;two\n").unwrap();
+        let ctx = SedonaContext::new_local_interactive().await.unwrap();
+        let options = HashMap::from([("delimiter".to_string(), ";".to_string())]);
+
+        let batches = ctx
+            .read(csv.to_string_lossy().to_string(), &options, None)
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+
+        assert_batches_eq!(
+            [
+                "+----+-------+",
+                "| id | value |",
+                "+----+-------+",
+                "| 1  | one   |",
+                "| 2  | two   |",
+                "+----+-------+",
+            ],
+            &batches
         );
     }
 

@@ -56,6 +56,8 @@ fn stringify_options(
         .filter_map(|(k, v)| {
             if v.is_none(py) {
                 None
+            } else if let Ok(value) = v.extract::<bool>(py) {
+                Some((k, value.to_string()))
             } else {
                 v.bind(py)
                     .str()
@@ -204,6 +206,32 @@ impl InternalContext {
             ),
         )??;
 
+        Ok(InternalDataFrame::new(df, self.runtime.clone()))
+    }
+
+    pub fn read<'py>(
+        &self,
+        py: Python<'py>,
+        table_paths: Vec<String>,
+        options: HashMap<String, Py<PyAny>>,
+        format: Option<&str>,
+        partitioning: Option<Vec<String>>,
+    ) -> Result<InternalDataFrame, PySedonaError> {
+        let rust_options = stringify_options(py, options);
+        let df = wait_for_future(
+            py,
+            &self.runtime,
+            self.inner.read_with_partitioning(
+                table_paths,
+                &rust_options,
+                format,
+                partitioning.map(|cols| {
+                    cols.into_iter()
+                        .map(|name| (name, DataType::Utf8View))
+                        .collect()
+                }),
+            ),
+        )??;
         Ok(InternalDataFrame::new(df, self.runtime.clone()))
     }
 

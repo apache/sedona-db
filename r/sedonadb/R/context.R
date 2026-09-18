@@ -131,6 +131,58 @@ sd_ctx_read_parquet <- function(ctx, path) {
   new_sedonadb_dataframe(ctx, df)
 }
 
+#' Read one or more files into a DataFrame
+#'
+#' Resolves the reader from `format`, or from the file extension when `format`
+#' is `NULL`. The query is executed lazily when results are requested.
+#'
+#' @param file_or_files One or more paths or URIs.
+#' @param options A named list of scalar reader or object-store options.
+#' @param format An optional file format name such as `"parquet"`, `"csv"`,
+#'   or `"json"`. By default the format is inferred from the path extension.
+#' @param ctx A SedonaDB context.
+#'
+#' @returns A sedonadb_dataframe
+#' @export
+#'
+#' @examples
+#' path <- system.file("files/natural-earth_cities_geo.parquet", package = "sedonadb")
+#' sd_read(path) |> head(5) |> sd_preview()
+sd_read <- function(file_or_files, options = list(), format = NULL) {
+  sd_ctx_read(ctx(), file_or_files, options, format)
+}
+
+#' @rdname sd_read
+#' @export
+sd_ctx_read <- function(ctx, file_or_files, options = list(), format = NULL) {
+  check_ctx(ctx)
+
+  if (
+    !is.list(options) ||
+      (length(options) > 0 && (is.null(names(options)) || any(names(options) == "")))
+  ) {
+    stop("`options` must be a named list", call. = FALSE)
+  }
+
+  df <- ctx$read(
+    as.character(file_or_files),
+    as.character(names(options)),
+    vapply(
+      options,
+      function(value) {
+        if (is.logical(value) && length(value) == 1) {
+          tolower(as.character(value))
+        } else {
+          as.character(value)
+        }
+      },
+      character(1)
+    ),
+    format
+  )
+  new_sedonadb_dataframe(ctx, df)
+}
+
 #' Create a DataFrame from SQL
 #'
 #' The query will only be executed when requested.

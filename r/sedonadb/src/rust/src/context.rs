@@ -89,6 +89,34 @@ impl InternalContext {
         Ok(new_data_frame(inner, self.runtime.clone()))
     }
 
+    pub fn read(
+        &self,
+        paths: savvy::Sexp,
+        option_keys: savvy::Sexp,
+        option_values: savvy::Sexp,
+        format: Option<&str>,
+    ) -> Result<InternalDataFrame> {
+        let paths = savvy::StringSexp::try_from(paths)?
+            .iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
+        let keys = savvy::StringSexp::try_from(option_keys)?;
+        let values = savvy::StringSexp::try_from(option_values)?;
+        let options = keys
+            .iter()
+            .zip(values.iter())
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect::<HashMap<_, _>>();
+        let format = format.map(str::to_string);
+
+        let inner_context = self.inner.clone();
+        let inner = wait_for_future_captured_r(&self.runtime, async move {
+            inner_context.read(paths, &options, format.as_deref()).await
+        })??;
+
+        Ok(new_data_frame(inner, self.runtime.clone()))
+    }
+
     pub fn sql(&self, query: &str) -> Result<InternalDataFrame> {
         let query_string = query.to_string();
         let inner_context = self.inner.clone();
