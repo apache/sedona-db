@@ -28,8 +28,10 @@
 //! opened once (one metadata round trip per distinct array rather than
 //! per request), and each distinct chunk is fetched once with up to
 //! [`ZarrLoader::concurrency`] reads in flight. Requests that name the
-//! same chunk share the loaded bytes. All I/O goes through `zarrs`'s async
-//! API over `object_store`, so nothing blocks the caller's runtime.
+//! same chunk share the loaded bytes. Across calls the loader keeps the
+//! store clients and opened arrays (see [`ZarrLoader`]), so a later batch
+//! over the same group pays neither again. All I/O goes through `zarrs`'s
+//! async API over `object_store`, so nothing blocks the caller's runtime.
 //!
 //! Registered against the per-session
 //! [`RasterLoaderRegistry`](sedona_raster::raster_loader::RasterLoaderRegistry);
@@ -43,19 +45,28 @@
 //! ```
 
 use std::collections::HashMap;
+use std::fmt;
 use std::hash::Hash;
+use std::num::NonZeroUsize;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 use arrow_buffer::Buffer;
 use arrow_schema::ArrowError;
 use async_trait::async_trait;
 use futures::{StreamExt, TryStreamExt, stream};
+use lru::LruCache;
+use object_store::ObjectStore;
 use sedona_common::sedona_internal_datafusion_err;
 use sedona_raster::raster_loader::{AsyncRasterLoader, RasterLoadRequest, RasterLoadResult};
 use zarrs::array::{Array, ArrayBytes};
-use zarrs::storage::{AsyncReadableListableStorage, AsyncReadableListableStorageTraits};
+use zarrs::storage::AsyncReadableListableStorageTraits;
 
 use crate::dtype::zarr_to_band_data_type;
-use crate::source_uri::{object_store_for_uri, open_storage_from_uri, parse_chunk_anchor};
+use crate::source_uri::{
+    object_store_for_uri, open_storage_from_uri, parse_chunk_anchor, store_client_key,
+};
 
 /// Format key the loader registers under. Keep in sync with
 /// `outdb_format` values emitted by the Zarr reader's band builder
@@ -67,16 +78,34 @@ pub const ZARR_FORMAT: &str = "zarr";
 /// fan-out, not the process-wide one.
 pub const DEFAULT_LOAD_CONCURRENCY: usize = 8;
 
+/// Default number of opened arrays a loader keeps across `load` calls.
+pub const DEFAULT_ARRAY_HANDLE_CAPACITY: usize = 256;
+
+/// Default time an opened array stays usable. A `load` that needs the
+/// array after this re-reads its metadata, which is the only guard
+/// against an array rewritten or removed under a running session: with
+/// a live handle, a chunk whose key has been deleted comes back as the
+/// array's fill value rather than as an open error, until the TTL lapses.
+pub const DEFAULT_ARRAY_HANDLE_TTL: Duration = Duration::from_secs(300);
+
 /// Async raster byte loader for Zarr-backed bands.
 ///
-/// Stateless across calls: each call builds an `ObjectStore` per distinct
-/// store URI (via [`object_store_for_uri`]) and opens each distinct array
-/// over async storage. Building the store here is the in-process bridge
-/// until a credentialed store can be passed in from DataFusion's
-/// `ObjectStoreRegistry`; see the loader-FFI follow-up.
-#[derive(Debug, Clone, Copy)]
+/// Within one `load` call the batch is reduced to its distinct stores,
+/// arrays and chunks (`LoadPlan`). Across calls the loader keeps two
+/// kinds of handle, never chunk bytes: the `ObjectStore` client per
+/// scheme and authority (a connection pool; see `store_client_key`) and
+/// the opened [`Array`] per `(store URI, array path)`, whose open is a
+/// metadata round trip. Clones share the same handles.
+///
+/// Building the store client here is the in-process bridge until a
+/// credentialed store can be passed in from DataFusion's
+/// `ObjectStoreRegistry`; see the loader-FFI follow-up. Because the client
+/// is kept, the environment (credentials, endpoint, region) is read once
+/// per scheme and authority for the life of the loader, not on every call.
+#[derive(Debug, Clone)]
 pub struct ZarrLoader {
     concurrency: usize,
+    handles: Arc<HandleCache>,
 }
 
 impl Default for ZarrLoader {
@@ -89,6 +118,10 @@ impl ZarrLoader {
     pub fn new() -> Self {
         Self {
             concurrency: DEFAULT_LOAD_CONCURRENCY,
+            handles: Arc::new(HandleCache::new(
+                DEFAULT_ARRAY_HANDLE_CAPACITY,
+                DEFAULT_ARRAY_HANDLE_TTL,
+            )),
         }
     }
 
@@ -102,6 +135,153 @@ impl ZarrLoader {
     pub fn concurrency(&self) -> usize {
         self.concurrency
     }
+
+    /// Number of opened arrays kept across calls. Clamped to at least 1.
+    /// Starts a fresh handle cache, so configure before the loader is
+    /// shared.
+    pub fn with_array_handle_capacity(mut self, capacity: usize) -> Self {
+        debug_assert!(
+            Arc::strong_count(&self.handles) == 1,
+            "configure the handle cache before sharing the loader"
+        );
+        self.handles = Arc::new(HandleCache::new(capacity, self.handles.ttl));
+        self
+    }
+
+    /// How long an opened array stays usable before it is re-opened.
+    /// `Duration::ZERO` re-opens on every call. Starts a fresh handle
+    /// cache, so configure before the loader is shared.
+    pub fn with_array_handle_ttl(mut self, ttl: Duration) -> Self {
+        debug_assert!(
+            Arc::strong_count(&self.handles) == 1,
+            "configure the handle cache before sharing the loader"
+        );
+        self.handles = Arc::new(HandleCache::new(self.handles.capacity, ttl));
+        self
+    }
+
+    /// Counters for the cross-call handle reuse, for tests and diagnostics.
+    pub fn handle_stats(&self) -> HandleStats {
+        self.handles.stats()
+    }
+}
+
+/// Counters exposed by [`ZarrLoader::handle_stats`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct HandleStats {
+    /// `ObjectStore` clients built: one per distinct scheme and authority.
+    pub store_builds: u64,
+    /// Arrays opened, each a metadata round trip.
+    pub array_opens: u64,
+    /// Array opens avoided by an unexpired handle from an earlier call.
+    pub array_reuses: u64,
+}
+
+type SharedArray = Arc<Array<dyn AsyncReadableListableStorageTraits>>;
+
+struct ArrayHandle {
+    array: SharedArray,
+    opened_at: Instant,
+}
+
+/// The cross-call state of a [`ZarrLoader`]. Locks are held only around
+/// map access, never across an await; two calls racing to open the same
+/// array both open it and the later insert wins, which is harmless.
+struct HandleCache {
+    capacity: usize,
+    ttl: Duration,
+    stores: Mutex<HashMap<String, Arc<dyn ObjectStore>>>,
+    arrays: Mutex<LruCache<(String, String), ArrayHandle>>,
+    store_builds: AtomicU64,
+    array_opens: AtomicU64,
+    array_reuses: AtomicU64,
+}
+
+impl HandleCache {
+    fn new(capacity: usize, ttl: Duration) -> Self {
+        let capacity = capacity.max(1);
+        Self {
+            capacity,
+            ttl,
+            stores: Mutex::new(HashMap::new()),
+            arrays: Mutex::new(LruCache::new(
+                NonZeroUsize::new(capacity).expect("capacity clamped to at least 1"),
+            )),
+            store_builds: AtomicU64::new(0),
+            array_opens: AtomicU64::new(0),
+            array_reuses: AtomicU64::new(0),
+        }
+    }
+
+    fn stats(&self) -> HandleStats {
+        HandleStats {
+            store_builds: self.store_builds.load(Ordering::Relaxed),
+            array_opens: self.array_opens.load(Ordering::Relaxed),
+            array_reuses: self.array_reuses.load(Ordering::Relaxed),
+        }
+    }
+
+    /// The `ObjectStore` client for `store_uri`, built on first use.
+    fn store(&self, store_uri: &str) -> Result<Arc<dyn ObjectStore>, ArrowError> {
+        let key = store_client_key(store_uri)?;
+        if let Some(store) = lock(&self.stores).get(&key) {
+            return Ok(store.clone());
+        }
+        let store = object_store_for_uri(store_uri)?;
+        self.store_builds.fetch_add(1, Ordering::Relaxed);
+        Ok(lock(&self.stores).entry(key).or_insert(store).clone())
+    }
+
+    /// The opened array at `array_path` in `store_uri`, reusing an
+    /// unexpired handle from an earlier call.
+    async fn array(&self, store_uri: &str, array_path: &str) -> Result<SharedArray, ArrowError> {
+        let key = (store_uri.to_string(), array_path.to_string());
+        {
+            let mut arrays = lock(&self.arrays);
+            if let Some(handle) = arrays.get(&key) {
+                if handle.opened_at.elapsed() < self.ttl {
+                    self.array_reuses.fetch_add(1, Ordering::Relaxed);
+                    return Ok(handle.array.clone());
+                }
+                arrays.pop(&key);
+            }
+        }
+        let storage = open_storage_from_uri(store_uri, self.store(store_uri)?)?;
+        let array = Array::async_open(storage, array_path).await.map_err(|e| {
+            ArrowError::ExternalError(Box::new(sedona_internal_datafusion_err!(
+                "failed to open Zarr array {array_path} in {store_uri}: {e}"
+            )))
+        })?;
+        self.array_opens.fetch_add(1, Ordering::Relaxed);
+        let array: SharedArray = Arc::new(array);
+        lock(&self.arrays).put(
+            key,
+            ArrayHandle {
+                array: array.clone(),
+                opened_at: Instant::now(),
+            },
+        );
+        Ok(array)
+    }
+}
+
+impl fmt::Debug for HandleCache {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HandleCache")
+            .field("capacity", &self.capacity)
+            .field("ttl", &self.ttl)
+            .field("stats", &self.stats())
+            .finish()
+    }
+}
+
+/// A poisoned lock only means another `load` panicked mid-update; the
+/// maps stay usable, so recover rather than propagate.
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// A batch of chunk anchors reduced to the distinct stores, arrays and
@@ -179,31 +359,12 @@ impl AsyncRasterLoader for ZarrLoader {
     async fn load(&self, reqs: &[&RasterLoadRequest]) -> Result<Vec<RasterLoadResult>, ArrowError> {
         let plan = LoadPlan::build(reqs.iter().map(|req| req.uri))?;
 
-        // One store per distinct store URI.
-        let storages: Vec<AsyncReadableListableStorage> = plan
-            .stores
-            .iter()
-            .map(|store_uri| {
-                let store = object_store_for_uri(store_uri)?;
-                open_storage_from_uri(store_uri, store)
-            })
-            .collect::<Result<_, _>>()?;
-
-        // One open per distinct array: a metadata round trip each, so this
-        // is the dedupe that matters for a batch of rows over the same
-        // group.
-        let mut arrays: Vec<Array<dyn AsyncReadableListableStorageTraits>> =
-            Vec::with_capacity(plan.arrays.len());
+        // One opened array per distinct array in the batch. The open is a
+        // metadata round trip, so it is paid once per batch here and, via
+        // the handle cache, usually not even that across batches.
+        let mut arrays: Vec<SharedArray> = Vec::with_capacity(plan.arrays.len());
         for (store, array_path) in &plan.arrays {
-            let store_uri = &plan.stores[*store];
-            let array = Array::async_open(storages[*store].clone(), array_path)
-                .await
-                .map_err(|e| {
-                    ArrowError::ExternalError(Box::new(sedona_internal_datafusion_err!(
-                        "failed to open Zarr array {array_path} in {store_uri}: {e}"
-                    )))
-                })?;
-            arrays.push(array);
+            arrays.push(self.handles.array(&plan.stores[*store], array_path).await?);
         }
 
         // Verify every request's claimed dtype against its array before
@@ -235,7 +396,7 @@ impl AsyncRasterLoader for ZarrLoader {
         // general enough" check under async_trait's `Send` bound.)
         let mut fetches = Vec::with_capacity(plan.chunks.len());
         for (chunk_idx, (array_idx, chunk_indices)) in plan.chunks.iter().enumerate() {
-            let array = &arrays[*array_idx];
+            let array: &Array<dyn AsyncReadableListableStorageTraits> = &arrays[*array_idx];
             let (store, array_path) = &plan.arrays[*array_idx];
             let store_uri = plan.stores[*store].as_str();
             fetches.push(async move {
@@ -602,6 +763,116 @@ mod tests {
         assert!(
             err.contains("metadata claims") && err.contains("/pressure"),
             "expected the dtype-mismatch diagnostic naming the array, got: {err}"
+        );
+    }
+
+    fn two_array_uris(store_uri: &str) -> Vec<String> {
+        vec![
+            build_chunk_anchor(store_uri, "temperature", &[0, 0]),
+            build_chunk_anchor(store_uri, "pressure", &[0, 1]),
+        ]
+    }
+
+    async fn load_two_arrays(loader: &ZarrLoader, uris: &[String]) -> Vec<RasterLoadResult> {
+        let view = ViewEntries::identity_for_shape(&[2, 3]);
+        let reqs: Vec<RasterLoadRequest> = uris
+            .iter()
+            .map(|uri| RasterLoadRequest {
+                uri,
+                dim_names: &["y", "x"],
+                source_shape: &[2, 3],
+                view: &view,
+                data_type: BandDataType::UInt8,
+            })
+            .collect();
+        let refs: Vec<&RasterLoadRequest> = reqs.iter().collect();
+        loader.load(&refs).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn zarr_loader_reuses_array_handles_across_calls() {
+        let tmp = TempDir::new().unwrap();
+        let store_uri = build_two_array_zarr(&tmp);
+        let uris = two_array_uris(&store_uri);
+        let loader = ZarrLoader::new();
+
+        let first = load_two_arrays(&loader, &uris).await;
+        assert_eq!(
+            loader.handle_stats(),
+            HandleStats {
+                store_builds: 1,
+                array_opens: 2,
+                array_reuses: 0
+            }
+        );
+
+        let second = load_two_arrays(&loader, &uris).await;
+        assert_eq!(
+            loader.handle_stats(),
+            HandleStats {
+                store_builds: 1,
+                array_opens: 2,
+                array_reuses: 2
+            }
+        );
+        for (a, b) in first.iter().zip(&second) {
+            assert_eq!(a.bytes.as_slice(), b.bytes.as_slice());
+        }
+
+        // A clone shares the handles rather than starting its own.
+        let clone = loader.clone();
+        load_two_arrays(&clone, &uris).await;
+        assert_eq!(loader.handle_stats().array_reuses, 4);
+        assert_eq!(loader.handle_stats().array_opens, 2);
+
+        // A second group under the same scheme and authority (`file://`)
+        // shares the store client: its arrays are new opens, the client
+        // is not rebuilt.
+        let other = TempDir::new().unwrap();
+        let other_uris = two_array_uris(&build_two_array_zarr(&other));
+        load_two_arrays(&loader, &other_uris).await;
+        assert_eq!(loader.handle_stats().store_builds, 1);
+        assert_eq!(loader.handle_stats().array_opens, 4);
+    }
+
+    #[tokio::test]
+    async fn zarr_loader_reopens_arrays_once_the_handle_ttl_expires() {
+        let tmp = TempDir::new().unwrap();
+        let store_uri = build_two_array_zarr(&tmp);
+        let uris = two_array_uris(&store_uri);
+        let loader = ZarrLoader::new().with_array_handle_ttl(Duration::ZERO);
+
+        load_two_arrays(&loader, &uris).await;
+        load_two_arrays(&loader, &uris).await;
+        // Arrays are re-opened; the store client has no TTL and is kept.
+        assert_eq!(
+            loader.handle_stats(),
+            HandleStats {
+                store_builds: 1,
+                array_opens: 4,
+                array_reuses: 0
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn zarr_loader_bounds_the_number_of_kept_array_handles() {
+        let tmp = TempDir::new().unwrap();
+        let store_uri = build_two_array_zarr(&tmp);
+        let uris = two_array_uris(&store_uri);
+        // Room for one array while every call touches two: each open evicts
+        // the other, so nothing is ever reused. Zero clamps to one.
+        let loader = ZarrLoader::new().with_array_handle_capacity(0);
+
+        load_two_arrays(&loader, &uris).await;
+        load_two_arrays(&loader, &uris).await;
+        assert_eq!(
+            loader.handle_stats(),
+            HandleStats {
+                store_builds: 1,
+                array_opens: 4,
+                array_reuses: 0
+            }
         );
     }
 }
