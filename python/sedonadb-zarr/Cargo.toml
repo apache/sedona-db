@@ -35,5 +35,5 @@ pyo3 = { workspace = true }
 sedona-raster = { workspace = true }
 sedona-raster-zarr = { workspace = true }
 sedona-schema = { workspace = true }
-tokio = { workspace = true, features = ["rt"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 url = { workspace = true }

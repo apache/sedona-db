@@ -38,14 +38,27 @@ use tokio::runtime::{Builder, Runtime};
 
 /// Process-wide tokio runtime backing the sync Python FFI bridge.
 ///
-/// `ZarrChunkReader::try_new` is async, but the Python constructor is sync
-/// by contract, so we `block_on` here. Building a runtime per reader is
-/// wasteful; one shared runtime serves every open in the package. `next()`
-/// on the returned reader is pure CPU and never touches this runtime.
+/// `ZarrChunkReader::try_new` and `ZarrLoader::load` are async, but the
+/// Python entry points are sync by contract, so we `block_on` here. One
+/// shared runtime serves every open and every load in the package;
+/// `next()` on a reader is pure CPU and never touches it.
+///
+/// Multi-thread rather than current-thread: `load` is called from one
+/// blocking thread per DataFusion partition at once, and on a
+/// current-thread runtime every caller's I/O readiness is delivered by
+/// whichever caller happens to own the driver, so a CPU-bound chunk decode
+/// on that thread stalls the others' fetches. With workers owning the
+/// driver, each `block_on` only drives its own future.
+///
+/// Like any tokio runtime held in a Python process, the workers do not
+/// survive `fork()`: a forked child that inherits an initialized runtime
+/// must not use this module. Spawn-start multiprocessing is unaffected.
 fn shared_runtime() -> &'static Runtime {
     static RUNTIME: OnceLock<Runtime> = OnceLock::new();
     RUNTIME.get_or_init(|| {
-        Builder::new_current_thread()
+        Builder::new_multi_thread()
+            .worker_threads(2)
+            .thread_name("sedonadb-zarr-io")
             .enable_all()
             .build()
             .expect("build sedonadb-zarr tokio runtime")
