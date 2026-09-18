@@ -148,6 +148,40 @@ def _sedonadb_band_nodata(con, path, *, band=1):
     return result[0].as_py()
 
 
+@pytest.mark.parametrize(
+    "source",
+    [
+        pytest.param("rs_value_scan", id="table"),
+        pytest.param(
+            "(SELECT RS_EnsureLoaded(r) AS r FROM rs_value_scan)", id="user_loaded"
+        ),
+    ],
+)
+def test_two_reads_sharing_a_raster_column_over_a_scan(con, tmp_path, source):
+    """Two RS_Value calls on one raster column of a table, and a read over a
+    subquery that already called RS_EnsureLoaded, used to fail with
+    'async functions should not be called directly'. The planner wraps each
+    call's raster in an async RS_EnsureLoaded; once DataFusion had turned that
+    wrap into a plain column (common-subexpression elimination hoists the
+    shared loader into a projection below; the user's subquery is such a
+    projection already) the next optimizer pass wrapped the column again,
+    nesting async calls the physical planner cannot hoist. Both reads are
+    cross-checked against rasterio."""
+    path = _write_fixture(tmp_path, "int32", nodata=BAND_NODATA["int32"])
+    con.create_data_frame(
+        con.sql("SELECT RS_FromPath($1) AS r", params=(str(path),)).to_arrow_table()
+    ).to_view("rs_value_scan", overwrite=True)
+    (x1, y1), (x2, y2) = pixel_center(0, 1), pixel_center(3, 4)
+
+    got = con.sql(
+        f"SELECT RS_Value(r, ST_Point({x1}, {y1}), 1) AS a, "
+        f"RS_Value(r, ST_Point({x2}, {y2}), 1) AS b FROM {source}"
+    ).to_arrow_table()
+
+    assert got["a"][0].as_py() == _rasterio_value(path, x1, y1)
+    assert got["b"][0].as_py() == _rasterio_value(path, x2, y2)
+
+
 def _rasterio_value(path, x, y, *, band=1):
     return _rasterio_values(path, [(x, y)], band=band)[0]
 
