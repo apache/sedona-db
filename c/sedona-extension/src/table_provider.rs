@@ -132,12 +132,10 @@ impl ExportedTableProvider {
                 };
                 Ok(type_str.to_string())
             }
-            "table_reference" => {
-                let Some(table_reference) = &self.table_reference else {
-                    return exec_err!("Table provider does not have a table reference");
-                };
-                serialize_table_reference(table_reference)
-            }
+            "table_reference" => match &self.table_reference {
+                Some(table_reference) => serialize_table_reference(table_reference),
+                None => Ok(String::new()),
+            },
             _ => exec_err!("Unknown property: {}", property),
         }
     }
@@ -526,12 +524,12 @@ impl ImportedTableProvider {
     }
 
     fn get_table_reference(provider: &SedonaCTableProvider) -> Result<Option<TableReference>> {
-        let serialized = match get_table_provider_string_property(provider, "table_reference") {
-            Ok(value) => value,
-            Err(_) => return Ok(None),
-        };
-
-        deserialize_table_reference(&serialized).map(Some)
+        let serialized = get_table_provider_string_property(provider, "table_reference")?;
+        if serialized.is_empty() {
+            Ok(None)
+        } else {
+            deserialize_table_reference(&serialized).map(Some)
+        }
     }
 }
 
@@ -1272,5 +1270,25 @@ mod tests {
     fn test_table_provider_roundtrip_without_table_reference() {
         let (imported, _runtime) = setup_imported_provider_with(TableType::Base);
         assert_eq!(imported.table_reference(), None);
+    }
+
+    #[test]
+    fn test_table_reference_property_error_is_propagated() {
+        unsafe extern "C" fn get_failing_property(
+            _self_: *const SedonaCTableProvider,
+            _property: *const std::ffi::c_char,
+            _args: *mut SedonaCExecutionPlanArgs,
+            _out: *mut FFI_ArrowArray,
+            _err: *mut SedonaCError,
+        ) -> c_int {
+            libc::EINVAL
+        }
+
+        let provider = SedonaCTableProvider {
+            get_property: Some(get_failing_property),
+            ..Default::default()
+        };
+
+        assert!(ImportedTableProvider::get_table_reference(&provider).is_err());
     }
 }
