@@ -36,6 +36,7 @@ backtrace = ["datafusion-common/backtrace"]
 [dependencies]
 async-trait = { workspace = true }
 arrow = { workspace = true }
+arrow-data = { workspace = true }
 arrow-schema = { workspace = true }
 arrow-array = { workspace = true }
 datafusion = { workspace = true, features = ["sql"] }

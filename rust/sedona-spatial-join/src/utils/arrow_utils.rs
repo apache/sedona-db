@@ -21,6 +21,7 @@ use arrow::array::{Array, ArrayData, BinaryViewArray, ListArray, RecordBatch, St
 use arrow_array::ArrayRef;
 use arrow_array::StructArray;
 use arrow_array::make_array;
+use arrow_data::{BufferSpec, layout};
 use arrow_schema::SchemaRef;
 use arrow_schema::{ArrowError, DataType};
 use datafusion_common::Result;
@@ -203,17 +204,79 @@ pub const MAX_INLINE_VIEW_LEN: u32 = 12;
 
 /// Compute the memory usage of `array_data` and its children recursively.
 fn get_array_data_memory_size(array_data: &ArrayData) -> core::result::Result<usize, ArrowError> {
-    // The `ArrayData::get_slice_memory_size` method does not account for the memory used by
-    // the values of BinaryView/Utf8View arrays, so we need to compute that using
-    // `get_binary_view_value_size` and add that to the total size.
-    Ok(get_binary_view_value_size(array_data)? + array_data.get_slice_memory_size()?)
+    let mut result = get_array_data_buffer_memory_size(array_data)?;
+
+    // ListArray, LargeListArray, and MapArray don't slice their child data when they are
+    // sliced. Use their first and last offsets to restrict memory accounting to the child
+    // range referenced by this slice. Reading these two offsets keeps this traversal O(1)
+    // per nested array (in addition to the work needed to inspect BinaryView/Utf8View values).
+    match array_data.data_type() {
+        DataType::List(_) | DataType::Map(_, _) => {
+            let offsets = array_data.buffer::<i32>(0);
+            let child = slice_child_for_offsets(array_data, offsets)?;
+            result += get_array_data_memory_size(&child)?;
+        }
+        DataType::LargeList(_) => {
+            let offsets = array_data.buffer::<i64>(0);
+            let child = slice_child_for_offsets(array_data, offsets)?;
+            result += get_array_data_memory_size(&child)?;
+        }
+        _ => {
+            for child in array_data.child_data() {
+                result += get_array_data_memory_size(child)?;
+            }
+        }
+    }
+
+    Ok(result)
 }
 
-fn get_binary_view_value_size(array_data: &ArrayData) -> Result<usize, ArrowError> {
-    let mut result: usize = 0;
-    let array_data_type = array_data.data_type();
+/// Compute the memory used by the buffers directly owned by `array_data`.
+///
+/// This mirrors `ArrayData::get_slice_memory_size`, except child data is handled by
+/// `get_array_data_memory_size` so list-like arrays can propagate their slice to the child.
+fn get_array_data_buffer_memory_size(array_data: &ArrayData) -> Result<usize, ArrowError> {
+    let mut result = 0usize;
 
-    if matches!(array_data_type, DataType::BinaryView | DataType::Utf8View) {
+    for spec in layout(array_data.data_type()).buffers {
+        let buffer_size = match spec {
+            BufferSpec::FixedWidth { byte_width, .. } => {
+                array_data
+                    .len()
+                    .checked_mul(byte_width)
+                    .ok_or_else(|| memory_size_overflow_error(array_data.data_type()))?
+            }
+            BufferSpec::VariableWidth => match array_data.data_type() {
+                DataType::Utf8 | DataType::Binary => {
+                    get_variable_width_buffer_size(array_data.buffer::<i32>(0), array_data.len())?
+                }
+                DataType::LargeUtf8 | DataType::LargeBinary => {
+                    get_variable_width_buffer_size(array_data.buffer::<i64>(0), array_data.len())?
+                }
+                data_type => {
+                    return Err(ArrowError::NotYetImplemented(format!(
+                        "Invalid data type for VariableWidth buffer: {data_type}"
+                    )));
+                }
+            },
+            BufferSpec::BitMap => array_data.len().div_ceil(8),
+            BufferSpec::AlwaysNull => 0,
+        };
+        result = result
+            .checked_add(buffer_size)
+            .ok_or_else(|| memory_size_overflow_error(array_data.data_type()))?;
+    }
+
+    if array_data.nulls().is_some() {
+        result = result
+            .checked_add(array_data.len().div_ceil(8))
+            .ok_or_else(|| memory_size_overflow_error(array_data.data_type()))?;
+    }
+
+    if matches!(
+        array_data.data_type(),
+        DataType::BinaryView | DataType::Utf8View
+    ) {
         // The views buffer contains length view structures with the following layout:
         // https://arrow.apache.org/docs/format/Columnar.html#variable-size-binary-view-layout
         //
@@ -227,7 +290,7 @@ fn get_binary_view_value_size(array_data: &ArrayData) -> Result<usize, ArrowErro
         // |------------|------------|------------|-------------|
         // | length     | prefix     | buf. index | offset      |
         let views = &array_data.buffer::<u128>(0)[..array_data.len()];
-        result = views
+        let value_size = views
             .iter()
             .map(|v| {
                 let len = *v as u32;
@@ -237,25 +300,75 @@ fn get_binary_view_value_size(array_data: &ArrayData) -> Result<usize, ArrowErro
                     0
                 }
             })
-            .sum();
+            .sum::<usize>();
+        result = result
+            .checked_add(value_size)
+            .ok_or_else(|| memory_size_overflow_error(array_data.data_type()))?;
     }
 
-    // If this was not a BinaryView/Utf8View array, count the bytes of any BinaryView/Utf8View
-    // children, taking into account the slice of this array that applies to the child.
-    for child in array_data.child_data() {
-        result += get_binary_view_value_size(child)?;
-    }
     Ok(result)
+}
+
+fn get_variable_width_buffer_size<T>(offsets: &[T], len: usize) -> Result<usize, ArrowError>
+where
+    T: Copy + TryInto<usize>,
+{
+    if offsets.is_empty() {
+        return Ok(0);
+    }
+
+    let start = offsets[0].try_into().map_err(|_| {
+        ArrowError::InvalidArgumentError("Variable-width offset does not fit in usize".to_string())
+    })?;
+    let end = offsets[len].try_into().map_err(|_| {
+        ArrowError::InvalidArgumentError("Variable-width offset does not fit in usize".to_string())
+    })?;
+    end.checked_sub(start).ok_or_else(|| {
+        ArrowError::InvalidArgumentError("Variable-width offsets are not monotonic".to_string())
+    })
+}
+
+fn slice_child_for_offsets<T>(
+    array_data: &ArrayData,
+    offsets: &[T],
+) -> Result<ArrayData, ArrowError>
+where
+    T: Copy + TryInto<usize>,
+{
+    let child = &array_data.child_data()[0];
+    if offsets.is_empty() {
+        return Ok(child.slice(0, 0));
+    }
+
+    let start = offsets[0].try_into().map_err(|_| {
+        ArrowError::InvalidArgumentError("List offset does not fit in usize".to_string())
+    })?;
+    let end = offsets[array_data.len()].try_into().map_err(|_| {
+        ArrowError::InvalidArgumentError("List offset does not fit in usize".to_string())
+    })?;
+    let len = end.checked_sub(start).ok_or_else(|| {
+        ArrowError::InvalidArgumentError("List offsets are not monotonic".to_string())
+    })?;
+    Ok(child.slice(start, len))
+}
+
+fn memory_size_overflow_error(data_type: &DataType) -> ArrowError {
+    ArrowError::ComputeError(format!(
+        "Integer overflow computing memory size for {data_type}"
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use arrow::array::StringViewBuilder;
-    use arrow_array::builder::{BinaryViewBuilder, ListBuilder};
+    use arrow_array::builder::{
+        BinaryViewBuilder, Int32Builder, ListBuilder, MapBuilder, StringBuilder,
+    };
     use arrow_array::types::Int32Type;
     use arrow_array::{
-        BinaryViewArray, BooleanArray, ListArray, StringArray, StringViewArray, StructArray,
+        BinaryViewArray, BooleanArray, LargeListArray, ListArray, StringArray, StringViewArray,
+        StructArray,
     };
     use arrow_schema::{DataType, Field, Fields, Schema};
     use std::sync::Arc;
@@ -454,8 +567,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "XFAIL: get_array_memory_size slice accounting for ListArray is incorrect/fragile"]
-    fn test_struct_array_with_list_of_view_and_list_of_i32_memory_size_slices_xfail() {
+    fn test_struct_array_with_list_of_view_and_list_of_i32_memory_size_slices() {
         const VIEW_BYTES: usize = 16; // BinaryView/Utf8View: one u128 per value
         const OFFSET_BYTES: usize = 4; // ListArray offsets are i32
         const I32_BYTES: usize = 4;
@@ -485,6 +597,45 @@ mod tests {
         assert_eq!(
             get_array_memory_size(&double_slice).unwrap(),
             expected_bv_slice1 + expected_i32_slice1
+        );
+    }
+
+    #[test]
+    fn test_large_list_array_memory_size_slices() {
+        let array: ArrayRef = Arc::new(LargeListArray::from_iter_primitive::<Int32Type, _, _>([
+            Some(vec![Some(1), Some(2), Some(3)]),
+            Some(vec![Some(4)]),
+        ]));
+
+        // One i64 offset plus the referenced i32 values.
+        assert_eq!(
+            get_array_memory_size(&array.slice(0, 1)).unwrap(),
+            8 + 3 * 4
+        );
+        assert_eq!(get_array_memory_size(&array.slice(1, 1)).unwrap(), 8 + 4);
+    }
+
+    #[test]
+    fn test_map_array_memory_size_slices() {
+        let mut builder = MapBuilder::new(None, StringBuilder::new(), Int32Builder::new());
+        builder.keys().append_value("joe");
+        builder.values().append_value(1);
+        builder.append(true).unwrap();
+        builder.keys().append_value("blogs");
+        builder.values().append_value(2);
+        builder.keys().append_value("foo");
+        builder.values().append_value(4);
+        builder.append(true).unwrap();
+        let array: ArrayRef = Arc::new(builder.finish());
+
+        // Map offset + string offsets and values + i32 values.
+        assert_eq!(
+            get_array_memory_size(&array.slice(0, 1)).unwrap(),
+            4 + 4 + 3 + 4
+        );
+        assert_eq!(
+            get_array_memory_size(&array.slice(1, 1)).unwrap(),
+            4 + 2 * 4 + 8 + 2 * 4
         );
     }
 
