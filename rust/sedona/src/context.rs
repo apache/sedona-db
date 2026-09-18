@@ -72,6 +72,9 @@ use sedona_schema::schema::SedonaSchema;
 #[cfg(feature = "gpu")]
 use sedona_spatial_join_gpu::options::GpuOptions;
 
+use datafusion_execution::memory_pool::arrow::ArrowMemoryPool;
+use datafusion_execution::memory_pool::MemoryConsumer;
+use sedona_common::option::DEFAULT_RASTER_CACHE_MAX_BYTES;
 use sedona_query_planner::{
     optimizer::{
         register_ensure_loaded_optimizer, register_spatial_join_logical_optimizer,
@@ -80,6 +83,7 @@ use sedona_query_planner::{
     query_planner::SedonaQueryPlanner,
     raster_batch_budget::RasterBatchBudgetRule,
 };
+use sedona_raster::chunk_cache::RasterChunkCache;
 use sedona_raster::raster_loader::{AsyncRasterLoader, RasterLoaderConfig, RasterLoaderRegistry};
 
 /// Sedona SessionContext wrapper
@@ -97,6 +101,10 @@ pub struct SedonaContext {
     /// entry points observe the same map. See
     /// [`SedonaContext::register_raster_loader`].
     raster_loader_registry: Arc<RwLock<RasterLoaderRegistry>>,
+    /// Per-session cache of loaded OutDb band bytes, shared with the
+    /// `RS_EnsureLoaded` UDF through the same config extension as the
+    /// registry. See [`SedonaContext::raster_chunk_cache`].
+    raster_chunk_cache: Arc<RasterChunkCache>,
 }
 
 impl SedonaContext {
@@ -159,6 +167,13 @@ impl SedonaContext {
         // `SET sedona.raster.max_batch_bytes` overrides this.
         const RASTER_BATCH_BUDGET_DIVISOR: usize = 8;
         const MIN_RASTER_MAX_BATCH_BYTES: usize = 16 * 1024 * 1024; // 16MB
+
+        // The raster chunk cache keeps loaded OutDb bytes across queries. Its
+        // budget only counts entries no batch references, and every entry is
+        // claimed from the memory pool, so under a memory limit it is capped
+        // at an eighth of the limit rather than the unbounded default.
+        // Provisional, to be tuned with the rest of bounded execution.
+        const RASTER_CACHE_LIMIT_DIVISOR: usize = 8;
         if let MemoryLimit::Finite(memory_limit) = runtime_env.memory_pool.memory_limit() {
             let per_partition_memory_limit = memory_limit.div_ceil(target_partitions);
             opts.spatial_join.spilled_batch_in_memory_size_threshold = per_partition_memory_limit
@@ -168,6 +183,8 @@ impl SedonaContext {
                 / RASTER_BATCH_BUDGET_DIVISOR)
                 .max(MIN_RASTER_MAX_BATCH_BYTES)
                 .min(opts.raster.max_batch_bytes);
+            opts.raster.cache_max_bytes =
+                DEFAULT_RASTER_CACHE_MAX_BYTES.min(memory_limit / RASTER_CACHE_LIMIT_DIVISOR);
         }
 
         // Register the spatial join planner extension
@@ -305,10 +322,31 @@ impl SedonaContext {
     }
 
     fn finish_new(ctx: SessionContext) -> Result<Self> {
+        // The cache's budget comes from `sedona.raster.cache_max_bytes`
+        // (derived above under a memory limit, the default otherwise) and
+        // is re-read at every `RS_EnsureLoaded` call, so `SET` applies
+        // live. Every cached allocation is claimed from the session's
+        // memory pool for as long as any holder keeps it alive.
+        let cache_max_bytes = ctx
+            .state()
+            .config()
+            .options()
+            .extensions
+            .get::<SedonaOptions>()
+            .map(|opts| opts.raster.cache_max_bytes)
+            .unwrap_or(DEFAULT_RASTER_CACHE_MAX_BYTES);
+        let pool = ArrowMemoryPool::new(
+            Arc::clone(&ctx.runtime_env().memory_pool),
+            MemoryConsumer::new("RasterChunkCache"),
+        );
+        let raster_chunk_cache =
+            Arc::new(RasterChunkCache::new(cache_max_bytes).with_memory_pool(Arc::new(pool)));
+
         let mut out = Self {
             ctx,
             functions: RwLock::new(FunctionSet::new()),
             raster_loader_registry: Arc::new(RwLock::new(RasterLoaderRegistry::new())),
+            raster_chunk_cache,
         };
 
         // Work around https://github.com/apache/datafusion/issues/24933:
@@ -362,9 +400,10 @@ impl SedonaContext {
         // mutates the Arc held in `out.raster_loader_registry`) are immediately
         // visible to UDF reads through this config extension because
         // both handles share the same `RwLock`.
-        extensions.insert(RasterLoaderConfig::from_handle(Arc::clone(
-            &out.raster_loader_registry,
-        )));
+        extensions.insert(
+            RasterLoaderConfig::from_handle(Arc::clone(&out.raster_loader_registry))
+                .with_cache(Arc::clone(&out.raster_chunk_cache)),
+        );
         drop(state);
 
         // Register the RS_EnsureLoaded async UDF. It pulls the registry
@@ -466,6 +505,13 @@ impl SedonaContext {
         if let Ok(mut guard) = self.raster_loader_registry.write() {
             guard.register(loader);
         }
+    }
+
+    /// The session's cache of loaded OutDb band bytes: inspect its
+    /// [`stats`](RasterChunkCache::stats) or [`clear`](RasterChunkCache::clear)
+    /// it. Its budget is `sedona.raster.cache_max_bytes`.
+    pub fn raster_chunk_cache(&self) -> &Arc<RasterChunkCache> {
+        &self.raster_chunk_cache
     }
 
     fn functions(&self) -> Result<RwLockReadGuard<'_, FunctionSet>> {
@@ -1207,9 +1253,13 @@ mod tests {
         let loader = Arc::new(CountingLoader::default());
         ctx.register_raster_loader(loader.clone());
 
-        // Six 16 × 16 UInt8 OutDb rasters: 256 bytes each once loaded.
+        // Six 16 × 16 UInt8 OutDb rasters: 256 bytes each once loaded. Each
+        // has its own URI: identical requests are deduplicated within a
+        // slice and served from the chunk cache across slices, and this test
+        // measures slicing and bundling, not that.
         let mut b = RasterBuilder::new(6);
-        for _ in 0..6 {
+        for i in 0..6 {
+            let uri = format!("mock://tile/{i}");
             b.start_raster_nd(
                 &[0.0, 1.0, 0.0, 0.0, 0.0, -1.0],
                 &["y", "x"],
@@ -1218,7 +1268,7 @@ mod tests {
             )
             .unwrap();
             b.start_band(StartBandArgs {
-                outdb_uri: Some("mock://tile"),
+                outdb_uri: Some(&uri),
                 outdb_format: Some("mock"),
                 ..StartBandArgs::new(&["y", "x"], &[16, 16], BandDataType::UInt8)
             })
@@ -1683,6 +1733,52 @@ mod tests {
         assert_eq!(opts.spatial_join.spilled_batch_in_memory_size_threshold, 0);
     }
 
+    #[tokio::test]
+    async fn raster_cache_budget_follows_the_memory_limit() {
+        use crate::context_builder::SedonaContextBuilder;
+        use sedona_common::option::SedonaOptions;
+
+        // 1 GiB limit: an eighth of it, below the 512 MiB default.
+        let ctx = SedonaContextBuilder::new()
+            .with_memory_limit(1024 * 1024 * 1024)
+            .build()
+            .await
+            .unwrap();
+        let state = ctx.ctx.state();
+        let opts = state
+            .config_options()
+            .extensions
+            .get::<SedonaOptions>()
+            .unwrap();
+        assert_eq!(opts.raster.cache_max_bytes, 128 * 1024 * 1024);
+        assert_eq!(ctx.raster_chunk_cache().max_bytes(), 128 * 1024 * 1024);
+
+        // 16 GiB limit: capped at the default.
+        let ctx = SedonaContextBuilder::new()
+            .with_memory_limit(16 * 1024 * 1024 * 1024)
+            .build()
+            .await
+            .unwrap();
+        let state = ctx.ctx.state();
+        let opts = state
+            .config_options()
+            .extensions
+            .get::<SedonaOptions>()
+            .unwrap();
+        assert_eq!(opts.raster.cache_max_bytes, DEFAULT_RASTER_CACHE_MAX_BYTES);
+
+        // No limit: the default.
+        let ctx = SedonaContextBuilder::new()
+            .without_memory_limit()
+            .build()
+            .await
+            .unwrap();
+        assert_eq!(
+            ctx.raster_chunk_cache().max_bytes(),
+            DEFAULT_RASTER_CACHE_MAX_BYTES
+        );
+    }
+
     /// Test geography literal bounding via the WkbBounder2DFactory → SpatialFilterFactory path.
     ///
     /// This covers antimeridian wraparound, distance expansion (~100km), and NULL handling.
@@ -1834,5 +1930,106 @@ mod tests {
             "noop pipeline should preserve coordinates: {:?}",
             coord2
         );
+    }
+
+    /// Builds a one-row table `t(rast)` whose raster has one OutDb band
+    /// served by `format`, registered on `ctx`.
+    async fn register_outdb_table(ctx: &SedonaContext, uri: &str, format: &str) {
+        use arrow_array::RecordBatch;
+        use sedona_raster::builder::{RasterBuilder, StartBandArgs};
+        use sedona_schema::raster::BandDataType;
+
+        let mut b = RasterBuilder::new(1);
+        b.start_raster_nd(&[0.0, 1.0, 0.0, 0.0, 0.0, -1.0], &["y", "x"], &[4, 8], None)
+            .unwrap();
+        b.start_band(StartBandArgs {
+            name: Some("band0"),
+            outdb_uri: Some(uri),
+            outdb_format: Some(format),
+            ..StartBandArgs::new(&["y", "x"], &[4, 8], BandDataType::UInt8)
+        })
+        .unwrap();
+        b.band_data_writer().append_value([0u8; 0]);
+        b.finish_band().unwrap();
+        b.finish_raster().unwrap();
+        let rasters: ArrayRef = Arc::new(b.finish().unwrap());
+        let field = SedonaType::Raster.to_storage_field("rast", true).unwrap();
+        let schema = Arc::new(Schema::new(vec![field]));
+        let batch = RecordBatch::try_new(schema, vec![rasters]).unwrap();
+        ctx.ctx.register_batch("t", batch).unwrap();
+    }
+
+    #[tokio::test]
+    async fn rs_ensureloaded_serves_repeated_queries_from_the_chunk_cache() {
+        use arrow_buffer::Buffer;
+        use sedona_raster::raster_loader::{
+            AsyncRasterLoader, RasterLoadRequest, RasterLoadResult,
+        };
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        /// Counts the requests it serves.
+        #[derive(Debug, Default)]
+        struct CountingLoader {
+            requests: AtomicUsize,
+        }
+        #[async_trait]
+        impl AsyncRasterLoader for CountingLoader {
+            fn name(&self) -> &str {
+                "counting"
+            }
+            fn supports_format(&self, format: Option<&str>) -> bool {
+                format == Some("counting")
+            }
+            async fn load(
+                &self,
+                reqs: &[&RasterLoadRequest],
+            ) -> std::result::Result<Vec<RasterLoadResult>, arrow_schema::ArrowError> {
+                self.requests.fetch_add(reqs.len(), Ordering::Relaxed);
+                Ok(reqs
+                    .iter()
+                    .map(|req| RasterLoadResult::unresolved(Buffer::from_vec(vec![9u8; 32]), req))
+                    .collect())
+            }
+        }
+
+        let ctx = SedonaContext::new();
+        let loader = Arc::new(CountingLoader::default());
+        ctx.register_raster_loader(loader.clone());
+        register_outdb_table(&ctx, "counting://a", "counting").await;
+
+        let run = |ctx: &SedonaContext| {
+            let ctx = ctx.ctx.clone();
+            async move {
+                ctx.sql("SELECT RS_EnsureLoaded(rast) FROM t")
+                    .await
+                    .unwrap()
+                    .collect()
+                    .await
+                    .unwrap()
+            }
+        };
+
+        // First query loads; the second is served from the cache.
+        run(&ctx).await;
+        run(&ctx).await;
+        assert_eq!(loader.requests.load(Ordering::Relaxed), 1);
+        let stats = ctx.raster_chunk_cache().stats();
+        assert_eq!((stats.inserts, stats.hits), (1, 1));
+        // The pool is charged for the cached allocation while it lives.
+        assert_eq!(ctx.ctx.runtime_env().memory_pool.reserved(), 32);
+
+        // Disabling the cache from SQL takes effect on the next call and
+        // drops what was held.
+        ctx.ctx
+            .sql("SET sedona.raster.cache_max_bytes = 0")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        run(&ctx).await;
+        assert_eq!(loader.requests.load(Ordering::Relaxed), 2);
+        assert_eq!(ctx.raster_chunk_cache().stats().entries, 0);
+        assert_eq!(ctx.ctx.runtime_env().memory_pool.reserved(), 0);
     }
 }
