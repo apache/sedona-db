@@ -111,6 +111,16 @@ sd_connect <- function(
 #'
 #' @param ctx A SedonaDB context.
 #' @param path One or more paths or URIs to Parquet files
+#' @param options A named list of options to pass to the Parquet reader.
+#' @param geometry_columns A JSON string or named list mapping column names to
+#'   GeoParquet column metadata. This can be used to mark binary WKB columns as
+#'   geometry columns or override existing GeoParquet metadata. The suggested
+#'   jsonlite package is required when passing a list.
+#' @param validate Whether to validate geometry column contents against their
+#'   metadata. Currently, this validates WKB input.
+#' @param partitioning A character vector of column names for hive-style
+#'   partitioning. By default (`NULL`), partition columns are auto-discovered.
+#'   Use `character()` to disable partitioning.
 #'
 #' @returns A sedonadb_dataframe
 #' @export
@@ -119,16 +129,112 @@ sd_connect <- function(
 #' path <- system.file("files/natural-earth_cities_geo.parquet", package = "sedonadb")
 #' sd_read_parquet(path) |> head(5) |> sd_preview()
 #'
-sd_read_parquet <- function(path) {
-  sd_ctx_read_parquet(ctx(), path)
+sd_read_parquet <- function(
+  path,
+  options = NULL,
+  geometry_columns = NULL,
+  validate = FALSE,
+  partitioning = NULL
+) {
+  sd_ctx_read_parquet(
+    ctx(),
+    path,
+    options = options,
+    geometry_columns = geometry_columns,
+    validate = validate,
+    partitioning = partitioning
+  )
 }
 
 #' @rdname sd_read_parquet
 #' @export
-sd_ctx_read_parquet <- function(ctx, path) {
+sd_ctx_read_parquet <- function(
+  ctx,
+  path,
+  options = NULL,
+  geometry_columns = NULL,
+  validate = FALSE,
+  partitioning = NULL
+) {
   check_ctx(ctx)
-  df <- ctx$read_parquet(path)
+
+  if (is.null(options)) {
+    options <- list()
+  } else {
+    options <- Filter(Negate(is.null), as.list(options))
+  }
+
+  option_keys <- names(options)
+  if (
+    length(options) > 0L &&
+      (is.null(option_keys) || any(is.na(option_keys)) || any(option_keys == ""))
+  ) {
+    stop("All option values must be named")
+  }
+
+  if (length(options) == 0L) {
+    option_keys <- character()
+  }
+
+  option_values <- vapply(
+    options,
+    function(value) {
+      if (length(value) != 1L) {
+        stop("All option values must be length 1")
+      }
+
+      as.character(value)
+    },
+    character(1)
+  )
+
+  if (is.list(geometry_columns)) {
+    if (!jsonlite_available()) {
+      stop(
+        "The `jsonlite` package is required when `geometry_columns` is a list. ",
+        "Install it with install.packages(\"jsonlite\"), or supply a JSON string."
+      )
+    }
+
+    geometry_columns <- as.character(jsonlite::toJSON(
+      geometry_columns,
+      auto_unbox = TRUE,
+      null = "null"
+    ))
+  } else if (!is.null(geometry_columns)) {
+    if (
+      !is.character(geometry_columns) ||
+        length(geometry_columns) != 1L ||
+        is.na(geometry_columns)
+    ) {
+      stop("`geometry_columns` must be a JSON string, named list, or NULL")
+    }
+  }
+
+  if (!is.logical(validate) || length(validate) != 1L || is.na(validate)) {
+    stop("`validate` must be TRUE or FALSE")
+  }
+
+  if (
+    !is.null(partitioning) &&
+      (!is.character(partitioning) || any(is.na(partitioning)))
+  ) {
+    stop("`partitioning` must be a character vector or NULL")
+  }
+
+  df <- ctx$read_parquet(
+    path,
+    option_keys,
+    unname(option_values),
+    geometry_columns,
+    validate,
+    partitioning
+  )
   new_sedonadb_dataframe(ctx, df)
+}
+
+jsonlite_available <- function() {
+  requireNamespace("jsonlite", quietly = TRUE)
 }
 
 #' Create a DataFrame from SQL
