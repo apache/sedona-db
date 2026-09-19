@@ -24,6 +24,9 @@ edition = "2021"
 [lib]
 crate-type = ["staticlib", "lib"]
 
+[features]
+s2geography = ["sedona/s2geography"]
+
 [dependencies]
 arrow-array = { workspace = true }
 arrow-schema = { workspace = true }

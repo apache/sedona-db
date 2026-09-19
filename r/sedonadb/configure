@@ -106,9 +106,66 @@ if [ -n "${SAVVY_FEATURES}" ]; then
   FEATURE_FLAGS="--features '${SAVVY_FEATURES}'"
 fi
 
+# On macOS, prefer Homebrew's mutually compatible S2, Abseil, and OpenSSL
+# packages. On other Unix platforms CMake will use a system S2 package when
+# available and otherwise build the vendored s2geometry source.
+S2_VCPKG_ROOT="${VCPKG_ROOT}"
+S2_VCPKG_DEFAULT_TRIPLET="${VCPKG_DEFAULT_TRIPLET}"
+S2_VCPKG_TARGET_TRIPLET="${VCPKG_TARGET_TRIPLET:-${VCPKG_DEFAULT_TRIPLET}}"
+S2_VCPKG_OVERLAY_TRIPLETS="${VCPKG_OVERLAY_TRIPLETS}"
+S2_VCPKG_MANIFEST_MODE="${VCPKG_MANIFEST_MODE}"
+S2_CMAKE_TOOLCHAIN_FILE="${CMAKE_TOOLCHAIN_FILE}"
+S2_CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}"
+S2_OPENSSL_ROOT_DIR="${OPENSSL_ROOT_DIR}"
+
+S2_VCPKG_ENABLED=false
+if [ -n "${S2_VCPKG_ROOT}" ] && \
+    [ -f "${S2_VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" ]; then
+  S2_VCPKG_ENABLED=true
+fi
+if [ "${S2_VCPKG_ENABLED}" = true ] && [ -z "${S2_CMAKE_TOOLCHAIN_FILE}" ]; then
+  S2_CMAKE_TOOLCHAIN_FILE="${S2_VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+fi
+
+SAVVY_FEATURE_WORDS="$(printf '%s' "${SAVVY_FEATURES}" | tr ',' ' ')"
+case " ${SAVVY_FEATURE_WORDS} " in
+  *" s2geography "*)
+    if [ "${S2_VCPKG_ENABLED}" = true ]; then
+      echo "using vcpkg dependencies from ${S2_VCPKG_ROOT}"
+    elif [ "$(uname)" = "Darwin" ] && command -v brew >/dev/null 2>&1; then
+      for formula in s2geometry abseil openssl@3; do
+        formula_prefix="$(brew --prefix "${formula}" 2>/dev/null)" || {
+          echo "-------------- ERROR: CONFIGURATION FAILED --------------------"
+          echo ""
+          echo "Building with SAVVY_FEATURES=s2geography on macOS requires"
+          echo "the Homebrew packages s2geometry, abseil, and openssl@3."
+          echo "Install them with: brew install s2geometry abseil openssl@3"
+          echo ""
+          echo "---------------------------------------------------------------"
+          exit 1
+        }
+        if [ -n "${S2_CMAKE_PREFIX_PATH}" ]; then
+          S2_CMAKE_PREFIX_PATH="${S2_CMAKE_PREFIX_PATH};${formula_prefix}"
+        else
+          S2_CMAKE_PREFIX_PATH="${formula_prefix}"
+        fi
+      done
+      echo "using Homebrew s2geometry, Abseil, and OpenSSL"
+    fi
+    ;;
+esac
+
 sed \
   -e "s/@TARGET@/${TARGET}/" \
   -e "s/@PROFILE@/${PROFILE}/" \
   -e "s/@FEATURE_FLAGS@/${FEATURE_FLAGS}/" \
+  -e "s|@VCPKG_ROOT@|${S2_VCPKG_ROOT}|" \
+  -e "s|@VCPKG_DEFAULT_TRIPLET@|${S2_VCPKG_DEFAULT_TRIPLET}|" \
+  -e "s|@VCPKG_TARGET_TRIPLET@|${S2_VCPKG_TARGET_TRIPLET}|" \
+  -e "s|@VCPKG_OVERLAY_TRIPLETS@|${S2_VCPKG_OVERLAY_TRIPLETS}|" \
+  -e "s|@VCPKG_MANIFEST_MODE@|${S2_VCPKG_MANIFEST_MODE}|" \
+  -e "s|@CMAKE_TOOLCHAIN_FILE@|${S2_CMAKE_TOOLCHAIN_FILE}|" \
+  -e "s|@CMAKE_PREFIX_PATH@|${S2_CMAKE_PREFIX_PATH}|" \
+  -e "s|@OPENSSL_ROOT_DIR@|${S2_OPENSSL_ROOT_DIR}|" \
   -e "s|@PKG_LIBS@|${PKG_LIBS}|" \
   src/Makevars.in > src/Makevars

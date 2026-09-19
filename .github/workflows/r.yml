@@ -17,6 +17,10 @@
 
 name: r
 
+env:
+  # At s2geometry updated to 0.13.0
+  VCPKG_REF: 580d480f750618f8affeb77abbb956e6eeaee0ce
+
 on:
   push:
     branches:
@@ -63,6 +67,33 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          submodules: 'true'
+
+      - name: Clone vcpkg (Linux and Windows)
+        if: matrix.config.os != 'macos-latest'
+        uses: actions/checkout@v7
+        with:
+          repository: microsoft/vcpkg
+          ref: ${{ env.VCPKG_REF }}
+          path: vcpkg
+
+      - name: Bootstrap vcpkg (Windows)
+        if: matrix.config.os == 'windows-latest'
+        shell: pwsh
+        run: .\vcpkg\bootstrap-vcpkg.bat -disableMetrics
+
+      - name: Bootstrap vcpkg (Linux)
+        if: matrix.config.os == 'ubuntu-latest'
+        run: ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
+
+      - name: Cache vcpkg binaries (Linux and Windows)
+        if: matrix.config.os != 'macos-latest'
+        uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/vcpkg-bincache
+          key: r-vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ env.VCPKG_REF }}-${{ hashFiles('c/sedona-s2geography/vcpkg.json', 'r/sedonadb/tools/vcpkg-triplets/**') }}
+
       - uses: r-lib/actions/setup-r@v2
         with:
           r-version: ${{ matrix.config.r }}
@@ -90,7 +121,7 @@ jobs:
 
       - name: Install dependencies (MacOS)
         if: matrix.config.os == 'macos-latest'
-        run: brew install geos
+        run: brew install geos s2geometry
 
       # Dynamically set a short target directory on Windows to bypass 260-char MinGW limits,
       # while keeping paths standard on Mac/Linux.
@@ -119,7 +150,12 @@ jobs:
           cache: false
 
       - name: Install sedonadb R Package
+        env:
+          SAVVY_FEATURES: s2geography
+          VCPKG_ROOT: ${{ matrix.config.os != 'macos-latest' && format('{0}/vcpkg', github.workspace) || '' }}
+          VCPKG_DEFAULT_BINARY_CACHE: ${{ matrix.config.os != 'macos-latest' && format('{0}/vcpkg-bincache', github.workspace) || '' }}
         run: |
+          if [ -n "$VCPKG_ROOT" ]; then mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"; fi
           R CMD INSTALL r/sedonadb --preclean
 
       - name: Test sedonadb R Package
