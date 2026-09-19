@@ -86,7 +86,7 @@ fn object_store_table_options(
     custom_options: Option<&HashMap<String, String>>,
 ) -> Result<TableOptions> {
     let mut table_options = state.default_table_options();
-    let option_prefix = match scheme {
+    let option_prefix: Option<&str> = match scheme {
         #[cfg(feature = "aws")]
         "s3" | "oss" | "cos" => {
             table_options.extensions.insert(AwsOptions::default());
