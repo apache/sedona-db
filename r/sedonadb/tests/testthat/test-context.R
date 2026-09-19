@@ -75,7 +75,12 @@ test_that("sd_read_parquet() forwards reader options", {
   expect_identical(
     sd_count(sd_read_parquet(
       path,
-      geometry_columns = list(geometry = list(encoding = "WKB")),
+      geometry_columns = list(geometry = list(
+        encoding = "WKB",
+        geometry_types = c("Point", "MultiPoint"),
+        bbox = c(-180, -90, 180, 90),
+        crs = list(id = list(authority = "EPSG", code = 4326L))
+      )),
       validate = TRUE
     )),
     243

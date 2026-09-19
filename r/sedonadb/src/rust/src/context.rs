@@ -22,7 +22,8 @@ use arrow_schema::{ArrowError, DataType};
 use datafusion::catalog::{MemTable, TableProvider};
 use datafusion_expr::ScalarUDF;
 use datafusion_ffi::udf::FFI_ScalarUDF;
-use savvy::{savvy, savvy_err, IntoExtPtrSexp, OwnedStringSexp, Result};
+use savvy::{savvy, savvy_err, IntoExtPtrSexp, NotAvailableValue, OwnedStringSexp, Result};
+use serde_json::{Map, Number, Value};
 
 use sedona::{
     context::SedonaContext, context_builder::SedonaContextBuilder,
@@ -36,6 +37,115 @@ use crate::{
     ffi::{import_array_stream, import_scalar_udf, import_table_provider, FFIScalarUdfR},
     runtime::wait_for_future_captured_r,
 };
+
+fn json_scalar_or_array(values: Vec<Value>) -> Value {
+    if values.len() == 1 {
+        values.into_iter().next().unwrap()
+    } else {
+        Value::Array(values)
+    }
+}
+
+fn r_value_to_json(value: savvy::Sexp) -> Result<Value> {
+    if value.is_null() {
+        return Ok(Value::Null);
+    }
+
+    if value.is_list() {
+        let values = savvy::ListSexp::try_from(value)?;
+        let names = values.names_iter().collect::<Vec<_>>();
+        let has_names = names.iter().any(|name| !name.is_empty());
+
+        if has_names {
+            if names.iter().any(|name| name.is_empty()) {
+                return Err(savvy_err!(
+                    "JSON object values must be either all named or all unnamed"
+                ));
+            }
+
+            let mut object = Map::new();
+            for (name, item) in names.into_iter().zip(values.values_iter()) {
+                if object
+                    .insert(name.to_string(), r_value_to_json(item)?)
+                    .is_some()
+                {
+                    return Err(savvy_err!("JSON object names must be unique"));
+                }
+            }
+            return Ok(Value::Object(object));
+        }
+
+        return values
+            .values_iter()
+            .map(r_value_to_json)
+            .collect::<Result<Vec<_>>>()
+            .map(Value::Array);
+    }
+
+    if value.is_logical() {
+        let values = savvy::LogicalSexp::try_from(value)?
+            .as_slice_raw()
+            .iter()
+            .map(|value| {
+                if value.is_na() {
+                    Value::Null
+                } else {
+                    Value::Bool(*value != 0)
+                }
+            })
+            .collect();
+        return Ok(json_scalar_or_array(values));
+    }
+
+    if value.is_integer() {
+        let values = savvy::IntegerSexp::try_from(value)?
+            .iter()
+            .map(|value| {
+                if value.is_na() {
+                    Value::Null
+                } else {
+                    Value::Number(Number::from(*value))
+                }
+            })
+            .collect();
+        return Ok(json_scalar_or_array(values));
+    }
+
+    if value.is_real() {
+        let values = savvy::RealSexp::try_from(value)?
+            .iter()
+            .map(|value| {
+                if value.is_na() {
+                    Ok(Value::Null)
+                } else {
+                    Number::from_f64(*value)
+                        .map(Value::Number)
+                        .ok_or_else(|| savvy_err!("JSON numbers must be finite"))
+                }
+            })
+            .collect::<Result<Vec<_>>>()?;
+        return Ok(json_scalar_or_array(values));
+    }
+
+    if value.is_string() {
+        let values = savvy::StringSexp::try_from(value)?
+            .iter()
+            .map(|value| {
+                if value.is_na() {
+                    Value::Null
+                } else {
+                    Value::String(value.to_string())
+                }
+            })
+            .collect();
+        return Ok(json_scalar_or_array(values));
+    }
+
+    Err(savvy_err!(
+        "Cannot convert R type '{}' to JSON",
+        value.get_human_readable_type_name()
+    ))
+}
 
 #[savvy]
 pub struct InternalContext {
@@ -100,13 +210,19 @@ impl InternalContext {
             .map_err(|e| savvy_err!("Invalid table options: {e}"))?;
 
         if !geometry_columns.is_null() {
-            let geometry_columns_strsxp = savvy::StringSexp::try_from(geometry_columns)?;
-            let geometry_columns_json = geometry_columns_strsxp
-                .iter()
-                .next()
-                .ok_or_else(|| savvy_err!("`geometry_columns` must have length 1"))?;
+            let geometry_columns_json = if geometry_columns.is_list() {
+                serde_json::to_string(&r_value_to_json(geometry_columns)?)
+                    .map_err(|e| savvy_err!("Failed to serialize geometry_columns: {e}"))?
+            } else {
+                let geometry_columns_strsxp = savvy::StringSexp::try_from(geometry_columns)?;
+                geometry_columns_strsxp
+                    .iter()
+                    .next()
+                    .ok_or_else(|| savvy_err!("`geometry_columns` must have length 1"))?
+                    .to_string()
+            };
             geo_options = geo_options
-                .with_geometry_columns_json(geometry_columns_json)
+                .with_geometry_columns_json(&geometry_columns_json)
                 .map_err(|e| savvy_err!("Invalid geometry_columns JSON: {e}"))?;
         }
 

@@ -187,13 +187,7 @@ sd_ctx_read_parquet <- function(
     character(1)
   )
 
-  if (is.list(geometry_columns)) {
-    geometry_columns <- as.character(jsonlite::toJSON(
-      geometry_columns,
-      auto_unbox = TRUE,
-      null = "null"
-    ))
-  } else if (!is.null(geometry_columns)) {
+  if (!is.null(geometry_columns) && !is.list(geometry_columns)) {
     if (
       !is.character(geometry_columns) ||
         length(geometry_columns) != 1L ||
