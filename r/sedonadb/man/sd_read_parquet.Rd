@@ -29,7 +29,8 @@ sd_ctx_read_parquet(
 
 \item{geometry_columns}{A JSON string or named list mapping column names to
 GeoParquet column metadata. This can be used to mark binary WKB columns as
-geometry columns or override existing GeoParquet metadata.}
+geometry columns or override existing GeoParquet metadata. The suggested
+jsonlite package is required when passing a list.}
 
 \item{validate}{Whether to validate geometry column contents against their
 metadata. Currently, this validates WKB input.}

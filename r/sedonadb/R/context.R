@@ -114,7 +114,8 @@ sd_connect <- function(
 #' @param options A named list of options to pass to the Parquet reader.
 #' @param geometry_columns A JSON string or named list mapping column names to
 #'   GeoParquet column metadata. This can be used to mark binary WKB columns as
-#'   geometry columns or override existing GeoParquet metadata.
+#'   geometry columns or override existing GeoParquet metadata. The suggested
+#'   jsonlite package is required when passing a list.
 #' @param validate Whether to validate geometry column contents against their
 #'   metadata. Currently, this validates WKB input.
 #' @param partitioning A character vector of column names for hive-style
@@ -187,7 +188,20 @@ sd_ctx_read_parquet <- function(
     character(1)
   )
 
-  if (!is.null(geometry_columns) && !is.list(geometry_columns)) {
+  if (is.list(geometry_columns)) {
+    if (!jsonlite_available()) {
+      stop(
+        "The `jsonlite` package is required when `geometry_columns` is a list. ",
+        "Install it with install.packages(\"jsonlite\"), or supply a JSON string."
+      )
+    }
+
+    geometry_columns <- as.character(jsonlite::toJSON(
+      geometry_columns,
+      auto_unbox = TRUE,
+      null = "null"
+    ))
+  } else if (!is.null(geometry_columns)) {
     if (
       !is.character(geometry_columns) ||
         length(geometry_columns) != 1L ||
@@ -217,6 +231,10 @@ sd_ctx_read_parquet <- function(
     partitioning
   )
   new_sedonadb_dataframe(ctx, df)
+}
+
+jsonlite_available <- function() {
+  requireNamespace("jsonlite", quietly = TRUE)
 }
 
 #' Create a DataFrame from SQL

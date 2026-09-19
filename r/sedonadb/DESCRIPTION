@@ -13,6 +13,7 @@ Depends: R (>= 4.1.0)
 Suggests:
     adbcdrivermanager,
     dplyr,
+    jsonlite,
     lintr,
     rlang,
     tibble,
