@@ -113,7 +113,7 @@ pub(crate) struct GeoParquetMorselizer {
     pub enable_pruning: bool,
     pub metrics: GeoParquetFileOpenerMetrics,
     pub options: TableGeoParquetOptions,
-    pub metadata_cache: Option<Arc<dyn FileMetadataCache>>,
+    pub metadata_cache: Option<Arc<FileMetadataCache>>,
     pub bounder_factory: WkbBounder2DFactory,
 }
 
@@ -152,7 +152,7 @@ struct GeoParquetMetadataPlanner {
     enable_pruning: bool,
     metrics: GeoParquetFileOpenerMetrics,
     options: TableGeoParquetOptions,
-    metadata_cache: Option<Arc<dyn FileMetadataCache>>,
+    metadata_cache: Option<Arc<FileMetadataCache>>,
     bounder_factory: WkbBounder2DFactory,
 }
 

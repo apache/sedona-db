@@ -17,7 +17,9 @@
 
 use std::{iter, sync::Arc};
 
-use datafusion_common::{config::ConfigOptions, error::DataFusionError};
+use datafusion_common::{
+    config::ConfigOptions, error::DataFusionError, tree_node::TreeNodeRecursion,
+};
 use datafusion_datasource::{
     TableSchema,
     file::FileSource,
@@ -88,6 +90,23 @@ impl LasSource {
 }
 
 impl FileSource for LasSource {
+    fn apply_expressions(
+        &self,
+        f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> Result<TreeNodeRecursion, DataFusionError>,
+    ) -> Result<TreeNodeRecursion, DataFusionError> {
+        if let Some(predicate) = &self.predicate {
+            if f(predicate)? == TreeNodeRecursion::Stop {
+                return Ok(TreeNodeRecursion::Stop);
+            }
+        }
+        for projection in &self.projection {
+            if f(&projection.expr)? == TreeNodeRecursion::Stop {
+                return Ok(TreeNodeRecursion::Stop);
+            }
+        }
+        Ok(TreeNodeRecursion::Continue)
+    }
+
     fn create_file_opener(
         &self,
         object_store: Arc<dyn ObjectStore>,

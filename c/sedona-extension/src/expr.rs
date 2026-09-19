@@ -433,6 +433,7 @@ impl datafusion_proto::physical_plan::PhysicalExtensionCodec for PlaceholderPhys
         _buf: &[u8],
         _inputs: &[Arc<dyn datafusion_physical_plan::ExecutionPlan>],
         _ctx: &TaskContext,
+        _proto_converter: &dyn datafusion_proto::physical_plan::PhysicalProtoConverterExtension,
     ) -> Result<Arc<dyn datafusion_physical_plan::ExecutionPlan>> {
         sedona_internal_err!(
             "Physical plan extensions are not supported when importing expressions"
@@ -443,6 +444,7 @@ impl datafusion_proto::physical_plan::PhysicalExtensionCodec for PlaceholderPhys
         &self,
         _node: Arc<dyn datafusion_physical_plan::ExecutionPlan>,
         _buf: &mut Vec<u8>,
+        _proto_converter: &dyn datafusion_proto::physical_plan::PhysicalProtoConverterExtension,
     ) -> Result<()> {
         sedona_internal_err!(
             "Physical plan extensions are not supported when exporting expressions"

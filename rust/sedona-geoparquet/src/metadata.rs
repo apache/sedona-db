@@ -650,14 +650,16 @@ fn column_from_logical_type(
         let mut column_metadata = GeoParquetColumnMetadata::default();
 
         match logical_type {
-            LogicalType::Geometry { crs } => {
-                column_metadata.crs = geoparquet_crs_from_logical_type(crs.as_ref(), kv_metadata);
+            LogicalType::Geometry(geometry) => {
+                column_metadata.crs =
+                    geoparquet_crs_from_logical_type(geometry.crs.as_ref(), kv_metadata);
                 Ok(Some(column_metadata))
             }
-            LogicalType::Geography { crs, algorithm } => {
-                column_metadata.crs = geoparquet_crs_from_logical_type(crs.as_ref(), kv_metadata);
+            LogicalType::Geography(geography) => {
+                column_metadata.crs =
+                    geoparquet_crs_from_logical_type(geography.crs.as_ref(), kv_metadata);
 
-                let edges = match algorithm {
+                let edges = match &geography.algorithm {
                     None | Some(EdgeInterpolationAlgorithm::SPHERICAL) => "spherical",
                     Some(EdgeInterpolationAlgorithm::VINCENTY) => "vincenty",
                     Some(EdgeInterpolationAlgorithm::ANDOYER) => "andoyer",

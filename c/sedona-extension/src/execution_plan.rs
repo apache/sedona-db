@@ -26,8 +26,9 @@ use std::{
 
 use arrow_array::ffi_stream::FFI_ArrowArrayStream;
 use arrow_schema::{ffi::FFI_ArrowSchema, Schema, SchemaRef};
-use datafusion_common::{exec_err, Result, Statistics};
+use datafusion_common::{exec_err, tree_node::TreeNodeRecursion, Result, Statistics};
 use datafusion_execution::TaskContext;
+use datafusion_physical_expr::PhysicalExpr;
 use datafusion_physical_plan::{
     displayable,
     execution_plan::{Boundedness, CardinalityEffect, EmissionType},
@@ -399,6 +400,13 @@ impl DisplayAs for ImportedSedonaCExec {
 }
 
 impl ExecutionPlan for ImportedSedonaCExec {
+    fn apply_expressions(
+        &self,
+        _f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> Result<TreeNodeRecursion>,
+    ) -> Result<TreeNodeRecursion> {
+        Ok(TreeNodeRecursion::Continue)
+    }
+
     fn name(&self) -> &str {
         &self.name
     }
@@ -743,6 +751,13 @@ mod tests {
                 self.schema.clone(),
                 stream::iter(vec![Ok(batch)]),
             )))
+        }
+
+        fn apply_expressions(
+            &self,
+            _f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> Result<TreeNodeRecursion>,
+        ) -> Result<TreeNodeRecursion> {
+            Ok(TreeNodeRecursion::Continue)
         }
     }
 

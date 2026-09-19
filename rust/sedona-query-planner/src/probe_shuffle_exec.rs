@@ -35,7 +35,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use datafusion_common::config::ConfigOptions;
-use datafusion_common::{Result, Statistics, internal_err, plan_err};
+use datafusion_common::{Result, Statistics, internal_err, plan_err, tree_node::TreeNodeRecursion};
 use datafusion_execution::{SendableRecordBatchStream, TaskContext};
 use datafusion_physical_expr::PhysicalExpr;
 use datafusion_physical_plan::execution_plan::CardinalityEffect;
@@ -115,6 +115,13 @@ impl DisplayAs for ProbeShuffleExec {
 }
 
 impl ExecutionPlan for ProbeShuffleExec {
+    fn apply_expressions(
+        &self,
+        _f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> Result<TreeNodeRecursion>,
+    ) -> Result<TreeNodeRecursion> {
+        Ok(TreeNodeRecursion::Continue)
+    }
+
     fn name(&self) -> &str {
         "ProbeShuffleExec"
     }

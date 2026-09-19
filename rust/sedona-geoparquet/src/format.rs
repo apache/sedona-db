@@ -216,7 +216,13 @@ impl FileFormat for GeoParquetFormat {
                 }
             })
             .boxed() // Workaround https://github.com/rust-lang/rust/issues/64552
-            .buffered(state.config_options().execution.meta_fetch_concurrency)
+            .buffered(
+                state
+                    .config_options()
+                    .execution
+                    .meta_fetch_concurrency
+                    .get(),
+            )
             .try_collect()
             .await?;
 
@@ -431,7 +437,7 @@ pub struct GeoParquetFileSource {
     metadata_size_hint: Option<usize>,
     predicate: Option<Arc<dyn PhysicalExpr>>,
     options: TableGeoParquetOptions,
-    metadata_cache: Option<Arc<dyn FileMetadataCache>>,
+    metadata_cache: Option<Arc<FileMetadataCache>>,
     /// Factory for creating bounders used for spatial pruning
     ///
     /// Enables spatial pruning for both GEOMETRY and GEOGRAPHY columns.
@@ -579,6 +585,19 @@ impl GeoParquetFileSource {
 }
 
 impl FileSource for GeoParquetFileSource {
+    fn apply_expressions(
+        &self,
+        f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> Result<TreeNodeRecursion>,
+    ) -> Result<TreeNodeRecursion> {
+        if self.inner.apply_expressions(f)? == TreeNodeRecursion::Stop {
+            return Ok(TreeNodeRecursion::Stop);
+        }
+        if let Some(predicate) = &self.predicate {
+            return f(predicate);
+        }
+        Ok(TreeNodeRecursion::Continue)
+    }
+
     fn create_file_opener(
         &self,
         object_store: Arc<dyn ObjectStore>,

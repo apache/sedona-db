@@ -156,7 +156,7 @@ struct RecordBatchReaderTableOptions {
 impl ReadOptions<'_> for RecordBatchReaderTableOptions {
     fn to_listing_options(
         &self,
-        config: &SessionConfig,
+        _config: &SessionConfig,
         table_options: TableOptions,
     ) -> ListingOptions {
         let format = if let Some(modified) = self.spec.with_table_options(&table_options) {
@@ -165,9 +165,8 @@ impl ReadOptions<'_> for RecordBatchReaderTableOptions {
             ExternalFileFormat::new(self.spec.clone())
         };
 
-        let mut options = ListingOptions::new(Arc::new(format))
-            .with_file_extension(self.spec.extension())
-            .with_session_config_options(config);
+        let mut options =
+            ListingOptions::new(Arc::new(format)).with_file_extension(self.spec.extension());
 
         // Apply partition columns if explicitly specified (Some)
         // None means auto-discover later, Some([]) means no partitioning
@@ -288,6 +287,7 @@ impl TableProvider for SingleObjectExternalTable {
                     metadata_size_hint: None,
                     ordering: None,
                     table_reference: Some(TableReference::bare(location.to_string())),
+                    arrow_schema: None,
                 }])
             })
             .collect();
