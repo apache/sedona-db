@@ -65,7 +65,7 @@ def test_read_csv_bad_delimiter_raises(con):
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / "t.csv"
         p.write_text("a,b\n1,x\n")
-        with pytest.raises(SedonaError, match="single byte"):
+        with pytest.raises(SedonaError, match="Error parsing"):
             con.read.csv(p, delimiter=";;")
 
 
@@ -93,7 +93,9 @@ def test_generic_read_guesses_csv_extension(con):
         p = Path(td) / "t.csv"
         p.write_text("a,b\n1,x\n")
         out = con.read(p).to_pandas()
+        sql_out = con.sql(f"SELECT * FROM '{p}'").to_pandas()
     pdt.assert_frame_equal(out, pd.DataFrame({"a": [1], "b": ["x"]}))
+    pdt.assert_frame_equal(sql_out, out)
 
 
 def test_generic_read_csv_options_thread_through(con):
@@ -101,6 +103,14 @@ def test_generic_read_csv_options_thread_through(con):
         p = Path(td) / "t.csv"
         p.write_text("a;b\n1;x\n")
         out = con.read(p, options={"delimiter": ";"}).to_pandas()
+    pdt.assert_frame_equal(out, pd.DataFrame({"a": [1], "b": ["x"]}))
+
+
+def test_generic_read_explicit_format_without_matching_extension(con):
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "table.data"
+        p.write_text("a,b\n1,x\n")
+        out = con.read(p, {"delimiter": ","}, "csv").to_pandas()
     pdt.assert_frame_equal(out, pd.DataFrame({"a": [1], "b": ["x"]}))
 
 

@@ -99,7 +99,7 @@ def test_zarr_url_as_table(tmp_path):
 
     url = zarr_path.as_uri()
 
-    # Ground truth: the working explicit-format read of the same `.zarr` group.
+    # Ground truth: the explicit-format read of the same `.zarr` group.
     expected = con.read(url, format="zarr").to_arrow_table()
 
     def assert_matches_expected(table):
@@ -111,6 +111,10 @@ def test_zarr_url_as_table(tmp_path):
 
     # The `file://` URL form is the primary SQL-text feature under test.
     assert_matches_expected(con.sql(f"SELECT * FROM '{url}'").to_arrow_table())
+
+    # The generic Python read uses the same extension lookup and single-object
+    # scan as SQL.
+    assert_matches_expected(con.read(url).to_arrow_table())
 
     # A bare filesystem path (no `file://` scheme) resolves the same way.
     assert_matches_expected(con.sql(f"SELECT * FROM '{zarr_path}'").to_arrow_table())

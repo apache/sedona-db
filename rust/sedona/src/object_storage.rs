@@ -25,16 +25,14 @@ use datafusion::common::config::{
 };
 #[allow(unused_imports)]
 use datafusion::common::{config_err, exec_datafusion_err, exec_err};
-use datafusion::config::ConfigFileType;
 use datafusion::datasource::listing::ListingTableUrl;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::SessionState;
-use datafusion::execution::SessionStateBuilder;
+use datafusion::prelude::SessionContext;
 use dirs::home_dir;
 #[cfg(any(feature = "aws", feature = "azure", feature = "gcp", feature = "http"))]
 use object_store::CredentialProvider;
 use object_store::ObjectStore;
-use sedona_geoparquet::options::TableGeoParquetOptions;
 use url::Url;
 
 #[cfg(feature = "aws")]
@@ -73,73 +71,50 @@ pub async fn ensure_object_store_registered_with_options(
     match state.runtime_env().object_store_registry.get_store(url) {
         Ok(_) => { /*Nothing to do here, store for this URL is already registered*/ }
         Err(_) => {
-            let mut builder = SessionStateBuilder::from(state.clone());
-
-            // Register the store for this URL with custom options if provided
-            match scheme {
-                "s3" | "oss" | "cos" => {
-                    if let Some(table_options) = builder.table_options() {
-                        let mut aws_options = AwsOptions::default();
-
-                        // Process custom options if provided
-                        if let Some(options) = custom_options {
-                            for (key, value) in options {
-                                if key.starts_with("aws.") {
-                                    let _ = aws_options.set(key, value);
-                                }
-                            }
-                        }
-
-                        table_options.extensions.insert(aws_options);
-                    }
-                }
-                "gs" | "gcs" => {
-                    if let Some(table_options) = builder.table_options() {
-                        let mut gcp_options = GcpOptions::default();
-
-                        // Process custom options if provided
-                        if let Some(options) = custom_options {
-                            for (key, value) in options {
-                                if key.starts_with("gcp.") {
-                                    let _ = gcp_options.set(key, value);
-                                }
-                            }
-                        }
-
-                        table_options.extensions.insert(gcp_options);
-                    }
-                }
-                #[cfg(feature = "azure")]
-                "az" | "abfs" | "abfss" => {
-                    if let Some(table_options) = builder.table_options() {
-                        let mut azure_options = AzureOptions::default();
-
-                        if let Some(options) = custom_options {
-                            for (key, value) in options {
-                                if key.starts_with("azure.") {
-                                    let _ = azure_options.set(key, value);
-                                }
-                            }
-                        }
-
-                        table_options.extensions.insert(azure_options);
-                    }
-                }
-                _ => {}
-            };
-            let new_state = builder.build();
-            let store = get_object_store(
-                &new_state,
-                table_url.scheme(),
-                url,
-                &new_state.default_table_options(),
-            )
-            .await?;
-            new_state.runtime_env().register_object_store(url, store);
+            let table_options = object_store_table_options(state, scheme, custom_options)?;
+            let store = get_object_store(state, table_url.scheme(), url, &table_options).await?;
+            state.runtime_env().register_object_store(url, store);
         }
     }
 
     Ok(())
+}
+
+fn object_store_table_options(
+    state: &SessionState,
+    scheme: &str,
+    custom_options: Option<&HashMap<String, String>>,
+) -> Result<TableOptions> {
+    let mut table_options = state.default_table_options();
+    let option_prefix: Option<&str> = match scheme {
+        #[cfg(feature = "aws")]
+        "s3" | "oss" | "cos" => {
+            table_options.extensions.insert(AwsOptions::default());
+            Some("aws.")
+        }
+        #[cfg(feature = "gcp")]
+        "gs" | "gcs" => {
+            table_options.extensions.insert(GcpOptions::default());
+            Some("gcp.")
+        }
+        #[cfg(feature = "azure")]
+        "az" | "abfs" | "abfss" => {
+            table_options.extensions.insert(AzureOptions::default());
+            Some("azure.")
+        }
+        _ => None,
+    };
+
+    if let (Some(prefix), Some(options)) = (option_prefix, custom_options) {
+        let options = options
+            .iter()
+            .filter(|(key, _)| key.starts_with(prefix))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        table_options.alter_with_string_hash_map(&options)?;
+    }
+
+    Ok(table_options)
 }
 
 // Backward compatibility wrapper
@@ -776,25 +751,21 @@ pub(crate) async fn get_object_store(
 }
 
 #[allow(unused_variables)]
-pub(crate) fn register_table_options_extension_from_scheme(ctx: &SedonaContext, scheme: &str) {
+pub(crate) fn register_table_options_extension_from_scheme(ctx: &SessionContext, scheme: &str) {
     match scheme {
         #[cfg(feature = "aws")]
         "s3" | "oss" | "cos" => {
             // Register AWS specific table options in the session context:
-            ctx.ctx
-                .register_table_options_extension(AwsOptions::default())
+            ctx.register_table_options_extension(AwsOptions::default())
         }
         // For Google Cloud Storage
         #[cfg(feature = "gcp")]
         "gs" | "gcs" => {
             // Register GCP specific table options in the session context:
-            ctx.ctx
-                .register_table_options_extension(GcpOptions::default())
+            ctx.register_table_options_extension(GcpOptions::default())
         }
         #[cfg(feature = "azure")]
-        "az" | "abfs" | "abfss" => ctx
-            .ctx
-            .register_table_options_extension(AzureOptions::default()),
+        "az" | "abfs" | "abfss" => ctx.register_table_options_extension(AzureOptions::default()),
         // For unsupported schemes, do nothing:
         _ => {}
     }
@@ -804,7 +775,6 @@ pub(crate) async fn register_object_store_and_config_extensions(
     ctx: &SedonaContext,
     location: &String,
     options: &HashMap<String, String>,
-    format: Option<ConfigFileType>,
 ) -> Result<()> {
     // Parse the location URL to extract the scheme and other components
     let table_path = ListingTableUrl::parse(location)?;
@@ -815,26 +785,8 @@ pub(crate) async fn register_object_store_and_config_extensions(
     // Obtain a reference to the URL
     let url = table_path.as_ref();
 
-    // Register the options based on the scheme extracted from the location
-    register_table_options_extension_from_scheme(ctx, scheme);
-
-    // Clone and modify the default table options based on the provided options
-    let mut table_options = ctx.ctx.state().default_table_options();
-    if let Some(ref format) = format {
-        table_options.set_config_format(format.clone());
-    }
-
-    let mut options = options.clone();
-
-    // If this is an explicitly Parquet configuration, we need to strip GeoParquet
-    // options before calling alter_string_with_hash_map.
-    if let Some(&ConfigFileType::PARQUET) = format.as_ref() {
-        for key in TableGeoParquetOptions::TABLE_OPTIONS_KEYS {
-            options.remove(key);
-        }
-    }
-
-    table_options.alter_with_string_hash_map(&options)?;
+    register_table_options_extension_from_scheme(&ctx.ctx, scheme);
+    let table_options = object_store_table_options(&ctx.ctx.state(), scheme, Some(options))?;
 
     // Retrieve the appropriate object store based on the scheme, URL, and modified table options
     let store = get_object_store(&ctx.ctx.state(), scheme, url, &table_options).await?;
@@ -855,6 +807,52 @@ mod tests {
 
     use super::*;
     use crate::context::SedonaContext;
+
+    #[cfg(feature = "aws")]
+    #[tokio::test]
+    async fn signed_and_unsigned_s3_buckets_use_distinct_stores() -> Result<()> {
+        // Regression for https://github.com/apache/sedona-db/issues/48.
+        let ctx = SedonaContext::new();
+        let unsigned_url = Url::parse("s3://public-bucket/path/a.parquet").unwrap();
+        let signed_url = Url::parse("s3://private-bucket/path/b.parquet").unwrap();
+        let unsigned_options = HashMap::from([
+            ("aws.skip_signature".to_string(), "true".to_string()),
+            ("aws.region".to_string(), "us-east-1".to_string()),
+        ]);
+        let signed_options = HashMap::from([
+            ("aws.access_key_id".to_string(), "test-key".to_string()),
+            (
+                "aws.secret_access_key".to_string(),
+                "test-secret".to_string(),
+            ),
+            ("aws.region".to_string(), "us-east-1".to_string()),
+        ]);
+
+        ensure_object_store_registered_with_options(
+            &mut ctx.ctx.state(),
+            unsigned_url.as_str(),
+            Some(&unsigned_options),
+        )
+        .await?;
+        ensure_object_store_registered_with_options(
+            &mut ctx.ctx.state(),
+            signed_url.as_str(),
+            Some(&signed_options),
+        )
+        .await?;
+
+        let registry = &ctx.ctx.runtime_env().object_store_registry;
+        let unsigned = registry.get_store(&unsigned_url)?;
+        let signed = registry.get_store(&signed_url)?;
+        assert!(!Arc::ptr_eq(&unsigned, &signed));
+
+        let same_public_bucket = Url::parse("s3://public-bucket/other/file.parquet").unwrap();
+        assert!(Arc::ptr_eq(
+            &unsigned,
+            &registry.get_store(&same_public_bucket)?
+        ));
+        Ok(())
+    }
 
     #[cfg(feature = "aws")]
     use object_store::{aws::AmazonS3ConfigKey, gcp::GoogleConfigKey};
@@ -886,7 +884,7 @@ mod tests {
         let mut plan = ctx.ctx.state().create_logical_plan(&sql).await?;
 
         if let LogicalPlan::Ddl(DdlStatement::CreateExternalTable(cmd)) = &mut plan {
-            register_table_options_extension_from_scheme(&ctx, scheme);
+            register_table_options_extension_from_scheme(&ctx.ctx, scheme);
             let mut table_options = ctx.ctx.state().default_table_options();
             table_options.alter_with_string_hash_map(&cmd.options)?;
             let aws_options = table_options.extensions.get::<AwsOptions>().unwrap();
@@ -930,7 +928,7 @@ mod tests {
         let mut plan = ctx.ctx.state().create_logical_plan(&sql).await?;
 
         if let LogicalPlan::Ddl(DdlStatement::CreateExternalTable(cmd)) = &mut plan {
-            register_table_options_extension_from_scheme(&ctx, scheme);
+            register_table_options_extension_from_scheme(&ctx.ctx, scheme);
             let mut table_options = ctx.ctx.state().default_table_options();
             table_options.alter_with_string_hash_map(&cmd.options)?;
             let aws_options = table_options.extensions.get::<AwsOptions>().unwrap();
@@ -956,7 +954,7 @@ mod tests {
         let mut plan = ctx.ctx.state().create_logical_plan(&sql).await?;
 
         if let LogicalPlan::Ddl(DdlStatement::CreateExternalTable(cmd)) = &mut plan {
-            register_table_options_extension_from_scheme(&ctx, scheme);
+            register_table_options_extension_from_scheme(&ctx.ctx, scheme);
             let mut table_options = ctx.ctx.state().default_table_options();
             table_options.alter_with_string_hash_map(&cmd.options)?;
             let aws_options = table_options.extensions.get::<AwsOptions>().unwrap();
@@ -984,7 +982,7 @@ mod tests {
         let mut plan = ctx.ctx.state().create_logical_plan(&sql).await?;
 
         if let LogicalPlan::Ddl(DdlStatement::CreateExternalTable(cmd)) = &mut plan {
-            register_table_options_extension_from_scheme(&ctx, scheme);
+            register_table_options_extension_from_scheme(&ctx.ctx, scheme);
             let mut table_options = ctx.ctx.state().default_table_options();
             table_options.alter_with_string_hash_map(&cmd.options)?;
             let aws_options = table_options.extensions.get::<AwsOptions>().unwrap();
@@ -1021,7 +1019,7 @@ mod tests {
         let mut plan = ctx.ctx.state().create_logical_plan(&sql).await?;
 
         if let LogicalPlan::Ddl(DdlStatement::CreateExternalTable(cmd)) = &mut plan {
-            register_table_options_extension_from_scheme(&ctx, scheme);
+            register_table_options_extension_from_scheme(&ctx.ctx, scheme);
             let mut table_options = ctx.ctx.state().default_table_options();
             table_options.alter_with_string_hash_map(&cmd.options)?;
             let gcp_options = table_options.extensions.get::<GcpOptions>().unwrap();
@@ -1073,7 +1071,7 @@ mod tests {
         let mut plan = ctx.ctx.state().create_logical_plan(&sql).await?;
 
         if let LogicalPlan::Ddl(DdlStatement::CreateExternalTable(cmd)) = &mut plan {
-            register_table_options_extension_from_scheme(&ctx, scheme);
+            register_table_options_extension_from_scheme(&ctx.ctx, scheme);
             let mut table_options = ctx.ctx.state().default_table_options();
             table_options.alter_with_string_hash_map(&cmd.options)?;
             let azure_options = table_options.extensions.get::<AzureOptions>().unwrap();

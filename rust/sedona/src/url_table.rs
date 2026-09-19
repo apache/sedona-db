@@ -29,15 +29,13 @@
 //! (e.g. `zarr.json` or a raw binary chunk) as the wrong format, which fails.
 //!
 //! [`enable_sedona_url_table`] installs [`SedonaUrlTableFactory`] instead. It
-//! matches the URL's extension against the session's registered
-//! [`ExternalFormatSpec`](sedona_datasource::spec::ExternalFormatSpec)s: when
-//! the match is a directory-shaped format
-//! ([`list_single_object`](sedona_datasource::spec::ExternalFormatSpec::list_single_object)
-//! `== true`), it builds a
-//! [`SingleObjectExternalTable`](sedona_datasource::provider::SingleObjectExternalTable)
-//! (via [`external_table`]) that passes the URL through untouched. Everything
-//! else — the file-shaped formats DataFusion already handles (GeoParquet,
-//! CSV, ...) — delegates to DataFusion's default resolver unchanged.
+//! resolves the URL's extension through the session's registered
+//! [`FileFormatFactory`](datafusion::datasource::file_format::FileFormatFactory)
+//! using the same implementation as
+//! [`SedonaContext::read`](crate::context::SedonaContext::read). This lets
+//! directory-shaped external formats use a single-object scan while ordinary
+//! file formats continue to use a listing scan. URLs without a registered
+//! extension delegate to DataFusion's default resolver.
 
 use std::sync::Arc;
 
@@ -52,7 +50,7 @@ use datafusion_catalog::{DynamicFileCatalog, UrlTableFactory};
 use datafusion_common::Result;
 use datafusion_session::SessionStore;
 
-use sedona_datasource::{format::ExternalFormatFactory, provider::external_table};
+use crate::read::{read_provider, resolve_read_format};
 
 /// Install SedonaDB's URL-as-table resolver on `ctx`.
 ///
@@ -87,15 +85,15 @@ pub fn install_sedona_url_table(ctx: &SessionContext) {
     factory.session_store().with_state(ctx.state_weak_ref());
 }
 
-/// [`UrlTableFactory`] that pre-routes directory-shaped external formats to
-/// the single-object table path and delegates everything else to
-/// DataFusion's default [`DynamicListTableFactory`].
+/// [`UrlTableFactory`] that resolves registered formats through SedonaDB's
+/// shared read path and delegates unknown URLs to DataFusion's default
+/// [`DynamicListTableFactory`].
 ///
 /// **Experimental.**
 #[derive(Debug)]
 pub struct SedonaUrlTableFactory {
     /// DataFusion's default resolver, used for every URL that does not
-    /// resolve to a registered directory-shaped format. Owns the
+    /// resolve to a registered format. Owns the
     /// [`SessionStore`] that both it and our routing logic read the live
     /// [`SessionState`] from.
     inner: DynamicListTableFactory,
@@ -133,10 +131,9 @@ impl SedonaUrlTableFactory {
             })
     }
 
-    /// Build a single-object table for `url` if its extension resolves to a
-    /// registered directory-shaped [`ExternalFormatFactory`]; otherwise
-    /// `None` so the caller delegates to DataFusion's default resolver.
-    async fn try_single_object(&self, url: &str) -> Result<Option<Arc<dyn TableProvider>>> {
+    /// Resolve a URL through the same registered-format path as
+    /// [`SedonaContext::read`](crate::context::SedonaContext::read).
+    async fn try_read(&self, url: &str) -> Result<Option<Arc<dyn TableProvider>>> {
         let Ok(table_url) = ListingTableUrl::parse(url) else {
             return Ok(None);
         };
@@ -149,19 +146,15 @@ impl SedonaUrlTableFactory {
         let Some(factory) = state.get_file_format_factory(&extension) else {
             return Ok(None);
         };
-        let Some(external) = factory.downcast_ref::<ExternalFormatFactory>() else {
-            return Ok(None);
-        };
-        if !external.spec().list_single_object() {
-            return Ok(None);
-        }
-
-        let spec = external.spec().clone();
-        // `SingleObjectExternalTable` only needs the runtime environment
-        // (for the object store registry), which the reconstructed context
-        // shares with the live session via its `Arc<RuntimeEnv>`.
+        let format = resolve_read_format(
+            &state,
+            std::slice::from_ref(&table_url),
+            Some(factory),
+            true,
+        )?;
         let ctx = SessionContext::new_with_state(state);
-        let provider = external_table(spec, &ctx, vec![table_url], false, None).await?;
+        let provider =
+            read_provider(&ctx, vec![table_url], &Default::default(), format, None).await?;
         Ok(Some(provider))
     }
 }
@@ -175,7 +168,7 @@ impl Default for SedonaUrlTableFactory {
 #[async_trait]
 impl UrlTableFactory for SedonaUrlTableFactory {
     async fn try_new(&self, url: &str) -> Result<Option<Arc<dyn TableProvider>>> {
-        if let Some(provider) = self.try_single_object(url).await? {
+        if let Some(provider) = self.try_read(url).await? {
             return Ok(Some(provider));
         }
         self.inner.try_new(url).await
@@ -217,7 +210,10 @@ mod test {
         prelude::{col, lit, SessionContext},
     };
     use datafusion_common::{plan_err, Result, Statistics};
-    use sedona_datasource::spec::{ExternalFormatSpec, Object, OpenReaderArgs};
+    use sedona_datasource::{
+        format::ExternalFormatFactory,
+        spec::{ExternalFormatSpec, Object, OpenReaderArgs},
+    };
     use tempfile::TempDir;
     use url::Url;
 
@@ -571,10 +567,9 @@ mod test {
 
     #[tokio::test]
     async fn url_table_file_shape_still_lists() {
-        // A file-shaped format (`list_single_object = false`) must keep
-        // resolving through DataFusion's listing path unchanged: the glob
-        // fans out to one row per matching file rather than treating the
-        // directory as a single object.
+        // A file-shaped format (`list_single_object = false`) must use a
+        // listing scan: the glob fans out to one row per matching file rather
+        // than treating the directory as a single object.
         let ctx = create_echo_spec_ctx();
         let (temp_dir, _files) = create_echo_spec_temp_dir();
 
