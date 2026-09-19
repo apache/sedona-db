@@ -50,7 +50,7 @@ use datafusion_catalog::{DynamicFileCatalog, UrlTableFactory};
 use datafusion_common::Result;
 use datafusion_session::SessionStore;
 
-use crate::read::read_provider;
+use crate::read::{read_provider, resolve_read_format};
 
 /// Install SedonaDB's URL-as-table resolver on `ctx`.
 ///
@@ -137,24 +137,25 @@ impl SedonaUrlTableFactory {
         let Ok(table_url) = ListingTableUrl::parse(url) else {
             return Ok(None);
         };
-        if url_extension(url).is_none() {
+        let Some(extension) = url_extension(url) else {
             return Ok(None);
-        }
+        };
         let Some(state) = self.session_state() else {
             return Ok(None);
         };
+        let Some(factory) = state.get_file_format_factory(&extension) else {
+            return Ok(None);
+        };
+        let format = resolve_read_format(
+            &state,
+            std::slice::from_ref(&table_url),
+            Some(factory),
+            true,
+        )?;
         let ctx = SessionContext::new_with_state(state);
-        match read_provider(&ctx, vec![table_url], &Default::default(), None, None).await {
-            Ok(provider) => Ok(Some(provider)),
-            // Preserve URL-table factory semantics: an unknown extension is
-            // not claimed by this factory.
-            Err(datafusion_common::DataFusionError::Plan(message))
-                if message.starts_with("No format registered for extension") =>
-            {
-                Ok(None)
-            }
-            Err(error) => Err(error),
-        }
+        let provider =
+            read_provider(&ctx, vec![table_url], &Default::default(), format, None).await?;
+        Ok(Some(provider))
     }
 }
 

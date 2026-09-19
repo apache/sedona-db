@@ -4,9 +4,15 @@
 \alias{sd_ctx_read}
 \title{Read one or more files into a DataFrame}
 \usage{
-sd_read(file_or_files, options = list(), format = NULL)
+sd_read(file_or_files, options = list(), format = NULL, partitioning = NULL)
 
-sd_ctx_read(ctx, file_or_files, options = list(), format = NULL)
+sd_ctx_read(
+  ctx,
+  file_or_files,
+  options = list(),
+  format = NULL,
+  partitioning = NULL
+)
 }
 \arguments{
 \item{file_or_files}{One or more paths or URIs.}
@@ -15,6 +21,9 @@ sd_ctx_read(ctx, file_or_files, options = list(), format = NULL)
 
 \item{format}{An optional file format name such as \code{"parquet"}, \code{"csv"},
 or \code{"json"}. By default the format is inferred from the path extension.}
+
+\item{partitioning}{Optional character vector of hive-style partition column
+names. \code{NULL} auto-discovers partitions; \code{character()} disables discovery.}
 
 \item{ctx}{A SedonaDB context.}
 }

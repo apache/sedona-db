@@ -140,6 +140,8 @@ sd_ctx_read_parquet <- function(ctx, path) {
 #' @param options A named list of scalar reader or object-store options.
 #' @param format An optional file format name such as `"parquet"`, `"csv"`,
 #'   or `"json"`. By default the format is inferred from the path extension.
+#' @param partitioning Optional character vector of hive-style partition column
+#'   names. `NULL` auto-discovers partitions; `character()` disables discovery.
 #' @param ctx A SedonaDB context.
 #'
 #' @returns A sedonadb_dataframe
@@ -148,13 +150,19 @@ sd_ctx_read_parquet <- function(ctx, path) {
 #' @examples
 #' path <- system.file("files/natural-earth_cities_geo.parquet", package = "sedonadb")
 #' sd_read(path) |> head(5) |> sd_preview()
-sd_read <- function(file_or_files, options = list(), format = NULL) {
-  sd_ctx_read(ctx(), file_or_files, options, format)
+sd_read <- function(file_or_files, options = list(), format = NULL, partitioning = NULL) {
+  sd_ctx_read(ctx(), file_or_files, options, format, partitioning)
 }
 
 #' @rdname sd_read
 #' @export
-sd_ctx_read <- function(ctx, file_or_files, options = list(), format = NULL) {
+sd_ctx_read <- function(
+  ctx,
+  file_or_files,
+  options = list(),
+  format = NULL,
+  partitioning = NULL
+) {
   check_ctx(ctx)
 
   if (
@@ -178,6 +186,8 @@ sd_ctx_read <- function(ctx, file_or_files, options = list(), format = NULL) {
       },
       character(1)
     ),
+    if (is.null(partitioning)) character() else as.character(partitioning),
+    !is.null(partitioning),
     format
   )
   new_sedonadb_dataframe(ctx, df)

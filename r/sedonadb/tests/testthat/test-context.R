@@ -84,6 +84,25 @@ test_that("sd_read() resolves registered formats and options", {
   expect_error(sd_read(csv, options = list()), NA)
   expect_error(sd_read(csv, options = c(delimiter = ";")), "named list")
   expect_error(sd_read(csv, options = list(";")), "named list")
+
+  partitioned <- tempfile()
+  dir.create(file.path(partitioned, "group=a"), recursive = TRUE)
+  writeLines(c("x", "1"), file.path(partitioned, "group=a", "part.csv"))
+  partitioned_out <- sd_read(
+    partitioned,
+    format = "csv",
+    partitioning = "group"
+  ) |>
+    sd_collect()
+  expect_identical(partitioned_out$group, "a")
+
+  unpartitioned_out <- sd_read(
+    partitioned,
+    format = "csv",
+    partitioning = character()
+  ) |>
+    sd_collect()
+  expect_false("group" %in% names(unpartitioned_out))
 })
 
 test_that("views can be created and dropped", {

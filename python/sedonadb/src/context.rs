@@ -218,6 +218,20 @@ impl InternalContext {
         partitioning: Option<Vec<String>>,
     ) -> Result<InternalDataFrame, PySedonaError> {
         let rust_options = stringify_options(py, options);
+        let format = format
+            .map(|format| format.trim_start_matches('.').to_lowercase())
+            .map(|format| {
+                self.inner
+                    .ctx
+                    .state()
+                    .get_file_format_factory(&format)
+                    .ok_or_else(|| {
+                        PySedonaError::SedonaPython(format!(
+                            "No format registered for extension '{format}'"
+                        ))
+                    })
+            })
+            .transpose()?;
         let df = wait_for_future(
             py,
             &self.runtime,

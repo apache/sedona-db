@@ -65,7 +65,7 @@ def test_read_csv_bad_delimiter_raises(con):
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / "t.csv"
         p.write_text("a,b\n1,x\n")
-        with pytest.raises(SedonaError, match="single byte"):
+        with pytest.raises(SedonaError, match="Error parsing"):
             con.read.csv(p, delimiter=";;")
 
 

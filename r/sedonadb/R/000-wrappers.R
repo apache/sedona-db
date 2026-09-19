@@ -130,13 +130,22 @@ NULL
 }
 
 `InternalContext_read` <- function(self) {
-  function(`paths`, `option_keys`, `option_values`, `format` = NULL) {
+  function(
+    `paths`,
+    `option_keys`,
+    `option_values`,
+    `partitioning`,
+    `partitioning_set`,
+    `format` = NULL
+  ) {
     .savvy_wrap_InternalDataFrame(.Call(
       savvy_InternalContext_read__impl,
       `self`,
       `paths`,
       `option_keys`,
       `option_values`,
+      `partitioning`,
+      `partitioning_set`,
       `format`
     ))
   }
