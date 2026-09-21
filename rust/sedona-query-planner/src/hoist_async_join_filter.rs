@@ -33,6 +33,21 @@
 //! this rule moves the conjuncts that call an async UDF back out into a
 //! `Filter` above the join, where the physical planner handles them.
 //!
+//! Only conjuncts whose async calls are evaluated unconditionally move.
+//! `AsyncFuncExec` evaluates an async call for every row of every batch,
+//! whereas the synchronous evaluator the join uses skips some sub-expressions:
+//! every `CASE` branch after the first `WHEN` condition runs only on the rows
+//! that reach it, the right side of `AND`/`OR` is short-circuited, and a
+//! `ScalarUDF` with `short_circuits()` declares arguments that may not be
+//! evaluated. Hoisting an async call from such a position would run it for
+//! rows the sync path never touches: extra I/O at best (`RS_EnsureLoaded`
+//! fetching rasters an unreached `ELSE` names), an error from those rows at
+//! worst. A conjunct with a conditionally evaluated async call therefore
+//! stays in the join filter, where it behaves as before this rule: fine while
+//! the branch is never taken, and DataFusion's "async functions should not be
+//! called directly" error once it is. Evaluating async calls under a selection
+//! is DataFusion's to add (apache/datafusion#16520, "Join expression").
+//!
 //! Ordering: it runs after [`EnsureLoadedOptimizerRule`], because the raster
 //! argument of a `needs_pixels` call only becomes an async `RS_EnsureLoaded`
 //! call there, and before `SpatialJoinLogicalRewrite`, which turns the join
@@ -51,10 +66,11 @@
 use std::sync::Arc;
 
 use datafusion_common::Result;
-use datafusion_common::tree_node::{Transformed, TreeNode};
+use datafusion_common::tree_node::{Transformed, TreeNode, TreeNodeRecursion};
 use datafusion_expr::async_udf::AsyncScalarUDF;
+use datafusion_expr::expr::ScalarFunction;
 use datafusion_expr::utils::{conjunction, split_conjunction_owned};
-use datafusion_expr::{Expr, Filter, JoinType, LogicalPlan};
+use datafusion_expr::{BinaryExpr, Expr, Filter, JoinType, LogicalPlan, Operator};
 use datafusion_optimizer::{ApplyOrder, OptimizerConfig, OptimizerRule};
 
 /// Logical optimizer rule moving async-UDF conjuncts of an inner join's filter
@@ -90,7 +106,7 @@ impl OptimizerRule for HoistAsyncJoinFilterRule {
 
         let (hoist, keep): (Vec<Expr>, Vec<Expr>) = split_conjunction_owned(filter.clone())
             .into_iter()
-            .partition(calls_async_udf);
+            .partition(hoistable);
         let Some(hoisted) = conjunction(hoist) else {
             join.filter = Some(filter);
             return Ok(Transformed::no(LogicalPlan::Join(join)));
@@ -102,16 +118,92 @@ impl OptimizerRule for HoistAsyncJoinFilterRule {
     }
 }
 
+/// A conjunct moves above the join when it calls an async UDF and every such
+/// call is evaluated unconditionally, so evaluating it for every row (as
+/// `AsyncFuncExec` does) is what the join would have done anyway.
+fn hoistable(expr: &Expr) -> bool {
+    calls_async_udf(expr) && !has_conditional_async_call(expr)
+}
+
+fn is_async(call: &ScalarFunction) -> bool {
+    call.func.inner().downcast_ref::<AsyncScalarUDF>().is_some()
+}
+
 /// True if any call anywhere in `expr` is to an [`AsyncScalarUDF`].
 fn calls_async_udf(expr: &Expr) -> bool {
-    expr.exists(|e| {
-        Ok(matches!(
-            e,
-            Expr::ScalarFunction(call)
-                if call.func.inner().downcast_ref::<AsyncScalarUDF>().is_some()
-        ))
-    })
-    .unwrap_or(false)
+    expr.exists(|e| Ok(matches!(e, Expr::ScalarFunction(call) if is_async(call))))
+        .unwrap_or(false)
+}
+
+/// True if `expr` contains an async UDF call that the synchronous evaluator
+/// may skip for some rows or batches. Mirrors DataFusion's physical
+/// evaluators: `CaseExpr` runs the base expression and the first `WHEN`
+/// condition on the whole batch and every other branch on the rows that
+/// reach it; `BinaryExpr` short-circuits the right side of `AND`/`OR`; a
+/// `ScalarUDF` with `short_circuits()` reports its lazily evaluated arguments
+/// through `conditional_arguments()`.
+fn has_conditional_async_call(expr: &Expr) -> bool {
+    fn walk(expr: &Expr, conditional: bool) -> Result<bool> {
+        match expr {
+            Expr::ScalarFunction(call) if is_async(call) && conditional => Ok(true),
+            Expr::Case(case) => {
+                if let Some(base) = &case.expr
+                    && walk(base, conditional)?
+                {
+                    return Ok(true);
+                }
+                for (i, (when, then)) in case.when_then_expr.iter().enumerate() {
+                    // With a base expression the first WHEN value is compared
+                    // only on rows where the base is not null.
+                    let when_conditional = conditional || case.expr.is_some() || i > 0;
+                    if walk(when, when_conditional)? || walk(then, true)? {
+                        return Ok(true);
+                    }
+                }
+                match &case.else_expr {
+                    Some(else_expr) => walk(else_expr, true),
+                    None => Ok(false),
+                }
+            }
+            Expr::BinaryExpr(BinaryExpr {
+                left,
+                op: Operator::And | Operator::Or,
+                right,
+            }) => Ok(walk(left, conditional)? || walk(right, true)?),
+            Expr::ScalarFunction(call) if call.func.short_circuits() => {
+                let (eager, lazy) = call
+                    .func
+                    .conditional_arguments(&call.args)
+                    .unwrap_or_else(|| (call.args.iter().collect(), vec![]));
+                for arg in eager {
+                    if walk(arg, conditional)? {
+                        return Ok(true);
+                    }
+                }
+                for arg in lazy {
+                    if walk(arg, true)? {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+            other => {
+                let mut found = false;
+                other.apply_children(|child| {
+                    found = walk(child, conditional)?;
+                    Ok(if found {
+                        TreeNodeRecursion::Stop
+                    } else {
+                        TreeNodeRecursion::Continue
+                    })
+                })?;
+                Ok(found)
+            }
+        }
+    }
+    // The walk cannot fail; if it somehow did, keeping the conjunct in the
+    // join is the behaviour-preserving answer.
+    walk(expr, false).unwrap_or(true)
 }
 
 #[cfg(test)]
@@ -255,6 +347,107 @@ mod tests {
         assert_eq!(join.filter, None, "the join keeps no filter");
     }
 
+    /// `CASE WHEN a.x < b.y THEN 1 ELSE fake_async(a.x + b.y) END > 0`: the
+    /// async call sits in an `ELSE` the sync evaluator reaches only for rows
+    /// where the condition is false.
+    fn case_guarded_async_pred() -> Expr {
+        Expr::Case(datafusion_expr::expr::Case::new(
+            None,
+            vec![(Box::new(col("a.x").lt(col("b.y"))), Box::new(lit(1_i64)))],
+            Some(Box::new(fake_async(col("a.x") + col("b.y")))),
+        ))
+        .gt(lit(0_i64))
+    }
+
+    fn join_filter_of(plan: &LogicalPlan) -> Option<Expr> {
+        match plan {
+            LogicalPlan::Join(join) => join.filter.clone(),
+            LogicalPlan::Filter(filter) => join_filter_of(&filter.input),
+            other => panic!("unexpected plan shape: {}", other.display_indent()),
+        }
+    }
+
+    #[test]
+    fn keeps_conditionally_evaluated_async_calls_in_the_join() {
+        // The CASE conjunct stays in the join; the unconditional one moves.
+        let unconditional = fake_async(col("a.x")).gt(col("b.y"));
+        let out = rewrite(inner_join_with_filter(
+            case_guarded_async_pred().and(unconditional.clone()),
+        ));
+
+        assert!(out.transformed);
+        let LogicalPlan::Filter(filter) = &out.data else {
+            panic!(
+                "expected Filter above the join, got {}",
+                out.data.display_indent()
+            );
+        };
+        assert_eq!(filter.predicate, unconditional);
+        assert_eq!(join_filter_of(&out.data), Some(case_guarded_async_pred()));
+    }
+
+    #[test]
+    fn leaves_a_join_whose_only_async_call_is_conditional_alone() {
+        let out = rewrite(inner_join_with_filter(case_guarded_async_pred()));
+        assert!(!out.transformed);
+        assert!(matches!(out.data, LogicalPlan::Join(_)));
+    }
+
+    #[test]
+    fn hoists_an_async_call_in_the_first_when_condition() {
+        // The first WHEN condition is evaluated on the whole batch.
+        let pred = Expr::Case(datafusion_expr::expr::Case::new(
+            None,
+            vec![(
+                Box::new(fake_async(col("a.x")).gt(col("b.y"))),
+                Box::new(lit(true)),
+            )],
+            Some(Box::new(lit(false))),
+        ));
+        let out = rewrite(inner_join_with_filter(pred.clone()));
+        assert!(out.transformed);
+        let LogicalPlan::Filter(filter) = &out.data else {
+            panic!(
+                "expected Filter above the join, got {}",
+                out.data.display_indent()
+            );
+        };
+        assert_eq!(filter.predicate, pred);
+    }
+
+    #[test]
+    fn treats_the_right_side_of_and_or_as_conditional() {
+        // Left side: evaluated for every row, hoisted.
+        let left = fake_async(col("a.x"))
+            .gt(col("b.y"))
+            .or(col("a.x").gt(col("b.y")));
+        assert!(rewrite(inner_join_with_filter(left)).transformed);
+        // Right side: short-circuited by the sync evaluator, kept.
+        let right = col("a.x")
+            .gt(col("b.y"))
+            .or(fake_async(col("a.x")).gt(col("b.y")));
+        assert!(!rewrite(inner_join_with_filter(right)).transformed);
+    }
+
+    #[test]
+    fn treats_lazy_arguments_of_short_circuit_udfs_as_conditional() {
+        use datafusion::functions::core::coalesce;
+
+        // coalesce declares its first argument eager and the rest lazy.
+        let first = Expr::ScalarFunction(ScalarFunction {
+            func: coalesce(),
+            args: vec![fake_async(col("a.x")), lit(0_i64)],
+        })
+        .gt(col("b.y"));
+        assert!(rewrite(inner_join_with_filter(first)).transformed);
+        let second = Expr::ScalarFunction(ScalarFunction {
+            func: coalesce(),
+            args: vec![col("a.x"), fake_async(col("a.x"))],
+        })
+        .gt(col("b.y"));
+        assert!(!rewrite(inner_join_with_filter(second)).transformed);
+    }
+
     #[test]
     fn leaves_sync_join_filters_alone() {
         let out = rewrite(inner_join_with_filter(col("a.x").gt(col("b.y"))));
@@ -354,5 +547,53 @@ mod tests {
             !mentions.is_empty() && mentions.iter().all(|line| line.contains("AsyncFuncExec")),
             "{physical_str}"
         );
+    }
+
+    /// Regression from review: an async call in a CASE branch the sync
+    /// evaluator never takes must not run. Before the conditional check the
+    /// whole conjunct was hoisted and `AsyncFuncExec` evaluated the call for
+    /// all four pairs, hitting the stub's `unreachable!`; in the join filter
+    /// the `ELSE` is never reached and the query returns all four rows.
+    #[tokio::test]
+    async fn case_keeps_unselected_async_branch() {
+        use arrow::{array::Int64Array, record_batch::RecordBatch};
+        use datafusion::{
+            catalog::MemTable, execution::session_state::SessionStateBuilder,
+            prelude::SessionContext,
+        };
+
+        let builder = crate::optimizer::register_ensure_loaded_optimizer(
+            SessionStateBuilder::new().with_default_features(),
+        )
+        .unwrap();
+        let ctx = SessionContext::new_with_state(builder.build());
+        ctx.register_udf(fake_async_udf());
+        for (name, column, values) in [("a", "x", vec![1_i64, 2]), ("b", "y", vec![10_i64, 20])] {
+            let schema = Arc::new(Schema::new(vec![Field::new(
+                column,
+                DataType::Int64,
+                false,
+            )]));
+            let batch =
+                RecordBatch::try_new(schema.clone(), vec![Arc::new(Int64Array::from(values))])
+                    .unwrap();
+            ctx.register_table(
+                name,
+                Arc::new(MemTable::try_new(schema, vec![vec![batch]]).unwrap()),
+            )
+            .unwrap();
+        }
+        let batches = ctx
+            .sql(
+                "SELECT a.x, b.y FROM a JOIN b ON \
+                 CASE WHEN a.x < b.y THEN CAST(1 AS BIGINT) \
+                 ELSE fake_async(a.x + b.y) END > 0",
+            )
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        assert_eq!(batches.iter().map(RecordBatch::num_rows).sum::<usize>(), 4);
     }
 }

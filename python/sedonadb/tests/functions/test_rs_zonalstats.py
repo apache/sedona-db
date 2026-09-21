@@ -461,3 +461,44 @@ def test_async_call_in_join_on_clause(con, tmp_path, join):
         assert rows == [("disjoint", False), ("rect", True), ("sliver", False)]
     else:
         assert rows == [("rect", True)]
+
+
+# A VRT whose only source is a file that does not exist. RS_FromPath reads its
+# metadata fine; any pixel read (the RS_EnsureLoaded the planner injects) fails
+# at the loader, which makes an unwanted load observable.
+MISSING_SOURCE_VRT = (
+    '<VRTDataset rasterXSize="10" rasterYSize="10"><SRS>EPSG:4326</SRS>'
+    "<GeoTransform>0,1,0,10,0,-1</GeoTransform>"
+    '<VRTRasterBand dataType="Byte" band="1"><SimpleSource>'
+    '<SourceFilename relativeToVRT="0">/nonexistent/missing.tif</SourceFilename>'
+    "<SourceBand>1</SourceBand></SimpleSource></VRTRasterBand></VRTDataset>"
+)
+
+
+def test_async_call_in_unreached_case_branch_is_not_evaluated(con):
+    """An RS_ZonalStatsAll call in a CASE branch of the ON clause that no row
+    reaches must not load the raster. The join evaluates CASE lazily; hoisting
+    the conjunct above the join would hand the call to AsyncFuncExec, which
+    evaluates it for every row, so the planner leaves such conjuncts in the
+    join. The raster's only source is missing, so an unwanted load errors.
+
+    The join is a spatial join on purpose: over a nested-loop join DataFusion
+    pushes the one-sided loader into a synchronous projection below the join,
+    which fails regardless of this rule."""
+    con.create_data_frame(
+        con.sql(
+            "SELECT 1 AS id, RS_FromPath($1) AS rast", params=(MISSING_SOURCE_VRT,)
+        ).to_arrow_table()
+    ).to_view("zonal_missing_dem", overwrite=True)
+    con.sql(
+        "SELECT 2 AS id, 'rect' AS name, ST_SetSRID(ST_GeomFromText($1), 4326) AS geometry",
+        params=("POLYGON ((1 1, 4 1, 4 4, 1 4, 1 1))",),
+    ).to_view("zonal_missing_zones", overwrite=True)
+
+    rows = con.sql(
+        "SELECT z.name FROM zonal_missing_zones z JOIN zonal_missing_dem d "
+        "ON RS_Intersects(d.rast, z.geometry) "
+        "AND CASE WHEN d.id < z.id THEN 1 "
+        "ELSE RS_ZonalStatsAll(d.rast, z.geometry)['count'] END > 0"
+    ).to_arrow_table()
+    assert rows["name"].to_pylist() == ["rect"]
