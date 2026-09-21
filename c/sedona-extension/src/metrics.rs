@@ -33,7 +33,8 @@ use datafusion_physical_plan::metrics::{
     MetricType, MetricValue, MetricsSet, PruningMetrics, RatioMergeStrategy, RatioMetrics, Time,
     Timestamp,
 };
-use serde::{Deserialize, Serialize};
+use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::{Map, Value};
 
 /// An owned, serde-compatible snapshot of an [`ExecutionPlanMetricsSet`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -96,7 +97,7 @@ impl SerializableMetric {
         let labels = self.labels.into_iter().map(Into::into).collect();
         let mut metric = Metric::new_with_labels(self.value.into(), self.partition, labels)
             .with_type(self.metric_type.into());
-        if let Some(category) = self.category {
+        if let Some(category) = self.category.and_then(SerializableMetricCategory::known) {
             metric = metric.with_category(category.into());
         }
         metric
@@ -124,9 +125,16 @@ impl From<SerializableLabel> for Label {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum SerializableMetricType {
+    Known(KnownMetricType),
+    Unknown(String),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum SerializableMetricType {
+pub enum KnownMetricType {
     Summary,
     Dev,
 }
@@ -134,8 +142,8 @@ pub enum SerializableMetricType {
 impl From<MetricType> for SerializableMetricType {
     fn from(value: MetricType) -> Self {
         match value {
-            MetricType::Summary => Self::Summary,
-            MetricType::Dev => Self::Dev,
+            MetricType::Summary => Self::Known(KnownMetricType::Summary),
+            MetricType::Dev => Self::Known(KnownMetricType::Dev),
         }
     }
 }
@@ -143,15 +151,32 @@ impl From<MetricType> for SerializableMetricType {
 impl From<SerializableMetricType> for MetricType {
     fn from(value: SerializableMetricType) -> Self {
         match value {
-            SerializableMetricType::Summary => Self::Summary,
-            SerializableMetricType::Dev => Self::Dev,
+            SerializableMetricType::Known(KnownMetricType::Summary) => Self::Summary,
+            SerializableMetricType::Known(KnownMetricType::Dev)
+            | SerializableMetricType::Unknown(_) => Self::Dev,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum SerializableMetricCategory {
+    Known(KnownMetricCategory),
+    Unknown(String),
+}
+
+impl SerializableMetricCategory {
+    fn known(self) -> Option<KnownMetricCategory> {
+        match self {
+            Self::Known(category) => Some(category),
+            Self::Unknown(_) => None,
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum SerializableMetricCategory {
+pub enum KnownMetricCategory {
     Rows,
     Bytes,
     Timing,
@@ -161,28 +186,75 @@ pub enum SerializableMetricCategory {
 impl From<MetricCategory> for SerializableMetricCategory {
     fn from(value: MetricCategory) -> Self {
         match value {
-            MetricCategory::Rows => Self::Rows,
-            MetricCategory::Bytes => Self::Bytes,
-            MetricCategory::Timing => Self::Timing,
-            MetricCategory::Uncategorized => Self::Uncategorized,
+            MetricCategory::Rows => Self::Known(KnownMetricCategory::Rows),
+            MetricCategory::Bytes => Self::Known(KnownMetricCategory::Bytes),
+            MetricCategory::Timing => Self::Known(KnownMetricCategory::Timing),
+            MetricCategory::Uncategorized => Self::Known(KnownMetricCategory::Uncategorized),
         }
     }
 }
 
-impl From<SerializableMetricCategory> for MetricCategory {
-    fn from(value: SerializableMetricCategory) -> Self {
+impl From<KnownMetricCategory> for MetricCategory {
+    fn from(value: KnownMetricCategory) -> Self {
         match value {
-            SerializableMetricCategory::Rows => Self::Rows,
-            SerializableMetricCategory::Bytes => Self::Bytes,
-            SerializableMetricCategory::Timing => Self::Timing,
-            SerializableMetricCategory::Uncategorized => Self::Uncategorized,
+            KnownMetricCategory::Rows => Self::Rows,
+            KnownMetricCategory::Bytes => Self::Bytes,
+            KnownMetricCategory::Timing => Self::Timing,
+            KnownMetricCategory::Uncategorized => Self::Uncategorized,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SerializableMetricValue {
+    Known(KnownMetricValue),
+    /// A metric variant introduced by a newer producer. Its complete JSON
+    /// object is retained until conversion to DataFusion's current types.
+    Unknown(Map<String, Value>),
+}
+
+impl From<KnownMetricValue> for SerializableMetricValue {
+    fn from(value: KnownMetricValue) -> Self {
+        Self::Known(value)
+    }
+}
+
+impl Serialize for SerializableMetricValue {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::Known(value) => value.serialize(serializer),
+            Self::Unknown(value) => value.serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for SerializableMetricValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let object = Map::<String, Value>::deserialize(deserializer)?;
+        let type_name = object
+            .get("type")
+            .and_then(Value::as_str)
+            .ok_or_else(|| D::Error::missing_field("type"))?;
+
+        if KnownMetricValue::is_known_type(type_name) {
+            serde_json::from_value(Value::Object(object))
+                .map(Self::Known)
+                .map_err(D::Error::custom)
+        } else {
+            Ok(Self::Unknown(object))
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum SerializableMetricValue {
+pub enum KnownMetricValue {
     OutputRows {
         value: usize,
     },
@@ -247,55 +319,79 @@ pub enum SerializableMetricValue {
     },
 }
 
+impl KnownMetricValue {
+    fn is_known_type(type_name: &str) -> bool {
+        matches!(
+            type_name,
+            "output_rows"
+                | "elapsed_compute"
+                | "spill_count"
+                | "spilled_bytes"
+                | "output_bytes"
+                | "output_batches"
+                | "spilled_rows"
+                | "current_memory_usage"
+                | "count"
+                | "gauge"
+                | "time"
+                | "start_timestamp"
+                | "end_timestamp"
+                | "pruning_metrics"
+                | "ratio"
+                | "custom"
+        )
+    }
+}
+
 impl From<&MetricValue> for SerializableMetricValue {
     fn from(value: &MetricValue) -> Self {
-        match value {
-            MetricValue::OutputRows(value) => Self::OutputRows {
+        let value = match value {
+            MetricValue::OutputRows(value) => KnownMetricValue::OutputRows {
                 value: value.value(),
             },
-            MetricValue::ElapsedCompute(value) => Self::ElapsedCompute {
+            MetricValue::ElapsedCompute(value) => KnownMetricValue::ElapsedCompute {
                 nanos: value.value(),
             },
-            MetricValue::SpillCount(value) => Self::SpillCount {
+            MetricValue::SpillCount(value) => KnownMetricValue::SpillCount {
                 value: value.value(),
             },
-            MetricValue::SpilledBytes(value) => Self::SpilledBytes {
+            MetricValue::SpilledBytes(value) => KnownMetricValue::SpilledBytes {
                 value: value.value(),
             },
-            MetricValue::OutputBytes(value) => Self::OutputBytes {
+            MetricValue::OutputBytes(value) => KnownMetricValue::OutputBytes {
                 value: value.value(),
             },
-            MetricValue::OutputBatches(value) => Self::OutputBatches {
+            MetricValue::OutputBatches(value) => KnownMetricValue::OutputBatches {
                 value: value.value(),
             },
-            MetricValue::SpilledRows(value) => Self::SpilledRows {
+            MetricValue::SpilledRows(value) => KnownMetricValue::SpilledRows {
                 value: value.value(),
             },
-            MetricValue::CurrentMemoryUsage(value) => Self::CurrentMemoryUsage {
+            MetricValue::CurrentMemoryUsage(value) => KnownMetricValue::CurrentMemoryUsage {
                 value: value.value(),
             },
-            MetricValue::Count { name, count } => Self::Count {
+            MetricValue::Count { name, count } => KnownMetricValue::Count {
                 name: name.to_string(),
                 value: count.value(),
             },
-            MetricValue::Gauge { name, gauge } => Self::Gauge {
+            MetricValue::Gauge { name, gauge } => KnownMetricValue::Gauge {
                 name: name.to_string(),
                 value: gauge.value(),
             },
-            MetricValue::Time { name, time } => Self::Time {
+            MetricValue::Time { name, time } => KnownMetricValue::Time {
                 name: name.to_string(),
                 nanos: time.value(),
             },
-            MetricValue::StartTimestamp(value) => Self::StartTimestamp {
+            MetricValue::StartTimestamp(value) => KnownMetricValue::StartTimestamp {
                 value: value.value().map(|value| value.to_rfc3339()),
             },
-            MetricValue::EndTimestamp(value) => Self::EndTimestamp {
+            MetricValue::EndTimestamp(value) => KnownMetricValue::EndTimestamp {
                 value: value.value().map(|value| value.to_rfc3339()),
             },
             MetricValue::PruningMetrics {
                 name,
                 pruning_metrics,
-            } => Self::PruningMetrics {
+            } => KnownMetricValue::PruningMetrics {
                 name: name.to_string(),
                 pruned: pruning_metrics.pruned(),
                 matched: pruning_metrics.matched(),
@@ -304,52 +400,55 @@ impl From<&MetricValue> for SerializableMetricValue {
             MetricValue::Ratio {
                 name,
                 ratio_metrics,
-            } => Self::Ratio {
+            } => KnownMetricValue::Ratio {
                 name: name.to_string(),
                 part: ratio_metrics.part(),
                 total: ratio_metrics.total(),
                 merge_strategy: ratio_metrics.merge_strategy().into(),
                 display_raw_values: ratio_metrics.display_raw_values(),
             },
-            MetricValue::Custom { name, value } => Self::Custom {
+            MetricValue::Custom { name, value } => KnownMetricValue::Custom {
                 name: name.to_string(),
                 display: value.to_string(),
                 value: value.as_usize(),
             },
-        }
+        };
+        Self::Known(value)
     }
 }
 
 impl From<SerializableMetricValue> for MetricValue {
     fn from(value: SerializableMetricValue) -> Self {
+        let value = match value {
+            SerializableMetricValue::Known(value) => value,
+            SerializableMetricValue::Unknown(object) => return unknown_metric_value(object),
+        };
         match value {
-            SerializableMetricValue::OutputRows { value } => Self::OutputRows(count(value)),
-            SerializableMetricValue::ElapsedCompute { nanos } => Self::ElapsedCompute(time(nanos)),
-            SerializableMetricValue::SpillCount { value } => Self::SpillCount(count(value)),
-            SerializableMetricValue::SpilledBytes { value } => Self::SpilledBytes(count(value)),
-            SerializableMetricValue::OutputBytes { value } => Self::OutputBytes(count(value)),
-            SerializableMetricValue::OutputBatches { value } => Self::OutputBatches(count(value)),
-            SerializableMetricValue::SpilledRows { value } => Self::SpilledRows(count(value)),
-            SerializableMetricValue::CurrentMemoryUsage { value } => {
+            KnownMetricValue::OutputRows { value } => Self::OutputRows(count(value)),
+            KnownMetricValue::ElapsedCompute { nanos } => Self::ElapsedCompute(time(nanos)),
+            KnownMetricValue::SpillCount { value } => Self::SpillCount(count(value)),
+            KnownMetricValue::SpilledBytes { value } => Self::SpilledBytes(count(value)),
+            KnownMetricValue::OutputBytes { value } => Self::OutputBytes(count(value)),
+            KnownMetricValue::OutputBatches { value } => Self::OutputBatches(count(value)),
+            KnownMetricValue::SpilledRows { value } => Self::SpilledRows(count(value)),
+            KnownMetricValue::CurrentMemoryUsage { value } => {
                 Self::CurrentMemoryUsage(gauge(value))
             }
-            SerializableMetricValue::Count { name, value } => Self::Count {
+            KnownMetricValue::Count { name, value } => Self::Count {
                 name: name.into(),
                 count: count(value),
             },
-            SerializableMetricValue::Gauge { name, value } => Self::Gauge {
+            KnownMetricValue::Gauge { name, value } => Self::Gauge {
                 name: name.into(),
                 gauge: gauge(value),
             },
-            SerializableMetricValue::Time { name, nanos } => Self::Time {
+            KnownMetricValue::Time { name, nanos } => Self::Time {
                 name: name.into(),
                 time: time(nanos),
             },
-            SerializableMetricValue::StartTimestamp { value } => {
-                Self::StartTimestamp(timestamp(value))
-            }
-            SerializableMetricValue::EndTimestamp { value } => Self::EndTimestamp(timestamp(value)),
-            SerializableMetricValue::PruningMetrics {
+            KnownMetricValue::StartTimestamp { value } => Self::StartTimestamp(timestamp(value)),
+            KnownMetricValue::EndTimestamp { value } => Self::EndTimestamp(timestamp(value)),
+            KnownMetricValue::PruningMetrics {
                 name,
                 pruned,
                 matched,
@@ -364,7 +463,7 @@ impl From<SerializableMetricValue> for MetricValue {
                     pruning_metrics: metrics,
                 }
             }
-            SerializableMetricValue::Ratio {
+            KnownMetricValue::Ratio {
                 name,
                 part,
                 total,
@@ -381,7 +480,7 @@ impl From<SerializableMetricValue> for MetricValue {
                     ratio_metrics: metrics,
                 }
             }
-            SerializableMetricValue::Custom {
+            KnownMetricValue::Custom {
                 name,
                 display,
                 value,
@@ -390,6 +489,30 @@ impl From<SerializableMetricValue> for MetricValue {
                 value: Arc::new(SerializedCustomMetric::new(display, value)),
             },
         }
+    }
+}
+
+fn unknown_metric_value(object: Map<String, Value>) -> MetricValue {
+    let type_name = object
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown_metric");
+    let name = object
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or(type_name)
+        .to_owned();
+    let numeric_value = object
+        .get("value")
+        .or_else(|| object.get("as_usize_value"))
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or(0);
+    let display = Value::Object(object).to_string();
+
+    MetricValue::Custom {
+        name: name.into(),
+        value: Arc::new(SerializedCustomMetric::new(display, numeric_value)),
     }
 }
 
@@ -530,44 +653,44 @@ mod tests {
     #[test]
     fn serde_json_roundtrip_preserves_all_metric_variants() {
         let values = vec![
-            SerializableMetricValue::OutputRows { value: 1 },
-            SerializableMetricValue::ElapsedCompute { nanos: 2 },
-            SerializableMetricValue::SpillCount { value: 3 },
-            SerializableMetricValue::SpilledBytes { value: 4 },
-            SerializableMetricValue::OutputBytes { value: 5 },
-            SerializableMetricValue::OutputBatches { value: 6 },
-            SerializableMetricValue::SpilledRows { value: 7 },
-            SerializableMetricValue::CurrentMemoryUsage { value: 8 },
-            SerializableMetricValue::Count {
+            KnownMetricValue::OutputRows { value: 1 },
+            KnownMetricValue::ElapsedCompute { nanos: 2 },
+            KnownMetricValue::SpillCount { value: 3 },
+            KnownMetricValue::SpilledBytes { value: 4 },
+            KnownMetricValue::OutputBytes { value: 5 },
+            KnownMetricValue::OutputBatches { value: 6 },
+            KnownMetricValue::SpilledRows { value: 7 },
+            KnownMetricValue::CurrentMemoryUsage { value: 8 },
+            KnownMetricValue::Count {
                 name: "count".to_owned(),
                 value: 9,
             },
-            SerializableMetricValue::Gauge {
+            KnownMetricValue::Gauge {
                 name: "gauge".to_owned(),
                 value: 10,
             },
-            SerializableMetricValue::Time {
+            KnownMetricValue::Time {
                 name: "time".to_owned(),
                 nanos: 11,
             },
-            SerializableMetricValue::StartTimestamp {
+            KnownMetricValue::StartTimestamp {
                 value: Some("2026-09-21T12:34:56.123456789+00:00".to_owned()),
             },
-            SerializableMetricValue::EndTimestamp { value: None },
-            SerializableMetricValue::PruningMetrics {
+            KnownMetricValue::EndTimestamp { value: None },
+            KnownMetricValue::PruningMetrics {
                 name: "pruning".to_owned(),
                 pruned: 12,
                 matched: 13,
                 fully_matched: 14,
             },
-            SerializableMetricValue::Ratio {
+            KnownMetricValue::Ratio {
                 name: "ratio".to_owned(),
                 part: 15,
                 total: 16,
                 merge_strategy: SerializableRatioMergeStrategy::AddPartSetTotal,
                 display_raw_values: false,
             },
-            SerializableMetricValue::Custom {
+            KnownMetricValue::Custom {
                 name: "custom".to_owned(),
                 display: "custom display".to_owned(),
                 value: 17,
@@ -576,6 +699,7 @@ mod tests {
         let snapshot = SerializableExecutionPlanMetricsSet {
             metrics: values
                 .into_iter()
+                .map(SerializableMetricValue::from)
                 .enumerate()
                 .map(|(partition, value)| SerializableMetric {
                     value,
@@ -584,8 +708,8 @@ mod tests {
                         value: "test".to_owned(),
                     }],
                     partition: Some(partition),
-                    metric_type: SerializableMetricType::Summary,
-                    category: Some(SerializableMetricCategory::Rows),
+                    metric_type: SerializableMetricType::Known(KnownMetricType::Summary),
+                    category: Some(SerializableMetricCategory::Known(KnownMetricCategory::Rows)),
                 })
                 .collect(),
         };
@@ -626,5 +750,87 @@ mod tests {
         assert_eq!(json["metrics"][0]["labels"][0]["name"], "format");
         assert_eq!(json["metrics"][0]["metric_type"], "summary");
         assert_eq!(json["metrics"][0]["category"], "rows");
+    }
+
+    #[test]
+    fn future_metric_and_classifications_are_handled_gracefully() {
+        let json = serde_json::json!({
+            "metrics": [{
+                "value": {
+                    "type": "histogram",
+                    "name": "scan_latency",
+                    "value": 23,
+                    "buckets": [1, 5, 10]
+                },
+                "metric_type": "diagnostic",
+                "category": "latency"
+            }]
+        });
+
+        let snapshot: SerializableExecutionPlanMetricsSet =
+            serde_json::from_value(json.clone()).unwrap();
+        let metric = &snapshot.metrics[0];
+        assert!(matches!(
+            metric.metric_type,
+            SerializableMetricType::Unknown(ref value) if value == "diagnostic"
+        ));
+        assert!(matches!(
+            metric.category,
+            Some(SerializableMetricCategory::Unknown(ref value)) if value == "latency"
+        ));
+        assert!(matches!(
+            metric.value,
+            SerializableMetricValue::Unknown(ref value)
+                if value.get("type") == Some(&Value::String("histogram".to_owned()))
+        ));
+
+        // Unknown data is retained exactly while it remains in the wire model.
+        assert_eq!(serde_json::to_value(&snapshot).unwrap(), json);
+
+        // DataFusion cannot represent unknown variants, so use a visible custom
+        // metric, retain its numeric projection, and safely omit its category.
+        let metrics = snapshot.into_metrics_set();
+        let metric = metrics.iter().next().unwrap();
+        assert_eq!(metric.metric_type(), MetricType::Dev);
+        assert_eq!(metric.metric_category(), None);
+        match metric.value() {
+            MetricValue::Custom { name, value } => {
+                assert_eq!(name, "scan_latency");
+                assert_eq!(value.as_usize(), 23);
+                let display: Value = serde_json::from_str(&value.to_string()).unwrap();
+                assert_eq!(display, json["metrics"][0]["value"]);
+            }
+            value => panic!("expected custom fallback, got {value:?}"),
+        }
+    }
+
+    #[test]
+    fn extra_fields_on_known_metrics_are_ignored() {
+        let value: SerializableMetricValue = serde_json::from_value(serde_json::json!({
+            "type": "count",
+            "name": "files",
+            "value": 4,
+            "future_field": true
+        }))
+        .unwrap();
+
+        assert!(matches!(
+            value,
+            SerializableMetricValue::Known(KnownMetricValue::Count {
+                ref name,
+                value: 4
+            }) if name == "files"
+        ));
+    }
+
+    #[test]
+    fn malformed_known_metric_is_still_an_error() {
+        let error = serde_json::from_value::<SerializableMetricValue>(serde_json::json!({
+            "type": "count",
+            "name": "missing_value"
+        }))
+        .unwrap_err();
+
+        assert!(error.to_string().contains("missing field `value`"));
     }
 }
