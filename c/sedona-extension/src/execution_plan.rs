@@ -16,11 +16,10 @@
 // under the License.
 
 use std::{
-    any::Any,
     ffi::{c_int, c_void},
-    fmt::{Debug, Display, Formatter},
+    fmt::Debug,
     ptr::null_mut,
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::Duration,
 };
 
@@ -31,7 +30,7 @@ use datafusion_execution::TaskContext;
 use datafusion_physical_plan::{
     displayable,
     execution_plan::{Boundedness, CardinalityEffect, EmissionType},
-    metrics::{CustomMetricValue, Metric, MetricValue, MetricsSet},
+    metrics::MetricsSet,
     DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, PlanProperties,
     SendableRecordBatchStream,
 };
@@ -39,6 +38,7 @@ use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use serde::{Deserialize, Serialize};
 
 use crate::extension::{SedonaCError, SedonaCExecutionPlan, SedonaCExecutionPlanArgs};
+use crate::metrics::SerializableExecutionPlanMetricsSet;
 use crate::runtime::RuntimeHandle;
 use crate::set_ffi_error;
 use crate::streaming::{ffi_stream_to_sendable, CancelChecker, StreamingRecordBatchReader};
@@ -117,9 +117,10 @@ impl ExportedExecutionPlan {
                 })
             }
             "metrics" => {
-                // Serialize metrics as JSON with aggregated values
+                // Serialize a structured snapshot of every metric.
                 if let Some(metrics) = self.plan.metrics() {
-                    let serialized = SerializedMetrics::from_metrics_set(&metrics);
+                    let serialized =
+                        SerializableExecutionPlanMetricsSet::from_metrics_set(&metrics);
                     serde_json::to_string(&serialized).map_err(|e| {
                         sedona_internal_datafusion_err!("Failed to serialize metrics: {}", e)
                     })
@@ -431,10 +432,14 @@ impl ExecutionPlan for ImportedSedonaCExec {
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
-        get_plan_property::<Option<SerializedMetrics>, ()>(&self.inner, "metrics", None)
-            .ok()
-            .flatten()
-            .map(|sm| sm.into_metrics_set())
+        get_plan_property::<Option<SerializableExecutionPlanMetricsSet>, ()>(
+            &self.inner,
+            "metrics",
+            None,
+        )
+        .ok()
+        .flatten()
+        .map(|set| set.into_metrics_set())
     }
 
     fn supports_limit_pushdown(&self) -> bool {
@@ -502,100 +507,6 @@ impl ExecutionPlan for ImportedSedonaCExec {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecuteArgs {
     pub partition: usize,
-}
-
-/// Metrics serialized for FFI transfer.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SerializedMetrics {
-    pub display: String,
-}
-
-impl SerializedMetrics {
-    /// Create from a MetricsSet by capturing its display string.
-    pub fn from_metrics_set(set: &MetricsSet) -> Self {
-        Self {
-            display: set.to_string(),
-        }
-    }
-
-    /// Convert back to a MetricsSet with a custom metric containing the display string.
-    pub fn into_metrics_set(self) -> MetricsSet {
-        let mut set = MetricsSet::new();
-        let custom = ImportedMetrics::new(self.display);
-        let metric = Metric::new(
-            MetricValue::Custom {
-                name: "imported_metrics".into(),
-                value: Arc::new(custom),
-            },
-            None,
-        );
-        set.push(Arc::new(metric));
-        set
-    }
-}
-
-/// Custom metric value that holds an imported metrics display string.
-#[derive(Debug)]
-pub struct ImportedMetrics {
-    display: Mutex<String>,
-}
-
-impl ImportedMetrics {
-    pub fn new(display: String) -> Self {
-        Self {
-            display: Mutex::new(display),
-        }
-    }
-
-    fn snapshot(&self) -> String {
-        self.display
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
-    }
-}
-
-impl Clone for ImportedMetrics {
-    fn clone(&self) -> Self {
-        Self::new(self.snapshot())
-    }
-}
-
-impl Display for ImportedMetrics {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.snapshot())
-    }
-}
-
-impl CustomMetricValue for ImportedMetrics {
-    fn new_empty(&self) -> Arc<dyn CustomMetricValue> {
-        Arc::new(Self::new(String::new()))
-    }
-
-    fn aggregate(&self, other: Arc<dyn CustomMetricValue>) {
-        let Some(other) = other.as_any().downcast_ref::<Self>() else {
-            return;
-        };
-        let other_display = other.snapshot();
-        let mut display = self
-            .display
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if display.is_empty() {
-            *display = other_display;
-        }
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn is_eq(&self, other: &Arc<dyn CustomMetricValue>) -> bool {
-        other
-            .as_any()
-            .downcast_ref::<Self>()
-            .is_some_and(|other| other.snapshot() == self.snapshot())
-    }
 }
 
 /// Properties of an execution plan serialized across FFI.
@@ -847,6 +758,12 @@ mod tests {
         let metrics = imported.metrics().expect("Expected imported metrics");
 
         assert!(metrics.to_string().contains("test_metric=42"));
+        let metric = metrics.iter().next().expect("Expected one metric");
+        assert!(matches!(
+            metric.value(),
+            datafusion_physical_plan::metrics::MetricValue::Count { name, count }
+                if name == "test_metric" && count.value() == 42
+        ));
         assert!(
             metrics
                 .aggregate_by_name()
