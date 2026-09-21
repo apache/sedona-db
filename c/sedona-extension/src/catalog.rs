@@ -17,19 +17,19 @@
 
 //! Version-agnostic FFI wrappers for DataFusion's catalog hierarchy.
 
-use std::ffi::{CString, c_char, c_int};
+use std::ffi::{c_char, c_int, CString};
 use std::fmt::{Debug, Formatter};
 use std::ptr::null_mut;
 use std::sync::Arc;
 
 use arrow_array::ffi::FFI_ArrowArray;
-use arrow_schema::{DataType, Field, ffi::FFI_ArrowSchema};
+use arrow_schema::ffi::FFI_ArrowSchema;
 use async_trait::async_trait;
 use datafusion_catalog::{
     CatalogProvider, CatalogProviderList, SchemaProvider, Session, TableProvider,
 };
-use datafusion_common::{Result, not_impl_err};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use datafusion_common::{not_impl_err, Result};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::extension::{
     SedonaCCatalogProvider, SedonaCCatalogProviderList, SedonaCError, SedonaCSchemaProvider,
@@ -38,7 +38,10 @@ use crate::extension::{
 use crate::runtime::RuntimeHandle;
 use crate::set_ffi_error;
 use crate::table_provider::{ExportedTableProvider, ImportedTableProvider};
-use crate::utils::{ERRNO_OK, PropertyValue, cstr_from_ptr_or_empty, parse_ffi_array_to_bytes};
+use crate::utils::{
+    call_get_json_property_impl, cstr_from_ptr_or_empty, parse_json_c_args, write_json_property,
+    write_utf8_property_schema, ERRNO_OK,
+};
 
 fn c_string(value: impl Into<Vec<u8>>) -> Result<CString> {
     CString::new(value).map_err(|error| {
@@ -46,90 +49,6 @@ fn c_string(value: impl Into<Vec<u8>>) -> Result<CString> {
             format!("Catalog name contains an interior NUL: {error}").into(),
         )
     })
-}
-
-fn write_property_schema(out: *mut FFI_ArrowSchema, err: *mut SedonaCError) -> c_int {
-    let field = Field::new("value", DataType::Utf8, false);
-    match FFI_ArrowSchema::try_from(&field) {
-        Ok(schema) => {
-            unsafe { std::ptr::write(out, schema) };
-            ERRNO_OK
-        }
-        Err(error) => {
-            unsafe { set_ffi_error!(err, "Failed to export property schema: {}", error) };
-            libc::EINVAL
-        }
-    }
-}
-
-fn write_json<T: Serialize>(value: &T, out: *mut FFI_ArrowArray, err: *mut SedonaCError) -> c_int {
-    match serde_json::to_string(value) {
-        Ok(value) => {
-            unsafe { std::ptr::write(out, PropertyValue::String(value).into_ffi_array()) };
-            ERRNO_OK
-        }
-        Err(error) => {
-            unsafe { set_ffi_error!(err, "Failed to serialize catalog metadata: {}", error) };
-            libc::EINVAL
-        }
-    }
-}
-
-fn read_property<T, A, F, G>(
-    property: &str,
-    args: Option<&A>,
-    get_property_schema: G,
-    get_property: F,
-) -> Result<T>
-where
-    T: DeserializeOwned,
-    A: Serialize,
-    F: FnOnce(*const c_char, *const c_char, *mut FFI_ArrowArray, *mut SedonaCError) -> c_int,
-    G: FnOnce(*const c_char, *mut FFI_ArrowSchema, *mut SedonaCError) -> c_int,
-{
-    let property_c = c_string(property)?;
-    let args_json = args
-        .map(serde_json::to_string)
-        .transpose()
-        .map_err(|error| datafusion_common::DataFusionError::External(Box::new(error)))?
-        .map(CString::new)
-        .transpose()
-        .map_err(|error| datafusion_common::DataFusionError::External(Box::new(error)))?;
-    let args = args_json
-        .as_ref()
-        .map_or(std::ptr::null(), |args| args.as_ptr());
-    let mut error = SedonaCError::default();
-    let mut schema = FFI_ArrowSchema::empty();
-    let code = get_property_schema(property_c.as_ptr(), &mut schema, &mut error);
-    if code != ERRNO_OK {
-        return sedona_common::sedona_internal_err!(
-            "Failed to read schema for property '{property}': {error}"
-        );
-    }
-    let field = Field::try_from(&schema)?;
-
-    let mut array = FFI_ArrowArray::empty();
-    let code = get_property(property_c.as_ptr(), args, &mut array, &mut error);
-    if code != ERRNO_OK {
-        return sedona_common::sedona_internal_err!(
-            "Failed to read property '{property}': {error}"
-        );
-    }
-
-    let bytes = parse_ffi_array_to_bytes(array, field.data_type())?;
-    serde_json::from_slice(&bytes).map_err(|error| {
-        datafusion_common::DataFusionError::External(
-            format!("Failed to deserialize property '{property}': {error}").into(),
-        )
-    })
-}
-
-unsafe fn parse_args<T: DeserializeOwned>(args: *const c_char) -> Result<T> {
-    if args.is_null() {
-        return sedona_common::sedona_internal_err!("Property requires JSON arguments");
-    }
-    serde_json::from_str(&cstr_from_ptr_or_empty(args))
-        .map_err(|error| datafusion_common::DataFusionError::External(Box::new(error)))
 }
 
 fn optional_catalog(
@@ -217,7 +136,7 @@ unsafe extern "C" fn c_catalog_list_property_schema(
     out: *mut FFI_ArrowSchema,
     err: *mut SedonaCError,
 ) -> c_int {
-    write_property_schema(out, err)
+    write_utf8_property_schema(out, err)
 }
 
 unsafe extern "C" fn c_catalog_list_property(
@@ -229,7 +148,7 @@ unsafe extern "C" fn c_catalog_list_property(
 ) -> c_int {
     let exported = &*((*self_).private_data as *const ExportedCatalogProviderList);
     match cstr_from_ptr_or_empty(property).as_ref() {
-        "catalog_names" => write_json(&exported.inner.catalog_names(), out, err),
+        "catalog_names" => write_json_property(&exported.inner.catalog_names(), out, err),
         property => {
             set_ffi_error!(err, "Unknown catalog list property: {}", property);
             libc::EINVAL
@@ -375,8 +294,9 @@ impl CatalogProviderList for ImportedCatalogProviderList {
         let Some(schema_callback) = self.inner.get_property_schema else {
             return vec![];
         };
-        read_property(
+        call_get_json_property_impl(
             "catalog_names",
+            "SedonaCCatalogProviderList",
             None::<&()>,
             |property, out, err| unsafe { schema_callback(&self.inner, property, out, err) },
             |property, args, out, err| unsafe { callback(&self.inner, property, args, out, err) },
@@ -449,7 +369,7 @@ unsafe extern "C" fn c_catalog_property_schema(
     out: *mut FFI_ArrowSchema,
     err: *mut SedonaCError,
 ) -> c_int {
-    write_property_schema(out, err)
+    write_utf8_property_schema(out, err)
 }
 
 unsafe extern "C" fn c_catalog_property(
@@ -461,7 +381,7 @@ unsafe extern "C" fn c_catalog_property(
 ) -> c_int {
     let exported = &*((*self_).private_data as *const ExportedCatalogProvider);
     match cstr_from_ptr_or_empty(property).as_ref() {
-        "schema_names" => write_json(&exported.inner.schema_names(), out, err),
+        "schema_names" => write_json_property(&exported.inner.schema_names(), out, err),
         property => {
             set_ffi_error!(err, "Unknown catalog property: {}", property);
             libc::EINVAL
@@ -629,8 +549,9 @@ impl CatalogProvider for ImportedCatalogProvider {
         let Some(schema_callback) = self.inner.get_property_schema else {
             return vec![];
         };
-        read_property(
+        call_get_json_property_impl(
             "schema_names",
+            "SedonaCCatalogProvider",
             None::<&()>,
             |property, out, err| unsafe { schema_callback(&self.inner, property, out, err) },
             |property, args, out, err| unsafe { callback(&self.inner, property, args, out, err) },
@@ -755,7 +676,7 @@ unsafe extern "C" fn c_schema_property_schema(
     out: *mut FFI_ArrowSchema,
     err: *mut SedonaCError,
 ) -> c_int {
-    write_property_schema(out, err)
+    write_utf8_property_schema(out, err)
 }
 
 unsafe extern "C" fn c_schema_property(
@@ -767,10 +688,10 @@ unsafe extern "C" fn c_schema_property(
 ) -> c_int {
     let exported = &*((*self_).private_data as *const ExportedSchemaProvider);
     match cstr_from_ptr_or_empty(property).as_ref() {
-        "owner_name" => write_json(&exported.inner.owner_name(), out, err),
-        "table_names" => write_json(&exported.inner.table_names(), out, err),
-        "table_exist" => match parse_args::<TableExistArgs>(args) {
-            Ok(args) => write_json(&exported.inner.table_exist(&args.name), out, err),
+        "owner_name" => write_json_property(&exported.inner.owner_name(), out, err),
+        "table_names" => write_json_property(&exported.inner.table_names(), out, err),
+        "table_exist" => match parse_json_c_args::<TableExistArgs>(args) {
+            Ok(args) => write_json_property(&exported.inner.table_exist(&args.name), out, err),
             Err(error) => {
                 set_ffi_error!(err, "Failed to parse table_exist arguments: {}", error);
                 libc::EINVAL
@@ -935,8 +856,9 @@ impl ImportedSchemaProvider {
                 "SedonaCSchemaProvider is missing a required callback"
             );
         }
-        let owner_name = read_property(
+        let owner_name = call_get_json_property_impl(
             "owner_name",
+            "SedonaCSchemaProvider",
             None::<&()>,
             |property, out, err| unsafe {
                 inner.get_property_schema.expect("validated above")(&inner, property, out, err)
@@ -957,8 +879,9 @@ impl ImportedSchemaProvider {
             .inner
             .get_property_schema
             .expect("validated in try_new");
-        read_property(
+        call_get_json_property_impl(
             property,
+            "SedonaCSchemaProvider",
             None::<&()>,
             |property, out, err| unsafe { schema_callback(&self.inner, property, out, err) },
             |property, args, out, err| unsafe { callback(&self.inner, property, args, out, err) },
@@ -1025,8 +948,9 @@ impl SchemaProvider for ImportedSchemaProvider {
         let Some(schema_callback) = self.inner.get_property_schema else {
             return false;
         };
-        read_property(
+        call_get_json_property_impl(
             "table_exist",
+            "SedonaCSchemaProvider",
             Some(&TableExistArgs {
                 name: name.to_owned(),
             }),
@@ -1108,37 +1032,29 @@ mod tests {
         let catalog = catalogs.catalog("catalog_one").unwrap();
         let schema = catalog.schema("schema_one").unwrap();
 
-        assert!(
-            schema
-                .register_table("table_two".to_owned(), empty_table())
-                .unwrap()
-                .is_none()
-        );
+        assert!(schema
+            .register_table("table_two".to_owned(), empty_table())
+            .unwrap()
+            .is_none());
         assert!(schema.table_names().contains(&"table_two".to_owned()));
         assert!(schema.deregister_table("table_two").unwrap().is_some());
 
-        assert!(
-            catalog
-                .register_schema("schema_two", Arc::new(MemorySchemaProvider::new()))
-                .unwrap()
-                .is_none()
-        );
+        assert!(catalog
+            .register_schema("schema_two", Arc::new(MemorySchemaProvider::new()))
+            .unwrap()
+            .is_none());
         assert!(catalog.schema("schema_two").is_some());
-        assert!(
-            catalog
-                .deregister_schema("schema_two", false)
-                .unwrap()
-                .is_some()
-        );
+        assert!(catalog
+            .deregister_schema("schema_two", false)
+            .unwrap()
+            .is_some());
 
-        assert!(
-            catalogs
-                .register_catalog(
-                    "catalog_two".to_owned(),
-                    Arc::new(MemoryCatalogProvider::new()),
-                )
-                .is_none()
-        );
+        assert!(catalogs
+            .register_catalog(
+                "catalog_two".to_owned(),
+                Arc::new(MemoryCatalogProvider::new()),
+            )
+            .is_none());
         assert!(catalogs.catalog("catalog_two").is_some());
 
         let replaced = catalogs.register_catalog(
@@ -1158,26 +1074,24 @@ mod tests {
         let session = Arc::new(context.state());
         let runtime = runtime();
 
-        assert!(
-            ImportedCatalogProviderList::try_new(
-                SedonaCCatalogProviderList::default(),
-                session.clone(),
-                runtime.clone(),
-            )
-            .is_err()
-        );
-        assert!(
-            ImportedCatalogProvider::try_new(
-                SedonaCCatalogProvider::default(),
-                session.clone(),
-                runtime.clone(),
-            )
-            .is_err()
-        );
-        assert!(
-            ImportedSchemaProvider::try_new(SedonaCSchemaProvider::default(), session, runtime,)
-                .is_err()
-        );
+        assert!(ImportedCatalogProviderList::try_new(
+            SedonaCCatalogProviderList::default(),
+            session.clone(),
+            runtime.clone(),
+        )
+        .is_err());
+        assert!(ImportedCatalogProvider::try_new(
+            SedonaCCatalogProvider::default(),
+            session.clone(),
+            runtime.clone(),
+        )
+        .is_err());
+        assert!(ImportedSchemaProvider::try_new(
+            SedonaCSchemaProvider::default(),
+            session,
+            runtime,
+        )
+        .is_err());
     }
 
     #[test]

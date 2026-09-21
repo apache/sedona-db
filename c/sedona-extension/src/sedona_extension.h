@@ -18,8 +18,8 @@
 #ifndef SEDONA_EXTENSION_H
 #define SEDONA_EXTENSION_H
 
-#include <stddef.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -453,24 +453,21 @@ struct SedonaCSchemaProvider {
   ///
   /// Supported properties are `owner_name`, `table_names`, and `table_exist`.
   /// The `table_exist` property accepts `{ "name": "..." }` in args.
-  int (*get_property)(const struct SedonaCSchemaProvider* self,
-                      const char* property, const char* args,
-                      struct ArrowArray* out, struct SedonaCError* err);
+  int (*get_property)(const struct SedonaCSchemaProvider* self, const char* property,
+                      const char* args, struct ArrowArray* out, struct SedonaCError* err);
 
   /// \brief Look up a table by name
   int (*table)(const struct SedonaCSchemaProvider* self, const char* name,
                struct SedonaCTableProvider* out, struct SedonaCError* err);
 
   /// \brief Register a table, taking ownership of `table`
-  int (*register_table)(const struct SedonaCSchemaProvider* self,
-                        const char* name, struct SedonaCTableProvider* table,
-                        struct SedonaCTableProvider* out,
-                        struct SedonaCError* err);
+  int (*register_table)(const struct SedonaCSchemaProvider* self, const char* name,
+                        struct SedonaCTableProvider* table,
+                        struct SedonaCTableProvider* out, struct SedonaCError* err);
 
   /// \brief Deregister a table by name
-  int (*deregister_table)(const struct SedonaCSchemaProvider* self,
-                          const char* name, struct SedonaCTableProvider* out,
-                          struct SedonaCError* err);
+  int (*deregister_table)(const struct SedonaCSchemaProvider* self, const char* name,
+                          struct SedonaCTableProvider* out, struct SedonaCError* err);
 
   /// \brief Reserved for future use. Must be NULL.
   void* reserved;
@@ -494,24 +491,21 @@ struct SedonaCCatalogProvider {
   /// \brief Extract a JSON-encoded property from this catalog
   ///
   /// The supported property is `schema_names`.
-  int (*get_property)(const struct SedonaCCatalogProvider* self,
-                      const char* property, const char* args,
-                      struct ArrowArray* out, struct SedonaCError* err);
+  int (*get_property)(const struct SedonaCCatalogProvider* self, const char* property,
+                      const char* args, struct ArrowArray* out, struct SedonaCError* err);
 
   /// \brief Look up a schema by name
   int (*schema)(const struct SedonaCCatalogProvider* self, const char* name,
                 struct SedonaCSchemaProvider* out, struct SedonaCError* err);
 
   /// \brief Register a schema, taking ownership of `schema`
-  int (*register_schema)(const struct SedonaCCatalogProvider* self,
-                         const char* name, struct SedonaCSchemaProvider* schema,
-                         struct SedonaCSchemaProvider* out,
-                         struct SedonaCError* err);
+  int (*register_schema)(const struct SedonaCCatalogProvider* self, const char* name,
+                         struct SedonaCSchemaProvider* schema,
+                         struct SedonaCSchemaProvider* out, struct SedonaCError* err);
 
   /// \brief Deregister a schema by name
-  int (*deregister_schema)(const struct SedonaCCatalogProvider* self,
-                           const char* name, bool cascade,
-                           struct SedonaCSchemaProvider* out,
+  int (*deregister_schema)(const struct SedonaCCatalogProvider* self, const char* name,
+                           bool cascade, struct SedonaCSchemaProvider* out,
                            struct SedonaCError* err);
 
   /// \brief Reserved for future use. Must be NULL.
@@ -536,21 +530,17 @@ struct SedonaCCatalogProviderList {
   /// \brief Extract a JSON-encoded property from this catalog list
   ///
   /// The supported property is `catalog_names`.
-  int (*get_property)(const struct SedonaCCatalogProviderList* self,
-                      const char* property, const char* args,
-                      struct ArrowArray* out, struct SedonaCError* err);
+  int (*get_property)(const struct SedonaCCatalogProviderList* self, const char* property,
+                      const char* args, struct ArrowArray* out, struct SedonaCError* err);
 
   /// \brief Look up a catalog by name
-  int (*catalog)(const struct SedonaCCatalogProviderList* self,
-                 const char* name, struct SedonaCCatalogProvider* out,
-                 struct SedonaCError* err);
+  int (*catalog)(const struct SedonaCCatalogProviderList* self, const char* name,
+                 struct SedonaCCatalogProvider* out, struct SedonaCError* err);
 
   /// \brief Register a catalog, taking ownership of `catalog`
-  int (*register_catalog)(const struct SedonaCCatalogProviderList* self,
-                          const char* name,
+  int (*register_catalog)(const struct SedonaCCatalogProviderList* self, const char* name,
                           struct SedonaCCatalogProvider* catalog,
-                          struct SedonaCCatalogProvider* out,
-                          struct SedonaCError* err);
+                          struct SedonaCCatalogProvider* out, struct SedonaCError* err);
 
   /// \brief Reserved for future use. Must be NULL.
   void* reserved;
