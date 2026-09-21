@@ -44,6 +44,30 @@ def test_udf_matchers(con):
     )
 
 
+def test_large_wkb_geography_matcher_preserves_edge_type(con):
+    import geoarrow.pyarrow as ga
+    from shapely.geometry import Point
+
+    geography_type = (
+        ga.large_wkb().with_edge_type(ga.EdgeType.SPHERICAL).with_crs("OGC:CRS84")
+    )
+    table = pa.table({"geom": pa.array([Point(1, 2).wkb], type=geography_type)})
+    df = con.create_data_frame(table)
+
+    assert df.schema.field("geom").type.edge_type == ga.EdgeType.SPHERICAL
+
+    @udf.arrow_udf(pa.bool_(), [udf.GEOGRAPHY])
+    def is_spherical(geom, *, num_rows):
+        assert geom.type.edge_type == ga.EdgeType.SPHERICAL
+        return pa.array([True] * num_rows)
+
+    con.register(is_spherical)
+    df.to_view("large_wkb_geography", overwrite=True)
+    assert con.sql(
+        "SELECT is_spherical(geom) FROM large_wkb_geography"
+    ).to_arrow_table().column(0).to_pylist() == [True]
+
+
 def test_udf_types(con):
     udf_impl = udf.arrow_udf(pa.binary(), [pa.string(), pa.int64()])(some_udf)
     assert udf_impl._name == "some_udf"
@@ -255,10 +279,11 @@ def test_native_scalar_udf_export_import_roundtrip(con):
 
 
 def test_native_scalar_udf_export_preserves_sedona_options(con):
-    from sedonadb.udf import sedona_native_scalar_udf
+    if "s2geography" not in sedonadb.__features__:
+        pytest.skip("Python package built without s2geography")
 
     capsules = con.funcs.st_envelope.__sedonadb_scalar_udf__()
-    con.register(sedona_native_scalar_udf(capsules, name="rt_envelope"))
+    con.register(udf.sedona_native_scalar_udf(capsules, name="rt_envelope"))
 
     expected = con.sql(
         "SELECT ST_Envelope(ST_GeogFromText('POINT (1 2)')) AS col"
