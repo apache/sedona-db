@@ -1779,6 +1779,21 @@ def test_oversized_integer_literal_raises_overflow():
         gdf["n"] / lit(2**63)
 
 
+def test_unsigned_numpy_literal_divides():
+    # The oversized-integer pre-check used numbers.Integral, which np.uint64
+    # satisfies, so wrapping a perfectly valid uint64 operand in lit() turned
+    # a working division into an OverflowError. Only plain Python ints past
+    # int64 are pre-checked; NumPy integers resolve as their own Arrow type.
+    gdf = GeoDataFrame(sgpd.default_context().sql("SELECT 4 AS n"))
+    value = np.uint64(2**63)
+    unwrapped = (gdf["n"] / value).to_pandas().tolist()
+    assert (gdf["n"] / lit(value)).to_pandas().tolist() == unwrapped
+    assert (lit(value) / gdf["n"]).to_pandas().tolist() == [2**63 / 4]
+    # A plain int past int64 still reports the overflow it is.
+    with pytest.raises(OverflowError):
+        gdf["n"] / lit(2**63)
+
+
 def test_singleton_container_literals_resolve_as_numbers():
     # SedonaDB accepts one-element containers as single-value literals; the
     # numeric resolver must look through them like any other wrapper.

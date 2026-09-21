@@ -198,13 +198,13 @@ def _numeric_value(other):
         # payload alone does not reveal that. Conversion and validation errors
         # propagate as-is — the resolver's own message (a Series of length
         # != 1, say) is more precise than any downstream type-check error.
-        # The exception is a plain integer past int64: the resolver's failure
-        # for it names the wrong problem, so it is reported as the overflow
-        # it is, matching the unwrapped-integer behavior.
-        import numbers
-
+        # The exception is a plain Python int past int64: the resolver's
+        # failure for it names the wrong problem, so it is reported as the
+        # overflow it is, matching the unwrapped-integer behavior. Only plain
+        # ints qualify: a NumPy integer carries its own width and resolves as
+        # that Arrow type (np.uint64(2**63) is a valid uint64 literal).
         raw = value._value
-        if isinstance(raw, numbers.Integral) and not -(2**63) <= int(raw) < 2**63:
+        if isinstance(raw, int) and not -(2**63) <= raw < 2**63:
             raise OverflowError(f"{raw} overflows the signed 64-bit range")
         arr = pa.array(value)
         if len(arr) != 1:
