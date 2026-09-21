@@ -66,7 +66,9 @@ jobs:
 
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          extra-packages: any::rcmdcheck, any::glue, any::here, any::rlang, any::yaml, any::roxygen2
+          # adbcdrivermanager workaround can be removed when back on CRAN
+          # https://github.com/apache/sedona-db/issues/1303
+          extra-packages: any::rcmdcheck, any::glue, any::here, any::rlang, any::yaml, any::roxygen2, adbcdrivermanager=github::apache/arrow-adbc/r/adbcdrivermanager
           needs: check
           working-directory: r/sedonadb
 
