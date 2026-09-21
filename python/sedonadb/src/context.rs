@@ -26,6 +26,7 @@ use datafusion_expr::ScalarUDFImpl;
 use pyo3::prelude::*;
 use sedona::context::SedonaContext;
 use sedona::context_builder::SedonaContextBuilder;
+use sedona_common::SedonaOptions;
 use sedona_datasource::format::ExternalFormatFactory;
 use sedona_extension::runtime::RuntimeHandle;
 
@@ -124,8 +125,17 @@ impl InternalContext {
         obj: &Bound<PyAny>,
         requested_schema: Option<&Bound<PyAny>>,
     ) -> Result<InternalDataFrame, PySedonaError> {
+        let use_async_execution = self
+            .inner
+            .ctx
+            .state()
+            .config_options()
+            .extensions
+            .get::<SedonaOptions>()
+            .map(|options| options.ffi.use_async)
+            .unwrap_or(false);
         let (provider, table_reference) =
-            import_table_provider_from_any(py, obj, requested_schema)?;
+            import_table_provider_from_any(py, obj, requested_schema, use_async_execution)?;
         let df = if let Some(table_reference) = table_reference {
             let plan =
                 LogicalPlanBuilder::scan(table_reference, provider_as_source(provider), None)?

@@ -38,7 +38,10 @@ use datafusion_physical_plan::{
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use serde::{Deserialize, Serialize};
 
+use crate::export_sendable_record_batch_stream::drive_stream_to_handler;
+use crate::extension::FFI_ArrowAsyncDeviceStreamHandler;
 use crate::extension::{SedonaCError, SedonaCExecutionPlan, SedonaCExecutionPlanArgs};
+use crate::import_sendable_record_batch_stream::ImportedAsyncDeviceStream;
 use crate::runtime::RuntimeHandle;
 use crate::set_ffi_error;
 use crate::streaming::{ffi_stream_to_sendable, CancelChecker, StreamingRecordBatchReader};
@@ -147,7 +150,7 @@ impl From<ExportedExecutionPlan> for SedonaCExecutionPlan {
             get_property: Some(c_exec_plan_get_property),
             with_property: None,
             execute: Some(c_exec_plan_execute),
-            execute_async: None,
+            execute_async: Some(c_exec_plan_execute_async),
             reserved: null_mut(),
             release: Some(c_exec_plan_release),
             private_data: Box::into_raw(boxed) as *mut c_void,
@@ -271,6 +274,54 @@ unsafe extern "C" fn c_exec_plan_execute(
     }
 }
 
+unsafe extern "C" fn c_exec_plan_execute_async(
+    self_: *const SedonaCExecutionPlan,
+    args: *mut SedonaCExecutionPlanArgs,
+    out: *mut c_void,
+    err: *mut SedonaCError,
+) -> c_int {
+    debug_assert!(!self_.is_null(), "self pointer is null");
+    debug_assert!(!args.is_null(), "args pointer is null");
+    debug_assert!(!out.is_null(), "out pointer is null");
+    let self_ref = &*self_;
+    let args_ref = &*args;
+    debug_assert!(!self_ref.private_data.is_null(), "private_data is null");
+    let plan = &*(self_ref.private_data as *const ExportedExecutionPlan);
+
+    let args_slice = if args_ref.args.is_null() || args_ref.args_len == 0 {
+        &[]
+    } else {
+        std::slice::from_raw_parts(args_ref.args, args_ref.args_len)
+    };
+    let execute_args: ExecuteArgs = match serde_json::from_slice(args_slice) {
+        Ok(args) => args,
+        Err(e) => {
+            set_ffi_error!(err, "Failed to parse execute args: {}", e);
+            return libc::EINVAL;
+        }
+    };
+
+    match plan.execute(execute_args.partition) {
+        Ok(stream) => {
+            // Raw pointers are not Send; transport the address into the task as
+            // an integer and reconstruct it only on the runtime worker.
+            let handler_addr = out as usize;
+            let runtime = plan.runtime.clone();
+            plan.runtime.spawn_blocking(move || {
+                runtime.block_on(drive_stream_to_handler(
+                    stream,
+                    handler_addr as *mut FFI_ArrowAsyncDeviceStreamHandler,
+                ));
+            });
+            ERRNO_OK
+        }
+        Err(e) => {
+            set_ffi_error!(err, "{}", e);
+            libc::EINVAL
+        }
+    }
+}
+
 unsafe extern "C" fn c_exec_plan_release(self_: *mut SedonaCExecutionPlan) {
     debug_assert!(!self_.is_null(), "self pointer is null");
     let self_ref = &mut *self_;
@@ -295,6 +346,7 @@ pub struct ImportedSedonaCExec {
     cancel_checker: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     /// Interval for periodic cancellation checking during stream consumption.
     check_interval: Option<Duration>,
+    use_async: bool,
 }
 
 impl Debug for ImportedSedonaCExec {
@@ -350,6 +402,7 @@ impl ImportedSedonaCExec {
             name,
             cancel_checker: None,
             check_interval: None,
+            use_async: false,
         })
     }
 
@@ -373,6 +426,15 @@ impl ImportedSedonaCExec {
     /// If not set, the checker is called before every batch.
     pub fn with_check_interval(mut self, interval: Duration) -> Self {
         self.check_interval = Some(interval);
+        self
+    }
+
+    /// Select the Arrow async-device stream callback for execution.
+    ///
+    /// Synchronous execution remains the default for compatibility. When this
+    /// is enabled, `execute_async` must be implemented by the imported plan.
+    pub fn with_async_execution(mut self, use_async: bool) -> Self {
+        self.use_async = use_async;
         self
     }
 
@@ -446,10 +508,6 @@ impl ExecutionPlan for ImportedSedonaCExec {
         partition: usize,
         _context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
-        let Some(execute) = self.inner.execute else {
-            return sedona_internal_err!("SedonaCExecutionPlan does not have execute");
-        };
-
         let args = ExecuteArgs { partition };
         let args_bytes = serde_json::to_vec(&args).map_err(|e| {
             sedona_internal_datafusion_err!("Failed to serialize execute args: {}", e)
@@ -465,8 +523,35 @@ impl ExecutionPlan for ImportedSedonaCExec {
             reserved: null_mut(),
         };
 
-        let mut ffi_stream = FFI_ArrowArrayStream::empty();
         let mut err = SedonaCError::default();
+
+        if self.use_async {
+            let Some(execute_async) = self.inner.execute_async else {
+                return sedona_internal_err!("SedonaCExecutionPlan does not have execute_async");
+            };
+            let (stream, handler) =
+                ImportedAsyncDeviceStream::new_with_schema(2, self.schema.clone());
+            let code = unsafe {
+                execute_async(
+                    &self.inner,
+                    &mut ffi_args,
+                    handler.as_ptr().cast(),
+                    &mut err,
+                )
+            };
+            if code != ERRNO_OK {
+                return exec_err!("Failed to execute plan asynchronously: {}", err);
+            }
+            // From this point the producer owns the handler and releases it
+            // after end-of-stream, error, or cancellation.
+            let _ = handler.into_raw();
+            return Ok(stream.into_sendable());
+        }
+
+        let Some(execute) = self.inner.execute else {
+            return sedona_internal_err!("SedonaCExecutionPlan does not have execute");
+        };
+        let mut ffi_stream = FFI_ArrowArrayStream::empty();
 
         let code = unsafe { execute(&self.inner, &mut ffi_args, &mut ffi_stream, &mut err) };
 
@@ -964,6 +1049,35 @@ ImportedSedonaCExec
                 "+----+-------+",
             ];
             assert_batches_eq!(expected2, &batches2);
+        });
+    }
+
+    #[test]
+    fn test_execution_plan_roundtrip_execute_async() {
+        let (imported, task_ctx, runtime) = setup_imported_plan();
+        let imported = imported.with_async_execution(true);
+
+        runtime.block_on(async {
+            let stream = imported.execute(2, task_ctx).unwrap();
+            let batches = stream
+                .collect::<Vec<_>>()
+                .await
+                .into_iter()
+                .collect::<Result<Vec<_>>>()
+                .unwrap();
+
+            assert_batches_eq!(
+                [
+                    "+----+-------+",
+                    "| id | value |",
+                    "+----+-------+",
+                    "| 21 | 100   |",
+                    "| 22 | 200   |",
+                    "| 23 | 300   |",
+                    "+----+-------+",
+                ],
+                &batches
+            );
         });
     }
 }

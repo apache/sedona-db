@@ -101,8 +101,18 @@ FFI_TEST_CASES = [
 ]
 
 
+@pytest.fixture(params=[False, True], ids=["sync", "async"])
+def ffi_execution_mode(request):
+    """Exercise every FFI test through both execution-plan stream paths."""
+    return request.param
+
+
+def configure_ffi_execution(sd, use_async):
+    sd.sql(f"SET sedona.ffi.use_async TO {str(use_async).lower()}").execute()
+
+
 @pytest.mark.parametrize("producer_sql,consumer_sql", FFI_TEST_CASES)
-def test_ffi_roundtrip(geoarrow_data, producer_sql, consumer_sql):
+def test_ffi_roundtrip(geoarrow_data, producer_sql, consumer_sql, ffi_execution_mode):
     # Use a real file with a reasonable number of rows so that parallelism
     # and multiple batches are invoked
     path = geoarrow_data / "ns-water" / "files" / "ns-water_water-point_geo.parquet"
@@ -110,6 +120,7 @@ def test_ffi_roundtrip(geoarrow_data, producer_sql, consumer_sql):
 
     sd_producer = sedonadb.connect()
     sd_consumer = sedonadb.connect()
+    configure_ffi_execution(sd_consumer, ffi_execution_mode)
 
     sd_producer.read_parquet(path).to_view("water_point")
     df_producer = sd_producer.sql(producer_sql)
@@ -125,12 +136,13 @@ def test_ffi_roundtrip(geoarrow_data, producer_sql, consumer_sql):
     pd.testing.assert_frame_equal(result_no_ffi, result_over_ffi)
 
 
-def test_filter_pushdown_into_ffi_producer(geoarrow_data):
+def test_filter_pushdown_into_ffi_producer(geoarrow_data, ffi_execution_mode):
     path = geoarrow_data / "ns-water" / "files" / "ns-water_water-point_geo.parquet"
     skip_if_not_exists(path)
 
     sd_producer = sedonadb.connect()
     sd_consumer = sedonadb.connect()
+    configure_ffi_execution(sd_consumer, ffi_execution_mode)
 
     # Producer exposes all columns without filtering
     sd_producer.read_parquet(path).to_view("water_point")
@@ -167,7 +179,9 @@ def test_filter_pushdown_into_ffi_producer(geoarrow_data):
         )
 
 
-def test_udf_filter_not_pushed_down_into_ffi_producer(geoarrow_data):
+def test_udf_filter_not_pushed_down_into_ffi_producer(
+    geoarrow_data, ffi_execution_mode
+):
     """Verify that filters using consumer-side UDFs are NOT pushed down into the FFI producer.
 
     UDFs are session-specific, so a UDF registered on the consumer cannot be
@@ -178,6 +192,7 @@ def test_udf_filter_not_pushed_down_into_ffi_producer(geoarrow_data):
 
     sd_producer = sedonadb.connect()
     sd_consumer = sedonadb.connect()
+    configure_ffi_execution(sd_consumer, ffi_execution_mode)
 
     # Define a simple UDF on the consumer side only
     @udf.arrow_udf(pa.bool_(), [pa.int64()])
