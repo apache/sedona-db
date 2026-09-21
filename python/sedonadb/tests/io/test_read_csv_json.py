@@ -31,6 +31,14 @@ def test_read_csv_basic(con):
     pdt.assert_frame_equal(out, pd.DataFrame({"a": [1, 2], "b": ["x", "y"]}))
 
 
+def test_read_csv_without_expected_extension(con):
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "csv_input"
+        p.write_text("a,b\n1,x\n")
+        out = con.read.csv(p).to_pandas()
+    pdt.assert_frame_equal(out, pd.DataFrame({"a": [1], "b": ["x"]}))
+
+
 def test_read_csv_no_header(con):
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / "t.csv"
@@ -75,6 +83,14 @@ def test_read_json_ndjson(con):
         p.write_text('{"a": 1, "b": "x"}\n{"a": 2, "b": "y"}\n')
         out = con.read.json(p).sort("a").to_pandas()
     pdt.assert_frame_equal(out, pd.DataFrame({"a": [1, 2], "b": ["x", "y"]}))
+
+
+def test_read_json_without_expected_extension(con):
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "json_input"
+        p.write_text('{"a": 1, "b": "x"}\n')
+        out = con.read.json(p).to_pandas()
+    pdt.assert_frame_equal(out, pd.DataFrame({"a": [1], "b": ["x"]}))
 
 
 def test_read_json_multiple_paths(con):

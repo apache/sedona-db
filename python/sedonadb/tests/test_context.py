@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 import json
+import shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Mapping
@@ -86,6 +87,15 @@ def test_read_parquet(con, geoarrow_data):
     ).to_arrow_table()
     assert tab["geometry"].type.extension_name == "geoarrow.wkb"
     assert len(tab) == 244
+
+
+def test_read_parquet_without_expected_extension(con, geoarrow_data, tmp_path):
+    source = geoarrow_data / "example/files/example_geometry_geo.parquet"
+    extensionless = tmp_path / "items"
+    shutil.copyfile(source, extensionless)
+
+    tab = con.read_parquet(extensionless).to_arrow_table()
+    assert tab["geometry"].type.extension_name == "geoarrow.wkb"
 
 
 def test_read_parquet_local_glob(con, geoarrow_data):

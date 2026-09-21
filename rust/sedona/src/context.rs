@@ -1456,6 +1456,54 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn read_explicit_json_and_parquet_without_expected_extension() {
+        let tmpdir = tempdir().unwrap();
+        let ctx = SedonaContext::new_local_interactive().await.unwrap();
+
+        let json = tmpdir.path().join("records");
+        std::fs::write(&json, "{\"id\":1,\"value\":\"one\"}\n").unwrap();
+        let json_format = ctx.ctx.state().get_file_format_factory("json").unwrap();
+        let batches = ctx
+            .read(
+                json.to_string_lossy().to_string(),
+                &HashMap::new(),
+                Some(json_format),
+            )
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        assert_batches_eq!(
+            [
+                "+----+-------+",
+                "| id | value |",
+                "+----+-------+",
+                "| 1  | one   |",
+                "+----+-------+",
+            ],
+            &batches
+        );
+
+        let source = test_geoparquet("example", "geometry").unwrap();
+        let parquet = tmpdir.path().join("items");
+        std::fs::copy(source, &parquet).unwrap();
+        let parquet_format = ctx.ctx.state().get_file_format_factory("parquet").unwrap();
+        let df = ctx
+            .read(
+                parquet.to_string_lossy().to_string(),
+                &HashMap::new(),
+                Some(parquet_format),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            df.schema().sedona_types().nth(1).unwrap().unwrap(),
+            SedonaType::WkbView(Edges::Planar, lnglat())
+        );
+    }
+
     #[derive(Debug)]
     struct ExampleSpec {}
 
