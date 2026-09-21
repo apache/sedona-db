@@ -17,7 +17,7 @@
 
 //! Version-agnostic FFI wrappers for DataFusion's catalog hierarchy.
 
-use std::ffi::{c_char, c_int, CString};
+use std::ffi::{CString, c_char, c_int};
 use std::fmt::{Debug, Formatter};
 use std::ptr::null_mut;
 use std::sync::Arc;
@@ -28,8 +28,8 @@ use async_trait::async_trait;
 use datafusion_catalog::{
     CatalogProvider, CatalogProviderList, SchemaProvider, Session, TableProvider,
 };
-use datafusion_common::{not_impl_err, Result};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use datafusion_common::{Result, not_impl_err};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::extension::{
     SedonaCCatalogProvider, SedonaCCatalogProviderList, SedonaCError, SedonaCSchemaProvider,
@@ -39,8 +39,8 @@ use crate::runtime::RuntimeHandle;
 use crate::set_ffi_error;
 use crate::table_provider::{ExportedTableProvider, ImportedTableProvider};
 use crate::utils::{
-    call_get_json_property_impl, cstr_from_ptr_or_empty, parse_json_c_args, write_json_property,
-    write_utf8_property_schema, ERRNO_OK,
+    ERRNO_OK, call_get_json_property_impl, cstr_from_ptr_or_empty, parse_json_c_args,
+    write_json_property, write_utf8_property_schema,
 };
 
 fn c_string(value: impl Into<Vec<u8>>) -> Result<CString> {
@@ -262,16 +262,19 @@ impl ImportedCatalogProviderList {
             runtime,
         })
     }
-}
 
-impl CatalogProviderList for ImportedCatalogProviderList {
-    fn register_catalog(
+    /// Register a catalog, preserving any error returned by the FFI callback.
+    pub fn try_register_catalog(
         &self,
         name: String,
         catalog: Arc<dyn CatalogProvider>,
-    ) -> Option<Arc<dyn CatalogProvider>> {
-        let callback = self.inner.register_catalog?;
-        let name = CString::new(name).ok()?;
+    ) -> Result<Option<Arc<dyn CatalogProvider>>> {
+        let Some(callback) = self.inner.register_catalog else {
+            return not_impl_err!(
+                "Registering catalogs is not supported by the foreign catalog list"
+            );
+        };
+        let name = c_string(name)?;
         let mut input =
             ExportedCatalogProvider::new(catalog, self.session.clone(), self.runtime.clone())
                 .into();
@@ -280,20 +283,18 @@ impl CatalogProviderList for ImportedCatalogProviderList {
         let code =
             unsafe { callback(&self.inner, name.as_ptr(), &mut input, &mut out, &mut error) };
         if code != ERRNO_OK {
-            return None;
+            return sedona_common::sedona_internal_err!("Failed to register catalog: {error}");
         }
         optional_catalog(out, self.session.clone(), self.runtime.clone())
-            .ok()
-            .flatten()
     }
 
-    fn catalog_names(&self) -> Vec<String> {
-        let Some(callback) = self.inner.get_property else {
-            return vec![];
-        };
-        let Some(schema_callback) = self.inner.get_property_schema else {
-            return vec![];
-        };
+    /// Return catalog names, preserving any property error from FFI.
+    pub fn try_catalog_names(&self) -> Result<Vec<String>> {
+        let callback = self.inner.get_property.expect("validated in try_new");
+        let schema_callback = self
+            .inner
+            .get_property_schema
+            .expect("validated in try_new");
         call_get_json_property_impl(
             "catalog_names",
             "SedonaCCatalogProviderList",
@@ -301,21 +302,37 @@ impl CatalogProviderList for ImportedCatalogProviderList {
             |property, out, err| unsafe { schema_callback(&self.inner, property, out, err) },
             |property, args, out, err| unsafe { callback(&self.inner, property, args, out, err) },
         )
-        .unwrap_or_default()
     }
 
-    fn catalog(&self, name: &str) -> Option<Arc<dyn CatalogProvider>> {
-        let callback = self.inner.catalog?;
-        let name = CString::new(name).ok()?;
+    /// Look up a catalog, preserving any error returned by the FFI callback.
+    pub fn try_catalog(&self, name: &str) -> Result<Option<Arc<dyn CatalogProvider>>> {
+        let callback = self.inner.catalog.expect("validated in try_new");
+        let name = c_string(name)?;
         let mut out = SedonaCCatalogProvider::default();
         let mut error = SedonaCError::default();
         let code = unsafe { callback(&self.inner, name.as_ptr(), &mut out, &mut error) };
         if code != ERRNO_OK {
-            return None;
+            return sedona_common::sedona_internal_err!("Failed to get catalog: {error}");
         }
         optional_catalog(out, self.session.clone(), self.runtime.clone())
-            .ok()
-            .flatten()
+    }
+}
+
+impl CatalogProviderList for ImportedCatalogProviderList {
+    fn register_catalog(
+        &self,
+        name: String,
+        catalog: Arc<dyn CatalogProvider>,
+    ) -> Option<Arc<dyn CatalogProvider>> {
+        self.try_register_catalog(name, catalog).ok().flatten()
+    }
+
+    fn catalog_names(&self) -> Vec<String> {
+        self.try_catalog_names().unwrap_or_default()
+    }
+
+    fn catalog(&self, name: &str) -> Option<Arc<dyn CatalogProvider>> {
+        self.try_catalog(name).ok().flatten()
     }
 }
 
@@ -539,16 +556,14 @@ impl ImportedCatalogProvider {
             runtime,
         })
     }
-}
 
-impl CatalogProvider for ImportedCatalogProvider {
-    fn schema_names(&self) -> Vec<String> {
-        let Some(callback) = self.inner.get_property else {
-            return vec![];
-        };
-        let Some(schema_callback) = self.inner.get_property_schema else {
-            return vec![];
-        };
+    /// Return schema names, preserving any property error from FFI.
+    pub fn try_schema_names(&self) -> Result<Vec<String>> {
+        let callback = self.inner.get_property.expect("validated in try_new");
+        let schema_callback = self
+            .inner
+            .get_property_schema
+            .expect("validated in try_new");
         call_get_json_property_impl(
             "schema_names",
             "SedonaCCatalogProvider",
@@ -556,19 +571,28 @@ impl CatalogProvider for ImportedCatalogProvider {
             |property, out, err| unsafe { schema_callback(&self.inner, property, out, err) },
             |property, args, out, err| unsafe { callback(&self.inner, property, args, out, err) },
         )
-        .unwrap_or_default()
     }
-    fn schema(&self, name: &str) -> Option<Arc<dyn SchemaProvider>> {
-        let callback = self.inner.schema?;
-        let name = CString::new(name).ok()?;
+
+    /// Look up a schema, preserving any error returned by the FFI callback.
+    pub fn try_schema(&self, name: &str) -> Result<Option<Arc<dyn SchemaProvider>>> {
+        let callback = self.inner.schema.expect("validated in try_new");
+        let name = c_string(name)?;
         let mut out = SedonaCSchemaProvider::default();
         let mut error = SedonaCError::default();
-        if unsafe { callback(&self.inner, name.as_ptr(), &mut out, &mut error) } != ERRNO_OK {
-            return None;
+        let code = unsafe { callback(&self.inner, name.as_ptr(), &mut out, &mut error) };
+        if code != ERRNO_OK {
+            return sedona_common::sedona_internal_err!("Failed to get schema: {error}");
         }
         optional_schema(out, self.session.clone(), self.runtime.clone())
-            .ok()
-            .flatten()
+    }
+}
+
+impl CatalogProvider for ImportedCatalogProvider {
+    fn schema_names(&self) -> Vec<String> {
+        self.try_schema_names().unwrap_or_default()
+    }
+    fn schema(&self, name: &str) -> Option<Arc<dyn SchemaProvider>> {
+        self.try_schema(name).ok().flatten()
     }
     fn register_schema(
         &self,
@@ -887,6 +911,29 @@ impl ImportedSchemaProvider {
             |property, args, out, err| unsafe { callback(&self.inner, property, args, out, err) },
         )
     }
+
+    /// Return table names, preserving any property error from FFI.
+    pub fn try_table_names(&self) -> Result<Vec<String>> {
+        self.property("table_names")
+    }
+
+    /// Test whether a table exists, preserving any property error from FFI.
+    pub fn try_table_exist(&self, name: &str) -> Result<bool> {
+        let callback = self.inner.get_property.expect("validated in try_new");
+        let schema_callback = self
+            .inner
+            .get_property_schema
+            .expect("validated in try_new");
+        call_get_json_property_impl(
+            "table_exist",
+            "SedonaCSchemaProvider",
+            Some(&TableExistArgs {
+                name: name.to_owned(),
+            }),
+            |property, out, err| unsafe { schema_callback(&self.inner, property, out, err) },
+            |property, args, out, err| unsafe { callback(&self.inner, property, args, out, err) },
+        )
+    }
 }
 
 #[async_trait]
@@ -895,7 +942,7 @@ impl SchemaProvider for ImportedSchemaProvider {
         self.owner_name.as_deref()
     }
     fn table_names(&self) -> Vec<String> {
-        self.property("table_names").unwrap_or_default()
+        self.try_table_names().unwrap_or_default()
     }
     async fn table(&self, name: &str) -> Result<Option<Arc<dyn TableProvider>>> {
         let callback = self.inner.table.expect("validated in try_new");
@@ -942,22 +989,7 @@ impl SchemaProvider for ImportedSchemaProvider {
         optional_table(out)
     }
     fn table_exist(&self, name: &str) -> bool {
-        let Some(callback) = self.inner.get_property else {
-            return false;
-        };
-        let Some(schema_callback) = self.inner.get_property_schema else {
-            return false;
-        };
-        call_get_json_property_impl(
-            "table_exist",
-            "SedonaCSchemaProvider",
-            Some(&TableExistArgs {
-                name: name.to_owned(),
-            }),
-            |property, out, err| unsafe { schema_callback(&self.inner, property, out, err) },
-            |property, args, out, err| unsafe { callback(&self.inner, property, args, out, err) },
-        )
-        .unwrap_or(false)
+        self.try_table_exist(name).unwrap_or(false)
     }
 }
 
@@ -970,6 +1002,23 @@ mod tests {
     };
     use datafusion::datasource::empty::EmptyTable;
     use datafusion::prelude::SessionContext;
+
+    unsafe extern "C" fn failing_register_catalog(
+        _self_: *const SedonaCCatalogProviderList,
+        _name: *const c_char,
+        catalog: *mut SedonaCCatalogProvider,
+        _out: *mut SedonaCCatalogProvider,
+        error: *mut SedonaCError,
+    ) -> c_int {
+        if !catalog.is_null() {
+            drop(std::ptr::replace(
+                catalog,
+                SedonaCCatalogProvider::default(),
+            ));
+        }
+        crate::extension::write_ffi_error(error, "catalog registration failed");
+        libc::EIO
+    }
 
     fn runtime() -> Arc<RuntimeHandle> {
         Arc::new(RuntimeHandle::new(
@@ -1032,29 +1081,37 @@ mod tests {
         let catalog = catalogs.catalog("catalog_one").unwrap();
         let schema = catalog.schema("schema_one").unwrap();
 
-        assert!(schema
-            .register_table("table_two".to_owned(), empty_table())
-            .unwrap()
-            .is_none());
+        assert!(
+            schema
+                .register_table("table_two".to_owned(), empty_table())
+                .unwrap()
+                .is_none()
+        );
         assert!(schema.table_names().contains(&"table_two".to_owned()));
         assert!(schema.deregister_table("table_two").unwrap().is_some());
 
-        assert!(catalog
-            .register_schema("schema_two", Arc::new(MemorySchemaProvider::new()))
-            .unwrap()
-            .is_none());
+        assert!(
+            catalog
+                .register_schema("schema_two", Arc::new(MemorySchemaProvider::new()))
+                .unwrap()
+                .is_none()
+        );
         assert!(catalog.schema("schema_two").is_some());
-        assert!(catalog
-            .deregister_schema("schema_two", false)
-            .unwrap()
-            .is_some());
+        assert!(
+            catalog
+                .deregister_schema("schema_two", false)
+                .unwrap()
+                .is_some()
+        );
 
-        assert!(catalogs
-            .register_catalog(
-                "catalog_two".to_owned(),
-                Arc::new(MemoryCatalogProvider::new()),
-            )
-            .is_none());
+        assert!(
+            catalogs
+                .register_catalog(
+                    "catalog_two".to_owned(),
+                    Arc::new(MemoryCatalogProvider::new()),
+                )
+                .is_none()
+        );
         assert!(catalogs.catalog("catalog_two").is_some());
 
         let replaced = catalogs.register_catalog(
@@ -1074,24 +1131,54 @@ mod tests {
         let session = Arc::new(context.state());
         let runtime = runtime();
 
-        assert!(ImportedCatalogProviderList::try_new(
-            SedonaCCatalogProviderList::default(),
+        assert!(
+            ImportedCatalogProviderList::try_new(
+                SedonaCCatalogProviderList::default(),
+                session.clone(),
+                runtime.clone(),
+            )
+            .is_err()
+        );
+        assert!(
+            ImportedCatalogProvider::try_new(
+                SedonaCCatalogProvider::default(),
+                session.clone(),
+                runtime.clone(),
+            )
+            .is_err()
+        );
+        assert!(
+            ImportedSchemaProvider::try_new(SedonaCSchemaProvider::default(), session, runtime,)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn fallible_catalog_list_methods_preserve_ffi_errors() {
+        let context = SessionContext::new();
+        let session = Arc::new(context.state());
+        let runtime = runtime();
+        let mut raw: SedonaCCatalogProviderList = ExportedCatalogProviderList::new(
+            Arc::new(MemoryCatalogProviderList::new()),
             session.clone(),
             runtime.clone(),
         )
-        .is_err());
-        assert!(ImportedCatalogProvider::try_new(
-            SedonaCCatalogProvider::default(),
-            session.clone(),
-            runtime.clone(),
-        )
-        .is_err());
-        assert!(ImportedSchemaProvider::try_new(
-            SedonaCSchemaProvider::default(),
-            session,
-            runtime,
-        )
-        .is_err());
+        .into();
+        raw.register_catalog = Some(failing_register_catalog);
+        let imported = ImportedCatalogProviderList::try_new(raw, session, runtime).unwrap();
+
+        let error = imported
+            .try_register_catalog("catalog".to_owned(), Arc::new(MemoryCatalogProvider::new()))
+            .unwrap_err();
+        assert!(error.to_string().contains("catalog registration failed"));
+
+        // The DataFusion trait cannot return this error and deliberately keeps
+        // its Option-only behavior.
+        assert!(
+            imported
+                .register_catalog("catalog".to_owned(), Arc::new(MemoryCatalogProvider::new()),)
+                .is_none()
+        );
     }
 
     #[test]
