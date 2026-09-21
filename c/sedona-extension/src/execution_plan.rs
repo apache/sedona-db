@@ -20,7 +20,7 @@ use std::{
     ffi::{c_int, c_void},
     fmt::{Debug, Display, Formatter},
     ptr::null_mut,
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -534,34 +534,56 @@ impl SerializedMetrics {
     }
 }
 
-/// Custom metric value that holds imported metrics display string.
-#[derive(Debug, Clone)]
+/// Custom metric value that holds an imported metrics display string.
+#[derive(Debug)]
 pub struct ImportedMetrics {
-    display: String,
+    display: Mutex<String>,
 }
 
 impl ImportedMetrics {
     pub fn new(display: String) -> Self {
-        Self { display }
+        Self {
+            display: Mutex::new(display),
+        }
+    }
+
+    fn snapshot(&self) -> String {
+        self.display
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+}
+
+impl Clone for ImportedMetrics {
+    fn clone(&self) -> Self {
+        Self::new(self.snapshot())
     }
 }
 
 impl Display for ImportedMetrics {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.display)
+        f.write_str(&self.snapshot())
     }
 }
 
 impl CustomMetricValue for ImportedMetrics {
     fn new_empty(&self) -> Arc<dyn CustomMetricValue> {
-        Arc::new(Self {
-            display: String::new(),
-        })
+        Arc::new(Self::new(String::new()))
     }
 
     fn aggregate(&self, other: Arc<dyn CustomMetricValue>) {
-        // No aggregation for imported metrics - they're read-only snapshots
-        let _ = other;
+        let Some(other) = other.as_any().downcast_ref::<Self>() else {
+            return;
+        };
+        let other_display = other.snapshot();
+        let mut display = self
+            .display
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if display.is_empty() {
+            *display = other_display;
+        }
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -572,7 +594,7 @@ impl CustomMetricValue for ImportedMetrics {
         other
             .as_any()
             .downcast_ref::<Self>()
-            .is_some_and(|o| o.display == self.display)
+            .is_some_and(|other| other.snapshot() == self.snapshot())
     }
 }
 
@@ -647,7 +669,10 @@ mod tests {
     use arrow_array::{Int32Array, RecordBatch};
     use arrow_schema::{DataType, Field};
     use datafusion_common::assert_batches_eq;
-    use datafusion_physical_plan::stream::RecordBatchStreamAdapter;
+    use datafusion_physical_plan::{
+        metrics::{ExecutionPlanMetricsSet, MetricBuilder},
+        stream::RecordBatchStreamAdapter,
+    };
     use futures::{stream, StreamExt};
     use std::fmt::Formatter;
 
@@ -657,6 +682,7 @@ mod tests {
         schema: SchemaRef,
         properties: Arc<PlanProperties>,
         limit_pushdown: bool,
+        metrics: ExecutionPlanMetricsSet,
     }
 
     impl DummyExec {
@@ -679,10 +705,15 @@ mod tests {
                 emission_type,
                 boundedness,
             );
+            let metrics = ExecutionPlanMetricsSet::new();
+            MetricBuilder::new(&metrics)
+                .global_counter("test_metric")
+                .add(42);
             Self {
                 schema,
                 properties: Arc::new(properties),
                 limit_pushdown: supports_limit_pushdown,
+                metrics,
             }
         }
     }
@@ -722,6 +753,10 @@ mod tests {
 
         fn supports_limit_pushdown(&self) -> bool {
             self.limit_pushdown
+        }
+
+        fn metrics(&self) -> Option<MetricsSet> {
+            Some(self.metrics.clone_inner())
         }
 
         fn execute(
@@ -804,6 +839,21 @@ mod tests {
     fn test_execution_plan_roundtrip_name() {
         let (imported, _, _runtime) = setup_imported_plan();
         assert_eq!(imported.name(), "ImportedSedonaCExec<DummyExec>");
+    }
+
+    #[test]
+    fn test_execution_plan_roundtrip_metrics_survive_aggregation() {
+        let (imported, _, _runtime) = setup_imported_plan();
+        let metrics = imported.metrics().expect("Expected imported metrics");
+
+        assert!(metrics.to_string().contains("test_metric=42"));
+        assert!(
+            metrics
+                .aggregate_by_name()
+                .to_string()
+                .contains("test_metric=42"),
+            "Imported metrics should survive DataFusion's EXPLAIN ANALYZE aggregation"
+        );
     }
 
     #[test]
