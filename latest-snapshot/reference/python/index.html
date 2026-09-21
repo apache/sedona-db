@@ -7169,6 +7169,7 @@ avoid accidentally skipping tests on CI.</p>
     <span class="n">gdal_transform</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
     <span class="n">nodata</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
     <span class="n">plants</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">crs</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="DBEngine (sedonadb.testing.DBEngine)" href="#sedonadb.testing.DBEngine">DBEngine</a></span>
 </code></pre></div>
 
@@ -7181,10 +7182,12 @@ arguments, so a test can anchor with that constructor and the fixture
 cannot drift from the expectation. The grid defaults to
 <code>RANDOM_GRID_BBOX</code> on the 7x6 grid (2x3 pixels; override with <code>bbox</code>
 or, for grids a bbox cannot express, a raw GDAL <code>gdal_transform</code> —
-at most one). It is small and north-up/CRS-less so nothing reprojects
-and results stay bit-comparable across engines, and the pixels are
+at most one). It is small and north-up so nothing reprojects and
+results stay bit-comparable across engines, and the pixels are
 seeded, so registering the same <code>path</code> on several engines rewrites
-identical bytes and every engine sees the same raster.</p>
+identical bytes and every engine sees the same raster. <code>crs</code> defaults
+to none (nothing reprojects); pass one when a test needs the output to
+carry a CRS.</p>
 
 
     </div>
@@ -7504,10 +7507,26 @@ subject.</p>
 <p>This option strips away fine-grained type information but is helpful for
 generally asserting a query result or verifying results between engines
 that have (e.g.) differing integer handling.</p>
-<p>Geometry columns are rendered as WKT strings. List columns (e.g. the
-<code>List&lt;Double&gt;</code> returned by <code>RS_Values</code>) can't be cast to string, so they
-pass through as Python lists and are compared by value — assert them with
-an expected cell that is itself a list, e.g. <code>[([1.0, None],)]</code>.</p>
+<p>Geometry columns are rendered as WKT strings, with one exception:
+geometry that carries a <strong>row-level</strong> CRS renders as a
+<code>(crs, wkt)</code> tuple, so the CRS travels with the value instead of
+being dropped. Two representations produce a row-level CRS —
+SedonaDB's item-level <code>struct&lt;item: geoarrow.wkb, crs&gt;</code> (returned by
+RS_Envelope and friends, whose CRS can vary per row) and a
+per-geometry SRID embedded in the WKB (how Sedona Spark encodes it).</p>
+<p>A <strong>column-level</strong> (type) CRS is deliberately <em>not</em> folded in: such a
+column keeps rendering as bare WKT. Keeping the two distinct is the
+point — a kernel that attaches the CRS at the wrong level is an easy
+mistake to make, and collapsing them here would hide it.</p>
+<p>The CRS half is a <code>pyproj.CRS</code>, so comparison is pyproj's: any spelling
+it resolves to the same CRS is equal, in either direction. A test can
+therefore anchor the readable <code>("EPSG:3857", "POLYGON ...")</code> against
+an engine that emitted PROJJSON, and two engines that spell the same
+CRS differently still agree.</p>
+<p>List columns (e.g. the <code>List&lt;Double&gt;</code> returned by <code>RS_Values</code>) can't be
+cast to string, so they pass through as Python lists and are compared
+by value — assert them with an expected cell that is itself a list,
+e.g. <code>[([1.0, None],)]</code>.</p>
 
 
     </div>
