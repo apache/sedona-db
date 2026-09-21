@@ -55,10 +55,19 @@ fi
 popd
 
 pushd "${SEDONADB_DIR}"
-if mkdocs build --strict ; then
-  echo "Success!"
-  exit 0
-else
+
+# Install the R package from source
+R CMD INSTALL r/sedonadb --preclean
+
+# Build R documentation inside the MkDocs source directory so both the MkDocs
+# build and the mike deployment include it. pkgdown paths are relative to the
+# package root (r/sedonadb).
+rm -rf docs/r
+Rscript -e 'pkgdown::build_site("r/sedonadb", override = list(destination = "../../docs/r"), new_process = FALSE, install = FALSE)'
+
+if ! mkdocs build --strict ; then
   echo "Documentation build failed"
   exit 1
 fi
+
+echo "Success!"
