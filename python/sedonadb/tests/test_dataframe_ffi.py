@@ -18,11 +18,9 @@
 import pandas as pd
 import pyarrow as pa
 import pytest
-
 import sedonadb
 from sedonadb import udf
 from sedonadb.testing import skip_if_not_exists
-
 
 # Test cases: (producer_sql, consumer_sql)
 FFI_TEST_CASES = [
@@ -101,18 +99,9 @@ FFI_TEST_CASES = [
 ]
 
 
-@pytest.fixture(params=[False, True], ids=["sync", "async"])
-def ffi_execution_mode(request):
-    """Exercise every FFI test through both execution-plan stream paths."""
-    return request.param
-
-
-def configure_ffi_execution(sd, use_async):
-    sd.sql(f"SET sedona.ffi.use_async TO {str(use_async).lower()}").execute()
-
-
+@pytest.mark.parametrize("use_async", [True, False])
 @pytest.mark.parametrize("producer_sql,consumer_sql", FFI_TEST_CASES)
-def test_ffi_roundtrip(geoarrow_data, producer_sql, consumer_sql, ffi_execution_mode):
+def test_ffi_roundtrip(geoarrow_data, producer_sql, consumer_sql, use_async):
     # Use a real file with a reasonable number of rows so that parallelism
     # and multiple batches are invoked
     path = geoarrow_data / "ns-water" / "files" / "ns-water_water-point_geo.parquet"
@@ -120,7 +109,7 @@ def test_ffi_roundtrip(geoarrow_data, producer_sql, consumer_sql, ffi_execution_
 
     sd_producer = sedonadb.connect()
     sd_consumer = sedonadb.connect()
-    configure_ffi_execution(sd_consumer, ffi_execution_mode)
+    sd_consumer.sql(f"SET sedona.ffi.use_async TO {str(use_async).lower()}").execute()
 
     sd_producer.read_parquet(path).to_view("water_point")
     df_producer = sd_producer.sql(producer_sql)
@@ -136,13 +125,14 @@ def test_ffi_roundtrip(geoarrow_data, producer_sql, consumer_sql, ffi_execution_
     pd.testing.assert_frame_equal(result_no_ffi, result_over_ffi)
 
 
-def test_filter_pushdown_into_ffi_producer(geoarrow_data, ffi_execution_mode):
+@pytest.mark.parametrize("use_async", [True, False])
+def test_filter_pushdown_into_ffi_producer(geoarrow_data, use_async):
     path = geoarrow_data / "ns-water" / "files" / "ns-water_water-point_geo.parquet"
     skip_if_not_exists(path)
 
     sd_producer = sedonadb.connect()
     sd_consumer = sedonadb.connect()
-    configure_ffi_execution(sd_consumer, ffi_execution_mode)
+    sd_consumer.sql(f"SET sedona.ffi.use_async TO {str(use_async).lower()}").execute()
 
     # Producer exposes all columns without filtering
     sd_producer.read_parquet(path).to_view("water_point")
@@ -179,8 +169,9 @@ def test_filter_pushdown_into_ffi_producer(geoarrow_data, ffi_execution_mode):
         )
 
 
+@pytest.mark.parametrize("use_async", [True, False])
 def test_udf_filter_not_pushed_down_into_ffi_producer(
-    geoarrow_data, ffi_execution_mode
+    geoarrow_data, ffi_execution_mode, use_async
 ):
     """Verify that filters using consumer-side UDFs are NOT pushed down into the FFI producer.
 
@@ -192,7 +183,7 @@ def test_udf_filter_not_pushed_down_into_ffi_producer(
 
     sd_producer = sedonadb.connect()
     sd_consumer = sedonadb.connect()
-    configure_ffi_execution(sd_consumer, ffi_execution_mode)
+    sd_consumer.sql(f"SET sedona.ffi.use_async TO {str(use_async).lower()}").execute()
 
     # Define a simple UDF on the consumer side only
     @udf.arrow_udf(pa.bool_(), [pa.int64()])
