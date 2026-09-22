@@ -23,6 +23,7 @@
 
 use std::{
     any::Any,
+    collections::HashMap,
     fmt::{Display, Formatter},
     sync::{Arc, Mutex},
     time::Duration,
@@ -33,7 +34,7 @@ use datafusion_physical_plan::metrics::{
     MetricType, MetricValue, MetricsSet, PruningMetrics, RatioMergeStrategy, RatioMetrics, Time,
     Timestamp,
 };
-use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use serde_json::{Map, Value};
 
 /// An owned, serde-compatible snapshot of an [`ExecutionPlanMetricsSet`].
@@ -48,10 +49,16 @@ impl SerializableExecutionPlanMetricsSet {
     }
 
     pub fn from_metrics_set(metrics: &MetricsSet) -> Self {
+        let custom_aggregates = custom_metric_aggregates(metrics);
         Self {
             metrics: metrics
                 .iter()
-                .map(|metric| SerializableMetric::from(metric.as_ref()))
+                .map(|metric| {
+                    SerializableMetric::from_metric(
+                        metric.as_ref(),
+                        custom_aggregates.get(metric.value().name()),
+                    )
+                })
                 .collect(),
         }
     }
@@ -82,17 +89,24 @@ pub struct SerializableMetric {
 
 impl From<&Metric> for SerializableMetric {
     fn from(metric: &Metric) -> Self {
+        Self::from_metric(metric, None)
+    }
+}
+
+impl SerializableMetric {
+    fn from_metric(
+        metric: &Metric,
+        custom_aggregate: Option<&SerializableCustomMetricAggregate>,
+    ) -> Self {
         Self {
-            value: metric.value().into(),
+            value: SerializableMetricValue::from_metric_value(metric.value(), custom_aggregate),
             labels: metric.labels().iter().map(Into::into).collect(),
             partition: metric.partition(),
             metric_type: metric.metric_type().into(),
             category: metric.metric_category().map(Into::into),
         }
     }
-}
 
-impl SerializableMetric {
     fn into_metric(self) -> Metric {
         let labels = self.labels.into_iter().map(Into::into).collect();
         let mut metric = Metric::new_with_labels(self.value.into(), self.partition, labels)
@@ -316,7 +330,18 @@ pub enum KnownMetricValue {
         name: String,
         display: String,
         value: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        aggregate: Option<SerializableCustomMetricAggregate>,
     },
+}
+
+/// The result of aggregating all producer-side custom metrics with the same
+/// name, while their concrete implementation is still available.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SerializableCustomMetricAggregate {
+    pub display: String,
+    pub value: usize,
+    pub input_count: usize,
 }
 
 impl KnownMetricValue {
@@ -345,6 +370,15 @@ impl KnownMetricValue {
 
 impl From<&MetricValue> for SerializableMetricValue {
     fn from(value: &MetricValue) -> Self {
+        Self::from_metric_value(value, None)
+    }
+}
+
+impl SerializableMetricValue {
+    fn from_metric_value(
+        value: &MetricValue,
+        custom_aggregate: Option<&SerializableCustomMetricAggregate>,
+    ) -> Self {
         let value = match value {
             MetricValue::OutputRows(value) => KnownMetricValue::OutputRows {
                 value: value.value(),
@@ -411,6 +445,7 @@ impl From<&MetricValue> for SerializableMetricValue {
                 name: name.to_string(),
                 display: value.to_string(),
                 value: value.as_usize(),
+                aggregate: custom_aggregate.cloned(),
             },
         };
         Self::Known(value)
@@ -484,12 +519,47 @@ impl From<SerializableMetricValue> for MetricValue {
                 name,
                 display,
                 value,
+                aggregate,
             } => Self::Custom {
                 name: name.into(),
-                value: Arc::new(SerializedCustomMetric::new(display, value)),
+                value: Arc::new(SerializedCustomMetric::new(display, value, aggregate)),
             },
         }
     }
+}
+
+fn custom_metric_aggregates(
+    metrics: &MetricsSet,
+) -> HashMap<String, SerializableCustomMetricAggregate> {
+    let mut accumulators: HashMap<String, (Arc<dyn CustomMetricValue>, usize)> = HashMap::new();
+
+    for metric in metrics.iter() {
+        let MetricValue::Custom { name, value } = metric.value() else {
+            continue;
+        };
+
+        let (accumulator, input_count) = accumulators
+            .entry(name.to_string())
+            .or_insert_with(|| (value.new_empty(), 0));
+        accumulator.aggregate(Arc::clone(value));
+        *input_count += 1;
+    }
+
+    accumulators
+        .into_iter()
+        .filter_map(|(name, (value, input_count))| {
+            (input_count > 1).then(|| {
+                (
+                    name,
+                    SerializableCustomMetricAggregate {
+                        display: value.to_string(),
+                        value: value.as_usize(),
+                        input_count,
+                    },
+                )
+            })
+        })
+        .collect()
 }
 
 fn unknown_metric_value(object: Map<String, Value>) -> MetricValue {
@@ -512,7 +582,7 @@ fn unknown_metric_value(object: Map<String, Value>) -> MetricValue {
 
     MetricValue::Custom {
         name: name.into(),
-        value: Arc::new(SerializedCustomMetric::new(display, numeric_value)),
+        value: Arc::new(SerializedCustomMetric::new(display, numeric_value, None)),
     }
 }
 
@@ -582,16 +652,27 @@ struct SerializedCustomMetric {
     state: Mutex<SerializedCustomMetricState>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct SerializedCustomMetricState {
     display: String,
     value: usize,
+    aggregate: Option<SerializableCustomMetricAggregate>,
+    input_count: usize,
 }
 
 impl SerializedCustomMetric {
-    fn new(display: String, value: usize) -> Self {
+    fn new(
+        display: String,
+        value: usize,
+        aggregate: Option<SerializableCustomMetricAggregate>,
+    ) -> Self {
         Self {
-            state: Mutex::new(SerializedCustomMetricState { display, value }),
+            state: Mutex::new(SerializedCustomMetricState {
+                display,
+                value,
+                aggregate,
+                input_count: 1,
+            }),
         }
     }
 
@@ -611,7 +692,15 @@ impl Display for SerializedCustomMetric {
 
 impl CustomMetricValue for SerializedCustomMetric {
     fn new_empty(&self) -> Arc<dyn CustomMetricValue> {
-        Arc::new(Self::new(String::new(), 0))
+        let aggregate = self.snapshot().aggregate;
+        Arc::new(Self {
+            state: Mutex::new(SerializedCustomMetricState {
+                display: String::new(),
+                value: 0,
+                aggregate,
+                input_count: 0,
+            }),
+        })
     }
 
     fn aggregate(&self, other: Arc<dyn CustomMetricValue>) {
@@ -623,10 +712,28 @@ impl CustomMetricValue for SerializedCustomMetric {
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if state.display.is_empty() {
-            state.display = other.display;
+        if state.aggregate.is_none() {
+            state.aggregate = other.aggregate.clone();
         }
         state.value = state.value.saturating_add(other.value);
+        state.input_count = state.input_count.saturating_add(other.input_count);
+
+        let aggregate = state
+            .aggregate
+            .as_ref()
+            .filter(|aggregate| aggregate.input_count == state.input_count)
+            .cloned();
+        if let Some(aggregate) = aggregate {
+            state.display = aggregate.display;
+            state.value = aggregate.value;
+        } else if state.input_count == 1 {
+            state.display = other.display;
+        } else {
+            // The concrete custom metric implementation is unavailable here,
+            // so its formatting cannot be combined safely. Display the numeric
+            // projection instead of retaining a stale per-input display.
+            state.display = state.value.to_string();
+        }
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -641,7 +748,7 @@ impl CustomMetricValue for SerializedCustomMetric {
         other.as_any().downcast_ref::<Self>().is_some_and(|other| {
             let this = self.snapshot();
             let other = other.snapshot();
-            this.display == other.display && this.value == other.value
+            this == other
         })
     }
 }
@@ -649,6 +756,55 @@ impl CustomMetricValue for SerializedCustomMetric {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Debug)]
+    struct NativeCustomCounter {
+        value: AtomicUsize,
+    }
+
+    impl NativeCustomCounter {
+        fn new(value: usize) -> Self {
+            Self {
+                value: AtomicUsize::new(value),
+            }
+        }
+    }
+
+    impl Display for NativeCustomCounter {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{} rows", self.as_usize())
+        }
+    }
+
+    impl CustomMetricValue for NativeCustomCounter {
+        fn new_empty(&self) -> Arc<dyn CustomMetricValue> {
+            Arc::new(Self::new(0))
+        }
+
+        fn aggregate(&self, other: Arc<dyn CustomMetricValue>) {
+            let other = other
+                .as_any()
+                .downcast_ref::<Self>()
+                .expect("matching custom metric type");
+            self.value.fetch_add(other.as_usize(), Ordering::Relaxed);
+        }
+
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+
+        fn as_usize(&self) -> usize {
+            self.value.load(Ordering::Relaxed)
+        }
+
+        fn is_eq(&self, other: &Arc<dyn CustomMetricValue>) -> bool {
+            other
+                .as_any()
+                .downcast_ref::<Self>()
+                .is_some_and(|other| self.as_usize() == other.as_usize())
+        }
+    }
 
     #[test]
     fn serde_json_roundtrip_preserves_all_metric_variants() {
@@ -694,6 +850,7 @@ mod tests {
                 name: "custom".to_owned(),
                 display: "custom display".to_owned(),
                 value: 17,
+                aggregate: None,
             },
         ];
         let snapshot = SerializableExecutionPlanMetricsSet {
@@ -832,5 +989,50 @@ mod tests {
         .unwrap_err();
 
         assert!(error.to_string().contains("missing field `value`"));
+    }
+
+    #[test]
+    fn custom_metric_display_repro() {
+        let snapshot: SerializableExecutionPlanMetricsSet =
+            serde_json::from_value(serde_json::json!({"metrics": [
+                {"partition": 0, "metric_type": "summary",
+                 "value": {"type": "custom", "name": "custom_count", "display": "10", "value": 10}},
+                {"partition": 1, "metric_type": "summary",
+                 "value": {"type": "custom", "name": "custom_count", "display": "20", "value": 20}}
+            ]}))
+            .unwrap();
+        let metrics = snapshot.into_metrics_set().aggregate_by_name();
+        assert_eq!(metrics.iter().next().unwrap().value().as_usize(), 30);
+        assert_eq!(metrics.to_string(), "custom_count=30");
+    }
+
+    #[test]
+    fn custom_metric_preserves_native_aggregate_display() {
+        let metrics = ExecutionPlanMetricsSet::new();
+        for (partition, value) in [10, 20].into_iter().enumerate() {
+            metrics.register(Arc::new(
+                Metric::new(
+                    MetricValue::Custom {
+                        name: "custom_count".into(),
+                        value: Arc::new(NativeCustomCounter::new(value)),
+                    },
+                    Some(partition),
+                )
+                .with_type(MetricType::Summary),
+            ));
+        }
+
+        assert_eq!(
+            metrics.clone_inner().aggregate_by_name().to_string(),
+            "custom_count=30 rows"
+        );
+
+        let json =
+            serde_json::to_string(&SerializableExecutionPlanMetricsSet::new(&metrics)).unwrap();
+        let snapshot: SerializableExecutionPlanMetricsSet = serde_json::from_str(&json).unwrap();
+        let reconstructed = snapshot.into_metrics_set().aggregate_by_name();
+
+        assert_eq!(reconstructed.iter().next().unwrap().value().as_usize(), 30);
+        assert_eq!(reconstructed.to_string(), "custom_count=30 rows");
     }
 }
