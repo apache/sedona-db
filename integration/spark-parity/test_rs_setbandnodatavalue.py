@@ -222,9 +222,10 @@ def test_rs_setbandnodata_null_band(tmp_path):
 
 
 @pytest.mark.xfail(
-    reason="SedonaDB reads a NULL nodata as 'clear this band's nodata' (the "
-    "trinary override semantics from #1198) and returns the raster; Sedona "
-    "Spark propagates the NULL and returns a NULL raster"
+    reason="needs a Sedona release carrying apache/sedona#3312 — the released "
+    "1.9.1 jar propagates the NULL and returns a NULL raster where SedonaDB "
+    "clears the band's nodata (the trinary override semantics from #1198); "
+    "Sedona master now clears it too, verified against a jar built from it"
 )
 def test_rs_setbandnodata_null_value(tmp_path):
     """A NULL nodata value gets the same treatment from both engines. The
@@ -264,18 +265,20 @@ def test_rs_setbandnodata_null_raster(tmp_path):
     compare(sql, sedona, spark)
 
 
-# The 4-argument replace flag is doubly broken today, so both tests anchor
-# the CORRECT raster and xfail: they trip on SedonaDB's missing kernel (and,
-# with the 4.1 jars, on Sedona Spark's failing SQL binding), and once those
-# heal they keep tripping on apache/sedona#3330 until the multiband
-# corruption is fixed — flipping green only when both engines get it right.
+# Both tests anchor the CORRECT raster rather than either engine's output.
+# The single-band case agrees on the released jar now that SedonaDB implements
+# the flag. The multiband case still trips apache/sedona#3330, where Sedona
+# Spark zeroes every band except the target; that is fixed on Sedona master by
+# apache/sedona#3347 — verified here against a jar built from it — but no
+# release carries it yet, and a release is what CI installs. So the multiband
+# case stays xfail and flips green on its own once one does.
 
 
 @pytest.mark.xfail(
-    reason="SedonaDB has no replace kernel ('No kernel matching arguments'); "
-    "Sedona Spark's flag is jar-dependent — the 4.1 binding fails to "
-    "evaluate it, and the 4.0 jar runs it but zeroes every band except the "
-    "target (apache/sedona#3330)"
+    reason="needs a Sedona release carrying apache/sedona#3347 — the released "
+    "1.9.1 jar zeroes every band except the target (apache/sedona#3330) and "
+    "its 4.1 binding cannot evaluate the flag at all; both are fixed on "
+    "Sedona master"
 )
 def test_rs_setbandnodata_replace_multiband(tmp_path):
     """replace=true rewrites the old nodata pixels in the target band and
@@ -300,11 +303,6 @@ def test_rs_setbandnodata_replace_multiband(tmp_path):
     compare(sql, sedona, spark, expected=anchor)
 
 
-@pytest.mark.xfail(
-    reason="SedonaDB has no replace kernel ('No kernel matching arguments'); "
-    "Sedona Spark's flag is jar-dependent (the 4.1 binding fails to evaluate "
-    "it) though the 4.0 jar handles the single-band case correctly"
-)
 def test_rs_setbandnodata_replace_single_band(tmp_path):
     """replace=true on a single-band raster rewrites the old nodata pixels
     and moves the band nodata to the new value."""

@@ -18,9 +18,23 @@
 //! `RS_SetBandNoDataValue` — set a band's nodata sentinel.
 //!
 //! ```text
-//! RS_SetBandNoDataValue(raster, nodata)        -> Raster  -- single-band rasters only
-//! RS_SetBandNoDataValue(raster, band, nodata)  -> Raster
+//! RS_SetBandNoDataValue(raster, nodata)                 -> Raster  -- single-band rasters only
+//! RS_SetBandNoDataValue(raster, band, nodata)           -> Raster
+//! RS_SetBandNoDataValue(raster, band, nodata, replace)  -> Raster
 //! ```
+//!
+//! With `replace` true, every pixel in the addressed band currently equal to
+//! that band's nodata is rewritten to the new sentinel before it is declared —
+//! so the pixels that read as nodata before the call still read as nodata
+//! after it. The band must already have a nodata value to replace; without one
+//! there is nothing to match, and Sedona Spark raises there too. Other bands
+//! are untouched. A null `nodata` clears the band as it does in the 3-argument
+//! form and `replace` is moot (there is no new sentinel to rewrite pixels to),
+//! so no pixel is touched.
+//!
+//! `replace` rewrites pixels, so unlike the metadata-only forms it cannot share
+//! the source buffer: the addressed band is materialized. That needs a
+//! contiguous view — a strided band errors, pointing at `RS_EnsureContiguous`.
 //!
 //! The setter companion to the `RS_BandNoDataValue` getter. `nodata` is a double
 //! packed into the band's native data type. A null raster or band yields a null
@@ -50,28 +64,46 @@ use datafusion_common::error::Result;
 use datafusion_common::exec_err;
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
-use sedona_raster::builder::{RasterBuilder, RasterOverrides};
-use sedona_raster::traits::{BandOverrides, Override, RasterRef, nodata_f64_to_bytes};
+use sedona_raster::builder::{RasterBuilder, RasterOverrides, StartBandArgs};
+use sedona_raster::traits::{BandOverrides, BandRef, Override, RasterRef, nodata_f64_to_bytes};
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;
 
 use crate::executor::RasterExecutor;
+use crate::rs_ensure_loaded::NEEDS_PIXELS_METADATA_KEY;
 
 /// RS_SetBandNoDataValue() scalar UDF implementation
 pub fn rs_set_band_nodata_value_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "rs_setbandnodatavalue",
         vec![
-            Arc::new(RsSetBandNoDataValue { with_band: false }),
-            Arc::new(RsSetBandNoDataValue { with_band: true }),
+            Arc::new(RsSetBandNoDataValue {
+                with_band: false,
+                with_replace: false,
+            }),
+            Arc::new(RsSetBandNoDataValue {
+                with_band: true,
+                with_replace: false,
+            }),
+            Arc::new(RsSetBandNoDataValue {
+                with_band: true,
+                with_replace: true,
+            }),
         ],
         Volatility::Immutable,
     )
+    // The replace kernel rewrites pixel bytes, so the raster argument must be
+    // materialised InDb first; the planner injects RS_EnsureLoaded on this flag.
+    .with_metadata(NEEDS_PIXELS_METADATA_KEY, "true")
 }
 
 #[derive(Debug)]
 struct RsSetBandNoDataValue {
     with_band: bool,
+    /// Matches the 4-argument form, whose trailing boolean asks for the old
+    /// nodata pixels to be rewritten. Only ever set together with `with_band`:
+    /// Sedona Spark spells this overload with an explicit band.
+    with_replace: bool,
 }
 
 impl SedonaScalarKernel for RsSetBandNoDataValue {
@@ -81,6 +113,9 @@ impl SedonaScalarKernel for RsSetBandNoDataValue {
             matchers.push(ArgMatcher::is_integer());
         }
         matchers.push(ArgMatcher::is_numeric());
+        if self.with_replace {
+            matchers.push(ArgMatcher::is_boolean());
+        }
         let matcher = ArgMatcher::new(matchers, SedonaType::Raster);
         matcher.match_args(args)
     }
@@ -121,6 +156,19 @@ impl SedonaScalarKernel for RsSetBandNoDataValue {
             .into_array(n)?;
         let value_values = value_array.as_primitive::<Float64Type>();
 
+        // The replace flag, read per row like the others so it may be a column.
+        let replace_array = if self.with_replace {
+            Some(
+                args[3]
+                    .clone()
+                    .cast_to(&DataType::Boolean, None)?
+                    .into_array(n)?,
+            )
+        } else {
+            None
+        };
+        let replace_values = replace_array.as_ref().map(|a| a.as_boolean());
+
         let mut builder = RasterBuilder::new(n);
         executor.execute_raster_void(|i, raster_opt| {
             let null_out = |b: &mut RasterBuilder| b.append_null().map_err(Into::into);
@@ -141,7 +189,12 @@ impl SedonaScalarKernel for RsSetBandNoDataValue {
             } else {
                 Some(value_values.value(i))
             };
-            set_band_nodata(&mut builder, raster, band, value)
+            let replace = match replace_values {
+                Some(flags) if flags.is_null(i) => return null_out(&mut builder),
+                Some(flags) => flags.value(i),
+                None => false,
+            };
+            set_band_nodata(&mut builder, raster, band, value, replace)
         })?;
 
         executor.finish(Arc::new(builder.finish()?))
@@ -161,6 +214,7 @@ fn set_band_nodata(
     raster: &dyn RasterRef,
     band: Option<i64>,
     value: Option<f64>,
+    replace: bool,
 ) -> Result<()> {
     let num_bands = raster.num_bands();
     let band = match band {
@@ -193,6 +247,25 @@ fn set_band_nodata(
             Some(v) if addressed => Some(nodata_f64_to_bytes(v, &band_ref.data_type())?),
             _ => None,
         };
+        // `replace` rewrites pixels, so the addressed band is rebuilt from
+        // materialized bytes instead of sharing the source buffer. A null
+        // `value` falls through to the metadata-only path below: there is no
+        // new sentinel to rewrite pixels to, so the band is simply cleared.
+        let rewrite = new_nodata.as_deref().filter(|_| addressed && replace);
+        if let Some(new_bytes) = rewrite {
+            let pixels = replace_nodata_pixels(band_ref.as_ref(), new_bytes)?;
+            let dim_names = band_ref.dim_names();
+            let shape = band_ref.shape().to_vec();
+            builder.start_band(StartBandArgs {
+                name: band_ref.name(),
+                nodata: Some(new_bytes),
+                ..StartBandArgs::new(&dim_names, &shape, band_ref.data_type())
+            })?;
+            builder.band_data_writer().append_value(&pixels);
+            builder.finish_band()?;
+            continue;
+        }
+
         // Only the addressed band's nodata is touched (`Set` or `Clear`); every
         // other band keeps its own.
         let nodata = if addressed {
@@ -217,9 +290,48 @@ fn set_band_nodata(
     Ok(())
 }
 
+/// `band`'s visible bytes with every pixel equal to its current nodata
+/// rewritten to `new_nodata`.
+///
+/// The comparison is on the raw little-endian bytes rather than on decoded
+/// values, which makes it exact for every band data type without a dispatch
+/// over them — `new_nodata` arrives already packed into this band's type by
+/// `nodata_f64_to_bytes`, so both sides are the same width by construction.
+/// The one behavior this inherits from byte equality is that a NaN sentinel
+/// matches only pixels carrying the identical NaN bit pattern; Sedona Spark
+/// compares numerically, where NaN never equals itself and so never matches.
+fn replace_nodata_pixels(band: &dyn BandRef, new_nodata: &[u8]) -> Result<Vec<u8>> {
+    let Some(old_nodata) = band.nodata() else {
+        return exec_err!(
+            "RS_SetBandNoDataValue: replace requires the band to already have a nodata value \
+             to replace, but this band has none"
+        );
+    };
+
+    let width = band.data_type().byte_size();
+    if old_nodata.len() != width || new_nodata.len() != width {
+        return exec_err!(
+            "RS_SetBandNoDataValue: nodata width mismatch for a {width}-byte band \
+             (existing {} bytes, new {} bytes)",
+            old_nodata.len(),
+            new_nodata.len()
+        );
+    }
+
+    let buffer = band.nd_buffer()?;
+    let mut pixels = buffer.as_contiguous()?.to_vec();
+    for pixel in pixels.chunks_exact_mut(width) {
+        if pixel == old_nodata {
+            pixel.copy_from_slice(new_nodata);
+        }
+    }
+    Ok(pixels)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arrow_array::ArrayRef;
     use arrow_schema::DataType;
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
@@ -250,6 +362,87 @@ mod tests {
                 SedonaType::Arrow(DataType::Float64),
             ],
         )
+    }
+
+    fn tester_4arg() -> ScalarUdfTester {
+        let udf: ScalarUDF = rs_set_band_nodata_value_udf().into();
+        ScalarUdfTester::new(
+            udf,
+            vec![
+                RASTER,
+                SedonaType::Arrow(DataType::Int32),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Boolean),
+            ],
+        )
+    }
+
+    /// `tester_4arg` takes the raster as an array and the rest as scalars.
+    fn invoke_4arg(spec: RasterSpec, band: i32, value: f64, replace: bool) -> Result<ArrayRef> {
+        let result = tester_4arg().invoke(vec![
+            ColumnarValue::Array(Arc::new(spec.build())),
+            ColumnarValue::Scalar(ScalarValue::Int32(Some(band))),
+            ColumnarValue::Scalar(ScalarValue::Float64(Some(value))),
+            ColumnarValue::Scalar(ScalarValue::Boolean(Some(replace))),
+        ])?;
+        match result {
+            ColumnarValue::Array(array) => Ok(array),
+            _ => unreachable!("array input yields an array result"),
+        }
+    }
+
+    #[test]
+    fn replace_rewrites_old_nodata_pixels_in_the_addressed_band_only() {
+        // Band 1 carries nodata 2 on a pixel holding 2; band 2 carries nodata 3
+        // on a pixel holding 3. Replacing band 1's sentinel with 9 rewrites its
+        // 2 to 9 and leaves band 2 — pixels and sentinel both — untouched.
+        let input = RasterSpec::d2(2, 1)
+            .band_values(&[1u8, 2])
+            .nodata(2u8)
+            .band_values(&[3u8, 4])
+            .nodata(3u8);
+        let result = invoke_4arg(input, 1, 9.0, true).unwrap();
+        let expected = RasterSpec::d2(2, 1)
+            .band_values(&[1u8, 9])
+            .nodata(9u8)
+            .band_values(&[3u8, 4])
+            .nodata(3u8);
+        assert_rasters_equal(&result, &[Some(expected)]);
+    }
+
+    #[test]
+    fn replace_false_leaves_pixels_alone() {
+        // The same call with replace=false is the 3-arg behavior: the sentinel
+        // moves to 9 but the pixel holding the old sentinel keeps its value, so
+        // it stops reading as nodata.
+        let input = RasterSpec::d2(2, 1).band_values(&[1u8, 2]).nodata(2u8);
+        let result = invoke_4arg(input, 1, 9.0, false).unwrap();
+        let expected = RasterSpec::d2(2, 1).band_values(&[1u8, 2]).nodata(9u8);
+        assert_rasters_equal(&result, &[Some(expected)]);
+    }
+
+    #[test]
+    fn replace_without_an_existing_nodata_errors() {
+        // Nothing to match against — Sedona Spark raises here too.
+        let err = invoke_4arg(two_band(), 1, 9.0, true).unwrap_err();
+        assert!(
+            err.message().contains("nodata value"),
+            "unexpected message: {err}"
+        );
+    }
+
+    #[test]
+    fn replace_rewrites_every_matching_pixel() {
+        // More than one pixel carries the sentinel, and a pixel that merely
+        // looks similar (1) is left alone.
+        let input = RasterSpec::d2(4, 1)
+            .band_values(&[2u8, 1, 2, 5])
+            .nodata(2u8);
+        let result = invoke_4arg(input, 1, 9.0, true).unwrap();
+        let expected = RasterSpec::d2(4, 1)
+            .band_values(&[9u8, 1, 9, 5])
+            .nodata(9u8);
+        assert_rasters_equal(&result, &[Some(expected)]);
     }
 
     #[test]
