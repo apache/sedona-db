@@ -10,7 +10,7 @@
         <link rel="canonical" href="https://sedona.apache.org/sedonadb/latest/reference/python-zarr/">
       
       
-        <link rel="prev" href="../python/">
+        <link rel="prev" href="../../r/">
       
       
         <link rel="next" href="../sql/">
@@ -905,6 +905,34 @@
     
   
     Python
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../r/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    R
   
 
     
@@ -1953,7 +1981,9 @@ after registering the extension:</p>
           –
           <div class="doc-md-description">
             <p>Supported options include
-- <code>arrays</code> (<code>list[str]</code>) — explicit subset of group arrays to read.</p>
+- <code>arrays</code> (<code>list[str]</code>) — explicit subset of group arrays to read,
+  in band order: band <code>i</code> of every row is <code>arrays[i]</code>. Without it,
+  discovered arrays are read as bands sorted by path.</p>
           </div>
         </li>
     </ul>
