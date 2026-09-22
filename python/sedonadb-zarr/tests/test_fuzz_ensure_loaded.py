@@ -60,7 +60,10 @@ SEEDS = [20260922, 7]
 # Sizes are chosen so one seed runs in a few seconds while still pushing
 # several thousand band loads through the loaders.
 N_GEOTIFF = 2000
-N_ZARR_GROUPS = 120
+# 84 groups of 2-4 arrays is at most 252 distinct arrays, under the Zarr
+# loader's 256-entry array-handle LRU, so the handle assertions below can
+# expect every array to be opened exactly once.
+N_ZARR_GROUPS = 84
 N_INDB = 200
 
 DTYPES = ["uint8", "int16", "uint16", "int32", "float32", "float64"]
@@ -215,7 +218,8 @@ def build_rows(tmp_path, rng):
     whether the raster is null, and `(px, py)` a pixel to sample.
     """
     sd = sedonadb.connect()
-    sd.register(sedonadb_zarr.ZarrExtension())
+    ext = sedonadb_zarr.ZarrExtension()
+    sd.register(ext)
 
     keys = []
     raster_chunks = []
@@ -266,7 +270,7 @@ def build_rows(tmp_path, rng):
         [None if tif_nullify[i] else str(p) for i, p in enumerate(tif_paths)],
         pa.utf8(),
     )
-    return sd, pa.table(rows), pa.table(tifs)
+    return sd, ext, pa.table(rows), pa.table(tifs)
 
 
 def with_nulls(column, nullify):
@@ -297,7 +301,14 @@ def fuzz_columns(rng, keys):
 @pytest.mark.parametrize("seed", SEEDS)
 def test_fuzz_ensure_loaded_mixed_zarr_geotiff_indb(tmp_path, seed):
     rng = np.random.default_rng(seed)
-    sd, rows, tifs = build_rows(tmp_path, rng)
+    sd, ext, rows, tifs = build_rows(tmp_path, rng)
+    # Reading the groups goes through the chunk reader, not the loader.
+    assert ext.loader.handle_stats() == {
+        "store_hits": 0,
+        "store_misses": 0,
+        "array_hits": 0,
+        "array_misses": 0,
+    }
     sd.create_data_frame(rows).to_view("rows")
     sd.create_data_frame(tifs).to_view("tifs")
 
@@ -389,3 +400,19 @@ def test_fuzz_ensure_loaded_mixed_zarr_geotiff_indb(tmp_path, seed):
 
     # Every source appeared at least once.
     assert len(seen_keys) == rows.num_rows + tifs.num_rows
+
+    # Handle reuse inside the Zarr loader: every distinct array that was
+    # loaded is opened exactly once, every open after the first reuses the
+    # single `file://` store client (the client is looked up once per array
+    # open), and chunks of one array are spread over many slices, so later
+    # slices reuse the opened array.
+    loaded_arrays = set()
+    for key, nullify in zip(rows["key"].to_pylist(), rows["nullify"].to_pylist()):
+        kind, ids = parse_key(key)
+        if kind == "zarr" and not nullify:
+            loaded_arrays.update((ids[0], a) for a in ids[3:])
+    stats = ext.loader.handle_stats()
+    assert stats["array_misses"] == len(loaded_arrays), stats
+    assert stats["store_misses"] == 1, stats
+    assert stats["store_hits"] == len(loaded_arrays) - 1, stats
+    assert stats["array_hits"] > 0, stats
