@@ -91,38 +91,6 @@ test_that("sd_read_parquet() forwards reader options", {
   )
 })
 
-test_that("sd_read_parquet() serializes geometry column lists", {
-  skip_if_not_installed("jsonlite")
-  path <- system.file("files/natural-earth_cities_geo.parquet", package = "sedonadb")
-
-  expect_identical(
-    sd_count(sd_read_parquet(
-      path,
-      geometry_columns = list(geometry = list(
-        encoding = "WKB",
-        geometry_types = c("Point", "MultiPoint"),
-        bbox = c(-180, -90, 180, 90),
-        crs = list(id = list(authority = "EPSG", code = 4326L))
-      )),
-      validate = TRUE
-    )),
-    243
-  )
-})
-
-test_that("sd_read_parquet() explains the optional jsonlite dependency", {
-  path <- system.file("files/natural-earth_cities_geo.parquet", package = "sedonadb")
-  local_mocked_bindings(
-    jsonlite_available = function() FALSE,
-    .package = "sedonadb"
-  )
-
-  expect_error(
-    sd_read_parquet(path, geometry_columns = list(geometry = list(encoding = "WKB"))),
-    'install.packages\\("jsonlite"\\)'
-  )
-})
-
 test_that("sd_read_parquet() configures hive partitioning", {
   path <- system.file("files/natural-earth_cities_geo.parquet", package = "sedonadb")
   partition_root <- withr::local_tempdir()

@@ -188,29 +188,6 @@ sd_ctx_read_parquet <- function(
     character(1)
   )
 
-  if (is.list(geometry_columns)) {
-    if (!jsonlite_available()) {
-      stop(
-        "The `jsonlite` package is required when `geometry_columns` is a list. ",
-        "Install it with install.packages(\"jsonlite\"), or supply a JSON string."
-      )
-    }
-
-    geometry_columns <- as.character(jsonlite::toJSON(
-      geometry_columns,
-      auto_unbox = TRUE,
-      null = "null"
-    ))
-  } else if (!is.null(geometry_columns)) {
-    if (
-      !is.character(geometry_columns) ||
-        length(geometry_columns) != 1L ||
-        is.na(geometry_columns)
-    ) {
-      stop("`geometry_columns` must be a JSON string, named list, or NULL")
-    }
-  }
-
   if (!is.logical(validate) || length(validate) != 1L || is.na(validate)) {
     stop("`validate` must be TRUE or FALSE")
   }
@@ -231,10 +208,6 @@ sd_ctx_read_parquet <- function(
     partitioning
   )
   new_sedonadb_dataframe(ctx, df)
-}
-
-jsonlite_available <- function() {
-  requireNamespace("jsonlite", quietly = TRUE)
 }
 
 #' Create a DataFrame from SQL
