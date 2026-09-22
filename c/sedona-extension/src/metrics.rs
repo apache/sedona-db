@@ -34,12 +34,25 @@ use datafusion_physical_plan::metrics::{
     MetricType, MetricValue, MetricsSet, PruningMetrics, RatioMergeStrategy, RatioMetrics, Time,
     Timestamp,
 };
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
+use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value};
 
 /// An owned, serde-compatible snapshot of an [`ExecutionPlanMetricsSet`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SerializableExecutionPlanMetricsSet {
+    /// The legacy metrics representation used by SedonaDB 0.4.1.
+    ///
+    /// Keep emitting this field so older hosts can decode metrics produced by
+    /// newer extensions. Newer hosts use `metrics` and only retain `display`
+    /// for wire compatibility.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub display: String,
+    /// Structured metrics added after SedonaDB 0.4.1.
+    ///
+    /// Defaulting this field lets newer hosts accept the legacy
+    /// `{ "display": "..." }` representation without failing the entire
+    /// metrics property decode.
+    #[serde(default)]
     pub metrics: Vec<SerializableMetric>,
 }
 
@@ -51,6 +64,7 @@ impl SerializableExecutionPlanMetricsSet {
     pub fn from_metrics_set(metrics: &MetricsSet) -> Self {
         let custom_aggregates = custom_metric_aggregates(metrics);
         Self {
+            display: metrics.to_string(),
             metrics: metrics
                 .iter()
                 .map(|metric| {
@@ -853,7 +867,8 @@ mod tests {
                 aggregate: None,
             },
         ];
-        let snapshot = SerializableExecutionPlanMetricsSet {
+        let mut snapshot = SerializableExecutionPlanMetricsSet {
+            display: String::new(),
             metrics: values
                 .into_iter()
                 .map(SerializableMetricValue::from)
@@ -870,6 +885,7 @@ mod tests {
                 })
                 .collect(),
         };
+        snapshot.display = snapshot.clone().into_metrics_set().to_string();
 
         let json = serde_json::to_string(&snapshot).unwrap();
         let decoded: SerializableExecutionPlanMetricsSet = serde_json::from_str(&json).unwrap();
@@ -882,6 +898,11 @@ mod tests {
 
     #[test]
     fn json_is_structured_for_external_consumers() {
+        #[derive(Deserialize)]
+        struct LegacyMetrics {
+            display: String,
+        }
+
         let metrics = ExecutionPlanMetricsSet::new();
         let count = Count::new();
         count.add(42);
@@ -900,6 +921,12 @@ mod tests {
 
         let json =
             serde_json::to_value(SerializableExecutionPlanMetricsSet::new(&metrics)).unwrap();
+        assert_eq!(
+            json["display"],
+            "files_scanned{partition=3, format=parquet}=42"
+        );
+        let legacy: LegacyMetrics = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(legacy.display, json["display"]);
         assert_eq!(json["metrics"][0]["value"]["type"], "count");
         assert_eq!(json["metrics"][0]["value"]["name"], "files_scanned");
         assert_eq!(json["metrics"][0]["value"]["value"], 42);
@@ -907,6 +934,18 @@ mod tests {
         assert_eq!(json["metrics"][0]["labels"][0]["name"], "format");
         assert_eq!(json["metrics"][0]["metric_type"], "summary");
         assert_eq!(json["metrics"][0]["category"], "rows");
+    }
+
+    #[test]
+    fn legacy_metrics_repro() {
+        let json = r#"{"display":"output_rows=42"}"#;
+        let result =
+            serde_json::from_str::<Option<SerializableExecutionPlanMetricsSet>>(json).unwrap();
+
+        let snapshot = result.expect("legacy metrics should deserialize as Some");
+        assert_eq!(snapshot.display, "output_rows=42");
+        assert!(snapshot.metrics.is_empty());
+        assert!(snapshot.into_metrics_set().iter().next().is_none());
     }
 
     #[test]
