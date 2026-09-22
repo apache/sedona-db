@@ -63,7 +63,10 @@ R CMD INSTALL r/sedonadb --preclean
 # build and the mike deployment include it. pkgdown paths are relative to the
 # package root (r/sedonadb).
 rm -rf docs/r
-Rscript -e 'pkgdown::build_site("r/sedonadb", override = list(destination = "../../docs/r"), new_process = FALSE, install = FALSE)'
+if ! Rscript -e 'pkgdown::build_site("r/sedonadb", override = list(destination = "../../docs/r"), new_process = FALSE, install = FALSE)'; then
+  echo "R documentation build failed"
+  exit 1
+fi
 
 if ! mkdocs build --strict ; then
   echo "Documentation build failed"
