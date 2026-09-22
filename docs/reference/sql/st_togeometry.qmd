@@ -17,12 +17,18 @@
 # under the License.
 
 title: ST_ToGeometry
-description: Converts a geography to a geometry by changing the edge interpretation to planar.
+description: Converts a geography to a geometry, optionally tessellating its edges using a tolerance.
 kernels:
   - returns: geometry
     args: [geometry]
   - returns: geometry
     args: [geography]
+  - returns: geometry
+    args:
+    - geography
+    - name: tolerance
+      type: double
+      description: Maximum deviation in meters between a spherical edge and its planar approximation.
 ---
 
 ## Description
@@ -31,8 +37,20 @@ Converts a geography to a geometry by changing the edge interpretation from sphe
 to planar. This is a metadata-only operation that does not modify the underlying
 coordinate data. If the input is already a geometry, it is returned unchanged.
 
+When `tolerance` is provided, geography edges are tessellated using spherical
+interpolation before conversion. The tolerance is the maximum deviation in meters
+between an original spherical edge and its planar approximation. This overload is
+equivalent to `ST_TessellateGeom`.
+
 ## Examples
 
 ```sql
 SELECT ST_ToGeometry(ST_GeogFromText('POINT (-122.35 47.62)'));
+```
+
+```sql
+SELECT ST_ToGeometry(
+    ST_GeogFromText('LINESTRING (-10 50, 10 50)'),
+    1000
+);
 ```
