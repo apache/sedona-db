@@ -17,7 +17,7 @@
 
 //! Version-agnostic FFI wrappers for DataFusion's catalog hierarchy.
 
-use std::ffi::{CString, c_char, c_int};
+use std::ffi::{c_char, c_int, CString};
 use std::fmt::{Debug, Formatter};
 use std::ptr::null_mut;
 use std::sync::Arc;
@@ -28,8 +28,8 @@ use async_trait::async_trait;
 use datafusion_catalog::{
     CatalogProvider, CatalogProviderList, SchemaProvider, Session, TableProvider,
 };
-use datafusion_common::{Result, not_impl_err};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use datafusion_common::{not_impl_err, Result};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::extension::{
     SedonaCCatalogProvider, SedonaCCatalogProviderList, SedonaCError, SedonaCSchemaProvider,
@@ -39,53 +39,9 @@ use crate::runtime::RuntimeHandle;
 use crate::set_ffi_error;
 use crate::table_provider::{ExportedTableProvider, ImportedTableProvider};
 use crate::utils::{
-    ERRNO_OK, call_get_json_property_impl, cstr_from_ptr_or_empty, parse_json_c_args,
-    write_json_property, write_utf8_property_schema,
+    call_get_json_property_impl, cstr_from_ptr_or_empty, parse_json_c_args, write_json_property,
+    write_utf8_property_schema, ERRNO_OK,
 };
-
-fn c_string(value: impl Into<Vec<u8>>) -> Result<CString> {
-    CString::new(value).map_err(|error| {
-        datafusion_common::DataFusionError::External(
-            format!("Catalog name contains an interior NUL: {error}").into(),
-        )
-    })
-}
-
-fn optional_catalog(
-    raw: SedonaCCatalogProvider,
-    session: Arc<dyn Session>,
-    runtime: Arc<RuntimeHandle>,
-) -> Result<Option<Arc<dyn CatalogProvider>>> {
-    if raw.release.is_none() {
-        Ok(None)
-    } else {
-        Ok(Some(Arc::new(ImportedCatalogProvider::try_new(
-            raw, session, runtime,
-        )?)))
-    }
-}
-
-fn optional_schema(
-    raw: SedonaCSchemaProvider,
-    session: Arc<dyn Session>,
-    runtime: Arc<RuntimeHandle>,
-) -> Result<Option<Arc<dyn SchemaProvider>>> {
-    if raw.release.is_none() {
-        Ok(None)
-    } else {
-        Ok(Some(Arc::new(ImportedSchemaProvider::try_new(
-            raw, session, runtime,
-        )?)))
-    }
-}
-
-fn optional_table(raw: SedonaCTableProvider) -> Result<Option<Arc<dyn TableProvider>>> {
-    if raw.release.is_none() {
-        Ok(None)
-    } else {
-        Ok(Some(Arc::new(ImportedTableProvider::try_new(raw)?)))
-    }
-}
 
 /// Exports a [`CatalogProviderList`] through [`SedonaCCatalogProviderList`].
 pub struct ExportedCatalogProviderList {
@@ -993,6 +949,50 @@ impl SchemaProvider for ImportedSchemaProvider {
     }
 }
 
+fn c_string(value: impl Into<Vec<u8>>) -> Result<CString> {
+    CString::new(value).map_err(|error| {
+        datafusion_common::DataFusionError::External(
+            format!("Catalog name contains an interior NUL: {error}").into(),
+        )
+    })
+}
+
+fn optional_catalog(
+    raw: SedonaCCatalogProvider,
+    session: Arc<dyn Session>,
+    runtime: Arc<RuntimeHandle>,
+) -> Result<Option<Arc<dyn CatalogProvider>>> {
+    if raw.release.is_none() {
+        Ok(None)
+    } else {
+        Ok(Some(Arc::new(ImportedCatalogProvider::try_new(
+            raw, session, runtime,
+        )?)))
+    }
+}
+
+fn optional_schema(
+    raw: SedonaCSchemaProvider,
+    session: Arc<dyn Session>,
+    runtime: Arc<RuntimeHandle>,
+) -> Result<Option<Arc<dyn SchemaProvider>>> {
+    if raw.release.is_none() {
+        Ok(None)
+    } else {
+        Ok(Some(Arc::new(ImportedSchemaProvider::try_new(
+            raw, session, runtime,
+        )?)))
+    }
+}
+
+fn optional_table(raw: SedonaCTableProvider) -> Result<Option<Arc<dyn TableProvider>>> {
+    if raw.release.is_none() {
+        Ok(None)
+    } else {
+        Ok(Some(Arc::new(ImportedTableProvider::try_new(raw)?)))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1081,37 +1081,29 @@ mod tests {
         let catalog = catalogs.catalog("catalog_one").unwrap();
         let schema = catalog.schema("schema_one").unwrap();
 
-        assert!(
-            schema
-                .register_table("table_two".to_owned(), empty_table())
-                .unwrap()
-                .is_none()
-        );
+        assert!(schema
+            .register_table("table_two".to_owned(), empty_table())
+            .unwrap()
+            .is_none());
         assert!(schema.table_names().contains(&"table_two".to_owned()));
         assert!(schema.deregister_table("table_two").unwrap().is_some());
 
-        assert!(
-            catalog
-                .register_schema("schema_two", Arc::new(MemorySchemaProvider::new()))
-                .unwrap()
-                .is_none()
-        );
+        assert!(catalog
+            .register_schema("schema_two", Arc::new(MemorySchemaProvider::new()))
+            .unwrap()
+            .is_none());
         assert!(catalog.schema("schema_two").is_some());
-        assert!(
-            catalog
-                .deregister_schema("schema_two", false)
-                .unwrap()
-                .is_some()
-        );
+        assert!(catalog
+            .deregister_schema("schema_two", false)
+            .unwrap()
+            .is_some());
 
-        assert!(
-            catalogs
-                .register_catalog(
-                    "catalog_two".to_owned(),
-                    Arc::new(MemoryCatalogProvider::new()),
-                )
-                .is_none()
-        );
+        assert!(catalogs
+            .register_catalog(
+                "catalog_two".to_owned(),
+                Arc::new(MemoryCatalogProvider::new()),
+            )
+            .is_none());
         assert!(catalogs.catalog("catalog_two").is_some());
 
         let replaced = catalogs.register_catalog(
@@ -1131,26 +1123,24 @@ mod tests {
         let session = Arc::new(context.state());
         let runtime = runtime();
 
-        assert!(
-            ImportedCatalogProviderList::try_new(
-                SedonaCCatalogProviderList::default(),
-                session.clone(),
-                runtime.clone(),
-            )
-            .is_err()
-        );
-        assert!(
-            ImportedCatalogProvider::try_new(
-                SedonaCCatalogProvider::default(),
-                session.clone(),
-                runtime.clone(),
-            )
-            .is_err()
-        );
-        assert!(
-            ImportedSchemaProvider::try_new(SedonaCSchemaProvider::default(), session, runtime,)
-                .is_err()
-        );
+        assert!(ImportedCatalogProviderList::try_new(
+            SedonaCCatalogProviderList::default(),
+            session.clone(),
+            runtime.clone(),
+        )
+        .is_err());
+        assert!(ImportedCatalogProvider::try_new(
+            SedonaCCatalogProvider::default(),
+            session.clone(),
+            runtime.clone(),
+        )
+        .is_err());
+        assert!(ImportedSchemaProvider::try_new(
+            SedonaCSchemaProvider::default(),
+            session,
+            runtime,
+        )
+        .is_err());
     }
 
     #[test]
@@ -1174,11 +1164,9 @@ mod tests {
 
         // The DataFusion trait cannot return this error and deliberately keeps
         // its Option-only behavior.
-        assert!(
-            imported
-                .register_catalog("catalog".to_owned(), Arc::new(MemoryCatalogProvider::new()),)
-                .is_none()
-        );
+        assert!(imported
+            .register_catalog("catalog".to_owned(), Arc::new(MemoryCatalogProvider::new()),)
+            .is_none());
     }
 
     #[test]
