@@ -41,26 +41,7 @@ pub fn scalar_kernels() -> Result<Vec<(&'static str, ScalarKernelRef)>> {
 }
 
 fn init_scalar_kernels() -> Result<Vec<(String, ScalarKernelRef)>> {
-    let mut kernels = crate::kernels::s2_scalar_kernels()?;
-
-    // The two-argument ST_ToGeometry/ST_ToGeography overloads are the
-    // tolerance-aware variants of the metadata-only one-argument functions.
-    // Reuse the tessellation kernels so both public spellings have identical
-    // validation, NULL handling, and tessellation behavior.
-    let tolerance_overloads = kernels
-        .iter()
-        .filter_map(|(name, kernel)| {
-            let alias = match name.as_str() {
-                "st_tessellategeom" => "st_togeometry",
-                "st_tessellategeog" => "st_togeography",
-                _ => return None,
-            };
-
-            Some((alias.to_string(), kernel.clone()))
-        })
-        .collect::<Vec<_>>();
-    kernels.extend(tolerance_overloads);
-
+    let kernels = crate::kernels::s2_scalar_kernels()?;
     Ok(kernels)
 }
 
@@ -85,25 +66,4 @@ pub fn aggregate_kernels() -> Vec<(&'static str, Vec<SedonaAccumulatorRef>)> {
             ))]),
         ),
     ]
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn tessellation_kernels_have_to_geom_geog_aliases() {
-        let kernels = scalar_kernels().unwrap();
-
-        for (source, alias) in [
-            ("st_tessellategeom", "st_togeometry"),
-            ("st_tessellategeog", "st_togeography"),
-        ] {
-            let source_count = kernels.iter().filter(|(name, _)| *name == source).count();
-            let alias_count = kernels.iter().filter(|(name, _)| *name == alias).count();
-
-            assert!(source_count > 0, "missing {source} kernels");
-            assert_eq!(source_count, alias_count);
-        }
-    }
 }

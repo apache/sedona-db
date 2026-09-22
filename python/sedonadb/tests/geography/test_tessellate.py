@@ -654,17 +654,6 @@ def test_st_togeometry(eng, geog, expected):
 
 
 @pytest.mark.parametrize("eng", [SedonaDB])
-def test_st_togeometry_with_tolerance(eng):
-    eng = eng.create_or_skip()
-    eng.assert_query_result(
-        "SELECT ST_ToGeometry(ST_GeogFromText('LINESTRING (-10 45, 10 45)'), 10000)",
-        "LINESTRING (-10 45, -5.019332 45.328489, 0 45.438549, "
-        "5.019332 45.328489, 10 45)",
-        wkt_precision=6,
-    )
-
-
-@pytest.mark.parametrize("eng", [SedonaDB])
 def test_st_togeometry_crs(eng):
     import pyproj
 
@@ -689,16 +678,6 @@ def test_st_togeography(eng, geom, expected):
     eng.assert_query_result(
         f"SELECT ST_ToGeography({geom_or_null(geom)})",
         expected,
-    )
-
-
-@pytest.mark.parametrize("eng", [SedonaDB])
-def test_st_togeography_with_tolerance(eng):
-    eng = eng.create_or_skip()
-    eng.assert_query_result(
-        "SELECT ST_ToGeography(ST_GeomFromText('LINESTRING (-10 45, 10 45)'), 10000)",
-        "LINESTRING (-10 45, -5 45, 0 45, 5 45, 10 45)",
-        wkt_precision=6,
     )
 
 
