@@ -258,6 +258,43 @@ def test_zarr_loader_supports_format():
     assert "ZarrRasterLoader" in repr(loader)
 
 
+def test_zarr_loader_handle_stats_start_at_zero():
+    loader = sedonadb_zarr.ZarrRasterLoader()
+    assert loader.handle_stats() == {
+        "store_hits": 0,
+        "store_misses": 0,
+        "array_hits": 0,
+        "array_misses": 0,
+    }
+
+
+def test_zarr_extension_reports_handle_reuse_across_calls(zarr_group):
+    sd = sedonadb.connect()
+    ext = sedonadb_zarr.ZarrExtension()
+    assert ext.loader is None
+    sd.register(ext)
+    assert isinstance(ext.loader, sedonadb_zarr.ZarrRasterLoader)
+
+    t = sd.read(f"file://{zarr_group}", format="zarr")
+
+    def load_all():
+        tab = t.select(raster=t.raster.funcs.rs_ensureloaded()).to_arrow_table()
+        assert tab.num_rows == 2
+
+    load_all()
+    first = ext.loader.handle_stats()
+    # The one array in the group is opened once and its client built once.
+    assert first["array_misses"] == 1
+    assert first["store_misses"] == 1
+
+    load_all()
+    second = ext.loader.handle_stats()
+    # The second query reuses the opened array and builds no new client.
+    assert second["array_hits"] > first["array_hits"]
+    assert second["array_misses"] == first["array_misses"]
+    assert second["store_misses"] == 1
+
+
 @pytest.mark.parametrize(
     "numpy_dtype",
     [

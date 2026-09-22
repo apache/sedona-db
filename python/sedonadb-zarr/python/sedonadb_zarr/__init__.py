@@ -55,12 +55,18 @@ class ZarrExtension:
         >>> sd.register(ZarrExtension())
     """
 
+    def __init__(self) -> None:
+        #: The ``ZarrRasterLoader`` registered by this extension, set on
+        #: registration; its ``handle_stats()`` reports handle reuse.
+        self.loader: Optional[ZarrRasterLoader] = None
+
     def __sedonadb_extension__(self, sd: SedonaContext, **kwargs) -> None:
         if kwargs:
             raise ValueError("Registration options not supported for ZarrExtension")
 
-        # Register the ZarrRasterLoader
-        sd.register(ZarrRasterLoader())
+        # Register the ZarrRasterLoader, keeping it reachable for diagnostics
+        self.loader = ZarrRasterLoader()
+        sd.register(self.loader)
 
         # Register the Zarr() format as a FileFormatFactory for SQL and .read(..., format="zarr")
         sd.register(Zarr())
@@ -134,6 +140,17 @@ class ZarrRasterLoader(RasterLoader):
 
     def load(self, requests):
         return self._impl.load(requests)
+
+    def handle_stats(self) -> dict:
+        """Hit and miss counters for the handles this loader keeps across
+        ``RS_EnsureLoaded`` calls.
+
+        ``store_hits`` / ``store_misses`` count the object store client per
+        scheme and authority (a miss builds a client);
+        ``array_hits`` / ``array_misses`` count the opened array per store
+        and array path (a miss is a metadata round trip).
+        """
+        return self._impl.handle_stats()
 
 
 __all__ = ["Zarr", "ZarrExtension"]

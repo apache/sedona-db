@@ -29,7 +29,7 @@ use arrow_buffer::Buffer;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::ffi::Py_buffer;
 use pyo3::prelude::*;
-use pyo3::types::PyCapsule;
+use pyo3::types::{PyCapsule, PyDict};
 use sedona_raster::view_entries::{ViewEntries, ViewEntry};
 use sedona_raster_zarr::{
     object_store_for_uri, open_storage_from_uri, ZarrChunkReader, ZarrLoader,
@@ -289,6 +289,20 @@ impl PyZarrRasterLoader {
     fn supports_format(&self, format: Option<&str>) -> bool {
         use sedona_raster::raster_loader::AsyncRasterLoader;
         self.loader.supports_format(format)
+    }
+
+    /// Hit and miss counters for the handles kept across `load` calls: the
+    /// object store client per scheme and authority, and the opened array
+    /// per store and array path. An array miss is a metadata round trip; a
+    /// store miss builds a client.
+    fn handle_stats<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let stats = self.loader.handle_stats();
+        let dict = PyDict::new(py);
+        dict.set_item("store_hits", stats.store_hits)?;
+        dict.set_item("store_misses", stats.store_misses)?;
+        dict.set_item("array_hits", stats.array_hits)?;
+        dict.set_item("array_misses", stats.array_misses)?;
+        Ok(dict)
     }
 
     /// Load raster data from Zarr stores.
