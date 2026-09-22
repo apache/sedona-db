@@ -242,6 +242,37 @@ def test_format_spec_with_arrays_option(zarr_group):
     assert df.to_arrow_table().num_rows == 2
 
 
+def test_arrays_option_order_is_band_order(tmp_path):
+    """With `arrays`, band i is arrays[i]; without it, bands are sorted by path."""
+    root = zarr.open_group(str(tmp_path), mode="w")
+    for name, value in [("a0", 10), ("a1", 20), ("b2", 30)]:
+        arr = root.create_array(
+            name, shape=(2, 2), chunks=(2, 2), dtype="uint8", dimension_names=["y", "x"]
+        )
+        arr[:] = value
+
+    con = sedonadb.connect()
+    con.register(sedonadb_zarr.ZarrExtension())
+
+    def band_arrays(names):
+        fmt = sedonadb_zarr.Zarr({"arrays": names}) if names else sedonadb_zarr.Zarr()
+        tab = con.read(f"file://{tmp_path}", format=fmt).to_arrow_table()
+        raster = Raster(tab["raster"], 0)
+        return [b.outdb_uri.split("#array=")[1].split("&")[0] for b in raster.bands]
+
+    assert band_arrays(["a1", "a0"]) == ["a1", "a0"]
+    assert band_arrays(["b2", "a0", "a1"]) == ["b2", "a0", "a1"]
+    assert band_arrays(["b2", "a1"]) == ["b2", "a1"]
+    assert band_arrays(None) == ["a0", "a1", "b2"]
+
+    # The loaded pixels follow the same order.
+    fmt = sedonadb_zarr.Zarr({"arrays": ["b2", "a0"]})
+    df = con.read(f"file://{tmp_path}", format=fmt)
+    tab = df.select(r=df.raster.funcs.rs_ensureloaded()).to_arrow_table()
+    bands = Raster(tab["r"], 0).bands
+    assert [int(b.to_numpy()[0, 0]) for b in bands] == [30, 10]
+
+
 def test_format_spec_class_invariants():
     spec = sedonadb_zarr.Zarr()
     assert spec.extension == "zarr"

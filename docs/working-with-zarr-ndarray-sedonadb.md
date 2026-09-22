@@ -184,7 +184,7 @@ df = sd.read("s3://carbonplan-share/zarr-layer-examples/antarctic_era5.zarr")
 
 ### Selecting arrays with the `arrays` option
 
-By default SedonaDB discovers a group's arrays automatically — from the group's consolidated metadata when present, otherwise by listing the store. The `arrays` option names an explicit subset to read instead (as we did above):
+By default SedonaDB discovers a group's arrays automatically — from the group's consolidated metadata when present, otherwise by listing the store — and reads them as bands sorted by array path. The `arrays` option names an explicit subset to read instead (as we did above), and its order is the band order: band `i` of every row is `arrays[i]`.
 
 ```python
 spec = sedonadb_zarr.Zarr().with_options({"arrays": ["rain_ok"]})

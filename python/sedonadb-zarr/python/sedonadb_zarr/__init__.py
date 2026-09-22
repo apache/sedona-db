@@ -85,7 +85,9 @@ class Zarr(ExternalFormatSpec):
 
     Args:
         options: Supported options include
-            - `arrays` (`list[str]`) — explicit subset of group arrays to read.
+            - `arrays` (`list[str]`) — explicit subset of group arrays to read,
+              in band order: band `i` of every row is `arrays[i]`. Without it,
+              discovered arrays are read as bands sorted by path.
     """
 
     _SUPPORTED_OPTIONS = frozenset({"arrays"})
