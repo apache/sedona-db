@@ -170,9 +170,7 @@ def test_filter_pushdown_into_ffi_producer(geoarrow_data, use_async):
 
 
 @pytest.mark.parametrize("use_async", [True, False])
-def test_udf_filter_not_pushed_down_into_ffi_producer(
-    geoarrow_data, ffi_execution_mode, use_async
-):
+def test_udf_filter_not_pushed_down_into_ffi_producer(geoarrow_data, use_async):
     """Verify that filters using consumer-side UDFs are NOT pushed down into the FFI producer.
 
     UDFs are session-specific, so a UDF registered on the consumer cannot be
