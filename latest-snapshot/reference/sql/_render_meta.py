@@ -187,6 +187,10 @@ def to_str(v):
             return f"`{v['c'][1]}`"
         elif v["t"] == "Space":
             return " "
+        elif v["t"] == "SoftBreak":
+            # Pandoc uses SoftBreak for a source newline that is rendered as
+            # ordinary whitespace in prose.
+            return " "
         elif v["t"] == "Para":
             return "".join(to_str(item) for item in v["c"])
         elif v["t"] == "RawInline":
