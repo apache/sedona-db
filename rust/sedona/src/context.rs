@@ -83,7 +83,7 @@ use sedona_query_planner::{
     query_planner::SedonaQueryPlanner,
     raster_batch_budget::RasterBatchBudgetRule,
 };
-use sedona_raster::chunk_cache::RasterChunkCache;
+use sedona_raster::chunk_cache::{InMemoryChunkCache, RasterChunkCache};
 use sedona_raster::raster_loader::{AsyncRasterLoader, RasterLoaderConfig, RasterLoaderRegistry};
 
 /// Sedona SessionContext wrapper
@@ -104,7 +104,7 @@ pub struct SedonaContext {
     /// Per-session cache of loaded OutDb band bytes, shared with the
     /// `RS_EnsureLoaded` UDF through the same config extension as the
     /// registry. See [`SedonaContext::raster_chunk_cache`].
-    raster_chunk_cache: Arc<RasterChunkCache>,
+    raster_chunk_cache: Arc<dyn RasterChunkCache>,
 }
 
 impl SedonaContext {
@@ -341,8 +341,8 @@ impl SedonaContext {
             Arc::clone(&ctx.runtime_env().memory_pool),
             MemoryConsumer::new("RasterChunkCache"),
         );
-        let raster_chunk_cache =
-            Arc::new(RasterChunkCache::new(cache_max_bytes).with_memory_pool(Arc::new(pool)));
+        let raster_chunk_cache: Arc<dyn RasterChunkCache> =
+            Arc::new(InMemoryChunkCache::new(cache_max_bytes).with_memory_pool(Arc::new(pool)));
 
         let mut out = Self {
             ctx,
@@ -510,7 +510,7 @@ impl SedonaContext {
     /// The session's cache of loaded OutDb band bytes: inspect its
     /// [`stats`](RasterChunkCache::stats) or [`clear`](RasterChunkCache::clear)
     /// it. Its budget is `sedona.raster.cache_max_bytes`.
-    pub fn raster_chunk_cache(&self) -> &Arc<RasterChunkCache> {
+    pub fn raster_chunk_cache(&self) -> &Arc<dyn RasterChunkCache> {
         &self.raster_chunk_cache
     }
 

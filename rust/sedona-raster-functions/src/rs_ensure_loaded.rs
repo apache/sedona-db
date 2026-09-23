@@ -43,7 +43,7 @@ use sedona_common::option::SedonaOptions;
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_raster::array::RasterStructArray;
 use sedona_raster::builder::{RasterBuilder, RasterOverrides};
-use sedona_raster::chunk_cache::{CachedChunk, ChunkKey, RasterChunkCache};
+use sedona_raster::chunk_cache::{CachedChunk, ChunkKey, NoChunkCache, RasterChunkCache};
 use sedona_raster::raster_loader::{
     AsyncRasterLoader, RasterLoadRequest, RasterLoadResult, RasterLoaderConfig,
     RasterLoaderRegistry,
@@ -148,10 +148,14 @@ fn lookup_loader(
 }
 
 /// The session's chunk cache, with `sedona.raster.cache_max_bytes` applied
-/// so a `SET` takes effect on the next call. `None` when the session has
-/// no cache (a bare DataFusion context, or one built without it).
-fn chunk_cache_from_config(config: &ConfigOptions) -> Option<Arc<RasterChunkCache>> {
-    let cache = config.extensions.get::<RasterLoaderConfig>()?.cache()?;
+/// so a `SET` takes effect on the next call. A session without one (a bare
+/// DataFusion context, or a loader config built without a cache) gets a
+/// [`NoChunkCache`], so the load path never branches on it.
+fn chunk_cache_from_config(config: &ConfigOptions) -> Arc<dyn RasterChunkCache> {
+    let cache: Arc<dyn RasterChunkCache> = match config.extensions.get::<RasterLoaderConfig>() {
+        Some(loader_config) => loader_config.cache(),
+        None => Arc::new(NoChunkCache),
+    };
     if let Some(opts) = config.extensions.get::<SedonaOptions>() {
         let budget = opts.raster.cache_max_bytes;
         if cache.max_bytes() != budget {
@@ -161,7 +165,7 @@ fn chunk_cache_from_config(config: &ConfigOptions) -> Option<Arc<RasterChunkCach
     // Entries go idle when earlier batches drop, which the cache cannot
     // observe, so this is where a hit-only session gives memory back.
     cache.trim();
-    Some(cache)
+    cache
 }
 
 // One RsEnsureLoaded per session by construction — equality and hash
@@ -253,7 +257,7 @@ impl AsyncScalarUDFImpl for RsEnsureLoaded {
         let output = ensure_loaded(
             &input_array,
             |format| lookup_loader(&registry, format),
-            cache.as_deref(),
+            cache.as_ref(),
         )
         .await?;
         Ok(ColumnarValue::Array(output))
@@ -347,7 +351,7 @@ fn source_order_dim_names(visible: &[&str], view: &ViewEntries) -> Vec<String> {
 async fn ensure_loaded<F>(
     input_array: &ArrayRef,
     mut lookup: F,
-    cache: Option<&RasterChunkCache>,
+    cache: &dyn RasterChunkCache,
 ) -> Result<ArrayRef>
 where
     F: FnMut(Option<&str>) -> Result<Arc<dyn AsyncRasterLoader>>,
@@ -418,7 +422,7 @@ where
                 data_type: band.data_type(),
             };
             let dim_names = source_order_dim_names(&band.dim_names(), band.view());
-            if let Some(chunk) = cache.and_then(|cache| cache.get(&key)) {
+            if let Some(chunk) = cache.get(&key) {
                 // A stale entry whose layout no longer matches the band's
                 // metadata is treated as a miss rather than trusted.
                 if chunk.source_shape == band.raw_source_shape() && chunk.dim_names == dim_names {
@@ -514,10 +518,7 @@ where
                 request_refs.len()
             );
         }
-        let results = match cache {
-            Some(cache) => cache_results(cache, &group.requests, results),
-            None => results,
-        };
+        let results = cache_results(cache, &group.requests, results);
         group_results.push(results);
     }
 
@@ -683,7 +684,7 @@ fn expected_bytes(shape: &[i64], data_type: BandDataType) -> Option<usize> {
 /// byte count is wrong, which pass 3 then reports. All of a load's
 /// results go in as one batch so the cache scans its idle bytes once.
 fn cache_results(
-    cache: &RasterChunkCache,
+    cache: &dyn RasterChunkCache,
     requests: &[LoadRequestPlan],
     mut results: Vec<RasterLoadResult>,
 ) -> Vec<RasterLoadResult> {
@@ -718,7 +719,7 @@ fn cache_results(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sedona_raster::chunk_cache::ChunkCacheStats;
+    use sedona_raster::chunk_cache::{ChunkCacheStats, InMemoryChunkCache};
     use sedona_raster::view_entries::ViewEntry;
     use std::sync::Mutex;
 
@@ -876,9 +877,13 @@ mod tests {
         let loader_dyn: Arc<dyn AsyncRasterLoader> = loader.clone();
         let reg = registry_with(loader_dyn);
 
-        let out = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt), None)
-            .await
-            .unwrap();
+        let out = ensure_loaded(
+            &input,
+            |fmt| reg.read().unwrap().get_or_error(fmt),
+            &NoChunkCache,
+        )
+        .await
+        .unwrap();
 
         let out_struct = out.as_any().downcast_ref::<StructArray>().unwrap();
         let out_rasters = RasterStructArray::try_new(out_struct).unwrap();
@@ -912,9 +917,13 @@ mod tests {
         let loader_dyn: Arc<dyn AsyncRasterLoader> = loader.clone();
         let reg = registry_with(loader_dyn);
 
-        let out = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt), None)
-            .await
-            .unwrap();
+        let out = ensure_loaded(
+            &input,
+            |fmt| reg.read().unwrap().get_or_error(fmt),
+            &NoChunkCache,
+        )
+        .await
+        .unwrap();
 
         let out_struct = out.as_any().downcast_ref::<StructArray>().unwrap();
         let out_rasters = RasterStructArray::try_new(out_struct).unwrap();
@@ -949,9 +958,13 @@ mod tests {
         let loader_dyn: Arc<dyn AsyncRasterLoader> = loader.clone();
         let reg = registry_with(loader_dyn);
 
-        let out = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt), None)
-            .await
-            .unwrap();
+        let out = ensure_loaded(
+            &input,
+            |fmt| reg.read().unwrap().get_or_error(fmt),
+            &NoChunkCache,
+        )
+        .await
+        .unwrap();
 
         let out_struct = out.as_any().downcast_ref::<StructArray>().unwrap();
         let out_rasters = RasterStructArray::try_new(out_struct).unwrap();
@@ -1006,9 +1019,13 @@ mod tests {
         let loader_dyn: Arc<dyn AsyncRasterLoader> = Arc::new(StableBufferLoader { buffer });
         let reg = registry_with(loader_dyn);
 
-        let out = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt), None)
-            .await
-            .unwrap();
+        let out = ensure_loaded(
+            &input,
+            |fmt| reg.read().unwrap().get_or_error(fmt),
+            &NoChunkCache,
+        )
+        .await
+        .unwrap();
 
         let out_struct = out.as_any().downcast_ref::<StructArray>().unwrap();
         let out_rasters = RasterStructArray::try_new(out_struct).unwrap();
@@ -1032,9 +1049,13 @@ mod tests {
         let reg: Arc<RwLock<RasterLoaderRegistry>> =
             Arc::new(RwLock::new(RasterLoaderRegistry::new()));
 
-        let err = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt), None)
-            .await
-            .unwrap_err();
+        let err = ensure_loaded(
+            &input,
+            |fmt| reg.read().unwrap().get_or_error(fmt),
+            &NoChunkCache,
+        )
+        .await
+        .unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("zarr"),
@@ -1073,9 +1094,13 @@ mod tests {
         let loader_dyn: Arc<dyn AsyncRasterLoader> = Arc::new(ShortLoader);
         let reg = registry_with(loader_dyn);
 
-        let err = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt), None)
-            .await
-            .unwrap_err();
+        let err = ensure_loaded(
+            &input,
+            |fmt| reg.read().unwrap().get_or_error(fmt),
+            &NoChunkCache,
+        )
+        .await
+        .unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("expected") && msg.contains("loader returned"),
@@ -1133,9 +1158,13 @@ mod tests {
         let loader: Arc<RecordingLoader> = Arc::new(RecordingLoader::default());
         let reg = registry_with(loader.clone());
 
-        let out = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt), None)
-            .await
-            .unwrap();
+        let out = ensure_loaded(
+            &input,
+            |fmt| reg.read().unwrap().get_or_error(fmt),
+            &NoChunkCache,
+        )
+        .await
+        .unwrap();
 
         let out_struct = out.as_any().downcast_ref::<StructArray>().unwrap();
         let out_rasters = RasterStructArray::try_new(out_struct).unwrap();
@@ -1191,9 +1220,13 @@ mod tests {
 
         let input = build_viewed_input(None);
         let reg = registry_with(Arc::new(ResolvingLoader));
-        let out = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt), None)
-            .await
-            .unwrap();
+        let out = ensure_loaded(
+            &input,
+            |fmt| reg.read().unwrap().get_or_error(fmt),
+            &NoChunkCache,
+        )
+        .await
+        .unwrap();
 
         let out_struct = out.as_any().downcast_ref::<StructArray>().unwrap();
         let out_rasters = RasterStructArray::try_new(out_struct).unwrap();
@@ -1224,9 +1257,13 @@ mod tests {
         let loader: Arc<RecordingLoader> = Arc::new(RecordingLoader::default());
         let reg = registry_with(loader.clone());
 
-        let out = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt), None)
-            .await
-            .unwrap();
+        let out = ensure_loaded(
+            &input,
+            |fmt| reg.read().unwrap().get_or_error(fmt),
+            &NoChunkCache,
+        )
+        .await
+        .unwrap();
 
         let out_struct = out.as_any().downcast_ref::<StructArray>().unwrap();
         let out_rasters = RasterStructArray::try_new(out_struct).unwrap();
@@ -1270,9 +1307,13 @@ mod tests {
         let loader_dyn: Arc<dyn AsyncRasterLoader> = Arc::new(RecordingLoader::default());
         let reg = registry_with(loader_dyn);
 
-        let out = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt), None)
-            .await
-            .unwrap();
+        let out = ensure_loaded(
+            &input,
+            |fmt| reg.read().unwrap().get_or_error(fmt),
+            &NoChunkCache,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(out.len(), 2);
         assert!(!out.is_null(0));
@@ -1407,9 +1448,13 @@ mod tests {
         let loader = Arc::new(MarkerLoader::new("marker", &["mock"]));
         let reg = registry_with(loader.clone());
 
-        let out = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt), None)
-            .await
-            .unwrap();
+        let out = ensure_loaded(
+            &input,
+            |fmt| reg.read().unwrap().get_or_error(fmt),
+            &NoChunkCache,
+        )
+        .await
+        .unwrap();
 
         let calls = loader.calls.lock().unwrap();
         assert_eq!(
@@ -1463,7 +1508,7 @@ mod tests {
                 lookups += 1;
                 reg.get_or_error(fmt)
             },
-            None,
+            &NoChunkCache,
         )
         .await
         .unwrap();
@@ -1499,9 +1544,13 @@ mod tests {
         let loader = Arc::new(MarkerLoader::new("marker", &["mock"]));
         let reg = registry_with(loader.clone());
 
-        let out = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt), None)
-            .await
-            .unwrap();
+        let out = ensure_loaded(
+            &input,
+            |fmt| reg.read().unwrap().get_or_error(fmt),
+            &NoChunkCache,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(
             *loader.calls.lock().unwrap(),
@@ -1539,10 +1588,14 @@ mod tests {
 
         let input = build_rows(&[Some(vec![outdb("mock", 1)])]);
         let reg = registry_with(Arc::new(ExtraResultLoader));
-        let err = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt), None)
-            .await
-            .unwrap_err()
-            .to_string();
+        let err = ensure_loaded(
+            &input,
+            |fmt| reg.read().unwrap().get_or_error(fmt),
+            &NoChunkCache,
+        )
+        .await
+        .unwrap_err()
+        .to_string();
         assert!(
             err.contains("returned 2 result(s) for 1 request(s)"),
             "{err}"
@@ -1571,10 +1624,14 @@ mod tests {
 
         let input = build_rows(&[Some(vec![outdb("mock", 1)]), Some(vec![outdb("mock", 2)])]);
         let reg = registry_with(Arc::new(FailingLoader));
-        let err = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt), None)
-            .await
-            .unwrap_err()
-            .to_string();
+        let err = ensure_loaded(
+            &input,
+            |fmt| reg.read().unwrap().get_or_error(fmt),
+            &NoChunkCache,
+        )
+        .await
+        .unwrap_err()
+        .to_string();
         assert!(
             err.contains("loader 'failing' failed loading 2 band(s)") && err.contains("boom"),
             "{err}"
@@ -1648,10 +1705,14 @@ mod tests {
         }
 
         let reg = registry_with(Arc::new(IdentityViewLoader));
-        let err = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt), None)
-            .await
-            .unwrap_err()
-            .to_string();
+        let err = ensure_loaded(
+            &input,
+            |fmt| reg.read().unwrap().get_or_error(fmt),
+            &NoChunkCache,
+        )
+        .await
+        .unwrap_err()
+        .to_string();
         assert!(
             err.contains("visible shape [3, 1, 8], expected [1, 1, 8]"),
             "{err}"
@@ -1694,9 +1755,13 @@ mod tests {
 
         let loader: Arc<RecordingLoader> = Arc::new(RecordingLoader::default());
         let reg = registry_with(loader.clone());
-        let out = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt), None)
-            .await
-            .unwrap();
+        let out = ensure_loaded(
+            &input,
+            |fmt| reg.read().unwrap().get_or_error(fmt),
+            &NoChunkCache,
+        )
+        .await
+        .unwrap();
 
         let seen = loader.seen.lock().unwrap();
         assert_eq!(seen[0].1, vec![4, 8]);
@@ -1746,9 +1811,13 @@ mod tests {
         let input: ArrayRef = Arc::new(RasterBuilder::new(0).finish().unwrap());
         let loader: Arc<RecordingLoader> = Arc::new(RecordingLoader::default());
         let reg = registry_with(loader.clone());
-        let out = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt), None)
-            .await
-            .unwrap();
+        let out = ensure_loaded(
+            &input,
+            |fmt| reg.read().unwrap().get_or_error(fmt),
+            &NoChunkCache,
+        )
+        .await
+        .unwrap();
         assert_eq!(out.len(), 0);
         assert!(loader.seen.lock().unwrap().is_empty());
     }
@@ -1762,9 +1831,13 @@ mod tests {
         let input: ArrayRef = Arc::new(b.finish().unwrap());
         let loader: Arc<RecordingLoader> = Arc::new(RecordingLoader::default());
         let reg = registry_with(loader.clone());
-        let out = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt), None)
-            .await
-            .unwrap();
+        let out = ensure_loaded(
+            &input,
+            |fmt| reg.read().unwrap().get_or_error(fmt),
+            &NoChunkCache,
+        )
+        .await
+        .unwrap();
         let out_struct = out.as_any().downcast_ref::<StructArray>().unwrap();
         let out_rasters = RasterStructArray::try_new(out_struct).unwrap();
         assert_eq!(out_rasters.len(), 1);
@@ -1823,22 +1896,14 @@ mod tests {
         let input = build_outdb_rows(&["mock://a"], &[4, 8]);
         let loader: Arc<RecordingLoader> = Arc::new(RecordingLoader::default());
         let reg = registry_with(loader.clone());
-        let cache = RasterChunkCache::new(1 << 20);
+        let cache = InMemoryChunkCache::new(1 << 20);
 
-        let first = ensure_loaded(
-            &input,
-            |fmt| reg.read().unwrap().get_or_error(fmt),
-            Some(&cache),
-        )
-        .await
-        .unwrap();
-        let second = ensure_loaded(
-            &input,
-            |fmt| reg.read().unwrap().get_or_error(fmt),
-            Some(&cache),
-        )
-        .await
-        .unwrap();
+        let first = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt), &cache)
+            .await
+            .unwrap();
+        let second = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt), &cache)
+            .await
+            .unwrap();
 
         assert_eq!(
             loader.seen.lock().unwrap().len(),
@@ -1866,9 +1931,13 @@ mod tests {
         let loader: Arc<RecordingLoader> = Arc::new(RecordingLoader::default());
         let reg = registry_with(loader.clone());
 
-        let out = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt), None)
-            .await
-            .unwrap();
+        let out = ensure_loaded(
+            &input,
+            |fmt| reg.read().unwrap().get_or_error(fmt),
+            &NoChunkCache,
+        )
+        .await
+        .unwrap();
 
         let seen: Vec<String> = loader
             .seen
@@ -1934,15 +2003,11 @@ mod tests {
         let input = build_viewed_rows(&[row1_view(), row2_view()]);
         let loader: Arc<RecordingLoader> = Arc::new(RecordingLoader::default());
         let reg = registry_with(loader.clone());
-        let cache = RasterChunkCache::new(1 << 20);
+        let cache = InMemoryChunkCache::new(1 << 20);
 
-        ensure_loaded(
-            &input,
-            |fmt| reg.read().unwrap().get_or_error(fmt),
-            Some(&cache),
-        )
-        .await
-        .unwrap();
+        ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt), &cache)
+            .await
+            .unwrap();
         assert_eq!(
             loader.seen.lock().unwrap().len(),
             2,
@@ -1950,13 +2015,9 @@ mod tests {
         );
         assert_eq!(cache.stats().inserts, 1, "one chunk behind both views");
 
-        let out = ensure_loaded(
-            &input,
-            |fmt| reg.read().unwrap().get_or_error(fmt),
-            Some(&cache),
-        )
-        .await
-        .unwrap();
+        let out = ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt), &cache)
+            .await
+            .unwrap();
         assert_eq!(
             loader.seen.lock().unwrap().len(),
             2,
@@ -2021,15 +2082,11 @@ mod tests {
         let input = build_viewed_input(None);
         let loader = Arc::new(ResolvingLoader::default());
         let reg = registry_with(loader.clone());
-        let cache = RasterChunkCache::new(1 << 20);
+        let cache = InMemoryChunkCache::new(1 << 20);
         for _ in 0..2 {
-            ensure_loaded(
-                &input,
-                |fmt| reg.read().unwrap().get_or_error(fmt),
-                Some(&cache),
-            )
-            .await
-            .unwrap();
+            ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt), &cache)
+                .await
+                .unwrap();
         }
         assert_eq!(*loader.calls.lock().unwrap(), 2);
         assert_eq!(cache.stats().inserts, 0);
@@ -2038,10 +2095,19 @@ mod tests {
     #[test]
     fn chunk_cache_from_config_applies_the_session_budget() {
         let reg = registry_with(Arc::new(RecordingLoader::default()));
-        let cache = Arc::new(RasterChunkCache::new(1 << 20));
+        let cache: Arc<dyn RasterChunkCache> = Arc::new(InMemoryChunkCache::new(1 << 20));
 
+        // No loader config at all: a cache that keeps nothing, not an error.
         let mut config = ConfigOptions::default();
-        assert!(chunk_cache_from_config(&config).is_none());
+        let none = chunk_cache_from_config(&config);
+        assert_eq!(none.max_bytes(), 0);
+        assert_eq!(none.stats(), ChunkCacheStats::default());
+
+        // A loader config without a cache attached behaves the same.
+        config
+            .extensions
+            .insert(RasterLoaderConfig::from_handle(Arc::clone(&reg)));
+        assert_eq!(chunk_cache_from_config(&config).max_bytes(), 0);
 
         config
             .extensions
@@ -2050,7 +2116,7 @@ mod tests {
         opts.raster.cache_max_bytes = 123;
         config.extensions.insert(opts);
 
-        let found = chunk_cache_from_config(&config).expect("cache is configured");
+        let found = chunk_cache_from_config(&config);
         assert!(Arc::ptr_eq(&found, &cache));
         assert_eq!(cache.max_bytes(), 123);
     }
@@ -2060,17 +2126,13 @@ mod tests {
         // Same URI, two dtypes: two keys, two loads, two entries.
         let loader: Arc<RecordingLoader> = Arc::new(RecordingLoader::default());
         let reg = registry_with(loader.clone());
-        let cache = RasterChunkCache::new(1 << 20);
+        let cache = InMemoryChunkCache::new(1 << 20);
         for dtype in [BandDataType::UInt8, BandDataType::UInt16] {
             let input = build_outdb_rows_typed(&["mock://a"], &[4, 8], dtype);
             for _ in 0..2 {
-                ensure_loaded(
-                    &input,
-                    |fmt| reg.read().unwrap().get_or_error(fmt),
-                    Some(&cache),
-                )
-                .await
-                .unwrap();
+                ensure_loaded(&input, |fmt| reg.read().unwrap().get_or_error(fmt), &cache)
+                    .await
+                    .unwrap();
             }
         }
         assert_eq!(loader.seen.lock().unwrap().len(), 2);
@@ -2082,29 +2144,21 @@ mod tests {
     async fn ensure_loaded_ignores_the_cache_for_indb_bands_and_null_rows() {
         let loader: Arc<RecordingLoader> = Arc::new(RecordingLoader::default());
         let reg = registry_with(loader.clone());
-        let cache = RasterChunkCache::new(1 << 20);
+        let cache = InMemoryChunkCache::new(1 << 20);
 
         let data: Vec<u8> = (0..32).collect();
         let indb: ArrayRef = Arc::new(build_indb_input(&[4, 8], &data));
-        let out = ensure_loaded(
-            &indb,
-            |fmt| reg.read().unwrap().get_or_error(fmt),
-            Some(&cache),
-        )
-        .await
-        .unwrap();
+        let out = ensure_loaded(&indb, |fmt| reg.read().unwrap().get_or_error(fmt), &cache)
+            .await
+            .unwrap();
         assert_eq!(band_bytes_and_ptr(&out, 0).0, data);
 
         let mut b = RasterBuilder::new(1);
         b.append_null().unwrap();
         let nulls: ArrayRef = Arc::new(b.finish().unwrap());
-        let out = ensure_loaded(
-            &nulls,
-            |fmt| reg.read().unwrap().get_or_error(fmt),
-            Some(&cache),
-        )
-        .await
-        .unwrap();
+        let out = ensure_loaded(&nulls, |fmt| reg.read().unwrap().get_or_error(fmt), &cache)
+            .await
+            .unwrap();
         assert!(out.is_null(0));
 
         assert!(loader.seen.lock().unwrap().is_empty());

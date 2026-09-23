@@ -37,7 +37,7 @@ use datafusion_common::config::{
 use datafusion_common::{Result as DFResult, config_err};
 use sedona_schema::raster::BandDataType;
 
-use crate::chunk_cache::RasterChunkCache;
+use crate::chunk_cache::{NoChunkCache, RasterChunkCache};
 use crate::view_entries::ViewEntries;
 
 /// Everything a backend needs to materialise a single OutDb band's bytes.
@@ -305,14 +305,14 @@ impl ConfigField for RasterLoaderRegistryOption {
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct RasterLoaderConfig {
     pub registry: RasterLoaderRegistryOption,
-    /// The session's [`RasterChunkCache`], when one is configured. Read by
-    /// `RS_EnsureLoaded` before dispatching to a loader.
+    /// The session's [`RasterChunkCache`], a [`NoChunkCache`] until one is
+    /// attached. Read by `RS_EnsureLoaded` before dispatching to a loader.
     pub cache: RasterChunkCacheOption,
 }
 
 impl RasterLoaderConfig {
     /// Build a config extension that closes over an existing shared
-    /// registry handle, with no chunk cache.
+    /// registry handle; the cache keeps nothing until [`Self::with_cache`].
     pub fn from_handle(registry: Arc<RwLock<RasterLoaderRegistry>>) -> Self {
         Self {
             registry: RasterLoaderRegistryOption::new(registry),
@@ -321,62 +321,59 @@ impl RasterLoaderConfig {
     }
 
     /// Attach the session's chunk cache.
-    pub fn with_cache(mut self, cache: Arc<RasterChunkCache>) -> Self {
+    pub fn with_cache(mut self, cache: Arc<dyn RasterChunkCache>) -> Self {
         self.cache = RasterChunkCacheOption::new(cache);
         self
     }
 
-    /// The session's chunk cache, if configured.
-    pub fn cache(&self) -> Option<Arc<RasterChunkCache>> {
-        self.cache.0.clone()
+    /// The session's chunk cache.
+    pub fn cache(&self) -> Arc<dyn RasterChunkCache> {
+        Arc::clone(&self.cache.0)
     }
 }
 
 /// `ConfigField`-shaped handle to the session's [`RasterChunkCache`], so it
 /// rides in the same `ConfigOptions` extension as the loader registry and
-/// is reachable from `RS_EnsureLoaded`. Compares by identity; SQL cannot
-/// set it (the budget is `sedona.raster.cache_max_bytes`, applied to the
-/// cache at dispatch time).
-#[derive(Debug, Default, Clone)]
-pub struct RasterChunkCacheOption(Option<Arc<RasterChunkCache>>);
+/// is reachable from `RS_EnsureLoaded`. Defaults to a [`NoChunkCache`].
+/// Compares by identity; SQL cannot set it (the budget is
+/// `sedona.raster.cache_max_bytes`, applied to the cache at dispatch time).
+#[derive(Debug, Clone)]
+pub struct RasterChunkCacheOption(Arc<dyn RasterChunkCache>);
 
 impl RasterChunkCacheOption {
     /// Wrap the session's cache.
-    pub fn new(cache: Arc<RasterChunkCache>) -> Self {
-        Self(Some(cache))
+    pub fn new(cache: Arc<dyn RasterChunkCache>) -> Self {
+        Self(cache)
+    }
+}
+
+impl Default for RasterChunkCacheOption {
+    fn default() -> Self {
+        Self(Arc::new(NoChunkCache))
     }
 }
 
 impl PartialEq for RasterChunkCacheOption {
     fn eq(&self, other: &Self) -> bool {
-        match (&self.0, &other.0) {
-            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
-            (None, None) => true,
-            _ => false,
-        }
+        Arc::ptr_eq(&self.0, &other.0)
     }
 }
 
 impl ConfigField for RasterChunkCacheOption {
     fn visit<V: Visit>(&self, v: &mut V, key: &str, description: &'static str) {
-        match &self.0 {
-            Some(cache) => {
-                let stats = cache.stats();
-                v.some(
-                    key,
-                    format!(
-                        "RasterChunkCache {{ max_bytes: {}, entries: {}, idle_bytes: {}, \
-                         shared_bytes: {} }}",
-                        cache.max_bytes(),
-                        stats.entries,
-                        stats.idle_bytes,
-                        stats.shared_bytes
-                    ),
-                    description,
-                )
-            }
-            None => v.none(key, description),
-        }
+        let stats = self.0.stats();
+        v.some(
+            key,
+            format!(
+                "RasterChunkCache {{ max_bytes: {}, entries: {}, idle_bytes: {}, \
+                 shared_bytes: {} }}",
+                self.0.max_bytes(),
+                stats.entries,
+                stats.idle_bytes,
+                stats.shared_bytes
+            ),
+            description,
+        )
     }
 
     fn set(&mut self, key: &str, _value: &str) -> DFResult<()> {

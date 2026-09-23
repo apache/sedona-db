@@ -17,13 +17,27 @@
 
 //! Session-scoped cache of loaded OutDb band bytes.
 //!
-//! [`RasterChunkCache`] memoises what a loader returned for a request
-//! identity — the band's `outdb_uri` plus its data type — as the bytes and
-//! the source shape they are laid out in. A Zarr anchor URI names one
-//! chunk and a GDAL URI names one band, so the unit cached is the unit
-//! loaded. The requesting band's own view is re-applied by the caller on a
-//! hit, which is why only whole-source ("unresolved") results belong here:
-//! the caller checks that before inserting.
+//! [`RasterChunkCache`] is the interface `RS_EnsureLoaded` caches through.
+//! Before dispatching to a loader it looks each OutDb band up by
+//! [`ChunkKey`] — the band's `outdb_uri` plus its data type — and
+//! afterwards it stores what the loader returned, as the bytes and the
+//! source shape they are laid out in. A Zarr anchor URI names one chunk
+//! and a GDAL URI names one band, so the unit cached is the unit loaded.
+//! The requesting band's own view is re-applied by the caller on a hit,
+//! which is why only whole-source ("unresolved") results belong here: the
+//! caller checks that before inserting.
+//!
+//! [`InMemoryChunkCache`] is what a `SedonaContext` builds, and the rest
+//! of this page describes it. [`NoChunkCache`] keeps nothing, for a
+//! session built without a cache. A tier that keeps evicted entries on
+//! local disk (DataFusion's `DiskManager` would be the natural home) or in
+//! an object store would implement the same trait: a hit may hand back
+//! bytes read from anywhere, and such a tier evicts by plain byte LRU,
+//! since nothing outside memory is refcounted. It only pays off where the
+//! tier is faster than the store the loader reads from, so it would be
+//! opt-in.
+//!
+//! # Zero-copy hits
 //!
 //! A hit hands back a refcounted clone of the cached [`Buffer`]. The raster
 //! builder attaches it as a shared data block of the output `BinaryView`
@@ -78,6 +92,56 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use arrow_buffer::{Buffer, MemoryPool};
 use lru::LruCache;
 use sedona_schema::raster::BandDataType;
+
+/// What `RS_EnsureLoaded` caches loaded OutDb bytes through; see the
+/// [module docs](self) for what is stored and why.
+///
+/// One instance serves every partition and call of a session, so each
+/// method takes `&self` and must tolerate concurrent callers. Nothing here
+/// can fail: a load never fails because of its cache.
+pub trait RasterChunkCache: Send + Sync + fmt::Debug {
+    /// The entry for `key`, if one is held. The bytes may share the cached
+    /// allocation, and the lookup may promote the entry.
+    fn get(&self, key: &ChunkKey) -> Option<CachedChunk>;
+
+    /// Store each chunk under its key and return, in order, the buffer the
+    /// caller should use from now on: the cached one where the entry was
+    /// stored, so that the caller's output and the cache share a single
+    /// allocation, and the caller's own bytes unchanged where it was not.
+    /// All of a load's results arrive together so an implementation can
+    /// account for them once.
+    fn insert_batch(&self, entries: Vec<(ChunkKey, CachedChunk)>) -> Vec<Buffer>;
+
+    /// [`Self::insert_batch`] for one entry.
+    fn insert(&self, key: ChunkKey, chunk: CachedChunk) -> Buffer {
+        self.insert_batch(vec![(key, chunk)])
+            .pop()
+            .expect("one buffer per entry")
+    }
+
+    /// The budget, in bytes, for entries only the cache holds. Zero means
+    /// the cache is disabled.
+    fn max_bytes(&self) -> usize;
+
+    /// Change the budget. `sedona.raster.cache_max_bytes` reaches the cache
+    /// through here before every load, so a `SET` applies live: lowering
+    /// the budget evicts down to the new value, and zero clears the cache
+    /// and disables it until raised again.
+    fn set_max_bytes(&self, max_bytes: usize);
+
+    /// Evict down to the budget. Callers run this before every load, since
+    /// an entry only stops being referenced when an earlier batch drops,
+    /// which a cache cannot observe; this is where a session that only
+    /// hits gives memory back.
+    fn trim(&self);
+
+    /// Drop every entry. Bytes shared with in-flight batches live on until
+    /// those batches drop.
+    fn clear(&self);
+
+    /// Counters and a snapshot of what is held.
+    fn stats(&self) -> ChunkCacheStats;
+}
 
 /// Identity of a cached load: the band's `outdb_uri` and data type. The
 /// data type is defensive — a URI identifies its bytes, but a mismatched
@@ -199,8 +263,11 @@ impl Inner {
     }
 }
 
-/// See the [module docs](self).
-pub struct RasterChunkCache {
+/// The in-memory [`RasterChunkCache`]: an LRU map of whole-source entries
+/// whose budget counts only the entries that no batch still references,
+/// each allocation charged to an optional [`MemoryPool`]. See the
+/// [module docs](self).
+pub struct InMemoryChunkCache {
     inner: Mutex<Inner>,
     pool: Option<Arc<dyn MemoryPool>>,
     hits: AtomicU64,
@@ -209,7 +276,7 @@ pub struct RasterChunkCache {
     skipped: AtomicU64,
 }
 
-impl RasterChunkCache {
+impl InMemoryChunkCache {
     /// A cache holding up to `max_bytes` of idle entries. Zero disables
     /// it: every lookup misses and nothing is stored.
     pub fn new(max_bytes: usize) -> Self {
@@ -233,47 +300,11 @@ impl RasterChunkCache {
         self.pool = Some(pool);
         self
     }
+}
 
-    /// The budget for idle entries.
-    pub fn max_bytes(&self) -> usize {
-        lock(&self.inner).max_bytes
-    }
-
-    /// Change the budget. Lowering it evicts idle entries down to the new
-    /// value; zero clears the cache and disables it until raised again.
-    pub fn set_max_bytes(&self, max_bytes: usize) {
-        let mut inner = lock(&self.inner);
-        inner.max_bytes = max_bytes;
-        if max_bytes == 0 {
-            inner.evictions += inner.entries.len() as u64;
-            inner.entries.clear();
-            return;
-        }
-        inner.trim();
-    }
-
-    /// Evict idle entries down to the budget. Entries only go idle when a
-    /// batch drops, which the cache cannot observe, so callers run this at
-    /// the start of each load; otherwise a session that only hits after a
-    /// large query would keep everything that query loaded.
-    pub fn trim(&self) {
-        let mut inner = lock(&self.inner);
-        if inner.max_bytes > 0 {
-            inner.trim();
-        }
-    }
-
-    /// Drop every entry. Bytes shared with in-flight batches live on until
-    /// those batches drop.
-    pub fn clear(&self) {
-        let mut inner = lock(&self.inner);
-        inner.evictions += inner.entries.len() as u64;
-        inner.entries.clear();
-    }
-
-    /// The entry for `key`, promoted to most recently used. The returned
-    /// bytes share the cached allocation.
-    pub fn get(&self, key: &ChunkKey) -> Option<CachedChunk> {
+impl RasterChunkCache for InMemoryChunkCache {
+    /// Promotes the entry to most recently used.
+    fn get(&self, key: &ChunkKey) -> Option<CachedChunk> {
         let mut inner = lock(&self.inner);
         if inner.max_bytes == 0 {
             return None;
@@ -290,19 +321,9 @@ impl RasterChunkCache {
         }
     }
 
-    /// [`Self::insert_batch`] for one entry.
-    pub fn insert(&self, key: ChunkKey, chunk: CachedChunk) -> Buffer {
-        self.insert_batch(vec![(key, chunk)])
-            .pop()
-            .expect("one buffer per entry")
-    }
-
-    /// Store each chunk under its key and return, in order, the buffer the
-    /// caller should use from now on: the cached one, so that the caller's
-    /// output and the cache share a single allocation. A buffer is shrunk
-    /// to its length first when nothing else holds it, since a decode may
-    /// leave spare capacity and both the budget and the pool charge
-    /// capacity.
+    /// A buffer is shrunk to its length first when nothing else holds it,
+    /// since a decode may leave spare capacity and both the budget and the
+    /// pool charge capacity.
     ///
     /// An insert is skipped, and its bytes handed back unchanged, when the
     /// cache is disabled, when the entry alone exceeds the budget, or when
@@ -310,9 +331,8 @@ impl RasterChunkCache {
     /// An existing entry for the key with the same layout wins over the new
     /// bytes; one with a different layout is stale and is replaced.
     ///
-    /// One lock and one idle scan serve the whole batch, which is why the
-    /// caller hands over all of a load's results at once.
-    pub fn insert_batch(&self, entries: Vec<(ChunkKey, CachedChunk)>) -> Vec<Buffer> {
+    /// One lock and one idle scan serve the whole batch.
+    fn insert_batch(&self, entries: Vec<(ChunkKey, CachedChunk)>) -> Vec<Buffer> {
         let mut inner = lock(&self.inner);
         if inner.max_bytes == 0 {
             self.skipped
@@ -372,8 +392,37 @@ impl RasterChunkCache {
         out
     }
 
-    /// Counters plus a scan of what is idle and what is shared right now.
-    pub fn stats(&self) -> ChunkCacheStats {
+    fn max_bytes(&self) -> usize {
+        lock(&self.inner).max_bytes
+    }
+
+    fn set_max_bytes(&self, max_bytes: usize) {
+        let mut inner = lock(&self.inner);
+        inner.max_bytes = max_bytes;
+        if max_bytes == 0 {
+            inner.evictions += inner.entries.len() as u64;
+            inner.entries.clear();
+            return;
+        }
+        inner.trim();
+    }
+
+    /// Idle entries over the budget go, least recently used first.
+    fn trim(&self) {
+        let mut inner = lock(&self.inner);
+        if inner.max_bytes > 0 {
+            inner.trim();
+        }
+    }
+
+    fn clear(&self) {
+        let mut inner = lock(&self.inner);
+        inner.evictions += inner.entries.len() as u64;
+        inner.entries.clear();
+    }
+
+    /// The idle and shared byte counts come from a scan under the lock.
+    fn stats(&self) -> ChunkCacheStats {
         let inner = lock(&self.inner);
         let (idle_bytes, shared_bytes) = inner.idle_and_shared_bytes();
         ChunkCacheStats {
@@ -389,13 +438,45 @@ impl RasterChunkCache {
     }
 }
 
-impl fmt::Debug for RasterChunkCache {
+impl fmt::Debug for InMemoryChunkCache {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("RasterChunkCache")
+        f.debug_struct("InMemoryChunkCache")
             .field("max_bytes", &self.max_bytes())
             .field("pool", &self.pool.is_some())
             .field("stats", &self.stats())
             .finish()
+    }
+}
+
+/// A [`RasterChunkCache`] that keeps nothing: every lookup misses, every
+/// insert hands the caller's bytes straight back, the budget reads as zero
+/// and setting it changes nothing, and the counters stay at zero. A loader
+/// config built without a cache carries one, so `RS_EnsureLoaded` never
+/// branches on whether a session has a cache.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NoChunkCache;
+
+impl RasterChunkCache for NoChunkCache {
+    fn get(&self, _key: &ChunkKey) -> Option<CachedChunk> {
+        None
+    }
+
+    fn insert_batch(&self, entries: Vec<(ChunkKey, CachedChunk)>) -> Vec<Buffer> {
+        entries.into_iter().map(|(_, chunk)| chunk.bytes).collect()
+    }
+
+    fn max_bytes(&self) -> usize {
+        0
+    }
+
+    fn set_max_bytes(&self, _max_bytes: usize) {}
+
+    fn trim(&self) {}
+
+    fn clear(&self) {}
+
+    fn stats(&self) -> ChunkCacheStats {
+        ChunkCacheStats::default()
     }
 }
 
@@ -438,7 +519,7 @@ mod tests {
 
     #[test]
     fn hit_shares_the_cached_allocation() {
-        let cache = RasterChunkCache::new(1024);
+        let cache = InMemoryChunkCache::new(1024);
         let stored = cache.insert(key("a"), chunk(100));
         let hit = cache.get(&key("a")).expect("hit");
         assert_eq!(hit.bytes.as_ptr(), stored.as_ptr());
@@ -457,7 +538,7 @@ mod tests {
 
     #[test]
     fn a_disabled_cache_stores_nothing_and_never_hits() {
-        let cache = RasterChunkCache::new(0);
+        let cache = InMemoryChunkCache::new(0);
         let c = chunk(10);
         let ptr = c.bytes.as_ptr();
         let returned = cache.insert(key("a"), c);
@@ -469,7 +550,7 @@ mod tests {
 
     #[test]
     fn an_entry_over_the_whole_budget_is_skipped() {
-        let cache = RasterChunkCache::new(50);
+        let cache = InMemoryChunkCache::new(50);
         cache.insert(key("big"), chunk(100));
         assert_eq!(cache.stats().entries, 0);
         assert_eq!(cache.stats().skipped, 1);
@@ -477,7 +558,7 @@ mod tests {
 
     #[test]
     fn eviction_takes_idle_entries_lru_first_and_leaves_shared_ones() {
-        let cache = RasterChunkCache::new(300);
+        let cache = InMemoryChunkCache::new(300);
         for name in ["a", "b", "c"] {
             cache.insert(key(name), chunk(100));
         }
@@ -511,7 +592,7 @@ mod tests {
 
     #[test]
     fn shared_entries_do_not_count_against_the_budget() {
-        let cache = RasterChunkCache::new(200);
+        let cache = InMemoryChunkCache::new(200);
         let held_a = cache.insert(key("a"), chunk(100));
         let held_b = cache.insert(key("b"), chunk(100));
         // Both are shared, so a third fits without evicting either.
@@ -530,7 +611,7 @@ mod tests {
 
     #[test]
     fn trim_evicts_idle_bytes_over_budget_without_an_insert() {
-        let cache = RasterChunkCache::new(200);
+        let cache = InMemoryChunkCache::new(200);
         let held: Vec<Buffer> = ["a", "b", "c"]
             .into_iter()
             .map(|name| cache.insert(key(name), chunk(100)))
@@ -548,7 +629,7 @@ mod tests {
 
     #[test]
     fn lowering_the_budget_evicts_and_zero_clears() {
-        let cache = RasterChunkCache::new(300);
+        let cache = InMemoryChunkCache::new(300);
         for name in ["a", "b", "c"] {
             cache.insert(key(name), chunk(100));
         }
@@ -565,7 +646,7 @@ mod tests {
 
     #[test]
     fn an_existing_entry_with_the_same_layout_wins_over_a_duplicate_insert() {
-        let cache = RasterChunkCache::new(1024);
+        let cache = InMemoryChunkCache::new(1024);
         let stored = cache.insert(key("a"), chunk(10));
         let returned = cache.insert(key("a"), chunk(10));
         assert_eq!(returned.as_ptr(), stored.as_ptr());
@@ -574,7 +655,7 @@ mod tests {
 
     #[test]
     fn an_existing_entry_with_a_different_layout_is_replaced() {
-        let cache = RasterChunkCache::new(1024);
+        let cache = InMemoryChunkCache::new(1024);
         let old = cache.insert(key("a"), chunk(12));
         // Same URI and dtype, same byte count, transposed layout: the new
         // bytes must win and the stale entry must go, even while held.
@@ -595,7 +676,7 @@ mod tests {
 
     #[test]
     fn insert_shrinks_spare_capacity_when_it_owns_the_allocation() {
-        let cache = RasterChunkCache::new(1024);
+        let cache = InMemoryChunkCache::new(1024);
         let mut vec = Vec::with_capacity(512);
         vec.extend_from_slice(&[1u8; 64]);
         let bytes = Buffer::from_vec(vec);
@@ -615,7 +696,7 @@ mod tests {
 
     #[test]
     fn a_batch_is_inserted_under_one_idle_scan() {
-        let cache = RasterChunkCache::new(150);
+        let cache = InMemoryChunkCache::new(150);
         cache.insert(key("old"), chunk(100));
         let entries: Vec<(ChunkKey, CachedChunk)> = ["a", "b", "c"]
             .into_iter()
@@ -630,6 +711,21 @@ mod tests {
         assert_eq!(stats.entries, 3);
         assert_eq!(stats.evictions, 1);
         assert!(cache.get(&key("old")).is_none());
+    }
+
+    #[test]
+    fn no_chunk_cache_keeps_nothing_and_ignores_its_budget() {
+        let cache: &dyn RasterChunkCache = &NoChunkCache;
+        let c = chunk(10);
+        let ptr = c.bytes.as_ptr();
+        let returned = cache.insert(key("a"), c);
+        assert_eq!(returned.as_ptr(), ptr);
+        assert!(cache.get(&key("a")).is_none());
+        cache.set_max_bytes(1 << 20);
+        assert_eq!(cache.max_bytes(), 0);
+        cache.trim();
+        cache.clear();
+        assert_eq!(cache.stats(), ChunkCacheStats::default());
     }
 
     /// A pool with a hard capacity, since arrow's tracking pool is
@@ -692,7 +788,7 @@ mod tests {
             capacity: 1024,
             used: used.clone(),
         });
-        let cache = RasterChunkCache::new(1024).with_memory_pool(pool);
+        let cache = InMemoryChunkCache::new(1024).with_memory_pool(pool);
         let held = cache.insert(key("a"), chunk(100));
         assert_eq!(used.load(Ordering::Relaxed), 100);
         // Evicting while a batch still holds the block frees nothing.
@@ -710,7 +806,7 @@ mod tests {
             capacity: 150,
             used: used.clone(),
         });
-        let cache = RasterChunkCache::new(1024).with_memory_pool(pool);
+        let cache = InMemoryChunkCache::new(1024).with_memory_pool(pool);
         let held = cache.insert(key("a"), chunk(100));
         // `a` is shared and fills most of the pool: `b` cannot be charged.
         let b = chunk(100);
