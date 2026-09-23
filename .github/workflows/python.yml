@@ -161,6 +161,11 @@ jobs:
           cd python/sedonadb-expr
           python -m pytest -vv
 
+      - name: Run tests (sedonadb-zarr)
+        run: |
+          cd python/sedonadb-zarr
+          python -m pytest -vv
+
       - name: Run tests (sedonadb-geopandas)
         run: |
           cd python/sedonadb-geopandas

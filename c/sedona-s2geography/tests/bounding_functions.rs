@@ -17,7 +17,7 @@
 
 use std::sync::Arc;
 
-use datafusion_expr::Volatility;
+use datafusion_expr::AggregateUDFImpl;
 use sedona_expr::{aggregate_udf::SedonaAggregateUDF, scalar_udf::SedonaScalarUDF};
 use sedona_geometry::types::Edges;
 use sedona_schema::datatypes::SedonaType;
@@ -36,11 +36,10 @@ fn scalar_tester(udf: SedonaScalarUDF, arg_type: SedonaType) -> ScalarUdfTester 
 }
 
 fn aggregate_udf(name: &str) -> SedonaAggregateUDF {
-    let kernels = sedona_s2geography::register::aggregate_kernels()
+    sedona_s2geography::register::aggregate_udfs()
         .into_iter()
-        .find_map(|(kernel_name, kernels)| (kernel_name == name).then_some(kernels))
-        .unwrap_or_else(|| panic!("aggregate kernel not found: {name}"));
-    SedonaAggregateUDF::new(name, kernels, Volatility::Immutable)
+        .find(|udf| udf.name() == name)
+        .unwrap_or_else(|| panic!("aggregate UDF not found: {name}"))
 }
 
 mod st_envelope {

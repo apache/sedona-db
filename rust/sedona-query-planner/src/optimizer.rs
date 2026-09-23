@@ -24,15 +24,55 @@ use crate::spatial_expr_utils::{
 };
 use crate::wrap_async_udf::WrapAsyncUdfRule;
 use datafusion::execution::session_state::SessionStateBuilder;
-use datafusion_common::tree_node::Transformed;
-use datafusion_common::{NullEquality, Result};
+use datafusion_common::config::ConfigOptions;
+use datafusion_common::tree_node::{Transformed, TransformedResult};
+use datafusion_common::{NullEquality, Result, plan_err};
 use datafusion_expr::logical_plan::Extension;
 use datafusion_expr::utils::{conjunction, split_conjunction};
 use datafusion_expr::{BinaryExpr, Expr, Operator};
 use datafusion_expr::{Filter, Join, JoinType, LogicalPlan};
-use datafusion_optimizer::{ApplyOrder, Optimizer, OptimizerConfig, OptimizerRule};
+use datafusion_optimizer::{AnalyzerRule, ApplyOrder, Optimizer, OptimizerConfig, OptimizerRule};
 use sedona_common::option::SedonaOptions;
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
+use sedona_expr::aggregate_udf::SedonaAggregateUDF;
+
+/// Reject ordered Sedona aggregates unless they explicitly declare that input
+/// ordering does not affect their result.
+#[derive(Default, Debug)]
+struct RejectOrderedAggregates;
+
+impl AnalyzerRule for RejectOrderedAggregates {
+    fn analyze(&self, plan: LogicalPlan, _config: &ConfigOptions) -> Result<LogicalPlan> {
+        plan.transform_up_with_subqueries(|plan| plan.map_expressions(reject_ordered_aggregate))
+            .data()
+    }
+
+    fn name(&self) -> &str {
+        "sedona.reject_ordered_aggregates"
+    }
+}
+
+fn reject_ordered_aggregate(expr: Expr) -> Result<Transformed<Expr>> {
+    if let Expr::AggregateFunction(ref aggregate) = expr
+        && let Some(udf) = aggregate.func.inner().downcast_ref::<SedonaAggregateUDF>()
+        && !aggregate.params.order_by.is_empty()
+        && !udf.order_sensitivity().is_insensitive()
+    {
+        return plan_err!(
+            "ORDER BY is not supported for aggregate function {}",
+            aggregate.func.name()
+        );
+    }
+
+    Ok(Transformed::no(expr))
+}
+
+/// Register Sedona-specific semantic validation rules.
+pub fn register_sedona_analyzer_rules(
+    session_state_builder: SessionStateBuilder,
+) -> Result<SessionStateBuilder> {
+    Ok(session_state_builder.with_analyzer_rule(Arc::new(RejectOrderedAggregates)))
+}
 
 /// Replace DataFusion 54.1's leaf projection pushdown rule with the version
 /// containing the `Unnest` barrier added by DataFusion PR #22620.

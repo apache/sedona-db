@@ -30,8 +30,7 @@ use datafusion_common::{
     error::{DataFusionError, Result},
     exec_datafusion_err,
 };
-use datafusion_expr::Volatility;
-use datafusion_expr::{Accumulator, ColumnarValue};
+use datafusion_expr::{Accumulator, ColumnarValue, Volatility, utils::AggregateOrderSensitivity};
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_expr::aggregate_udf::{SedonaAccumulatorRef, SedonaAggregateUDF};
 use sedona_expr::item_crs::ItemCrsSedonaAccumulator;
@@ -57,6 +56,7 @@ pub fn st_analyze_agg_udf() -> SedonaAggregateUDF {
         ItemCrsSedonaAccumulator::wrap_impl(st_analyze_agg_impl()),
         Volatility::Immutable,
     )
+    .with_order_sensitivity(AggregateOrderSensitivity::Insensitive)
 }
 
 /// ST_Analyze_Agg() implementation for geometry types

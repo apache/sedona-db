@@ -21,6 +21,7 @@ use datafusion_common::{Result, not_impl_err};
 use datafusion_expr::{
     Accumulator, AggregateUDFImpl, Documentation, GroupsAccumulator, Signature, Volatility,
     function::{AccumulatorArgs, StateFieldsArgs},
+    utils::AggregateOrderSensitivity,
 };
 use sedona_common::sedona_internal_err;
 use sedona_schema::datatypes::SedonaType;
@@ -68,6 +69,7 @@ pub struct SedonaAggregateUDF {
     name: String,
     signature: Signature,
     kernels: Vec<SedonaAccumulatorRef>,
+    order_sensitivity: AggregateOrderSensitivity,
 }
 
 impl PartialEq for SedonaAggregateUDF {
@@ -96,12 +98,28 @@ impl SedonaAggregateUDF {
             name: name.to_string(),
             signature,
             kernels: kernels.into_sedona_accumulator_refs(),
+            order_sensitivity: AggregateOrderSensitivity::HardRequirement,
         }
     }
 
     /// Create a new immutable SedonaAggregateUDF
     pub fn from_impl(name: &str, kernels: impl IntoSedonaAccumulatorRefs) -> Self {
         Self::new(name, kernels, Volatility::Immutable)
+    }
+
+    /// Set how this aggregate responds to an `ORDER BY` clause.
+    ///
+    /// Aggregates default to [`AggregateOrderSensitivity::HardRequirement`] so
+    /// that new and externally registered aggregates are rejected unless they
+    /// explicitly declare that they can safely ignore ordering.
+    pub fn with_order_sensitivity(mut self, order_sensitivity: AggregateOrderSensitivity) -> Self {
+        self.order_sensitivity = order_sensitivity;
+        self
+    }
+
+    /// Return how this aggregate responds to an `ORDER BY` clause.
+    pub fn order_sensitivity(&self) -> AggregateOrderSensitivity {
+        self.order_sensitivity
     }
 
     /// Add a new kernel to an Aggregate UDF
@@ -216,6 +234,10 @@ impl AggregateUDFImpl for SedonaAggregateUDF {
     fn documentation(&self) -> Option<&Documentation> {
         None
     }
+
+    fn order_sensitivity(&self) -> AggregateOrderSensitivity {
+        self.order_sensitivity()
+    }
 }
 
 pub trait SedonaAccumulator: Debug + Send + Sync {
@@ -272,6 +294,10 @@ mod test {
             Volatility::Immutable,
         );
         assert_eq!(udf.name(), "empty");
+        assert_eq!(
+            udf.order_sensitivity(),
+            AggregateOrderSensitivity::HardRequirement
+        );
         let err = udf.return_field(&[]).unwrap_err();
         assert_eq!(err.message(), "empty(): No kernel matching arguments");
         assert!(udf.kernels().is_empty());
@@ -281,5 +307,16 @@ mod test {
         assert_eq!(batch_err.message(), "empty(): No kernel matching arguments");
 
         Ok(())
+    }
+
+    #[test]
+    fn udaf_order_sensitivity() {
+        let udf = SedonaAggregateUDF::from_impl("insensitive", Vec::<SedonaAccumulatorRef>::new())
+            .with_order_sensitivity(AggregateOrderSensitivity::Insensitive);
+
+        assert_eq!(
+            udf.order_sensitivity(),
+            AggregateOrderSensitivity::Insensitive
+        );
     }
 }

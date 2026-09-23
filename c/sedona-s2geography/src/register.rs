@@ -16,8 +16,9 @@
 // under the License.
 
 use datafusion_common::Result;
+use datafusion_expr::utils::AggregateOrderSensitivity;
 use sedona_common::sedona_internal_err;
-use sedona_expr::aggregate_udf::SedonaAccumulatorRef;
+use sedona_expr::aggregate_udf::{SedonaAccumulatorRef, SedonaAggregateUDF};
 use sedona_expr::item_crs::ItemCrsSedonaAccumulator;
 use sedona_expr::scalar_udf::ScalarKernelRef;
 use sedona_functions::{st_analyze_agg, st_envelope_agg};
@@ -66,4 +67,15 @@ pub fn aggregate_kernels() -> Vec<(&'static str, Vec<SedonaAccumulatorRef>)> {
             ))]),
         ),
     ]
+}
+
+/// Returns aggregate UDF declarations for s2geography functions
+pub fn aggregate_udfs() -> Vec<SedonaAggregateUDF> {
+    aggregate_kernels()
+        .into_iter()
+        .map(|(name, kernels)| {
+            SedonaAggregateUDF::from_impl(name, kernels)
+                .with_order_sensitivity(AggregateOrderSensitivity::Insensitive)
+        })
+        .collect()
 }

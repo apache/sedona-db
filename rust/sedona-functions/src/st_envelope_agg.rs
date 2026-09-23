@@ -26,7 +26,10 @@ use datafusion_common::{
     cast::as_float64_array,
     error::{DataFusionError, Result},
 };
-use datafusion_expr::{Accumulator, ColumnarValue, EmitTo, GroupsAccumulator, Volatility};
+use datafusion_expr::{
+    Accumulator, ColumnarValue, EmitTo, GroupsAccumulator, Volatility,
+    utils::AggregateOrderSensitivity,
+};
 use sedona_common::sedona_internal_err;
 use sedona_expr::{
     aggregate_udf::{SedonaAccumulator, SedonaAggregateUDF},
@@ -58,6 +61,7 @@ pub fn st_envelope_agg_udf() -> SedonaAggregateUDF {
         )]),
         Volatility::Immutable,
     )
+    .with_order_sensitivity(AggregateOrderSensitivity::Insensitive)
 }
 
 /// Generic ST_Envelope_Agg accumulator that works with any WkbBounder2D implementation

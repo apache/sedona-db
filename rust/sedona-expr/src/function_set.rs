@@ -18,7 +18,7 @@ use crate::{
     aggregate_udf::{IntoSedonaAccumulatorRefs, SedonaAggregateUDF},
     scalar_udf::{IntoScalarKernelRefs, SedonaScalarUDF},
 };
-use datafusion_common::error::Result;
+use datafusion_common::{error::Result, exec_err};
 use datafusion_expr::{AggregateUDFImpl, ScalarUDFImpl};
 use std::collections::HashMap;
 
@@ -130,6 +130,27 @@ impl FunctionSet {
 
         Ok(self.aggregate_udf(name).unwrap())
     }
+
+    /// Add an aggregate UDF declaration to this set.
+    ///
+    /// If another backend has already declared the same function, its kernels
+    /// are appended after verifying that both declarations agree about order
+    /// sensitivity.
+    pub fn add_aggregate_udf(&mut self, udf: SedonaAggregateUDF) -> Result<&SedonaAggregateUDF> {
+        let name = udf.name().to_string();
+        if let Some(function) = self.aggregate_udf_mut(&name) {
+            if function.order_sensitivity() != udf.order_sensitivity() {
+                return exec_err!(
+                    "Conflicting order sensitivity declarations for aggregate function {name}"
+                );
+            }
+            function.add_kernel(udf.kernels().to_vec());
+        } else {
+            self.insert_aggregate_udf(udf);
+        }
+
+        Ok(self.aggregate_udf(&name).unwrap())
+    }
 }
 
 impl Default for FunctionSet {
@@ -145,7 +166,9 @@ mod tests {
     use arrow_schema::{DataType, FieldRef};
     use datafusion_common::{not_impl_err, scalar::ScalarValue};
 
-    use datafusion_expr::{Accumulator, ColumnarValue, Volatility};
+    use datafusion_expr::{
+        Accumulator, ColumnarValue, Volatility, utils::AggregateOrderSensitivity,
+    };
     use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
     use crate::{
@@ -287,5 +310,21 @@ mod tests {
             .into_iter()
             .collect::<HashSet<_>>()
         );
+
+        let insensitive = SedonaAggregateUDF::from_impl("merged_udaf", kernel.clone())
+            .with_order_sensitivity(AggregateOrderSensitivity::Insensitive);
+        functions.add_aggregate_udf(insensitive).unwrap();
+        let insensitive = SedonaAggregateUDF::from_impl("merged_udaf", kernel.clone())
+            .with_order_sensitivity(AggregateOrderSensitivity::Insensitive);
+        let merged = functions.add_aggregate_udf(insensitive).unwrap();
+        assert_eq!(merged.kernels().len(), 2);
+        assert_eq!(
+            merged.order_sensitivity(),
+            AggregateOrderSensitivity::Insensitive
+        );
+
+        let conflicting = SedonaAggregateUDF::from_impl("merged_udaf", kernel);
+        let err = functions.add_aggregate_udf(conflicting).unwrap_err();
+        assert!(err.message().contains("Conflicting order sensitivity"));
     }
 }

@@ -142,12 +142,27 @@ jobs:
           workspaces: ${{ env.CACHE_WORKSPACE }}
           cache-bin: false
 
+      # For macOS CRAN binaries that Posit Package Manager does not carry,
+      # pak downloads from cran.rstudio.com and mac.cran.dev at the same time
+      # and keeps whichever finishes first. mac.cran.dev serves the
+      # adbcdrivermanager 0.24.0-3 binary zstd-compressed, which pak cannot
+      # extract, so the job failed whenever that copy won the race:
+      #   https://github.com/r-lib/pkgdepends/issues/485
+      #   https://github.com/r-lib/pak/issues/915
+      # Install the package from source first; pak then keeps the installed
+      # version instead of downloading a binary. Drop this once pak reads
+      # zstd archives or the CRAN copies are gzip everywhere.
+      - name: Install adbcdrivermanager from source (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          Rscript -e 'install.packages("nanoarrow")' \
+                  -e 'install.packages("adbcdrivermanager", type = "source")'
+
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
           needs: check
           extra-packages: any::glue, any::here, any::rlang, any::yaml, any::roxygen2, any::rcmdcheck
           working-directory: r/sedonadb
-          cache: false
 
       - name: Install sedonadb R Package
         env:

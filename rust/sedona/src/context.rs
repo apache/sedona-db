@@ -77,8 +77,8 @@ use datafusion_execution::memory_pool::MemoryConsumer;
 use sedona_common::option::DEFAULT_RASTER_CACHE_MAX_BYTES;
 use sedona_query_planner::{
     optimizer::{
-        register_ensure_loaded_optimizer, register_spatial_join_logical_optimizer,
-        register_vendored_optimizer_rules,
+        register_ensure_loaded_optimizer, register_sedona_analyzer_rules,
+        register_spatial_join_logical_optimizer, register_vendored_optimizer_rules,
     },
     query_planner::SedonaQueryPlanner,
     raster_batch_budget::RasterBatchBudgetRule,
@@ -116,6 +116,7 @@ impl SedonaContext {
         // DataFusion #22620 workaround tracked by
         // https://github.com/apache/sedona-db/issues/1232.
         let state_builder = register_vendored_optimizer_rules(state_builder).unwrap();
+        let state_builder = register_sedona_analyzer_rules(state_builder).unwrap();
         Self::finish_new(SessionContext::new_with_state(state_builder.build())).unwrap()
     }
 
@@ -276,6 +277,7 @@ impl SedonaContext {
         // DataFusion #22620 workaround tracked by
         // https://github.com/apache/sedona-db/issues/1232.
         state_builder = register_vendored_optimizer_rules(state_builder)?;
+        state_builder = register_sedona_analyzer_rules(state_builder)?;
         state_builder = register_spatial_join_logical_optimizer(state_builder)?;
         state_builder = register_ensure_loaded_optimizer(state_builder)?;
         // Re-batch raster materialization by estimated bytes rather than
@@ -443,9 +445,9 @@ impl SedonaContext {
         #[cfg(feature = "geos")]
         out.register_scalar_kernels(sedona_geos::register::scalar_kernels().into_iter())?;
 
-        // Register geos aggregate kernels if built with geos support
+        // Register geos aggregate UDFs if built with geos support
         #[cfg(feature = "geos")]
-        out.register_aggregate_kernels(sedona_geos::register::aggregate_kernels().into_iter())?;
+        out.register_aggregate_udfs(sedona_geos::register::aggregate_udfs().into_iter())?;
 
         // Register geo kernels if built with geo support
         #[cfg(feature = "geo")]
@@ -454,9 +456,9 @@ impl SedonaContext {
         #[cfg(feature = "tg")]
         out.register_scalar_kernels(sedona_tg::register::scalar_kernels().into_iter())?;
 
-        // Register geo aggregate kernels if built with geo support
+        // Register geo aggregate UDFs if built with geo support
         #[cfg(feature = "geo")]
-        out.register_aggregate_kernels(sedona_geo::register::aggregate_kernels().into_iter())?;
+        out.register_aggregate_udfs(sedona_geo::register::aggregate_udfs().into_iter())?;
 
         // Register s2geography scalar kernels if built with s2geography support
         #[cfg(feature = "s2geography")]
@@ -478,9 +480,7 @@ impl SedonaContext {
             sd_order_lnglat::OrderLngLat::new(sedona_s2geography::utils::s2_cell_id_from_lnglat);
         self.register_scalar_kernels([("sd_order", sd_order_kernel)].into_iter())?;
 
-        self.register_aggregate_kernels(
-            sedona_s2geography::register::aggregate_kernels().into_iter(),
-        )?;
+        self.register_aggregate_udfs(sedona_s2geography::register::aggregate_udfs().into_iter())?;
 
         Ok(())
     }
@@ -624,6 +624,19 @@ impl SedonaContext {
         let mut functions = self.functions_mut()?;
         for (name, kernel) in kernels {
             let udf = functions.add_aggregate_udf_kernel(name, kernel)?;
+            self.ctx.register_udaf(udf.clone().into());
+        }
+
+        Ok(())
+    }
+
+    pub fn register_aggregate_udfs(
+        &mut self,
+        udfs: impl Iterator<Item = SedonaAggregateUDF>,
+    ) -> Result<()> {
+        let mut functions = self.functions_mut()?;
+        for udf in udfs {
+            let udf = functions.add_aggregate_udf(udf)?;
             self.ctx.register_udaf(udf.clone().into());
         }
 
@@ -1120,6 +1133,67 @@ mod tests {
         assert_eq!(
             batches.iter().map(|batch| batch.num_rows()).sum::<usize>(),
             2
+        );
+    }
+
+    #[tokio::test]
+    async fn ordered_sedona_aggregates_respect_order_sensitivity() {
+        let ctx = SedonaContext::new();
+
+        let values = "FROM (VALUES (2, ST_Point(2, 2)), (1, ST_Point(1, 1))) AS t(x, g)";
+
+        let sql = format!("SELECT ST_Collect_Agg(g ORDER BY x) {values}");
+        let err = ctx.sql(&sql).await.unwrap().collect().await.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("ORDER BY is not supported for aggregate function st_collect_agg"),
+            "unexpected error: {err}"
+        );
+
+        for function in [
+            "ST_Analyze_Agg",
+            "ST_Envelope_Agg",
+            "ST_ConvexHull_Agg",
+            "ST_Intersection_Agg",
+            "ST_Union_Agg",
+            "ST_Polygonize_Agg",
+        ] {
+            let sql = format!("SELECT {function}(g ORDER BY x) {values}");
+            ctx.sql(&sql)
+                .await
+                .unwrap()
+                .collect()
+                .await
+                .unwrap_or_else(|err| panic!("{function} unexpectedly failed: {err}"));
+        }
+
+        // DataFusion's own ordered aggregates remain available.
+        ctx.sql("SELECT array_agg(x ORDER BY x) FROM (VALUES (2), (1)) AS t(x)")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn ordered_sedona_aggregates_in_subqueries_are_rejected() {
+        let ctx = SedonaContext::new();
+
+        let sql = r#"
+            SELECT ST_AsText((
+                SELECT ST_Collect_Agg(g ORDER BY x)
+                FROM (VALUES
+                    (2, ST_Point(2, 2)),
+                    (1, ST_Point(1, 1))
+                ) AS t(x, g)
+            ))
+        "#;
+        let err = ctx.sql(sql).await.unwrap().collect().await.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("ORDER BY is not supported for aggregate function st_collect_agg"),
+            "unexpected error: {err}"
         );
     }
 
