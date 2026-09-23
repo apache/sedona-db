@@ -76,12 +76,12 @@ impl SedonaScalarKernel for StSrid {
         let executor = WkbExecutor::new(arg_types, args);
         let mut builder = UInt32Builder::with_capacity(executor.num_iterations());
         let srid_opt = match &arg_types[0] {
-            SedonaType::Wkb(_, Some(crs)) | SedonaType::WkbView(_, Some(crs)) => {
-                match crs.srid()? {
-                    Some(srid) => Some(srid),
-                    None => return Err(DataFusionError::Execution("CRS has no SRID".to_string())),
-                }
-            }
+            SedonaType::Wkb(_, Some(crs))
+            | SedonaType::WkbLarge(_, Some(crs))
+            | SedonaType::WkbView(_, Some(crs)) => match crs.srid()? {
+                Some(srid) => Some(srid),
+                None => return Err(DataFusionError::Execution("CRS has no SRID".to_string())),
+            },
             _ => Some(0),
         };
 
@@ -178,7 +178,9 @@ impl SedonaScalarKernel for StCrs {
         let executor = WkbExecutor::new(arg_types, args);
         let mut builder = StringViewBuilder::with_capacity(executor.num_iterations());
         let crs_opt: Option<String> = match &arg_types[0] {
-            SedonaType::Wkb(_, Some(crs)) | SedonaType::WkbView(_, Some(crs)) => {
+            SedonaType::Wkb(_, Some(crs))
+            | SedonaType::WkbLarge(_, Some(crs))
+            | SedonaType::WkbView(_, Some(crs)) => {
                 // Return the full round-trippable definition rather than
                 // collapsing to the authority code: an `authority:code` CRS
                 // stays compact, while a PROJJSON/WKT definition is preserved

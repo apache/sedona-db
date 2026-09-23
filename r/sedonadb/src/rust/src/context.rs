@@ -72,18 +72,59 @@ impl InternalContext {
         })
     }
 
-    pub fn read_parquet(&self, paths: savvy::Sexp) -> Result<InternalDataFrame> {
+    #[allow(clippy::too_many_arguments)]
+    pub fn read_parquet(
+        &self,
+        paths: savvy::Sexp,
+        option_keys: savvy::Sexp,
+        option_values: savvy::Sexp,
+        geometry_columns: savvy::Sexp,
+        validate: bool,
+        partitioning: savvy::Sexp,
+    ) -> Result<InternalDataFrame> {
         let paths_strsxp = savvy::StringSexp::try_from(paths)?;
         let table_paths = paths_strsxp
             .iter()
             .map(|s| s.to_string())
             .collect::<Vec<_>>();
 
+        let option_keys_strsxp = savvy::StringSexp::try_from(option_keys)?;
+        let option_values_strsxp = savvy::StringSexp::try_from(option_values)?;
+        let options = option_keys_strsxp
+            .iter()
+            .zip(option_values_strsxp.iter())
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect::<HashMap<_, _>>();
+
+        let mut geo_options = GeoParquetReadOptions::from_table_options(options)
+            .map_err(|e| savvy_err!("Invalid table options: {e}"))?;
+
+        if !geometry_columns.is_null() {
+            let geometry_columns_strsxp = savvy::StringSexp::try_from(geometry_columns)?;
+            let geometry_columns_json = geometry_columns_strsxp
+                .iter()
+                .next()
+                .ok_or_else(|| savvy_err!("`geometry_columns` must have length 1"))?;
+            geo_options = geo_options
+                .with_geometry_columns_json(geometry_columns_json)
+                .map_err(|e| savvy_err!("Invalid geometry_columns JSON: {e}"))?;
+        }
+
+        geo_options = geo_options.with_validate(validate);
+
+        if !partitioning.is_null() {
+            let partitioning_strsxp = savvy::StringSexp::try_from(partitioning)?;
+            geo_options = geo_options.with_table_partition_cols(
+                partitioning_strsxp
+                    .iter()
+                    .map(|name| (name.to_string(), DataType::Utf8View))
+                    .collect(),
+            );
+        }
+
         let inner_context = self.inner.clone();
         let inner = wait_for_future_captured_r(&self.runtime, async move {
-            inner_context
-                .read_parquet(table_paths, GeoParquetReadOptions::default())
-                .await
+            inner_context.read_parquet(table_paths, geo_options).await
         })??;
 
         Ok(new_data_frame(inner, self.runtime.clone()))

@@ -25,6 +25,7 @@ pub mod probe_shuffle_exec;
 // https://github.com/apache/sedona-db/issues/1232.
 pub mod push_down_leaf_projections;
 pub mod query_planner;
+pub mod raster_batch_budget;
 mod restore_metadata;
 mod spatial_expr_utils;
 pub mod spatial_join_physical_planner;

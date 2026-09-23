@@ -41,6 +41,7 @@ pub type GeoArrowDimensions = enum_t;
 pub type GeoArrowType = enum_t;
 
 pub const GeoArrowType_GEOARROW_TYPE_WKB: GeoArrowType = 100001;
+pub const GeoArrowType_GEOARROW_TYPE_LARGE_WKB: GeoArrowType = 100002;
 pub const GeoArrowType_GEOARROW_TYPE_WKT: GeoArrowType = 100003;
 pub const GeoArrowType_GEOARROW_TYPE_WKB_VIEW: GeoArrowType = 100005;
 pub const GeoArrowType_GEOARROW_TYPE_WKT_VIEW: GeoArrowType = 100006;

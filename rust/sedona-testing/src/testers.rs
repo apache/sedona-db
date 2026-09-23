@@ -709,7 +709,9 @@ impl ScalarUdfTester {
     fn scalar_lit(arg: impl Literal, sedona_type: &SedonaType) -> Result<ScalarValue> {
         if let Expr::Literal(scalar, _) = arg.lit() {
             let is_geometry_or_geography = match sedona_type {
-                SedonaType::Wkb(_, _) | SedonaType::WkbView(_, _) => true,
+                SedonaType::Wkb(_, _) | SedonaType::WkbLarge(_, _) | SedonaType::WkbView(_, _) => {
+                    true
+                }
                 SedonaType::Arrow(_) if sedona_type.is_item_crs() => true,
                 _ => false,
             };

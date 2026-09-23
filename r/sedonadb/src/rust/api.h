@@ -43,7 +43,12 @@ SEXP savvy_InternalContext_read__ffi(SEXP self__, SEXP c_arg__paths,
                                      SEXP c_arg__partitioning,
                                      SEXP c_arg__partitioning_set,
                                      SEXP c_arg__format);
-SEXP savvy_InternalContext_read_parquet__ffi(SEXP self__, SEXP c_arg__paths);
+SEXP savvy_InternalContext_read_parquet__ffi(SEXP self__, SEXP c_arg__paths,
+                                             SEXP c_arg__option_keys,
+                                             SEXP c_arg__option_values,
+                                             SEXP c_arg__geometry_columns,
+                                             SEXP c_arg__validate,
+                                             SEXP c_arg__partitioning);
 SEXP savvy_InternalContext_register_scalar_udf__ffi(
     SEXP self__, SEXP c_arg__scalar_udf_xptr);
 SEXP savvy_InternalContext_scalar_udf_xptr__ffi(SEXP self__, SEXP c_arg__name);

@@ -24,7 +24,8 @@ use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::types::{GeometryTypeAndDimensions, GeometryTypeId};
 use sedona_schema::{
     datatypes::{
-        SedonaType, WKB_GEOMETRY, WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOGRAPHY_WGS84, WKB_VIEW_GEOMETRY,
+        SedonaType, WKB_GEOMETRY, WKB_LARGE_GEOMETRY, WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOGRAPHY_WGS84,
+        WKB_VIEW_GEOMETRY,
     },
     matchers::ArgMatcher,
 };
@@ -132,6 +133,7 @@ impl SedonaScalarKernel for STGeomFromWKB {
             let iter_type = match &arg_types[0] {
                 SedonaType::Arrow(data_type) => match data_type {
                     DataType::Binary => WKB_GEOMETRY,
+                    DataType::LargeBinary => WKB_LARGE_GEOMETRY,
                     DataType::BinaryView => WKB_VIEW_GEOGRAPHY,
                     DataType::Null => WKB_VIEW_GEOMETRY,
                     _ => unreachable!(),
@@ -178,7 +180,7 @@ impl SedonaScalarKernel for STGeomFromWKB {
 
 #[cfg(test)]
 mod tests {
-    use arrow_array::{ArrayRef, BinaryArray, BinaryViewArray, create_array};
+    use arrow_array::{ArrayRef, BinaryArray, BinaryViewArray, LargeBinaryArray, create_array};
     use datafusion_common::scalar::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
@@ -321,7 +323,10 @@ mod tests {
     }
 
     #[rstest]
-    fn udf(#[values(DataType::Binary, DataType::BinaryView)] data_type: DataType) {
+    fn udf(
+        #[values(DataType::Binary, DataType::LargeBinary, DataType::BinaryView)]
+        data_type: DataType,
+    ) {
         let udf = st_geomfromwkb_udf();
         let tester = ScalarUdfTester::new(
             udf.clone().into(),
@@ -351,7 +356,10 @@ mod tests {
     }
 
     #[rstest]
-    fn udf_unchecked(#[values(DataType::Binary, DataType::BinaryView)] data_type: DataType) {
+    fn udf_unchecked(
+        #[values(DataType::Binary, DataType::LargeBinary, DataType::BinaryView)]
+        data_type: DataType,
+    ) {
         let udf = st_geomfromwkbunchecked_udf();
         let tester = ScalarUdfTester::new(
             udf.clone().into(),
@@ -400,7 +408,8 @@ mod tests {
 
     #[rstest]
     fn unchecked_invalid_wkb(
-        #[values(DataType::Binary, DataType::BinaryView)] data_type: DataType,
+        #[values(DataType::Binary, DataType::LargeBinary, DataType::BinaryView)]
+        data_type: DataType,
     ) {
         let udf = st_geomfromwkbunchecked_udf();
         let tester = ScalarUdfTester::new(udf.into(), vec![SedonaType::Arrow(data_type.clone())]);
@@ -408,6 +417,7 @@ mod tests {
         for invalid in INVALID_WKBS {
             let invalid_scalar = match data_type {
                 DataType::Binary => ScalarValue::Binary(Some(invalid.to_vec())),
+                DataType::LargeBinary => ScalarValue::LargeBinary(Some(invalid.to_vec())),
                 DataType::BinaryView => ScalarValue::BinaryView(Some(invalid.to_vec())),
                 _ => unreachable!(),
             };
@@ -422,6 +432,11 @@ mod tests {
                     [Some(invalid), None, Some(invalid)]
                         .iter()
                         .collect::<BinaryArray>(),
+                ),
+                DataType::LargeBinary => Arc::new(
+                    [Some(invalid), None, Some(invalid)]
+                        .iter()
+                        .collect::<LargeBinaryArray>(),
                 ),
                 DataType::BinaryView => Arc::new(
                     [Some(invalid), None, Some(invalid)]

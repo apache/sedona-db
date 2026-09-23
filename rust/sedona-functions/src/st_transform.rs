@@ -352,8 +352,12 @@ impl<'a> ArgInput<'a> {
             return Self::Null;
         }
 
-        if let Ok((SedonaType::Wkb(edges, _) | SedonaType::WkbView(edges, _), maybe_crs_type)) =
-            parse_item_crs_arg_type(arg_type)
+        if let Ok((
+            SedonaType::Wkb(edges, _)
+            | SedonaType::WkbLarge(edges, _)
+            | SedonaType::WkbView(edges, _),
+            maybe_crs_type,
+        )) = parse_item_crs_arg_type(arg_type)
             && maybe_crs_type.is_some()
         {
             return Self::ItemCrs(edges);
@@ -369,17 +373,21 @@ impl<'a> ArgInput<'a> {
             }
         } else {
             match arg_type {
-                SedonaType::Wkb(edges, crs) | SedonaType::WkbView(edges, crs) => {
-                    Self::Geo(*edges, crs)
-                }
+                SedonaType::Wkb(edges, crs)
+                | SedonaType::WkbLarge(edges, crs)
+                | SedonaType::WkbView(edges, crs) => Self::Geo(*edges, crs),
                 _ => Self::Unsupported,
             }
         }
     }
 
     fn from_arg(arg_type: &'a SedonaType, arg: &'a ColumnarValue) -> Self {
-        if let Ok((SedonaType::Wkb(edges, _) | SedonaType::WkbView(edges, _), maybe_crs_type)) =
-            parse_item_crs_arg_type(arg_type)
+        if let Ok((
+            SedonaType::Wkb(edges, _)
+            | SedonaType::WkbLarge(edges, _)
+            | SedonaType::WkbView(edges, _),
+            maybe_crs_type,
+        )) = parse_item_crs_arg_type(arg_type)
             && maybe_crs_type.is_some()
         {
             return Self::ItemCrs(edges);
@@ -394,9 +402,9 @@ impl<'a> ArgInput<'a> {
             }
         } else {
             match arg_type {
-                SedonaType::Wkb(edges, crs) | SedonaType::WkbView(edges, crs) => {
-                    Self::Geo(*edges, crs)
-                }
+                SedonaType::Wkb(edges, crs)
+                | SedonaType::WkbLarge(edges, crs)
+                | SedonaType::WkbView(edges, crs) => Self::Geo(*edges, crs),
                 _ => Self::Unsupported,
             }
         }

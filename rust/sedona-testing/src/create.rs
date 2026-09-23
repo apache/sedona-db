@@ -16,7 +16,9 @@
 // under the License.
 use std::{str::FromStr, sync::Arc};
 
-use arrow_array::{ArrayRef, BinaryArray, BinaryViewArray, StringViewArray, StructArray};
+use arrow_array::{
+    ArrayRef, BinaryArray, BinaryViewArray, LargeBinaryArray, StringViewArray, StructArray,
+};
 use arrow_schema::{DataType, Field};
 use datafusion_common::ScalarValue;
 use datafusion_expr::ColumnarValue;
@@ -59,6 +61,7 @@ pub fn create_array(wkt_values: &[Option<&str>], data_type: &SedonaType) -> Arra
 pub fn create_array_storage(wkt_values: &[Option<&str>], data_type: &SedonaType) -> ArrayRef {
     match data_type {
         SedonaType::Wkb(_, _) => Arc::new(make_wkb_array::<BinaryArray>(wkt_values)),
+        SedonaType::WkbLarge(_, _) => Arc::new(make_wkb_array::<LargeBinaryArray>(wkt_values)),
         SedonaType::WkbView(_, _) => Arc::new(make_wkb_array::<BinaryViewArray>(wkt_values)),
         SedonaType::Arrow(DataType::Struct(fields)) if data_type.is_item_crs() => {
             let item_type = SedonaType::from_storage_field(&fields[0]).unwrap();
@@ -99,6 +102,7 @@ pub fn create_array_item_crs<'a>(
 pub fn create_scalar_storage(wkt_value: Option<&str>, data_type: &SedonaType) -> ScalarValue {
     match data_type {
         SedonaType::Wkb(_, _) => ScalarValue::Binary(wkt_value.map(make_wkb)),
+        SedonaType::WkbLarge(_, _) => ScalarValue::LargeBinary(wkt_value.map(make_wkb)),
         SedonaType::WkbView(_, _) => ScalarValue::BinaryView(wkt_value.map(make_wkb)),
         SedonaType::Arrow(DataType::Struct(fields)) if data_type.is_item_crs() => {
             let item_type = SedonaType::from_storage_field(&fields[0]).unwrap();

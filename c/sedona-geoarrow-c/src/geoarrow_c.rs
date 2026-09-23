@@ -269,9 +269,11 @@ impl Default for Visitor {
 fn geoarrow_type_id(sedona_type: &SedonaType) -> Result<GeoArrowType, GeoArrowCError> {
     let type_id = match sedona_type {
         SedonaType::Wkb(_, _) => GeoArrowType_GEOARROW_TYPE_WKB,
+        SedonaType::WkbLarge(_, _) => GeoArrowType_GEOARROW_TYPE_LARGE_WKB,
         SedonaType::WkbView(_, _) => GeoArrowType_GEOARROW_TYPE_WKB_VIEW,
         SedonaType::Arrow(data_type) => match data_type {
             DataType::Binary => GeoArrowType_GEOARROW_TYPE_WKB,
+            DataType::LargeBinary => GeoArrowType_GEOARROW_TYPE_LARGE_WKB,
             DataType::BinaryView => GeoArrowType_GEOARROW_TYPE_WKB_VIEW,
             DataType::Utf8 => GeoArrowType_GEOARROW_TYPE_WKT,
             DataType::Utf8View => GeoArrowType_GEOARROW_TYPE_WKT_VIEW,
@@ -301,6 +303,7 @@ fn geoarrow_type_id(sedona_type: &SedonaType) -> Result<GeoArrowType, GeoArrowCE
 fn arrow_storage_type(type_id: GeoArrowType) -> Result<DataType, GeoArrowCError> {
     Ok(match type_id {
         GeoArrowType_GEOARROW_TYPE_WKB => DataType::Binary,
+        GeoArrowType_GEOARROW_TYPE_LARGE_WKB => DataType::LargeBinary,
         GeoArrowType_GEOARROW_TYPE_WKB_VIEW => DataType::BinaryView,
         GeoArrowType_GEOARROW_TYPE_WKT => DataType::Utf8,
         GeoArrowType_GEOARROW_TYPE_WKT_VIEW => DataType::Utf8View,
@@ -315,7 +318,7 @@ fn arrow_storage_type(type_id: GeoArrowType) -> Result<DataType, GeoArrowCError>
 #[cfg(test)]
 mod test {
     use datafusion_common::cast::as_string_array;
-    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
+    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_LARGE_GEOMETRY, WKB_VIEW_GEOMETRY};
     use sedona_testing::create::create_array_storage;
 
     use super::*;
@@ -327,6 +330,13 @@ mod test {
         let mut visitor = Visitor::void();
         let wkb_array = create_array_storage(&[Some("POINT (0 1)"), None], &WKB_GEOMETRY);
         reader.visit(&wkb_array, &mut visitor, &mut error).unwrap();
+
+        let mut reader = ArrayReader::try_new(&WKB_LARGE_GEOMETRY).unwrap();
+        let large_wkb_array =
+            create_array_storage(&[Some("POINT (0 1)"), None], &WKB_LARGE_GEOMETRY);
+        reader
+            .visit(&large_wkb_array, &mut visitor, &mut error)
+            .unwrap();
     }
 
     #[test]
@@ -373,12 +383,20 @@ mod test {
             GeoArrowType_GEOARROW_TYPE_WKB_VIEW
         );
         assert_eq!(
+            geoarrow_type_id(&WKB_LARGE_GEOMETRY).unwrap(),
+            GeoArrowType_GEOARROW_TYPE_LARGE_WKB
+        );
+        assert_eq!(
             geoarrow_type_id(&SedonaType::Arrow(DataType::Binary)).unwrap(),
             GeoArrowType_GEOARROW_TYPE_WKB
         );
         assert_eq!(
             geoarrow_type_id(&SedonaType::Arrow(DataType::BinaryView)).unwrap(),
             GeoArrowType_GEOARROW_TYPE_WKB_VIEW
+        );
+        assert_eq!(
+            geoarrow_type_id(&SedonaType::Arrow(DataType::LargeBinary)).unwrap(),
+            GeoArrowType_GEOARROW_TYPE_LARGE_WKB
         );
         assert_eq!(
             geoarrow_type_id(&SedonaType::Arrow(DataType::Utf8)).unwrap(),
@@ -405,6 +423,10 @@ mod test {
         assert_eq!(
             arrow_storage_type(GeoArrowType_GEOARROW_TYPE_WKB_VIEW).unwrap(),
             DataType::BinaryView
+        );
+        assert_eq!(
+            arrow_storage_type(GeoArrowType_GEOARROW_TYPE_LARGE_WKB).unwrap(),
+            DataType::LargeBinary
         );
         assert_eq!(
             arrow_storage_type(GeoArrowType_GEOARROW_TYPE_WKT).unwrap(),

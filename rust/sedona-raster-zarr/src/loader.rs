@@ -98,7 +98,8 @@ impl ZarrChunkReader {
     /// `arrays`:
     /// - `None` — read every multi-dimensional array. 1-D arrays
     ///   (typical xarray coord variables) are auto-skipped.
-    /// - `Some(names)` — read exactly the named arrays. Unknown names
+    /// - `Some(names)` — read exactly the named arrays, as bands in that
+    ///   order (band `i` of every row is `names[i]`). Unknown names
     ///   error. 1-D arrays are always rejected (a raster band needs
     ///   ≥ 2 dimensions); naming one explicitly errors with a clear
     ///   message.
@@ -322,7 +323,13 @@ async fn open_and_validate(
                     "Zarr group at {group_uri} has no child arrays"
                 )));
             }
-            let kept: Vec<_> = arrays.into_iter().filter(|a| a.shape().len() > 1).collect();
+            // Sort by path so band order is deterministic: zarrs's store
+            // listing order is implementation-defined (filesystem stores
+            // happen to enumerate alphabetically, but that is not a
+            // contract). With an explicit `arrays` list the caller's order
+            // is the band order, so only this arm sorts.
+            let mut kept: Vec<_> = arrays.into_iter().filter(|a| a.shape().len() > 1).collect();
+            kept.sort_by(|a, b| a.path().as_str().cmp(b.path().as_str()));
             if kept.is_empty() {
                 return Err(ArrowError::InvalidArgumentError(format!(
                     "Zarr group at {group_uri} contains only 1-D arrays (typical \
@@ -736,16 +743,11 @@ async fn enumerate_child_arrays(
     Ok(arrays)
 }
 
-/// Collect per-array metadata from open zarrs `Array` handles.
-///
-/// Sorts arrays by path so band ordering across rows is deterministic
-/// (zarrs's underlying store listing order is implementation-defined —
-/// filesystem stores currently happen to enumerate alphabetically, but
-/// that's not part of the contract we want consumers to rely on).
+/// Collect per-array metadata from open zarrs `Array` handles, in the
+/// order given: that order becomes the band order of every row.
 fn collect_array_infos(
-    mut arrays: Vec<Array<dyn AsyncReadableListableStorageTraits>>,
+    arrays: Vec<Array<dyn AsyncReadableListableStorageTraits>>,
 ) -> Result<Vec<ArrayInfo>, ArrowError> {
-    arrays.sort_by(|a, b| a.path().as_str().cmp(b.path().as_str()));
     let mut out = Vec::with_capacity(arrays.len());
     for array in arrays {
         let path = array.path().to_string();
@@ -1021,6 +1023,8 @@ mod tests {
     use zarrs::array::data_type;
     use zarrs_filesystem::FilesystemStore;
 
+    use crate::{object_store_for_uri, open_storage_from_uri};
+
     /// Direct coverage for `retrieve_chunk_bytes`. The function is the
     /// only pixel-byte read primitive in the crate today; previously it
     /// was exercised through `group_to_indb_rasters` integration tests,
@@ -1045,6 +1049,59 @@ mod tests {
 
         let chunk_1 = retrieve_chunk_bytes(&arr, &[0, 1]).unwrap();
         assert_eq!(chunk_1, vec![20u8, 21u8]);
+    }
+
+    /// Reader-level check of the array-to-band mapping: an explicit
+    /// `arrays` list is the band order, discovery sorts by path.
+    async fn band_paths(uri: &str, names: Option<&[String]>) -> Vec<String> {
+        let storage = open_storage_from_uri(uri, object_store_for_uri(uri).unwrap()).unwrap();
+        let reader = ZarrChunkReader::try_new(storage, uri, names, 8)
+            .await
+            .unwrap();
+        reader
+            .array_infos
+            .iter()
+            .map(|info| info.path.clone())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn arrays_option_order_is_band_order() {
+        use zarrs::group::GroupBuilder;
+
+        let tmp = TempDir::new().unwrap();
+        let store_path = tmp.path().join("g.zarr");
+        let store = Arc::new(FilesystemStore::new(&store_path).unwrap());
+        GroupBuilder::new()
+            .build(store.clone(), "/")
+            .unwrap()
+            .store_metadata()
+            .unwrap();
+        for name in ["b2", "a0", "a1"] {
+            let arr =
+                ArrayBuilder::new(vec![2u64, 2u64], vec![2u64, 2u64], data_type::uint8(), 0u8)
+                    .dimension_names(Some(["y", "x"]))
+                    .build(store.clone(), &format!("/{name}"))
+                    .unwrap();
+            arr.store_metadata().unwrap();
+        }
+        let uri = format!("file://{}", store_path.display());
+        let names = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+
+        assert_eq!(
+            band_paths(&uri, Some(&names(&["a1", "a0"]))).await,
+            ["/a1", "/a0"]
+        );
+        assert_eq!(
+            band_paths(&uri, Some(&names(&["b2", "a0", "a1"]))).await,
+            ["/b2", "/a0", "/a1"]
+        );
+        assert_eq!(
+            band_paths(&uri, Some(&names(&["b2", "a1"]))).await,
+            ["/b2", "/a1"]
+        );
+        // Discovery: deterministic, sorted by path regardless of store order.
+        assert_eq!(band_paths(&uri, None).await, ["/a0", "/a1", "/b2"]);
     }
 
     #[test]

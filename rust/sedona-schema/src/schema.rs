@@ -62,7 +62,7 @@ pub trait SedonaSchema {
 /// `List<Struct<path, geom>>` produced by `ST_Dump`) is detected.
 pub fn sedona_type_contains_geometry(sedona_type: &SedonaType) -> Result<bool> {
     match sedona_type {
-        SedonaType::Wkb(_, _) | SedonaType::WkbView(_, _) => Ok(true),
+        SedonaType::Wkb(_, _) | SedonaType::WkbLarge(_, _) | SedonaType::WkbView(_, _) => Ok(true),
         SedonaType::Arrow(data_type) => data_type_contains_geometry(data_type),
         _ => Ok(false),
     }

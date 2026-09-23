@@ -160,7 +160,9 @@ pub(crate) fn column_point_crs_transform(
     engine: &dyn CrsEngine,
 ) -> Result<Option<Option<Rc<dyn CrsTransform>>>> {
     let geom_crs = match geom_type {
-        SedonaType::Wkb(_, c) | SedonaType::WkbView(_, c) => c.as_deref(),
+        SedonaType::Wkb(_, c) | SedonaType::WkbLarge(_, c) | SedonaType::WkbView(_, c) => {
+            c.as_deref()
+        }
         // A per-item CRS varies by row; the caller resolves per row.
         _ => return Ok(None),
     };

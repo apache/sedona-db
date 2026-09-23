@@ -228,7 +228,9 @@ impl PySedonaType {
     #[getter]
     fn edge_type<'py>(&self, py: Python<'py>) -> Result<Option<Py<PyAny>>, PySedonaError> {
         match &self.inner {
-            SedonaType::Wkb(edges, _) | SedonaType::WkbView(edges, _) => {
+            SedonaType::Wkb(edges, _)
+            | SedonaType::WkbLarge(edges, _)
+            | SedonaType::WkbView(edges, _) => {
                 let geoarrow_types = py.import("geoarrow.types")?;
                 let py_edge_type_cls = geoarrow_types.getattr("EdgeType")?;
                 let py_edge_type = py_edge_type_cls

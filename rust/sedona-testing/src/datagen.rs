@@ -24,7 +24,7 @@
 //! which implements a number of other strategies for generating various geometry types.
 
 use arrow_array::{ArrayRef, RecordBatch, RecordBatchReader};
-use arrow_array::{BinaryArray, BinaryViewArray};
+use arrow_array::{BinaryArray, BinaryViewArray, LargeBinaryArray};
 use arrow_array::{Float64Array, Int32Array};
 use arrow_schema::{ArrowError, DataType, Field, Schema, SchemaRef};
 use datafusion_common::{exec_datafusion_err, plan_err, DataFusionError, Result};
@@ -457,6 +457,7 @@ fn create_wkb_array(
 ) -> Result<ArrayRef> {
     match sedona_type {
         SedonaType::Wkb(_, _) => Ok(Arc::new(BinaryArray::from_iter(wkb_values))),
+        SedonaType::WkbLarge(_, _) => Ok(Arc::new(LargeBinaryArray::from_iter(wkb_values))),
         SedonaType::WkbView(_, _) => Ok(Arc::new(BinaryViewArray::from_iter(wkb_values))),
         _ => sedona_internal_err!("create_wkb_array not implemented for {sedona_type:?}"),
     }

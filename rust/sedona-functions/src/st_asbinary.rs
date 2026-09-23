@@ -42,11 +42,17 @@ struct STAsBinary {}
 
 impl SedonaScalarKernel for STAsBinary {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        // If we have WkbView input, return BinaryView to avoid a cast
-        if args.len() == 1
-            && let SedonaType::WkbView(_, _) = args[0]
-        {
-            return Ok(Some(SedonaType::Arrow(DataType::BinaryView)));
+        // Preserve WKB storage to avoid a cast.
+        if args.len() == 1 {
+            match args[0] {
+                SedonaType::WkbLarge(_, _) => {
+                    return Ok(Some(SedonaType::Arrow(DataType::LargeBinary)));
+                }
+                SedonaType::WkbView(_, _) => {
+                    return Ok(Some(SedonaType::Arrow(DataType::BinaryView)));
+                }
+                _ => {}
+            }
         }
 
         let matcher = ArgMatcher::new(
@@ -65,13 +71,13 @@ impl SedonaScalarKernel for STAsBinary {
 
 #[cfg(test)]
 mod tests {
-    use arrow_array::{ArrayRef, BinaryArray, BinaryViewArray};
+    use arrow_array::{ArrayRef, BinaryArray, BinaryViewArray, LargeBinaryArray};
     use datafusion_common::scalar::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use rstest::rstest;
     use sedona_schema::datatypes::{
         WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS,
-        WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY,
+        WKB_LARGE_GEOGRAPHY, WKB_LARGE_GEOMETRY, WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY,
     };
     use sedona_testing::testers::ScalarUdfTester;
 
@@ -138,6 +144,31 @@ mod tests {
         );
 
         let expected_array: BinaryViewArray = [Some(POINT12), None, Some(POINT12)].iter().collect();
+        assert_eq!(
+            &tester
+                .invoke_wkb_array(vec![Some("POINT (1 2)"), None, Some("POINT (1 2)")])
+                .unwrap(),
+            &(Arc::new(expected_array) as ArrayRef)
+        );
+    }
+
+    #[rstest]
+    fn udf_geometry_large_input(
+        #[values(WKB_LARGE_GEOMETRY, WKB_LARGE_GEOGRAPHY)] sedona_type: SedonaType,
+    ) {
+        let tester = ScalarUdfTester::new(st_asbinary_udf().into(), vec![sedona_type]);
+
+        assert_eq!(
+            tester.invoke_wkb_scalar(Some("POINT (1 2)")).unwrap(),
+            ScalarValue::LargeBinary(Some(POINT12.to_vec()))
+        );
+        assert_eq!(
+            tester.invoke_wkb_scalar(None).unwrap(),
+            ScalarValue::LargeBinary(None)
+        );
+
+        let expected_array: LargeBinaryArray =
+            [Some(POINT12), None, Some(POINT12)].iter().collect();
         assert_eq!(
             &tester
                 .invoke_wkb_array(vec![Some("POINT (1 2)"), None, Some("POINT (1 2)")])
