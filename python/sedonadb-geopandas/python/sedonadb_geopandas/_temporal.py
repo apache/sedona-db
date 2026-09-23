@@ -151,9 +151,11 @@ def sanitize_temporal(df, expr, name):
     from sedonadb.expr import lit
 
     dtype = pa.schema(df.schema).field(name).type
-    # Dictionary and run-end encoding change storage, not meaning: an encoded
-    # duration or timestamp column carries the sentinel just the same.
-    if pa.types.is_dictionary(dtype) or pa.types.is_run_end_encoded(dtype):
+    # Dictionary encoding changes storage, not meaning: a dictionary-encoded
+    # duration or timestamp column carries the sentinel just the same. A
+    # run-end-encoded column is left untouched: the engine's casts ignore a
+    # sliced run-end-encoded array's offset and would read the wrong rows.
+    if pa.types.is_dictionary(dtype):
         dtype = dtype.value_type
     if pa.types.is_duration(dtype) or pa.types.is_timestamp(dtype):
         return expr.cast(pa.int64()).funcs.nullif(lit(TICK_SENTINEL)).cast(dtype)

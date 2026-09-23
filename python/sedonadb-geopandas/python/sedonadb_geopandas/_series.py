@@ -355,9 +355,8 @@ class Series:
     # integer-like. The cast is scoped that tightly because it is lossy
     # elsewhere: an integer divided by a Decimal must stay in decimal arithmetic
     # (forcing double gives 1/Decimal("0.1") -> binary rounding), and durations
-    # are handled separately below. Dictionary and run-end encoding are
-    # unwrapped before deciding, so an encoded integer column does not silently
-    # truncate.
+    # are handled separately below. Dictionary encoding is unwrapped before
+    # deciding, so a dictionary<int64> column does not silently truncate.
     # `//` is deliberately not implemented rather than mapped onto SQL division,
     # which truncates toward zero where Python floors.
     def __truediv__(self, other):
@@ -398,17 +397,18 @@ class Series:
         return value
 
     def _dtype(self):
-        """This expression's logical Arrow type, with encodings unwrapped.
+        """This expression's Arrow type, dictionary-unwrapped.
 
-        Dictionary and run-end encoding change how values are stored, not what
-        they are, so a dictionary<int64> or run_end_encoded<..., int64> column
-        is integer for division purposes. Read from the projected schema,
-        which is a plan build, not an execution.
+        Dictionary encoding changes how values are stored, not what they are,
+        so a dictionary<int64> column is integer for division purposes.
+        Run-end encoding is deliberately left wrapped: the engine's casts
+        ignore the offset of a sliced run-end-encoded array and read the
+        wrong rows, so decoding it here would silently corrupt results; left
+        alone, arithmetic on it fails to plan instead. Read from the
+        projected schema, which is a plan build, not an execution.
         """
         dtype = pa.schema(self._df.select(self._expr.alias("x")).schema).field("x").type
         if pa.types.is_dictionary(dtype):
-            dtype = dtype.value_type
-        elif pa.types.is_run_end_encoded(dtype):
             dtype = dtype.value_type
         return dtype
 

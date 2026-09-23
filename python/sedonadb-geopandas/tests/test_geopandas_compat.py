@@ -1727,15 +1727,18 @@ def test_division_unwraps_dictionary_int():
     assert sorted((gdf["k"] / 2).to_pandas().tolist()) == [0.5, 1.5]
 
 
-def test_division_unwraps_run_end_encoded_int():
-    # Run-end encoding, like dictionary encoding, changes storage rather than
-    # meaning: an encoded integer column is integer for true division.
+def test_run_end_encoded_columns_are_not_decoded():
+    # The engine's casts ignore the offset of a sliced run-end-encoded array
+    # and read the wrong rows, so the wrapper must not decode one: reading a
+    # sliced column stays correct, and arithmetic on it fails to plan rather
+    # than returning another row's values.
     ree = pa.RunEndEncodedArray.from_arrays(
-        pa.array([2, 3], pa.int32()), pa.array([1, 3], pa.int64())
-    )
+        pa.array([1, 2, 3], pa.int32()), pa.array([10, 20, 30], pa.int64())
+    ).slice(1, 1)
     gdf = GeoDataFrame(sgpd.default_context().create_data_frame(pa.table({"n": ree})))
-    assert (gdf["n"] / 2).to_pandas().tolist() == [0.5, 0.5, 1.5]
-    assert (4 / gdf["n"]).to_pandas().tolist() == [4.0, 4.0, 4 / 3]
+    assert gdf["n"].to_pandas().tolist() == [20]
+    with pytest.raises(Exception, match="RunEndEncoded"):
+        (gdf["n"] / 2).to_pandas()
 
 
 def test_division_by_decimal_stays_decimal():
@@ -2119,16 +2122,11 @@ def test_derived_sentinel_is_missing_in_duration_arithmetic():
         assert not pd.isna(values[1])
 
 
-@pytest.mark.parametrize("encoding", ["dictionary", "run_end"])
-def test_encoded_duration_columns_treat_sentinel_as_missing(encoding):
-    # Dictionary and run-end encoded duration columns bypassed read-time
-    # sentinel normalization, so the sentinel aborted / -1 and survived
-    # an equality filter.
-    plain = pa.array([-(2**63), 10], pa.duration("ns"))
-    if encoding == "dictionary":
-        column = plain.dictionary_encode()
-    else:
-        column = pa.RunEndEncodedArray.from_arrays(pa.array([1, 2], pa.int32()), plain)
+def test_dictionary_duration_columns_treat_sentinel_as_missing():
+    # Dictionary-encoded duration columns bypassed read-time sentinel
+    # normalization, so the sentinel aborted / -1 and survived an equality
+    # filter.
+    column = pa.array([-(2**63), 10], pa.duration("ns")).dictionary_encode()
     gdf = GeoDataFrame(
         sgpd.default_context().create_data_frame(pa.table({"t": column}))
     )
@@ -2136,3 +2134,18 @@ def test_encoded_duration_columns_treat_sentinel_as_missing(encoding):
     assert pd.isna(got[0])
     assert got[1] == pd.Timedelta(-10)
     assert gdf[gdf["t"] == gdf["t"]]["t"].to_pandas().tolist() == [pd.Timedelta(10)]
+
+
+@pytest.mark.parametrize("type", [pa.duration("ns"), pa.timestamp("ns")])
+def test_sliced_run_end_encoded_temporal_columns_read_correctly(type):
+    # Normalizing the sentinel through a cast decoded a sliced run-end-encoded
+    # column from the wrong offset: [10, 20, 30].slice(1, 1) read back as 10.
+    # Run-end-encoded temporal columns are passed through undecoded.
+    ree = pa.RunEndEncodedArray.from_arrays(
+        pa.array([1, 2, 3], pa.int32()), pa.array([10, 20, 30], type)
+    ).slice(1, 1)
+    expected = ree.to_pylist()
+    gdf = GeoDataFrame(sgpd.default_context().create_data_frame(pa.table({"t": ree})))
+    assert pa.array(gdf["t"].to_pandas()).to_pylist() == expected
+    gdf["copy"] = gdf["t"]
+    assert pa.array(gdf["copy"].to_pandas()).to_pylist() == expected
