@@ -151,6 +151,10 @@ def sanitize_temporal(df, expr, name):
     from sedonadb.expr import lit
 
     dtype = pa.schema(df.schema).field(name).type
+    # Dictionary and run-end encoding change storage, not meaning: an encoded
+    # duration or timestamp column carries the sentinel just the same.
+    if pa.types.is_dictionary(dtype) or pa.types.is_run_end_encoded(dtype):
+        dtype = dtype.value_type
     if pa.types.is_duration(dtype) or pa.types.is_timestamp(dtype):
         return expr.cast(pa.int64()).funcs.nullif(lit(TICK_SENTINEL)).cast(dtype)
     return expr
@@ -213,10 +217,12 @@ def duration_arith_expr(dtype, expr, op, other):
             f"{type(other).__name__}"
         )
 
-    # Column reads null out the INT64_MIN missing-value sentinel at the
-    # frame boundary (see sanitize_temporal), so the ticks here
-    # never carry it as data.
-    ticks = expr.cast(pa.int64())
+    # The INT64_MIN sentinel is nulled here, on the ticks of whatever
+    # expression arrives, not only where columns are read: a derived
+    # expression can land on it (Timedelta.min - 1ns), and treated as data it
+    # multiplies to zero, divides into a real-looking duration, and aborts
+    # the query on / -1.
+    ticks = expr.cast(pa.int64()).funcs.nullif(lit(TICK_SENTINEL))
 
     # Non-finite operands have no integer form to cast back to, so they are
     # resolved up front the way pandas resolves them. Division by infinity

@@ -2088,3 +2088,51 @@ def test_duration_unit_coercion_is_exact_or_raises():
     assert got.tolist()[0] == pd.Timedelta(microseconds=7)
     with pytest.raises(ValueError, match="exactly"):
         gdf["t"] + pa.scalar(1500, pa.duration("ns"))
+
+
+def test_duration_comparisons_do_not_require_exact_units():
+    # Unit coercion exists for arithmetic, where mixed units widen to the
+    # engine's interval type; comparisons across units are already correct,
+    # and requiring an exact conversion rejected valid ones.
+    tbl = pa.table({"t": pa.array([1, 2], pa.duration("us"))})
+    gdf = GeoDataFrame(sgpd.default_context().create_data_frame(tbl))
+    value = pd.Timedelta(1500, "ns")
+    assert (gdf["t"] < value).to_pandas().tolist() == [True, False]
+    assert (gdf["t"] > value).to_pandas().tolist() == [False, True]
+    assert (gdf["t"] == value).to_pandas().tolist() == [False, False]
+    # Arithmetic still requires the exact conversion.
+    with pytest.raises(ValueError, match="exactly"):
+        gdf["t"] + value
+
+
+def test_derived_sentinel_is_missing_in_duration_arithmetic():
+    # Nulling the sentinel where columns are read does not cover a derived
+    # expression that lands on it: Timedelta.min - 1ns is INT64_MIN, which
+    # multiplied to zero, divided into a real-looking duration, and aborted
+    # the query on / -1.
+    pdf = pd.DataFrame({"t": [pd.Timedelta.min, pd.Timedelta(10)]})
+    gdf = GeoDataFrame(sgpd.default_context().create_data_frame(pdf))
+    derived = gdf["t"] - pd.Timedelta(1)
+    for got in (derived * 0, derived / 2, derived / -1):
+        values = got.to_pandas().tolist()
+        assert pd.isna(values[0])
+        assert not pd.isna(values[1])
+
+
+@pytest.mark.parametrize("encoding", ["dictionary", "run_end"])
+def test_encoded_duration_columns_treat_sentinel_as_missing(encoding):
+    # Dictionary and run-end encoded duration columns bypassed read-time
+    # sentinel normalization, so the sentinel aborted / -1 and survived
+    # an equality filter.
+    plain = pa.array([-(2**63), 10], pa.duration("ns"))
+    if encoding == "dictionary":
+        column = plain.dictionary_encode()
+    else:
+        column = pa.RunEndEncodedArray.from_arrays(pa.array([1, 2], pa.int32()), plain)
+    gdf = GeoDataFrame(
+        sgpd.default_context().create_data_frame(pa.table({"t": column}))
+    )
+    got = (gdf["t"] / -1).to_pandas().tolist()
+    assert pd.isna(got[0])
+    assert got[1] == pd.Timedelta(-10)
+    assert gdf[gdf["t"] == gdf["t"]]["t"].to_pandas().tolist() == [pd.Timedelta(10)]

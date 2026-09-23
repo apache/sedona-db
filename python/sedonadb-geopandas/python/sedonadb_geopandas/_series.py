@@ -296,29 +296,29 @@ class Series:
 
     # -- element-wise comparisons -> boolean mask --------------------------
     def __gt__(self, other):
-        return Series(self._df, self._expr > self._binary_operand(other), self._name)
+        return Series(self._df, self._expr > _operand(self._df, other), self._name)
 
     def __ge__(self, other):
-        return Series(self._df, self._expr >= self._binary_operand(other), self._name)
+        return Series(self._df, self._expr >= _operand(self._df, other), self._name)
 
     def __lt__(self, other):
-        return Series(self._df, self._expr < self._binary_operand(other), self._name)
+        return Series(self._df, self._expr < _operand(self._df, other), self._name)
 
     def __le__(self, other):
-        return Series(self._df, self._expr <= self._binary_operand(other), self._name)
+        return Series(self._df, self._expr <= _operand(self._df, other), self._name)
 
     def __eq__(self, other):
-        return Series(self._df, self._expr == self._binary_operand(other), self._name)
+        return Series(self._df, self._expr == _operand(self._df, other), self._name)
 
     def __ne__(self, other):
-        return Series(self._df, self._expr != self._binary_operand(other), self._name)
+        return Series(self._df, self._expr != _operand(self._df, other), self._name)
 
     # -- boolean composition of masks --------------------------------------
     def __and__(self, other):
-        return Series(self._df, self._expr & self._binary_operand(other), self._name)
+        return Series(self._df, self._expr & _operand(self._df, other), self._name)
 
     def __or__(self, other):
-        return Series(self._df, self._expr | self._binary_operand(other), self._name)
+        return Series(self._df, self._expr | _operand(self._df, other), self._name)
 
     def __invert__(self):
         return Series(self._df, ~self._expr, self._name)
@@ -385,7 +385,10 @@ class Series:
         The engine widens mixed-unit duration arithmetic to its interval
         type, which materializes as DateOffset objects rather than
         timedeltas, so a duration scalar operand against a duration column
-        is rebuilt in the column's own unit first.
+        is rebuilt in the column's own unit first. Arithmetic operators only:
+        comparisons across units are already correct, and requiring an exact
+        conversion there would reject valid comparisons (a µs column against
+        1500 ns).
         """
         value = _operand(self._df, other)
         if isinstance(value, pa.Scalar) and pa.types.is_duration(value.type):
