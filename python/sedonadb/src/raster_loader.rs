@@ -20,6 +20,7 @@ use std::sync::Arc;
 use arrow_buffer::Buffer;
 use arrow_schema::ArrowError;
 use async_trait::async_trait;
+use bytes::Bytes;
 use pyo3::{
     buffer::PyBuffer,
     pyclass, pyfunction, pymethods,
@@ -132,15 +133,14 @@ impl AsyncRasterLoader for PyRasterLoader {
                 for item in result_list.iter() {
                     let bytes_obj = item.getattr("bytes").map_err(py_err)?;
 
-                    // Accepts any object implementing the buffer protocol
-                    // (bytes, memoryview, numpy array, ...) and copies it into
-                    // a Rust-owned buffer, in C order, while the GIL is held.
-                    let py_buffer: PyBuffer<u8> = PyBuffer::get(&bytes_obj).map_err(|e| {
-                        ArrowError::InvalidArgumentError(format!(
-                            "Failed to get buffer from Python object: {e}"
-                        ))
-                    })?;
-                    let bytes = Buffer::from_vec(py_buffer.to_vec(py).map_err(py_err)?);
+                    // Zero-copy: the Arrow buffer is a view of whatever
+                    // buffer-protocol object the loader returned (bytes,
+                    // memoryview, numpy array, the Zarr extension's buffer
+                    // class), kept alive by the wrapper. `PyBufferWrapper`
+                    // documents what that costs now that the session's
+                    // chunk cache can keep a result alive past this call.
+                    let py_buffer = PyBufferWrapper::new(&bytes_obj)?;
+                    let bytes = Bytes::from_owner(py_buffer);
 
                     let source_shape: Vec<i64> = item
                         .getattr("source_shape")
@@ -206,7 +206,7 @@ impl AsyncRasterLoader for PyRasterLoader {
         let load_results = results
             .into_iter()
             .map(|r| RasterLoadResult {
-                bytes: r.bytes,
+                bytes: Buffer::from(r.bytes),
                 source_shape: r.source_shape,
                 view: ViewEntries::new(r.view),
             })
@@ -225,12 +225,103 @@ struct OwnedPyLoadRequest {
     data_type: BandDataType,
 }
 
-/// Intermediate result data extracted from Python; `bytes` is a Rust-owned
-/// copy of the loader's buffer.
+/// Intermediate result data extracted from Python (zero-copy for bytes)
 struct PyRasterLoadResultData {
-    bytes: Buffer,
+    bytes: Bytes,
     source_shape: Vec<i64>,
     view: Vec<ViewEntry>,
+}
+
+/// Zero-copy wrapper around Python buffer protocol objects.
+///
+/// Keeps the exporting Python object alive through its `PyBuffer` and hands
+/// out its memory without copying. The pointer and length are cached at
+/// construction so that `AsRef<[u8]>` needs no GIL. The Zarr extension's
+/// results go Rust buffer → its buffer class → this view with no copy at
+/// all, which is what this exists for.
+///
+/// # What holding the view costs
+///
+/// The Arrow buffer built over this wrapper can outlive the load call: the
+/// session's chunk cache (`RS_EnsureLoaded`) keeps whole-source results
+/// until eviction or session end, so everything below holds for that long
+/// rather than for one batch.
+///
+/// - **Accounting.** Arrow charges a foreign allocation at its exported
+///   length, so the cache budget and the memory pool see the view, not the
+///   exporter. A loader that returns a view into a larger array (one slice
+///   of a whole-array read) keeps the whole array resident, uncounted, for
+///   as long as the entry lives. The Zarr extension exports exactly the
+///   chunk's bytes, so this is a concern for user-written Python loaders.
+/// - **Mutation.** `PyBuffer::get` accepts writable exporters and this
+///   wrapper does not require read-only, since numpy arrays are writable
+///   and refusing them would reject most user loaders. A loader that writes
+///   into a buffer it has already returned rewrites cached bytes under later
+///   queries. The Zarr extension exports read-only.
+/// - **Release.** Dropping the last holder releases the Python buffer, which
+///   attaches to the interpreter from whichever thread that is: a
+///   DataFusion worker dropping a batch, or the cache evicting under its own
+///   lock. Queries run with the GIL released, so this only waits while a
+///   Python loader is executing, and it cannot deadlock because a loader
+///   never takes the cache lock. pyo3's drop is a try-attach, so a drop
+///   after interpreter shutdown does not abort.
+///
+/// All of this goes away when loader results cross a C ABI with a release
+/// callback instead of a Python object.
+///
+/// # Safety
+/// - The pointer remains valid as long as the `PyBuffer<u8>` is alive
+/// - `PyBuffer<u8>` is already Send + Sync and attaches to the interpreter
+///   on Drop
+struct PyBufferWrapper {
+    /// The Python buffer handle - keeps the source object alive
+    _buffer: PyBuffer<u8>,
+    /// Cached pointer to the buffer data
+    ptr: *const u8,
+    /// Cached length of the buffer data
+    len: usize,
+}
+
+impl PyBufferWrapper {
+    /// Create a new PyBufferWrapper from any Python object implementing the buffer protocol.
+    ///
+    /// The Python GIL must be held when calling this function.
+    /// Returns an error if the buffer is not C-contiguous.
+    fn new(obj: &pyo3::Bound<'_, pyo3::types::PyAny>) -> Result<Self, ArrowError> {
+        let buffer: PyBuffer<u8> = PyBuffer::get(obj).map_err(|e| {
+            ArrowError::InvalidArgumentError(format!(
+                "Failed to get buffer from Python object: {e}"
+            ))
+        })?;
+
+        if !buffer.is_c_contiguous() {
+            return Err(ArrowError::InvalidArgumentError(
+                "Buffer must be C-contiguous".to_string(),
+            ));
+        }
+
+        // Cache the pointer and length while we have the GIL
+        let ptr = buffer.buf_ptr() as *const u8;
+        let len = buffer.len_bytes();
+
+        Ok(Self {
+            _buffer: buffer,
+            ptr,
+            len,
+        })
+    }
+}
+
+// Safety: PyBuffer<u8> is already Send + Sync, and nothing on this side ever
+// writes through the pointer (the exporter may; see the type docs).
+unsafe impl Send for PyBufferWrapper {}
+unsafe impl Sync for PyBufferWrapper {}
+
+impl AsRef<[u8]> for PyBufferWrapper {
+    fn as_ref(&self) -> &[u8] {
+        // Safety: ptr and len are valid as long as self.buffer is alive
+        unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
+    }
 }
 
 /// Python-visible raster load request
