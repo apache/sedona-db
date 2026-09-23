@@ -66,7 +66,17 @@ N_GEOTIFF = 2000
 N_ZARR_GROUPS = 84
 N_INDB = 200
 
-DTYPES = ["uint8", "int16", "uint16", "int32", "float32", "float64"]
+DTYPES = [
+    "uint8",
+    "int16",
+    "uint16",
+    "int32",
+    "uint32",
+    "int64",
+    "uint64",
+    "float32",
+    "float64",
+]
 
 # Source ids keep the three kinds apart in the value formula.
 GEOTIFF_BASE = 1000
