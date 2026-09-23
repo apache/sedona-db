@@ -170,9 +170,9 @@ impl SedonaContext {
         const MIN_RASTER_MAX_BATCH_BYTES: usize = 16 * 1024 * 1024; // 16MB
 
         // The raster chunk cache keeps loaded OutDb bytes across queries. Its
-        // budget only counts entries no batch references, and every entry is
-        // claimed from the memory pool, so under a memory limit it is capped
-        // at an eighth of the limit rather than the unbounded default.
+        // budget only counts entries that no batch references, and every
+        // entry is claimed from the memory pool, so under a memory limit it is
+        // capped at an eighth of the limit rather than the unbounded default.
         // Provisional, to be tuned with the rest of bounded execution.
         const RASTER_CACHE_LIMIT_DIVISOR: usize = 8;
         if let MemoryLimit::Finite(memory_limit) = runtime_env.memory_pool.memory_limit() {
