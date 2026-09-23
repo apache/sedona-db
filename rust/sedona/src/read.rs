@@ -29,12 +29,13 @@ use datafusion::{
     execution::SessionState,
     prelude::SessionContext,
 };
-use datafusion_common::{exec_err, plan_err, Result};
+use datafusion_common::{DataFusionError, Result, exec_err, plan_err};
 
 use crate::object_storage::{
     ensure_object_store_registered_with_options, register_table_options_extension_from_scheme,
 };
 use sedona_datasource::{format::ExternalFileFormat, provider::external_table};
+use sedona_geoparquet::provider::GeoParquetReadOptions;
 
 /// A file format factory plus the path-derived details needed for listing.
 pub(crate) struct ResolvedReadFormat {
@@ -61,6 +62,10 @@ pub(crate) async fn read_provider(
     if table_paths.is_empty() {
         return exec_err!("No table paths were provided");
     }
+
+    // Preserve the detailed cloud-option validation (including typo
+    // suggestions) provided by the format-specific read APIs.
+    GeoParquetReadOptions::from_table_options(options.clone()).map_err(DataFusionError::Plan)?;
 
     for path in &table_paths {
         register_table_options_extension_from_scheme(context, path.scheme());
@@ -130,13 +135,18 @@ pub(crate) async fn read_provider(
 fn sql_style_options(options: &HashMap<String, String>) -> HashMap<String, String> {
     options
         .iter()
-        .map(|(key, value)| {
-            let key = if key.contains('.') {
-                key.clone()
+        .filter_map(|(key, value)| {
+            // Dotted non-format keys belong to connection/table option
+            // namespaces. Object-store registration consumes the known ones;
+            // retain the historical behavior of ignoring unknown namespaces
+            // rather than passing them to a built-in file-format parser.
+            if key.starts_with("format.") {
+                Some((key.clone(), value.clone()))
+            } else if key.contains('.') {
+                None
             } else {
-                format!("format.{key}")
-            };
-            (key, value.clone())
+                Some((format!("format.{key}"), value.clone()))
+            }
         })
         .collect()
 }
@@ -147,6 +157,10 @@ pub(crate) fn resolve_read_format(
     requested: Option<Arc<dyn FileFormatFactory>>,
     check_extension: bool,
 ) -> Result<ResolvedReadFormat> {
+    if table_paths.is_empty() {
+        return exec_err!("No table paths were provided");
+    }
+
     if let Some(factory) = requested {
         if !check_extension {
             return Ok(ResolvedReadFormat {
@@ -227,5 +241,47 @@ fn infer_path_format(table_paths: &[ListingTableUrl]) -> Result<(String, Option<
         }
     }
 
-    Ok(resolved.expect("non-empty paths checked by read_provider"))
+    Ok(resolved.expect("non-empty paths checked by resolve_read_format"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sql_style_options_excludes_table_option_namespaces() {
+        let options = HashMap::from([
+            ("batch_size".to_string(), "1024".to_string()),
+            (
+                "format.schema_force_view_types".to_string(),
+                "true".to_string(),
+            ),
+            ("aws.region".to_string(), "us-west-2".to_string()),
+            ("test.option".to_string(), "value".to_string()),
+        ]);
+
+        assert_eq!(
+            sql_style_options(&options),
+            HashMap::from([
+                ("format.batch_size".to_string(), "1024".to_string()),
+                (
+                    "format.schema_force_view_types".to_string(),
+                    "true".to_string()
+                ),
+            ])
+        );
+    }
+
+    #[test]
+    fn resolve_read_format_rejects_empty_paths() {
+        let state = SessionContext::new().state();
+        let error = match resolve_read_format(&state, &[], None, true) {
+            Ok(_) => panic!("empty paths should fail"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error.strip_backtrace(),
+            "Execution error: No table paths were provided"
+        );
+    }
 }
