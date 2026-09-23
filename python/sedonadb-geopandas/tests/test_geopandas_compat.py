@@ -1740,6 +1740,17 @@ def test_division_unwraps_dictionary_int():
     assert sorted((gdf["k"] / 2).to_pandas().tolist()) == [0.5, 1.5]
 
 
+def test_division_unwraps_run_end_encoded_int():
+    # Run-end encoding, like dictionary encoding, changes storage rather than
+    # meaning: an encoded integer column is integer for true division.
+    ree = pa.RunEndEncodedArray.from_arrays(
+        pa.array([2, 3], pa.int32()), pa.array([1, 3], pa.int64())
+    )
+    gdf = GeoDataFrame(sgpd.default_context().create_data_frame(pa.table({"n": ree})))
+    assert (gdf["n"] / 2).to_pandas().tolist() == [0.5, 0.5, 1.5]
+    assert (4 / gdf["n"]).to_pandas().tolist() == [4.0, 4.0, 4 / 3]
+
+
 def test_division_by_decimal_stays_decimal():
     # An integer divided by a Decimal must stay in decimal arithmetic; the
     # unconditional double cast used to force a float result.
