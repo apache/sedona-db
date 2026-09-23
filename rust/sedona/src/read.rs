@@ -29,13 +29,12 @@ use datafusion::{
     execution::SessionState,
     prelude::SessionContext,
 };
-use datafusion_common::{DataFusionError, Result, exec_err, plan_err};
+use datafusion_common::{exec_err, plan_err, Result};
 
 use crate::object_storage::{
     ensure_object_store_registered_with_options, register_table_options_extension_from_scheme,
 };
 use sedona_datasource::{format::ExternalFileFormat, provider::external_table};
-use sedona_geoparquet::provider::GeoParquetReadOptions;
 
 /// A file format factory plus the path-derived details needed for listing.
 pub(crate) struct ResolvedReadFormat {
@@ -62,10 +61,6 @@ pub(crate) async fn read_provider(
     if table_paths.is_empty() {
         return exec_err!("No table paths were provided");
     }
-
-    // Preserve the detailed cloud-option validation (including typo
-    // suggestions) provided by the format-specific read APIs.
-    GeoParquetReadOptions::from_table_options(options.clone()).map_err(DataFusionError::Plan)?;
 
     for path in &table_paths {
         register_table_options_extension_from_scheme(context, path.scheme());
