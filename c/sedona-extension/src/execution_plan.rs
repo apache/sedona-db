@@ -16,9 +16,8 @@
 // under the License.
 
 use std::{
-    any::Any,
     ffi::{c_int, c_void},
-    fmt::{Debug, Display, Formatter},
+    fmt::Debug,
     ptr::null_mut,
     sync::Arc,
     time::Duration,
@@ -31,7 +30,7 @@ use datafusion_execution::TaskContext;
 use datafusion_physical_plan::{
     displayable,
     execution_plan::{Boundedness, CardinalityEffect, EmissionType},
-    metrics::{CustomMetricValue, Metric, MetricValue, MetricsSet},
+    metrics::MetricsSet,
     DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, PlanProperties,
     SendableRecordBatchStream,
 };
@@ -42,6 +41,7 @@ use crate::export_sendable_record_batch_stream::drive_stream_to_handler;
 use crate::extension::FFI_ArrowAsyncDeviceStreamHandler;
 use crate::extension::{SedonaCError, SedonaCExecutionPlan, SedonaCExecutionPlanArgs};
 use crate::import_sendable_record_batch_stream::ImportedAsyncDeviceStream;
+use crate::metrics::SerializableExecutionPlanMetricsSet;
 use crate::runtime::RuntimeHandle;
 use crate::set_ffi_error;
 use crate::streaming::{ffi_stream_to_sendable, CancelChecker, StreamingRecordBatchReader};
@@ -120,9 +120,10 @@ impl ExportedExecutionPlan {
                 })
             }
             "metrics" => {
-                // Serialize metrics as JSON with aggregated values
+                // Serialize a structured snapshot of every metric.
                 if let Some(metrics) = self.plan.metrics() {
-                    let serialized = SerializedMetrics::from_metrics_set(&metrics);
+                    let serialized =
+                        SerializableExecutionPlanMetricsSet::from_metrics_set(&metrics);
                     serde_json::to_string(&serialized).map_err(|e| {
                         sedona_internal_datafusion_err!("Failed to serialize metrics: {}", e)
                     })
@@ -493,10 +494,14 @@ impl ExecutionPlan for ImportedSedonaCExec {
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
-        get_plan_property::<Option<SerializedMetrics>, ()>(&self.inner, "metrics", None)
-            .ok()
-            .flatten()
-            .map(|sm| sm.into_metrics_set())
+        get_plan_property::<Option<SerializableExecutionPlanMetricsSet>, ()>(
+            &self.inner,
+            "metrics",
+            None,
+        )
+        .ok()
+        .flatten()
+        .map(|set| set.into_metrics_set())
     }
 
     fn supports_limit_pushdown(&self) -> bool {
@@ -589,78 +594,6 @@ pub struct ExecuteArgs {
     pub partition: usize,
 }
 
-/// Metrics serialized for FFI transfer.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SerializedMetrics {
-    pub display: String,
-}
-
-impl SerializedMetrics {
-    /// Create from a MetricsSet by capturing its display string.
-    pub fn from_metrics_set(set: &MetricsSet) -> Self {
-        Self {
-            display: set.to_string(),
-        }
-    }
-
-    /// Convert back to a MetricsSet with a custom metric containing the display string.
-    pub fn into_metrics_set(self) -> MetricsSet {
-        let mut set = MetricsSet::new();
-        let custom = ImportedMetrics::new(self.display);
-        let metric = Metric::new(
-            MetricValue::Custom {
-                name: "imported_metrics".into(),
-                value: Arc::new(custom),
-            },
-            None,
-        );
-        set.push(Arc::new(metric));
-        set
-    }
-}
-
-/// Custom metric value that holds imported metrics display string.
-#[derive(Debug, Clone)]
-pub struct ImportedMetrics {
-    display: String,
-}
-
-impl ImportedMetrics {
-    pub fn new(display: String) -> Self {
-        Self { display }
-    }
-}
-
-impl Display for ImportedMetrics {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.display)
-    }
-}
-
-impl CustomMetricValue for ImportedMetrics {
-    fn new_empty(&self) -> Arc<dyn CustomMetricValue> {
-        Arc::new(Self {
-            display: String::new(),
-        })
-    }
-
-    fn aggregate(&self, other: Arc<dyn CustomMetricValue>) {
-        // No aggregation for imported metrics - they're read-only snapshots
-        let _ = other;
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn is_eq(&self, other: &Arc<dyn CustomMetricValue>) -> bool {
-        other
-            .as_any()
-            .downcast_ref::<Self>()
-            .is_some_and(|o| o.display == self.display)
-    }
-}
-
 /// Properties of an execution plan serialized across FFI.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanPropertiesArgs {
@@ -732,7 +665,10 @@ mod tests {
     use arrow_array::{Int32Array, RecordBatch};
     use arrow_schema::{DataType, Field};
     use datafusion_common::assert_batches_eq;
-    use datafusion_physical_plan::stream::RecordBatchStreamAdapter;
+    use datafusion_physical_plan::{
+        metrics::{ExecutionPlanMetricsSet, MetricBuilder},
+        stream::RecordBatchStreamAdapter,
+    };
     use futures::{stream, StreamExt};
     use std::fmt::Formatter;
 
@@ -742,6 +678,7 @@ mod tests {
         schema: SchemaRef,
         properties: Arc<PlanProperties>,
         limit_pushdown: bool,
+        metrics: ExecutionPlanMetricsSet,
     }
 
     impl DummyExec {
@@ -764,10 +701,15 @@ mod tests {
                 emission_type,
                 boundedness,
             );
+            let metrics = ExecutionPlanMetricsSet::new();
+            MetricBuilder::new(&metrics)
+                .global_counter("test_metric")
+                .add(42);
             Self {
                 schema,
                 properties: Arc::new(properties),
                 limit_pushdown: supports_limit_pushdown,
+                metrics,
             }
         }
     }
@@ -807,6 +749,10 @@ mod tests {
 
         fn supports_limit_pushdown(&self) -> bool {
             self.limit_pushdown
+        }
+
+        fn metrics(&self) -> Option<MetricsSet> {
+            Some(self.metrics.clone_inner())
         }
 
         fn execute(
@@ -889,6 +835,27 @@ mod tests {
     fn test_execution_plan_roundtrip_name() {
         let (imported, _, _runtime) = setup_imported_plan();
         assert_eq!(imported.name(), "ImportedSedonaCExec<DummyExec>");
+    }
+
+    #[test]
+    fn test_execution_plan_roundtrip_metrics_survive_aggregation() {
+        let (imported, _, _runtime) = setup_imported_plan();
+        let metrics = imported.metrics().expect("Expected imported metrics");
+
+        assert!(metrics.to_string().contains("test_metric=42"));
+        let metric = metrics.iter().next().expect("Expected one metric");
+        assert!(matches!(
+            metric.value(),
+            datafusion_physical_plan::metrics::MetricValue::Count { name, count }
+                if name == "test_metric" && count.value() == 42
+        ));
+        assert!(
+            metrics
+                .aggregate_by_name()
+                .to_string()
+                .contains("test_metric=42"),
+            "Imported metrics should survive DataFusion's EXPLAIN ANALYZE aggregation"
+        );
     }
 
     #[test]

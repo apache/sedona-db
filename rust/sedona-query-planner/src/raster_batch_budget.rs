@@ -38,15 +38,28 @@
 //! Slices are contiguous row ranges of the input batch (`RecordBatch::slice`
 //! is zero-copy), so output order is the input order.
 //!
-//! This bounds the bytes *created* at the materialization point. Operators
-//! that *merge* batches downstream — `FilterExec`'s coalescer,
-//! `CoalesceBatchesExec`, `RepartitionExec` — still re-merge by row count
-//! and can rebuild an oversized batch from these slices; keeping them from
-//! doing so on raster-bearing streams is follow-up work here. Longer term
-//! that half belongs upstream: if arrow's `BatchCoalescer` (and DataFusion's
-//! `LimitedBatchCoalescer` on top of it) accepted a byte target next to the
-//! row target, every merger would become byte-aware on its own and only the
-//! materialization points would need Sedona-owned operators. See
+//! That bounds the bytes *created* at the materialization point. Operators
+//! that *merge* batches downstream still work by row count and would
+//! rebuild an oversized batch from these slices. Since DataFusion 54 the
+//! only such operator the planner emits on a linear pipeline is `FilterExec`
+//! (its internal coalescer — the separate `CoalesceBatchesExec` is no
+//! longer inserted), so the rule turns every `FilterExec` whose schema
+//! carries a raster column into a pass-through (see
+//! [`PASSTHROUGH_BATCH_SIZE`]). Memory cost is a property of the bytes in a
+//! batch, not of the operator: a filter on an id column never reads the
+//! raster, but its coalescer would still buffer 8192 rows of pixels. The
+//! check is by schema only — a stream whose raster column is still OutDb
+//! (cheap references) is included too, which costs nothing beyond skipping
+//! the merge of small filtered remainders. `RepartitionExec` reads the
+//! session `batch_size` at execute time and is not per-node configurable,
+//! so it remains a known gap; with the default partitioning preference the
+//! planner places it below this node, over OutDb references.
+//!
+//! Longer term the merging half belongs upstream: if arrow's
+//! `BatchCoalescer` (and DataFusion's `LimitedBatchCoalescer` on top of it)
+//! accepted a byte target next to the row target, every merger would become
+//! byte-aware on its own and only the materialization points would need
+//! Sedona-owned operators. See
 //! <https://github.com/apache/datafusion/issues/23385>, which tracks the
 //! coalescers' lack of memory awareness.
 
@@ -65,6 +78,7 @@ use datafusion_physical_expr::expressions::Column;
 use datafusion_physical_expr::{PhysicalExpr, ScalarFunctionExpr};
 use datafusion_physical_plan::async_func::AsyncFuncExec;
 use datafusion_physical_plan::execution_plan::CardinalityEffect;
+use datafusion_physical_plan::filter::FilterExec;
 use datafusion_physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
 use datafusion_physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion_physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties};
@@ -73,18 +87,37 @@ use sedona_common::option::{DEFAULT_RASTER_MAX_BATCH_BYTES, SedonaOptions};
 use sedona_common::sedona_internal_datafusion_err;
 use sedona_raster::array::RasterStructArray;
 use sedona_raster::size::estimated_row_bytes;
+use sedona_schema::datatypes::SedonaType;
 
 /// Name of the async UDF whose raster argument sizes the slices. Kept in
 /// sync with `sedona_raster_functions::rs_ensure_loaded` (this crate can't
 /// depend on it); `ensure_loaded.rs` resolves the same name.
 const ENSURE_LOADED_NAME: &str = "rs_ensureloaded";
 
-/// Physical optimizer rule that swaps DataFusion's `AsyncFuncExec` for an
-/// [`EnsureLoadedExec`] wherever the async expressions include
-/// `rs_ensureloaded`. Runs after DataFusion's own physical rules (it is
-/// appended via `SessionStateBuilder::with_physical_optimizer_rule`), so it
-/// sees the final placement of the async node. Plans without raster
-/// materialization are untouched.
+/// Batch size that turns `FilterExec`'s row-count coalescer into a
+/// pass-through.
+///
+/// `FilterExec` drives a `LimitedBatchCoalescer` whose "biggest coalesce
+/// batch size" is
+/// `target / 2`: a batch larger than that bypasses coalescing whenever
+/// nothing is buffered. With a target of 1 the threshold is 0, so every
+/// non-empty batch is forwarded as-is and nothing ever accumulates —
+/// byte-bounded slices produced upstream keep their boundaries.
+pub const PASSTHROUGH_BATCH_SIZE: usize = 1;
+
+/// Physical optimizer rule that keeps raster batches byte-bounded:
+///
+/// - swaps DataFusion's `AsyncFuncExec` for an [`EnsureLoadedExec`]
+///   wherever the async expressions include `rs_ensureloaded`;
+/// - sets the batch size of every `FilterExec` whose output schema carries
+///   a raster column to [`PASSTHROUGH_BATCH_SIZE`], so it forwards batches
+///   instead of merging them back up to `datafusion.execution.batch_size`
+///   rows (its `fetch` and projection are preserved).
+///
+/// Runs after DataFusion's own physical rules (it is appended via
+/// `SessionStateBuilder::with_physical_optimizer_rule`), so it sees the
+/// final placement of the async node. Plans without raster columns are
+/// untouched.
 #[derive(Debug, Default)]
 pub struct RasterBatchBudgetRule;
 
@@ -95,15 +128,27 @@ impl PhysicalOptimizerRule for RasterBatchBudgetRule {
         _config: &ConfigOptions,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         plan.transform_up(|node| {
-            let Some(async_exec) = node.downcast_ref::<AsyncFuncExec>() else {
-                return Ok(Transformed::no(node));
-            };
-            if !async_exec.async_exprs().iter().any(|e| is_ensure_loaded(e)) {
-                return Ok(Transformed::no(node));
+            match (
+                node.downcast_ref::<AsyncFuncExec>(),
+                node.downcast_ref::<FilterExec>(),
+            ) {
+                (Some(async_exec), _)
+                    if async_exec.async_exprs().iter().any(|e| is_ensure_loaded(e)) =>
+                {
+                    Ok(Transformed::yes(Arc::new(
+                        EnsureLoadedExec::from_async_func_exec(async_exec)?,
+                    )))
+                }
+                (_, Some(filter))
+                    if filter.batch_size() != PASSTHROUGH_BATCH_SIZE
+                        && has_raster_column(&node.schema()) =>
+                {
+                    Ok(Transformed::yes(Arc::new(
+                        filter.with_batch_size(PASSTHROUGH_BATCH_SIZE)?,
+                    )))
+                }
+                _ => Ok(Transformed::no(node)),
             }
-            Ok(Transformed::yes(Arc::new(
-                EnsureLoadedExec::from_async_func_exec(async_exec)?,
-            )))
         })
         .data()
     }
@@ -115,6 +160,19 @@ impl PhysicalOptimizerRule for RasterBatchBudgetRule {
     fn schema_check(&self) -> bool {
         true
     }
+}
+
+/// Whether any field of `schema` is a Sedona raster: by the
+/// `sedona.raster` extension metadata, or structurally by the raster
+/// storage type, since DataFusion drops field metadata on async UDF
+/// outputs (the `__async_fn_N` columns; see `sd_restore_metadata`).
+fn has_raster_column(schema: &Schema) -> bool {
+    schema.fields().iter().any(|field| {
+        matches!(
+            SedonaType::from_storage_field(field),
+            Ok(SedonaType::Raster)
+        ) || field.data_type() == SedonaType::Raster.storage_type()
+    })
 }
 
 fn scalar_function(expr: &AsyncFuncExpr) -> Option<&ScalarFunctionExpr> {
@@ -564,6 +622,7 @@ mod tests {
         ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility,
     };
     use datafusion_physical_expr::expressions::col;
+    use datafusion_physical_expr::expressions::lit;
     use datafusion_physical_plan::common::collect;
     use sedona_common::option::RasterOptions;
     use sedona_raster::builder::{RasterBuilder, StartBandArgs};
@@ -703,11 +762,11 @@ mod tests {
             b.finish_raster().unwrap();
         }
         let rasters: ArrayRef = Arc::new(b.finish().unwrap());
-        let schema = Arc::new(Schema::new(vec![Field::new(
-            "rast",
-            rasters.data_type().clone(),
-            true,
-        )]));
+        let raster_field = SedonaType::Raster.to_storage_field("rast", true).unwrap();
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("rast", rasters.data_type().clone(), true)
+                .with_metadata(raster_field.metadata().clone()),
+        ]));
         let batch = RecordBatch::try_new(Arc::clone(&schema), vec![rasters]).unwrap();
         (schema, batch)
     }
@@ -966,5 +1025,97 @@ mod tests {
         assert_eq!(*calls.lock().unwrap(), vec![2, 2]);
         // The other async column is evaluated per slice too (scalar → 2 rows).
         assert_eq!(batches[0].column(1).len(), 2);
+    }
+
+    /// `AsyncFuncExec(rs_ensureloaded(rast))` over six 256-byte rasters, and
+    /// its schema, for wrapping in the merger under test.
+    fn six_raster_async_exec() -> (Arc<AsyncFuncExec>, SchemaRef, Arc<Mutex<Vec<usize>>>) {
+        let (schema, batch) = raster_batch(&[Some(16); 6]);
+        let input =
+            MemorySourceConfig::try_new_exec(&[vec![batch]], Arc::clone(&schema), None).unwrap();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let expr = async_expr(
+            Arc::new(MockEnsureLoaded::new(Arc::clone(&calls))),
+            "__async_fn_0",
+            &schema,
+        );
+        let exec = Arc::new(AsyncFuncExec::try_new(vec![expr], input).unwrap());
+        (exec, schema, calls)
+    }
+
+    async fn run_plan(plan: Arc<dyn ExecutionPlan>, max_batch_bytes: usize) -> Vec<usize> {
+        let batches = collect(plan.execute(0, task_context(max_batch_bytes)).unwrap())
+            .await
+            .unwrap();
+        row_counts(&batches)
+    }
+
+    #[tokio::test]
+    async fn filter_over_raster_stream_forwards_slices_instead_of_merging_them() {
+        // Baseline: a stock FilterExec above a byte-bounded exec merges the
+        // three 2-row slices back into one 6-row batch.
+        let (async_exec, _, _) = six_raster_async_exec();
+        let budgeted: Arc<dyn ExecutionPlan> =
+            Arc::new(EnsureLoadedExec::from_async_func_exec(&async_exec).unwrap());
+        let stock = Arc::new(FilterExec::try_new(lit(true), budgeted).unwrap());
+        assert_eq!(run_plan(stock, 600).await, vec![6]);
+
+        // With the rule, the filter passes each slice through.
+        let (async_exec, _, calls) = six_raster_async_exec();
+        let filtered: Arc<dyn ExecutionPlan> =
+            Arc::new(FilterExec::try_new(lit(true), async_exec as Arc<dyn ExecutionPlan>).unwrap());
+        let plan = RasterBatchBudgetRule
+            .optimize(filtered, &ConfigOptions::default())
+            .unwrap();
+        let filter = plan.downcast_ref::<FilterExec>().expect("filter kept");
+        assert_eq!(filter.batch_size(), PASSTHROUGH_BATCH_SIZE);
+        assert!(filter.input().downcast_ref::<EnsureLoadedExec>().is_some());
+        assert_eq!(run_plan(plan, 600).await, vec![2, 2, 2]);
+        assert_eq!(*calls.lock().unwrap(), vec![2, 2, 2]);
+    }
+
+    #[tokio::test]
+    async fn filters_without_raster_columns_are_left_alone() {
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, false)]));
+        let batch = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![Arc::new(Int32Array::from(vec![1, 2, 3]))],
+        )
+        .unwrap();
+        let input = MemorySourceConfig::try_new_exec(&[vec![batch]], schema, None).unwrap();
+        let filter: Arc<dyn ExecutionPlan> =
+            Arc::new(FilterExec::try_new(lit(true), input).unwrap());
+
+        let plan = RasterBatchBudgetRule
+            .optimize(Arc::clone(&filter), &ConfigOptions::default())
+            .unwrap();
+        assert!(
+            Arc::ptr_eq(&plan, &filter),
+            "vector-only plan must be untouched"
+        );
+        assert_eq!(
+            plan.downcast_ref::<FilterExec>().unwrap().batch_size(),
+            8192
+        );
+    }
+
+    #[test]
+    fn has_raster_column_recognises_rasters_with_and_without_extension_metadata() {
+        // A scan column carries the extension metadata.
+        let (raster_schema, _) = raster_batch(&[Some(2)]);
+        assert!(has_raster_column(&raster_schema));
+        // An async UDF output has the raster storage type but no metadata.
+        let (async_exec, _, _) = six_raster_async_exec();
+        let bare = Schema::new(vec![
+            async_exec
+                .schema()
+                .field(1)
+                .clone()
+                .with_metadata(Default::default()),
+        ]);
+        assert!(bare.field(0).metadata().is_empty());
+        assert!(has_raster_column(&bare));
+        let plain = Schema::new(vec![Field::new("id", DataType::Int32, false)]);
+        assert!(!has_raster_column(&plain));
     }
 }

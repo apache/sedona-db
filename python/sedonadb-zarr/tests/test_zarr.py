@@ -242,6 +242,37 @@ def test_format_spec_with_arrays_option(zarr_group):
     assert df.to_arrow_table().num_rows == 2
 
 
+def test_arrays_option_order_is_band_order(tmp_path):
+    """With `arrays`, band i is arrays[i]; without it, bands are sorted by path."""
+    root = zarr.open_group(str(tmp_path), mode="w")
+    for name, value in [("a0", 10), ("a1", 20), ("b2", 30)]:
+        arr = root.create_array(
+            name, shape=(2, 2), chunks=(2, 2), dtype="uint8", dimension_names=["y", "x"]
+        )
+        arr[:] = value
+
+    con = sedonadb.connect()
+    con.register(sedonadb_zarr.ZarrExtension())
+
+    def band_arrays(names):
+        fmt = sedonadb_zarr.Zarr({"arrays": names}) if names else sedonadb_zarr.Zarr()
+        tab = con.read(f"file://{tmp_path}", format=fmt).to_arrow_table()
+        raster = Raster(tab["raster"], 0)
+        return [b.outdb_uri.split("#array=")[1].split("&")[0] for b in raster.bands]
+
+    assert band_arrays(["a1", "a0"]) == ["a1", "a0"]
+    assert band_arrays(["b2", "a0", "a1"]) == ["b2", "a0", "a1"]
+    assert band_arrays(["b2", "a1"]) == ["b2", "a1"]
+    assert band_arrays(None) == ["a0", "a1", "b2"]
+
+    # The loaded pixels follow the same order.
+    fmt = sedonadb_zarr.Zarr({"arrays": ["b2", "a0"]})
+    df = con.read(f"file://{tmp_path}", format=fmt)
+    tab = df.select(r=df.raster.funcs.rs_ensureloaded()).to_arrow_table()
+    bands = Raster(tab["r"], 0).bands
+    assert [int(b.to_numpy()[0, 0]) for b in bands] == [30, 10]
+
+
 def test_format_spec_class_invariants():
     spec = sedonadb_zarr.Zarr()
     assert spec.extension == "zarr"
@@ -256,6 +287,43 @@ def test_zarr_loader_supports_format():
     assert loader.supports_format(None) is False
     assert loader.supports_format("gdal") is False
     assert "ZarrRasterLoader" in repr(loader)
+
+
+def test_zarr_loader_handle_stats_start_at_zero():
+    loader = sedonadb_zarr.ZarrRasterLoader()
+    assert loader.handle_stats() == {
+        "store_hits": 0,
+        "store_misses": 0,
+        "array_hits": 0,
+        "array_misses": 0,
+    }
+
+
+def test_zarr_extension_reports_handle_reuse_across_calls(zarr_group):
+    sd = sedonadb.connect()
+    ext = sedonadb_zarr.ZarrExtension()
+    assert ext.loader is None
+    sd.register(ext)
+    assert isinstance(ext.loader, sedonadb_zarr.ZarrRasterLoader)
+
+    t = sd.read(f"file://{zarr_group}", format="zarr")
+
+    def load_all():
+        tab = t.select(raster=t.raster.funcs.rs_ensureloaded()).to_arrow_table()
+        assert tab.num_rows == 2
+
+    load_all()
+    first = ext.loader.handle_stats()
+    # The one array in the group is opened once and its client built once.
+    assert first["array_misses"] == 1
+    assert first["store_misses"] == 1
+
+    load_all()
+    second = ext.loader.handle_stats()
+    # The second query reuses the opened array and builds no new client.
+    assert second["array_hits"] > first["array_hits"]
+    assert second["array_misses"] == first["array_misses"]
+    assert second["store_misses"] == 1
 
 
 @pytest.mark.parametrize(

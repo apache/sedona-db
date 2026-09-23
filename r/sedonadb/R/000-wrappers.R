@@ -130,11 +130,23 @@ NULL
 }
 
 `InternalContext_read_parquet` <- function(self) {
-  function(`paths`) {
+  function(
+    `paths`,
+    `option_keys`,
+    `option_values`,
+    `geometry_columns`,
+    `validate`,
+    `partitioning`
+  ) {
     .savvy_wrap_InternalDataFrame(.Call(
       savvy_InternalContext_read_parquet__impl,
       `self`,
-      `paths`
+      `paths`,
+      `option_keys`,
+      `option_values`,
+      `geometry_columns`,
+      `validate`,
+      `partitioning`
     ))
   }
 }
