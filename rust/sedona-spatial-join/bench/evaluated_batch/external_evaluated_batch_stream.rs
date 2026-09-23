@@ -30,7 +30,7 @@ use futures::StreamExt;
 use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
 use sedona_spatial_join::evaluated_batch::EvaluatedBatch;
 use sedona_spatial_join::evaluated_batch::evaluated_batch_stream::external::ExternalEvaluatedBatchStream;
-use sedona_spatial_join::evaluated_batch::spill::EvaluatedBatchSpillWriter;
+use sedona_spatial_join::evaluated_batch::spill::{EvaluatedBatchSpillWriter, SpillArtifact};
 use sedona_spatial_join::operand_evaluator::EvaluatedGeometryArray;
 use sedona_testing::create::create_array_storage;
 
@@ -73,7 +73,7 @@ fn write_spill_file(
     sedona_type: &SedonaType,
     compression: SpillCompression,
     evaluated_batch: &EvaluatedBatch,
-) -> Arc<datafusion_execution::disk_manager::RefCountedTempFile> {
+) -> SpillArtifact {
     let metrics = SpillMetrics::new(metrics_set, 0);
     let mut writer = EvaluatedBatchSpillWriter::try_new(
         env,
@@ -92,7 +92,7 @@ fn write_spill_file(
             .expect("failed to append batch in benchmark");
     }
 
-    Arc::new(writer.finish().expect("failed to finish spill writer"))
+    writer.finish().expect("failed to finish spill writer")
 }
 
 fn bench_external_evaluated_batch_stream(c: &mut Criterion) {
@@ -136,9 +136,10 @@ fn bench_external_evaluated_batch_stream(c: &mut Criterion) {
                 |b, file| {
                     b.iter(|| {
                         runtime.block_on(async {
-                            let stream =
-                                ExternalEvaluatedBatchStream::try_from_spill_file(Arc::clone(file))
-                                    .expect("failed to create external evaluated batch stream");
+                            let stream = ExternalEvaluatedBatchStream::try_from_spill_file(
+                                SpillArtifact::clone(file),
+                            )
+                            .expect("failed to create external evaluated batch stream");
                             futures::pin_mut!(stream);
 
                             let mut rows = 0usize;

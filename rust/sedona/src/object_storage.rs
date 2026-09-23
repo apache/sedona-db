@@ -802,45 +802,47 @@ pub(crate) fn register_table_options_extension_from_scheme(ctx: &SedonaContext, 
 
 pub(crate) async fn register_object_store_and_config_extensions(
     ctx: &SedonaContext,
-    location: &String,
+    locations: &[&str],
     options: &HashMap<String, String>,
     format: Option<ConfigFileType>,
 ) -> Result<()> {
     // Parse the location URL to extract the scheme and other components
-    let table_path = ListingTableUrl::parse(location)?;
+    for location in locations {
+        let table_path = ListingTableUrl::parse(location)?;
 
-    // Extract the scheme (e.g., "s3", "gcs") from the parsed URL
-    let scheme = table_path.scheme();
+        // Extract the scheme (e.g., "s3", "gcs") from the parsed URL
+        let scheme = table_path.scheme();
 
-    // Obtain a reference to the URL
-    let url = table_path.as_ref();
+        // Obtain a reference to the URL
+        let url = table_path.as_ref();
 
-    // Register the options based on the scheme extracted from the location
-    register_table_options_extension_from_scheme(ctx, scheme);
+        // Register the options based on the scheme extracted from the location
+        register_table_options_extension_from_scheme(ctx, scheme);
 
-    // Clone and modify the default table options based on the provided options
-    let mut table_options = ctx.ctx.state().default_table_options();
-    if let Some(ref format) = format {
-        table_options.set_config_format(format.clone());
-    }
-
-    let mut options = options.clone();
-
-    // If this is an explicitly Parquet configuration, we need to strip GeoParquet
-    // options before calling alter_string_with_hash_map.
-    if let Some(&ConfigFileType::PARQUET) = format.as_ref() {
-        for key in TableGeoParquetOptions::TABLE_OPTIONS_KEYS {
-            options.remove(key);
+        // Clone and modify the default table options based on the provided options
+        let mut table_options = ctx.ctx.state().default_table_options();
+        if let Some(ref format) = format {
+            table_options.set_config_format(format.clone());
         }
+
+        let mut options = options.clone();
+
+        // If this is an explicitly Parquet configuration, we need to strip GeoParquet
+        // options before calling alter_string_with_hash_map.
+        if let Some(&ConfigFileType::PARQUET) = format.as_ref() {
+            for key in TableGeoParquetOptions::TABLE_OPTIONS_KEYS {
+                options.remove(key);
+            }
+        }
+
+        table_options.alter_with_string_hash_map(&options)?;
+
+        // Retrieve the appropriate object store based on the scheme, URL, and modified table options
+        let store = get_object_store(&ctx.ctx.state(), scheme, url, &table_options).await?;
+
+        // Register the retrieved object store in the session context's runtime environment
+        ctx.ctx.register_object_store(url, store);
     }
-
-    table_options.alter_with_string_hash_map(&options)?;
-
-    // Retrieve the appropriate object store based on the scheme, URL, and modified table options
-    let store = get_object_store(&ctx.ctx.state(), scheme, url, &table_options).await?;
-
-    // Register the retrieved object store in the session context's runtime environment
-    ctx.ctx.register_object_store(url, store);
 
     Ok(())
 }

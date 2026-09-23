@@ -438,10 +438,26 @@ impl<T: WkbBounder2D + Default + 'static> GroupsAccumulator for BoundsGroupsAccu
         &mut self,
         values: &[ArrayRef],
         group_indices: &[usize],
-        opt_filter: Option<&arrow_array::BooleanArray>,
         total_num_groups: usize,
     ) -> Result<()> {
-        self.merge_state(values, group_indices, opt_filter, total_num_groups)
+        self.merge_state(values, group_indices, None, total_num_groups)
+    }
+
+    fn convert_to_state(
+        &self,
+        values: &[ArrayRef],
+        opt_filter: Option<&BooleanArray>,
+    ) -> Result<Vec<ArrayRef>> {
+        let num_rows = values[0].len();
+        let mut accumulator = Self::new(self.input_type.clone());
+        accumulator.execute_update(
+            values,
+            &(0..num_rows).collect::<Vec<_>>(),
+            opt_filter,
+            num_rows,
+            self.input_type.clone(),
+        )?;
+        accumulator.emit_state(EmitTo::All)
     }
 
     fn evaluate(&mut self, emit_to: EmitTo) -> Result<ArrayRef> {

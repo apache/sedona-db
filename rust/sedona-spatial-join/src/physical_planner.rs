@@ -21,6 +21,7 @@ use arrow_schema::Schema;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion_common::{JoinSide, Result};
 use datafusion_physical_expr::PhysicalExpr;
+use datafusion_physical_plan::{StatisticsArgs, StatisticsContext};
 use sedona_common::{SpatialJoinOptions, sedona_internal_err};
 use sedona_query_planner::probe_shuffle_exec::ProbeShuffleExec;
 use sedona_query_planner::spatial_join_physical_planner::{
@@ -129,8 +130,10 @@ pub fn should_swap_join_order(
         return Ok(false);
     }
 
-    let left_stats = left.partition_statistics(None)?;
-    let right_stats = right.partition_statistics(None)?;
+    let statistics_context = StatisticsContext::new();
+    let statistics_args = StatisticsArgs::new();
+    let left_stats = statistics_context.compute(left, &statistics_args)?;
+    let right_stats = statistics_context.compute(right, &statistics_args)?;
 
     let left_num_rows = left_stats.num_rows;
     let right_num_rows = right_stats.num_rows;

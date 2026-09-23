@@ -30,13 +30,12 @@ use arrow_array::ArrayRef;
 use arrow_schema::Fields;
 use datafusion::config::SpillCompression;
 use datafusion_common::Result;
-use datafusion_execution::disk_manager::RefCountedTempFile;
 use datafusion_execution::runtime_env::RuntimeEnv;
 use datafusion_physical_plan::metrics::SpillMetrics;
 use sedona_common::sedona_internal_err;
 
 use crate::index::spatial_index::DISTANCE_TOLERANCE;
-use crate::utils::spill::{RecordBatchSpillReader, RecordBatchSpillWriter};
+use crate::utils::spill::{RecordBatchSpillReader, RecordBatchSpillWriter, SpillArtifact};
 
 /// [UnprocessedKNNResultBatch] represents the KNN results produced by probing the spatial index.
 /// An [UnprocessedKNNResultBatch] may include KNN results for multiple probe rows.
@@ -571,7 +570,7 @@ pub struct KNNResultsMerger {
 
 struct MergerState {
     /// File containing results from previous (0..N-1) partitions
-    previous_file: Option<RefCountedTempFile>,
+    previous_file: Option<SpillArtifact>,
     /// Reader for previous file
     previous_reader: Option<RecordBatchSpillReader>,
     /// Spill writer for current (0..N) partitions
@@ -654,7 +653,7 @@ impl KNNResultsMerger {
         Ok(())
     }
 
-    pub fn ingest(
+    pub async fn ingest(
         &mut self,
         batch: RecordBatch,
         probe_indices: Vec<usize>,
@@ -683,7 +682,7 @@ impl KNNResultsMerger {
         for result in knn_query_result_iterator {
             // Only the previous result is guaranteed to be complete.
             if let Some(result) = prev_result_opt {
-                self.merge_and_append_result(&result)?;
+                self.merge_and_append_result(&result).await?;
             }
 
             prev_result_opt = Some(result);
@@ -711,7 +710,7 @@ impl KNNResultsMerger {
     /// Returns `Ok(Some(batch))` at most once per pending buffered index; if there is nothing
     /// pending (or results are being spilled to disk for non-final indexed partitions), returns
     /// `Ok(None)`.
-    pub fn produce_batch_until(
+    pub async fn produce_batch_until(
         &mut self,
         end_index_exclusive: usize,
     ) -> Result<Option<RecordBatch>> {
@@ -720,7 +719,7 @@ impl KNNResultsMerger {
             let knn_result_array = KNNResultArray::new(tail);
             let knn_query_result_iterator = KNNProbeResultIterator::new(&knn_result_array);
             for result in knn_query_result_iterator {
-                self.merge_and_append_result(&result)?;
+                self.merge_and_append_result(&result).await?;
             }
             self.flush_merged_batch(Some(&knn_result_array))?
         } else {
@@ -732,7 +731,9 @@ impl KNNResultsMerger {
             let end_target_idx = end_index_exclusive - 1;
             // `end_target_idx` might have already been loaded before, but that's fine. The following operation
             // will be a no-op in that case.
-            if let Some((batch_idx, row_idx)) = self.load_spilled_batches_up_to(end_target_idx)? {
+            if let Some((batch_idx, row_idx)) =
+                self.load_spilled_batches_up_to(end_target_idx).await?
+            {
                 let loaded_range = row_idx..(row_idx + 1);
                 self.append_spilled_results_in_range(batch_idx, &loaded_range);
             }
@@ -752,9 +753,10 @@ impl KNNResultsMerger {
         }
     }
 
-    fn merge_and_append_result(&mut self, result: &KNNProbeResult<'_>) -> Result<()> {
-        if let Some((spilled_batch_idx, row_idx)) =
-            self.load_spilled_batches_up_to(result.probe_row_index)?
+    async fn merge_and_append_result(&mut self, result: &KNNProbeResult<'_>) -> Result<()> {
+        if let Some((spilled_batch_idx, row_idx)) = self
+            .load_spilled_batches_up_to(result.probe_row_index)
+            .await?
         {
             let spilled_batch_array = &self.state.spilled_batches[spilled_batch_idx];
             let spilled_result = spilled_batch_array.get_probe_result(row_idx);
@@ -777,7 +779,10 @@ impl KNNResultsMerger {
     /// Load spilled batches until we find the target index, or exhaust all spilled batches.
     /// Returns the (batch_idx, row_idx) of the found target index within the spilled batches,
     /// or None if the target index is not found in any spilled batch.
-    fn load_spilled_batches_up_to(&mut self, target_idx: usize) -> Result<Option<(usize, usize)>> {
+    async fn load_spilled_batches_up_to(
+        &mut self,
+        target_idx: usize,
+    ) -> Result<Option<(usize, usize)>> {
         loop {
             if !self.state.spilled_batches.is_empty() {
                 let batch_idx = self.state.spilled_batches.len() - 1;
@@ -811,7 +816,7 @@ impl KNNResultsMerger {
             let Some(prev_reader) = self.state.previous_reader.as_mut() else {
                 return Ok(None);
             };
-            let Some(batch) = prev_reader.next_batch() else {
+            let Some(batch) = prev_reader.next_batch().await else {
                 return Ok(None);
             };
             let batch = batch?;
@@ -1845,7 +1850,7 @@ mod test {
         expected_results == partitioned_results
     }
 
-    fn ingest_partitioned_fuzz_test_data(
+    async fn ingest_partitioned_fuzz_test_data(
         knn_result_spiller: &mut KNNResultsMerger,
         partitioned_test_data: &[Vec<FuzzTestKNNResult>],
         query_group_size: usize,
@@ -1865,19 +1870,20 @@ mod test {
                     partition_chunk,
                     start_offset,
                     batch_size,
-                )?;
+                )
+                .await?;
                 merged_record_batches.extend(res_batches);
                 start_offset += partition_chunk.len();
             }
 
-            if let Some(batch) = knn_result_spiller.produce_batch_until(start_offset)? {
+            if let Some(batch) = knn_result_spiller.produce_batch_until(start_offset).await? {
                 merged_record_batches.push(batch);
             }
         }
         Ok(merged_record_batches)
     }
 
-    fn ingest_fuzz_test_data_segment(
+    async fn ingest_fuzz_test_data_segment(
         knn_result_spiller: &mut KNNResultsMerger,
         test_data: &[FuzzTestKNNResult],
         start_offset: usize,
@@ -1936,13 +1942,15 @@ mod test {
                 .map(|&i| unfiltered_indices[i])
                 .collect::<Vec<usize>>();
 
-            let res = knn_result_spiller.ingest(
-                batch,
-                filtered_indices,
-                filtered_distances,
-                unfiltered_indices,
-                unfiltered_distances,
-            )?;
+            let res = knn_result_spiller
+                .ingest(
+                    batch,
+                    filtered_indices,
+                    filtered_distances,
+                    unfiltered_indices,
+                    unfiltered_distances,
+                )
+                .await?;
             if let Some(res_batch) = res {
                 merged_record_batches.push(res_batch);
             }
@@ -1989,7 +1997,7 @@ mod test {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn fuzz_test_knn_results_merger(
+    async fn fuzz_test_knn_results_merger(
         rng: &mut StdRng,
         num_rows: usize,
         num_partitions: usize,
@@ -2018,13 +2026,14 @@ mod test {
                 include_tie_breaker,
                 query_group_size,
                 target_batch_size,
-            )?;
+            )
+            .await?;
         }
 
         Ok(())
     }
 
-    fn fuzz_test_knn_results_merger_using_partitioned_data(
+    async fn fuzz_test_knn_results_merger_using_partitioned_data(
         partitioned_test_data: &[Vec<FuzzTestKNNResult>],
         k: usize,
         include_tie_breaker: bool,
@@ -2050,14 +2059,16 @@ mod test {
             partitioned_test_data,
             query_group_size,
             target_batch_size,
-        )?;
+        )
+        .await?;
         let batch = concat_batches(&test_data_schema, batches.iter())?;
         assert_merged_knn_result_is_correct(&batch, partitioned_test_data, k, include_tie_breaker);
         Ok(())
     }
 
     #[rstest]
-    fn test_knn_results_merger(
+    #[tokio::test]
+    async fn test_knn_results_merger(
         #[values(1, 10, 13, 50, 51, 1000)] target_batch_size: usize,
         #[values(false, true)] include_tie_breaker: bool,
     ) {
@@ -2072,23 +2083,30 @@ mod test {
             30,
             target_batch_size,
         )
+        .await
         .unwrap();
     }
 
     #[rstest]
-    fn test_knn_results_merger_empty_query_side(#[values(1, 2, 3)] random_seed: u64) {
+    #[tokio::test]
+    async fn test_knn_results_merger_empty_query_side(#[values(1, 2, 3)] random_seed: u64) {
         let mut rng = StdRng::seed_from_u64(random_seed);
-        fuzz_test_knn_results_merger(&mut rng, 0, 3, 1.0, 10, false, 100, 33).unwrap();
+        fuzz_test_knn_results_merger(&mut rng, 0, 3, 1.0, 10, false, 100, 33)
+            .await
+            .unwrap();
     }
 
     #[rstest]
-    fn test_knn_results_merger_all_filtered(#[values(1, 2, 3)] random_seed: u64) {
+    #[tokio::test]
+    async fn test_knn_results_merger_all_filtered(#[values(1, 2, 3)] random_seed: u64) {
         let mut rng = StdRng::seed_from_u64(random_seed);
-        fuzz_test_knn_results_merger(&mut rng, 100, 3, 0.0, 10, false, 50, 33).unwrap();
+        fuzz_test_knn_results_merger(&mut rng, 100, 3, 0.0, 10, false, 50, 33)
+            .await
+            .unwrap();
     }
 
-    #[test]
-    fn test_knn_results_merger_no_knn_results() {
+    #[tokio::test]
+    async fn test_knn_results_merger_no_knn_results() {
         let empty_test_data = (0..100)
             .map(|query_id| FuzzTestKNNResult {
                 query_id,
@@ -2103,11 +2121,12 @@ mod test {
             50,
             33,
         )
+        .await
         .unwrap();
     }
 
-    #[test]
-    fn test_knn_results_merger_k_is_zero() {
+    #[tokio::test]
+    async fn test_knn_results_merger_k_is_zero() {
         let empty_test_data = (0..100)
             .map(|query_id| FuzzTestKNNResult {
                 query_id,
@@ -2122,11 +2141,13 @@ mod test {
             50,
             33,
         )
+        .await
         .unwrap();
     }
 
     #[rstest]
-    fn test_knn_result_merger_with_empty_partitions(#[values(1, 2, 3)] random_seed: u64) {
+    #[tokio::test]
+    async fn test_knn_result_merger_with_empty_partitions(#[values(1, 2, 3)] random_seed: u64) {
         let k = 5;
         let include_tie_breaker = false;
         let num_rows = 100;
@@ -2165,12 +2186,14 @@ mod test {
                 query_group_size,
                 target_batch_size,
             )
+            .await
             .unwrap();
         }
     }
 
     #[rstest]
-    fn test_knn_results_merger_with_missing_probe_rows(
+    #[tokio::test]
+    async fn test_knn_results_merger_with_missing_probe_rows(
         #[values(1, 10, 13, 50, 51, 1000)] target_batch_size: usize,
     ) {
         let k = 5;
@@ -2216,6 +2239,7 @@ mod test {
             query_group_size,
             target_batch_size,
         )
+        .await
         .unwrap();
     }
 }

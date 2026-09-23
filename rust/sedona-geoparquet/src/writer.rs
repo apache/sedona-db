@@ -659,38 +659,25 @@ fn normalize_field_for_geoparquet(
             GeoParquetVersion::V2_0 | GeoParquetVersion::Omitted => {
                 let normalized_crs_value =
                     normalize_crs_for_geoparquet(field.name(), &crs, sedona_runtime)?;
-                let normalized_crs =
-                    deserialize_crs_from_obj(&normalized_crs_value.unwrap_or(Value::Null))?;
-                Ok(serialize_edges_and_crs_with_parquet_bug(
-                    field,
-                    &normalized_crs,
-                    edges,
-                ))
+                let normalized_crs = match normalized_crs_value {
+                    Some(value) => deserialize_crs_from_obj(&value)?,
+                    None => crs,
+                };
+                Ok(serialize_edges_and_crs(field, &normalized_crs, edges))
             }
         },
         _ => exec_err!("Unsupported geometry output to Parquet: {sedona_type}"),
     }
 }
 
-// Due to a bug in the parquet type conversion, we need to serialize invalid metadata for geography
-// fields. The conversion logic expects "algorithm" but the valid GeoArrow metadata we serialize
-// by default is "edges".
-// https://github.com/apache/arrow-rs/blob/f725bc9b955f23772a6a6d8a38c99a8b3f359116/parquet-geospatial/src/types.rs#L64-L66
-// https://github.com/apache/arrow-rs/issues/9929
-fn serialize_edges_and_crs_with_parquet_bug(
-    original_field: &FieldRef,
-    crs: &Crs,
-    edges: Edges,
-) -> FieldRef {
+fn serialize_edges_and_crs(original_field: &FieldRef, crs: &Crs, edges: Edges) -> FieldRef {
     let crs_component = crs
         .as_ref()
         .map(|crs| format!(r#""crs":{}"#, crs.to_json()));
 
     let edges_component = match edges {
         Edges::Planar => None,
-        // This is where we apply the workaround relative to our usual
-        // serialize_edges_and_crs().
-        other => Some(format!(r#""algorithm":"{other}""#)),
+        other => Some(format!(r#""edges":"{other}""#)),
     };
 
     let serialized = match (crs_component, edges_component) {
@@ -1226,8 +1213,8 @@ mod test {
         let logical_types = test_dataframe_roundtrip(&ctx, df, options).await;
         let logical_type = logical_types.get("geometry").unwrap().clone().unwrap();
         match logical_type {
-            LogicalType::Geometry { crs } => {
-                assert!(crs.is_none());
+            LogicalType::Geometry(geometry) => {
+                assert!(geometry.crs.is_none());
             }
             unknown => panic!("Unexpected logical type {unknown:?}"),
         }
@@ -1247,11 +1234,14 @@ mod test {
         let logical_types = test_dataframe_roundtrip(&ctx, df, options).await;
         let logical_type = logical_types.get("geometry").unwrap().clone().unwrap();
         match logical_type {
-            LogicalType::Geography { crs, algorithm } => {
-                assert!(crs.is_none());
+            LogicalType::Geography(geography) => {
+                assert!(geography.crs.is_none());
                 assert!(
-                    algorithm.is_none()
-                        || matches!(algorithm.unwrap(), EdgeInterpolationAlgorithm::SPHERICAL)
+                    geography.algorithm.is_none()
+                        || matches!(
+                            geography.algorithm.unwrap(),
+                            EdgeInterpolationAlgorithm::SPHERICAL
+                        )
                 );
             }
             unknown => panic!("Unexpected logical type {unknown:?}"),
@@ -1272,9 +1262,9 @@ mod test {
         let logical_types = test_dataframe_roundtrip(&ctx, df, options).await;
         let logical_type = logical_types.get("geometry").unwrap().clone().unwrap();
         match logical_type {
-            LogicalType::Geometry { crs } => {
-                assert!(crs.as_ref().unwrap().starts_with("{"));
-                let parsed = deserialize_crs(crs.as_ref().unwrap()).unwrap();
+            LogicalType::Geometry(geometry) => {
+                assert!(geometry.crs.as_ref().unwrap().starts_with("{"));
+                let parsed = deserialize_crs(geometry.crs.as_ref().unwrap()).unwrap();
                 assert_eq!(
                     parsed.unwrap().to_authority_code().unwrap(),
                     Some("EPSG:32618".to_string())
@@ -1298,8 +1288,8 @@ mod test {
         let logical_types = test_dataframe_roundtrip(&ctx, df, options).await;
         let logical_type = logical_types.get("geometry").unwrap().clone().unwrap();
         match logical_type {
-            LogicalType::Geometry { crs } => {
-                assert!(crs.is_none());
+            LogicalType::Geometry(geometry) => {
+                assert!(geometry.crs.is_none());
             }
             unknown => panic!("Unexpected logical type {unknown:?}"),
         }

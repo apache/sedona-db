@@ -543,7 +543,7 @@ mod tests {
         let geo_statistics = geo_stats_from_batches(&batches)?;
         let spill_file = writer.finish()?;
         Ok(SpilledPartition::new(
-            vec![Arc::new(spill_file)],
+            vec![spill_file],
             geo_statistics,
             num_rows,
         ))

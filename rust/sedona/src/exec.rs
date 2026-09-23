@@ -39,8 +39,8 @@ pub(crate) async fn create_plan_from_sql(
     if let LogicalPlan::Ddl(DdlStatement::CreateExternalTable(cmd)) = &plan {
         // To support custom formats, treat error as None
         let format = config_file_type_from_str(&cmd.file_type);
-        register_object_store_and_config_extensions(ctx, &cmd.location, &cmd.options, format)
-            .await?;
+        let locations = cmd.locations.iter().map(|s| s.as_ref()).collect::<Vec<_>>();
+        register_object_store_and_config_extensions(ctx, &locations, &cmd.options, format).await?;
     }
 
     if let LogicalPlan::Copy(copy_to) = &mut plan {
@@ -48,7 +48,7 @@ pub(crate) async fn create_plan_from_sql(
 
         register_object_store_and_config_extensions(
             ctx,
-            &copy_to.output_url,
+            &[&copy_to.output_url],
             &copy_to.options,
             format,
         )
@@ -85,7 +85,8 @@ mod tests {
 
         if let LogicalPlan::Ddl(DdlStatement::CreateExternalTable(cmd)) = &plan {
             let format = config_file_type_from_str(&cmd.file_type);
-            register_object_store_and_config_extensions(&ctx, &cmd.location, &cmd.options, format)
+            let locations = cmd.locations.iter().map(|s| s.as_ref()).collect::<Vec<_>>();
+            register_object_store_and_config_extensions(&ctx, &locations, &cmd.options, format)
                 .await?;
         } else {
             return plan_err!("LogicalPlan is not a CreateExternalTable");
@@ -109,7 +110,7 @@ mod tests {
             let format = config_file_type_from_str(&cmd.file_type.get_ext());
             register_object_store_and_config_extensions(
                 &ctx,
-                &cmd.output_url,
+                &[&cmd.output_url],
                 &cmd.options,
                 format,
             )

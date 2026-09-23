@@ -33,7 +33,10 @@ use datafusion::{
     },
 };
 use datafusion_catalog::{Session, memory::DataSourceExec};
-use datafusion_common::{DataFusionError, GetExt, Result, Statistics, not_impl_err, plan_err};
+use datafusion_common::{
+    DataFusionError, GetExt, Result, Statistics, not_impl_err, plan_err,
+    tree_node::TreeNodeRecursion,
+};
 use datafusion_datasource::projection::{ProjectionOpener, SplitProjection};
 use datafusion_physical_expr::{
     LexOrdering, LexRequirement, PhysicalExpr, projection::ProjectionExprs,
@@ -138,7 +141,11 @@ impl FileFormat for ExternalFileFormat {
         }
 
         let schema_concurrency = if self.spec.supports_concurrent_file_reads() {
-            state.config_options().execution.meta_fetch_concurrency
+            state
+                .config_options()
+                .execution
+                .meta_fetch_concurrency
+                .get()
         } else {
             1
         };
@@ -251,6 +258,25 @@ impl ExternalFileSource {
 }
 
 impl FileSource for ExternalFileSource {
+    fn apply_expressions(
+        &self,
+        f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> Result<TreeNodeRecursion>,
+    ) -> Result<TreeNodeRecursion> {
+        for filter in &self.filters {
+            if f(filter)? == TreeNodeRecursion::Stop {
+                return Ok(TreeNodeRecursion::Stop);
+            }
+        }
+        if let Some(projection) = &self.split_projection {
+            for expr in &projection.source {
+                if f(&expr.expr)? == TreeNodeRecursion::Stop {
+                    return Ok(TreeNodeRecursion::Stop);
+                }
+            }
+        }
+        Ok(TreeNodeRecursion::Continue)
+    }
+
     fn create_file_opener(
         &self,
         store: Arc<dyn ObjectStore>,

@@ -916,6 +916,7 @@ mod tests {
     use arrow_schema::Field;
     use arrow_schema::SchemaRef;
     use datafusion_common::ScalarValue;
+    use datafusion_common::tree_node::TreeNodeRecursion;
     use datafusion_expr::JoinType;
     use datafusion_expr::Operator;
     use datafusion_physical_expr::EquivalenceProperties;
@@ -1192,6 +1193,13 @@ mod tests {
             vec![]
         }
 
+        fn apply_expressions(
+            &self,
+            _f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> Result<TreeNodeRecursion>,
+        ) -> Result<TreeNodeRecursion> {
+            Ok(TreeNodeRecursion::Continue)
+        }
+
         fn with_new_children(
             self: Arc<Self>,
             _children: Vec<Arc<dyn ExecutionPlan>>,
@@ -1207,9 +1215,10 @@ mod tests {
             unimplemented!("PropertiesOnlyExec is for properties tests only")
         }
 
-        fn partition_statistics(
+        fn statistics_from_inputs(
             &self,
-            _partition: Option<usize>,
+            _input_stats: &[Arc<datafusion_common::Statistics>],
+            _args: &datafusion_physical_plan::StatisticsArgs,
         ) -> Result<Arc<datafusion_common::Statistics>> {
             Ok(Arc::new(datafusion_common::Statistics::new_unknown(
                 self.schema().as_ref(),

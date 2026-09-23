@@ -216,7 +216,13 @@ impl FileFormat for GeoParquetFormat {
                 }
             })
             .boxed() // Workaround https://github.com/rust-lang/rust/issues/64552
-            .buffered(state.config_options().execution.meta_fetch_concurrency)
+            .buffered(
+                state
+                    .config_options()
+                    .execution
+                    .meta_fetch_concurrency
+                    .get(),
+            )
             .try_collect()
             .await?;
 
@@ -431,7 +437,7 @@ pub struct GeoParquetFileSource {
     metadata_size_hint: Option<usize>,
     predicate: Option<Arc<dyn PhysicalExpr>>,
     options: TableGeoParquetOptions,
-    metadata_cache: Option<Arc<dyn FileMetadataCache>>,
+    metadata_cache: Option<Arc<FileMetadataCache>>,
     /// Factory for creating bounders used for spatial pruning
     ///
     /// Enables spatial pruning for both GEOMETRY and GEOGRAPHY columns.
@@ -579,6 +585,19 @@ impl GeoParquetFileSource {
 }
 
 impl FileSource for GeoParquetFileSource {
+    fn apply_expressions(
+        &self,
+        f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> Result<TreeNodeRecursion>,
+    ) -> Result<TreeNodeRecursion> {
+        if self.inner.apply_expressions(f)? == TreeNodeRecursion::Stop {
+            return Ok(TreeNodeRecursion::Stop);
+        }
+        if let Some(predicate) = &self.predicate {
+            return f(predicate);
+        }
+        Ok(TreeNodeRecursion::Continue)
+    }
+
     fn create_file_opener(
         &self,
         object_store: Arc<dyn ObjectStore>,
@@ -1074,7 +1093,7 @@ mod test {
         let schema = Arc::new(Schema::new(vec![
             WKB_GEOMETRY.to_storage_field("geometry", true).unwrap(),
         ]));
-        let table_schema = TableSchema::new(schema, vec![]);
+        let table_schema = TableSchema::from(schema);
         let file_source = format.file_source(table_schema);
         let conf =
             FileScanConfigBuilder::new(ObjectStoreUrl::local_filesystem(), file_source).build();
@@ -1106,7 +1125,7 @@ mod test {
             DataType::Int32,
             false,
         )]));
-        let table_schema = TableSchema::new(schema, vec![]);
+        let table_schema = TableSchema::from(schema);
 
         // Create a parquet source with the correct constructor signature
         let parquet_source = ParquetSource::new(table_schema);
