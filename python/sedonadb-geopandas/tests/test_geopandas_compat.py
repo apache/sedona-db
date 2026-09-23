@@ -1727,18 +1727,26 @@ def test_division_unwraps_dictionary_int():
     assert sorted((gdf["k"] / 2).to_pandas().tolist()) == [0.5, 1.5]
 
 
-def test_run_end_encoded_columns_are_not_decoded():
-    # The engine's casts ignore the offset of a sliced run-end-encoded array
-    # and read the wrong rows, so the wrapper must not decode one: reading a
-    # sliced column stays correct, and arithmetic on it fails to plan rather
-    # than returning another row's values.
-    ree = pa.RunEndEncodedArray.from_arrays(
+def test_run_end_encoded_integer_division_is_true_or_refused():
+    # Expanding a sliced run-end-encoded array reads the wrong rows on some
+    # engine versions (released 0.4.1), so the wrapper never expands one: it
+    # casts only the values, to a run-end-encoded float. Where the engine
+    # supports run-end-encoded arithmetic the result is true division on the
+    # right rows; where it does not, it fails to plan. Never a wrong row.
+    full = pa.RunEndEncodedArray.from_arrays(
         pa.array([1, 2, 3], pa.int32()), pa.array([10, 20, 30], pa.int64())
-    ).slice(1, 1)
-    gdf = GeoDataFrame(sgpd.default_context().create_data_frame(pa.table({"n": ree})))
-    assert gdf["n"].to_pandas().tolist() == [20]
-    with pytest.raises(Exception, match="RunEndEncoded"):
-        (gdf["n"] / 2).to_pandas()
+    )
+    for column, expected in ((full, [5.0, 10.0, 15.0]), (full.slice(1, 1), [10.0])):
+        gdf = GeoDataFrame(
+            sgpd.default_context().create_data_frame(pa.table({"n": column}))
+        )
+        assert gdf["n"].to_pandas().tolist() == [x * 2 for x in expected]
+        try:
+            got = (gdf["n"] / 2).to_pandas().tolist()
+        except Exception as err:
+            assert "RunEndEncoded" in str(err)
+        else:
+            assert got == expected
 
 
 def test_division_by_decimal_stays_decimal():
