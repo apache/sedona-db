@@ -289,6 +289,16 @@ def test_zarr_loader_supports_format():
     assert "ZarrRasterLoader" in repr(loader)
 
 
+def test_zarr_loader_io_concurrency_is_configurable():
+    assert sedonadb_zarr.ZarrRasterLoader().io_concurrency() > 0
+    assert sedonadb_zarr.ZarrRasterLoader(io_concurrency=3).io_concurrency() == 3
+
+    sd = sedonadb.connect()
+    ext = sedonadb_zarr.ZarrExtension(io_concurrency=5)
+    sd.register(ext)
+    assert ext.loader.io_concurrency() == 5
+
+
 def test_zarr_loader_handle_stats_start_at_zero():
     loader = sedonadb_zarr.ZarrRasterLoader()
     assert loader.handle_stats() == {
