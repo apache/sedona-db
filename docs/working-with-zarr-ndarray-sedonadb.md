@@ -182,6 +182,14 @@ export AWS_SKIP_SIGNATURE=true   # read public objects without credentials
 df = sd.read("s3://carbonplan-share/zarr-layer-examples/antarctic_era5.zarr")
 ```
 
+### I/O concurrency
+
+`RS_EnsureLoaded` fetches the chunks of a batch concurrently, and the Zarr loader bounds how many chunk reads are in flight at once with one budget shared by every partition of the session, 64 by default. To change it, pass it at registration:
+
+```python
+sd.register(sedonadb_zarr.ZarrExtension(io_concurrency=32))
+```
+
 ### Selecting arrays with the `arrays` option
 
 By default SedonaDB discovers a group's arrays automatically — from the group's consolidated metadata when present, otherwise by listing the store — and reads them as bands sorted by array path. The `arrays` option names an explicit subset to read instead (as we did above), and its order is the band order: band `i` of every row is `arrays[i]`.
