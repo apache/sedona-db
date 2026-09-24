@@ -525,7 +525,15 @@ unsafe extern "C" fn handler_on_schema(
     self_: *mut FFI_ArrowAsyncDeviceStreamHandler,
     schema: *mut FFI_ArrowSchema,
 ) -> c_int {
-    if self_.is_null() || schema.is_null() {
+    if schema.is_null() {
+        return 1;
+    }
+
+    // The handler owns the schema contents as soon as this callback is
+    // invoked, including on every error path.
+    let ffi_schema = std::ptr::read(schema);
+
+    if self_.is_null() {
         return 1;
     }
 
@@ -548,7 +556,6 @@ unsafe extern "C" fn handler_on_schema(
     state_arc.set_producer(handler.producer);
 
     // Import the schema
-    let ffi_schema = std::ptr::read(schema);
     let result = match Schema::try_from(&ffi_schema) {
         Ok(s) => {
             // Send through channel (lock-free)

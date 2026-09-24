@@ -188,12 +188,13 @@ async fn drive_stream_inner(
 
     if let Some(on_schema) = handler_ref.on_schema {
         let ret = unsafe { on_schema(handler, &mut ffi_schema) };
+        // Ownership of the schema contents transfers to the handler when the
+        // callback is invoked, regardless of its return value.
+        std::mem::forget(ffi_schema);
         if ret != 0 {
-            call_on_error(handler_ref, ret, "on_schema callback failed");
+            // A rejected callback may only be followed by release.
             return Err(());
         }
-        // The handler now owns the schema
-        std::mem::forget(ffi_schema);
     }
 
     // Stream batches with back-pressure
@@ -257,9 +258,16 @@ async fn drive_stream_inner(
 
         match next {
             Some(Ok(batch)) => {
-                if let Err(e) = send_batch_to_handler(handler_ref, handler, batch) {
-                    call_on_error(handler_ref, 1, &e);
-                    return Err(());
+                match send_batch_to_handler(handler_ref, handler, batch) {
+                    Ok(()) => {}
+                    Err(SendBatchError::HandlerRejected) => {
+                        // A rejected callback may only be followed by release.
+                        return Err(());
+                    }
+                    Err(SendBatchError::Producer(error)) => {
+                        call_on_error(handler_ref, 1, &error);
+                        return Err(());
+                    }
                 }
                 // Yield to allow consumer to process the batch.
                 // This enables single-task usage (producer and consumer in same task).
@@ -397,22 +405,29 @@ fn release_handler(handler: *mut FFI_ArrowAsyncDeviceStreamHandler) {
     }
 }
 
+enum SendBatchError {
+    HandlerRejected,
+    Producer(String),
+}
+
 fn send_batch_to_handler(
     handler_ref: &mut FFI_ArrowAsyncDeviceStreamHandler,
     handler: *mut FFI_ArrowAsyncDeviceStreamHandler,
     batch: RecordBatch,
-) -> Result<(), String> {
+) -> Result<(), SendBatchError> {
     let Some(on_next_task) = handler_ref.on_next_task else {
-        return Err("on_next_task callback is null".to_string());
+        return Err(SendBatchError::Producer(
+            "on_next_task callback is null".to_string(),
+        ));
     };
 
     // Create a task that wraps the batch
     // The handler moves the task contents if it accepts the callback. Keep the
     // stack wrapper from dropping the moved private data in that case.
-    let mut task = create_async_task(batch)?;
+    let mut task = create_async_task(batch).map_err(SendBatchError::Producer)?;
     let ret = unsafe { on_next_task(handler, &mut task, std::ptr::null()) };
     if ret != 0 {
-        return Err("on_next_task callback failed".to_string());
+        return Err(SendBatchError::HandlerRejected);
     }
     std::mem::forget(task);
     Ok(())

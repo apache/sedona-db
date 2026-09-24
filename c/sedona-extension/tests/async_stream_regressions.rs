@@ -266,6 +266,111 @@ impl RecordBatchStream for ReadyStream {
     }
 }
 
+#[derive(Default)]
+struct RejectingHandlerState {
+    schema_calls: AtomicUsize,
+    next_calls: AtomicUsize,
+    error_calls: AtomicUsize,
+    release_calls: AtomicUsize,
+}
+
+unsafe extern "C" fn reject_schema(
+    handler: *mut FFI_ArrowAsyncDeviceStreamHandler,
+    schema: *mut arrow_array::ffi::FFI_ArrowSchema,
+) -> std::ffi::c_int {
+    drop(std::ptr::read(schema));
+    let state = &*((*handler).private_data as *const RejectingHandlerState);
+    state.schema_calls.fetch_add(1, Ordering::SeqCst);
+    libc::EINVAL
+}
+
+unsafe extern "C" fn accept_schema_and_request_one(
+    handler: *mut FFI_ArrowAsyncDeviceStreamHandler,
+    schema: *mut arrow_array::ffi::FFI_ArrowSchema,
+) -> std::ffi::c_int {
+    drop(std::ptr::read(schema));
+    let state = &*((*handler).private_data as *const RejectingHandlerState);
+    state.schema_calls.fetch_add(1, Ordering::SeqCst);
+    let producer = (*handler).producer;
+    ((*producer).request.unwrap())(producer, 1);
+    0
+}
+
+unsafe extern "C" fn reject_task(
+    handler: *mut FFI_ArrowAsyncDeviceStreamHandler,
+    _task: *mut FFI_ArrowAsyncTask,
+    _metadata: *const std::ffi::c_char,
+) -> std::ffi::c_int {
+    let state = &*((*handler).private_data as *const RejectingHandlerState);
+    state.next_calls.fetch_add(1, Ordering::SeqCst);
+    libc::EINVAL
+}
+
+unsafe extern "C" fn count_error(
+    handler: *mut FFI_ArrowAsyncDeviceStreamHandler,
+    _code: std::ffi::c_int,
+    _message: *const std::ffi::c_char,
+    _metadata: *const std::ffi::c_char,
+) {
+    let state = &*((*handler).private_data as *const RejectingHandlerState);
+    state.error_calls.fetch_add(1, Ordering::SeqCst);
+}
+
+unsafe extern "C" fn count_release(handler: *mut FFI_ArrowAsyncDeviceStreamHandler) {
+    let state = &*((*handler).private_data as *const RejectingHandlerState);
+    state.release_calls.fetch_add(1, Ordering::SeqCst);
+    (*handler).release = None;
+}
+
+#[tokio::test]
+async fn rejected_schema_is_consumed_and_only_followed_by_release() {
+    let state = RejectingHandlerState::default();
+    let mut handler = FFI_ArrowAsyncDeviceStreamHandler {
+        on_schema: Some(reject_schema),
+        on_next_task: Some(reject_task),
+        on_error: Some(count_error),
+        release: Some(count_release),
+        producer: std::ptr::null_mut(),
+        private_data: (&state as *const RejectingHandlerState).cast_mut().cast(),
+    };
+    let source = Box::pin(ReadyStream {
+        schema: schema(),
+        batch: None,
+    });
+
+    drive_stream_to_handler(source, &mut handler).await;
+
+    assert_eq!(state.schema_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(state.next_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(state.error_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(state.release_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn rejected_task_is_only_followed_by_release() {
+    let state = RejectingHandlerState::default();
+    let mut handler = FFI_ArrowAsyncDeviceStreamHandler {
+        on_schema: Some(accept_schema_and_request_one),
+        on_next_task: Some(reject_task),
+        on_error: Some(count_error),
+        release: Some(count_release),
+        producer: std::ptr::null_mut(),
+        private_data: (&state as *const RejectingHandlerState).cast_mut().cast(),
+    };
+    let batch = RecordBatch::try_new(schema(), vec![Arc::new(Int32Array::from(vec![1]))]).unwrap();
+    let source = Box::pin(ReadyStream {
+        schema: schema(),
+        batch: Some(batch),
+    });
+
+    drive_stream_to_handler(source, &mut handler).await;
+
+    assert_eq!(state.schema_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(state.next_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(state.error_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(state.release_calls.load(Ordering::SeqCst), 1);
+}
+
 #[tokio::test]
 async fn roundtrip_preserves_schema_metadata() {
     let metadata = HashMap::from([("review_source".to_owned(), "table-v1".to_owned())]);
