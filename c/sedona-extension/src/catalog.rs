@@ -224,6 +224,24 @@ impl ImportedCatalogProviderList {
         })
     }
 
+    /// Register an existing catalog in the foreign catalog list.
+    ///
+    /// This operation is deliberately unsupported: transferring an exported
+    /// catalog back into a session-owned foreign catalog list can introduce a
+    /// strong reference cycle through the exported catalog's session. Call
+    /// [`Self::try_create_catalog`] when a new foreign catalog is required.
+    pub fn try_register_catalog(
+        &self,
+        name: String,
+        catalog: Arc<dyn CatalogProvider>,
+    ) -> Result<Option<Arc<dyn CatalogProvider>>> {
+        let _ = (name, catalog);
+        not_impl_err!(
+            "Registering existing catalogs is not supported by the foreign catalog list; \
+             use try_create_catalog instead"
+        )
+    }
+
     /// Return catalog names, preserving any property error from FFI.
     pub fn try_catalog_names(&self) -> Result<Vec<String>> {
         let callback = self.inner.get_property.expect("validated in try_new");
@@ -260,8 +278,10 @@ impl CatalogProviderList for ImportedCatalogProviderList {
         name: String,
         catalog: Arc<dyn CatalogProvider>,
     ) -> Option<Arc<dyn CatalogProvider>> {
-        let _ = (name, catalog);
-        None
+        // CatalogProviderList cannot report registration errors. Keep the
+        // fallible behavior available through try_register_catalog and match
+        // the trait's Option-only interface here.
+        self.try_register_catalog(name, catalog).ok().flatten()
     }
 
     fn catalog_names(&self) -> Vec<String> {
@@ -1072,6 +1092,32 @@ mod tests {
         drop(consumer_session);
         assert!(weak_consumer_session.upgrade().is_none());
         drop(runtime);
+    }
+
+    #[test]
+    fn registering_existing_catalog_is_explicitly_unsupported() {
+        let (catalogs, _consumer_session, _runtime, _producer_runtime) = round_trip();
+
+        let error = catalogs
+            .try_register_catalog(
+                "catalog_two".to_owned(),
+                Arc::new(MemoryCatalogProvider::new()),
+            )
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("Registering existing catalogs is not supported"));
+        assert!(catalogs.catalog("catalog_two").is_none());
+
+        // The DataFusion trait has no error channel, so it necessarily
+        // collapses the same error to None.
+        assert!(catalogs
+            .register_catalog(
+                "catalog_three".to_owned(),
+                Arc::new(MemoryCatalogProvider::new()),
+            )
+            .is_none());
+        assert!(catalogs.catalog("catalog_three").is_none());
     }
 
     #[test]
