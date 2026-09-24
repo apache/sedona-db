@@ -19,7 +19,6 @@ use datafusion_expr::{DdlStatement, LogicalPlan};
 use crate::{context::SedonaContext, object_storage::register_object_store_and_config_extensions};
 
 use datafusion::{
-    config::ConfigFileType,
     error::{DataFusionError, Result},
     sql::parser::Statement,
 };
@@ -37,34 +36,15 @@ pub(crate) async fn create_plan_from_sql(
     // datafusion-cli specific options before passing through to datafusion. Otherwise, datafusion
     // will raise Configuration errors.
     if let LogicalPlan::Ddl(DdlStatement::CreateExternalTable(cmd)) = &plan {
-        // To support custom formats, treat error as None
-        let format = config_file_type_from_str(&cmd.file_type);
-        register_object_store_and_config_extensions(ctx, &cmd.location, &cmd.options, format)
-            .await?;
+        register_object_store_and_config_extensions(ctx, &cmd.location, &cmd.options).await?;
     }
 
     if let LogicalPlan::Copy(copy_to) = &mut plan {
-        let format = config_file_type_from_str(&copy_to.file_type.get_ext());
-
-        register_object_store_and_config_extensions(
-            ctx,
-            &copy_to.output_url,
-            &copy_to.options,
-            format,
-        )
-        .await?;
+        register_object_store_and_config_extensions(ctx, &copy_to.output_url, &copy_to.options)
+            .await?;
     }
 
     Ok(plan)
-}
-
-pub(crate) fn config_file_type_from_str(ext: &str) -> Option<ConfigFileType> {
-    match ext.to_lowercase().as_str() {
-        "csv" => Some(ConfigFileType::CSV),
-        "json" => Some(ConfigFileType::JSON),
-        "parquet" => Some(ConfigFileType::PARQUET),
-        _ => None,
-    }
 }
 
 #[cfg(test)]
@@ -84,9 +64,7 @@ mod tests {
         let plan = ctx.ctx.state().create_logical_plan(sql).await?;
 
         if let LogicalPlan::Ddl(DdlStatement::CreateExternalTable(cmd)) = &plan {
-            let format = config_file_type_from_str(&cmd.file_type);
-            register_object_store_and_config_extensions(&ctx, &cmd.location, &cmd.options, format)
-                .await?;
+            register_object_store_and_config_extensions(&ctx, &cmd.location, &cmd.options).await?;
         } else {
             return plan_err!("LogicalPlan is not a CreateExternalTable");
         }
@@ -106,14 +84,8 @@ mod tests {
         let plan = ctx.ctx.state().create_logical_plan(sql).await?;
 
         if let LogicalPlan::Copy(cmd) = &plan {
-            let format = config_file_type_from_str(&cmd.file_type.get_ext());
-            register_object_store_and_config_extensions(
-                &ctx,
-                &cmd.output_url,
-                &cmd.options,
-                format,
-            )
-            .await?;
+            register_object_store_and_config_extensions(&ctx, &cmd.output_url, &cmd.options)
+                .await?;
         } else {
             return plan_err!("LogicalPlan is not a CreateExternalTable");
         }

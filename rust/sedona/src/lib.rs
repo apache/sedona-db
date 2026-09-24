@@ -23,6 +23,7 @@ mod object_storage;
 pub mod pool_type;
 pub mod projected_reader;
 pub mod random_geometry_provider;
+mod read;
 pub mod record_batch_reader_provider;
 pub mod show;
 pub mod size_parser;

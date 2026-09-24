@@ -21,6 +21,7 @@ use std::{
 
 use crate::exec::create_plan_from_sql;
 use crate::object_storage::ensure_object_store_registered_with_options;
+use crate::read::{read_provider, resolve_read_format};
 use crate::url_table::install_sedona_url_table;
 use crate::{
     catalog::DynamicObjectStoreCatalog,
@@ -30,7 +31,7 @@ use crate::{
 use arrow_array::RecordBatch;
 use arrow_schema::{DataType, Schema};
 use async_trait::async_trait;
-use datafusion::datasource::file_format::format_as_file_type;
+use datafusion::datasource::file_format::{format_as_file_type, FileFormatFactory};
 use datafusion::{
     common::plan_err,
     error::{DataFusionError, Result},
@@ -50,7 +51,7 @@ use datafusion_expr::sqlparser::dialect::{dialect_from_str, Dialect};
 use datafusion_expr::{AggregateUDFImpl, LogicalPlan, LogicalPlanBuilder, ScalarUDFImpl, SortExpr};
 use parking_lot::Mutex;
 use sedona_common::{sedona_internal_datafusion_err, SedonaOptions};
-use sedona_datasource::provider::external_table;
+use sedona_datasource::format::ExternalFormatFactory;
 use sedona_datasource::spec::ExternalFormatSpec;
 use sedona_expr::scalar_udf::{IntoScalarKernelRefs, SedonaScalarUDF};
 use sedona_expr::{
@@ -659,6 +660,44 @@ impl SedonaContext {
         self.ctx.read_table(Arc::new(provider))
     }
 
+    /// Creates a [`DataFrame`] from a file format factory.
+    ///
+    /// When `format` is `None`, a registered factory is resolved from the path
+    /// extension. A supplied factory does not need to be registered. Reader
+    /// options are passed to [`FileFormatFactory::create`] using the same
+    /// key/value convention as SQL `CREATE EXTERNAL TABLE`; object-store options
+    /// such as `aws.*` configure the store for each path. Formats that declare
+    /// themselves single-object formats are scanned without listing contents.
+    /// Directory listings are always filtered using an explicitly supplied
+    /// factory's extension. For individual paths, `check_extension` controls
+    /// whether extension-derived settings such as compression are applied.
+    pub async fn read<P: DataFilePaths>(
+        &self,
+        table_paths: P,
+        options: &HashMap<String, String>,
+        format: Option<Arc<dyn FileFormatFactory>>,
+        check_extension: bool,
+    ) -> Result<DataFrame> {
+        self.read_with_partitioning(table_paths, options, format, check_extension, None)
+            .await
+    }
+
+    /// Internal variant of [`Self::read`] retaining the bindings' existing
+    /// hive-partitioning override.
+    pub async fn read_with_partitioning<P: DataFilePaths>(
+        &self,
+        table_paths: P,
+        options: &HashMap<String, String>,
+        format: Option<Arc<dyn FileFormatFactory>>,
+        check_extension: bool,
+        partitioning: Option<Vec<(String, DataType)>>,
+    ) -> Result<DataFrame> {
+        let urls = table_paths.to_urls()?;
+        let format = resolve_read_format(&self.ctx.state(), &urls, format, check_extension)?;
+        let provider = read_provider(&self.ctx, urls, options, format, partitioning).await?;
+        self.ctx.read_table(provider)
+    }
+
     /// Creates a [`DataFrame`] for reading a [ExternalFormatSpec]
     ///
     /// The `partitioning` parameter controls hive-style partition discovery:
@@ -674,30 +713,10 @@ impl SedonaContext {
         partitioning: Option<Vec<(String, DataType)>>,
     ) -> Result<DataFrame> {
         let urls = table_paths.to_urls()?;
-
-        // Pre-register object store with our custom options before creating GeoParquetReadOptions
-        if !urls.is_empty() {
-            // Extract the table options from GeoParquetReadOptions for object store registration
-            ensure_object_store_registered_with_options(
-                &mut self.ctx.state(),
-                urls[0].as_str(),
-                options,
-            )
-            .await?;
-        }
-
-        let provider = if let Some(options) = options {
-            // Strip the filesystem-based options
-            let options_without_filesystems = options
-                .iter()
-                .filter(|(k, _)| !k.starts_with("gcs.") && !k.starts_with("aws."))
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect::<HashMap<String, String>>();
-            let spec = spec.with_options(&options_without_filesystems)?;
-            external_table(spec, &self.ctx, urls, check_extension, partitioning).await?
-        } else {
-            external_table(spec, &self.ctx, urls, check_extension, partitioning).await?
-        };
+        let factory = Arc::new(ExternalFormatFactory::new(spec));
+        let format = resolve_read_format(&self.ctx.state(), &urls, Some(factory), check_extension)?;
+        let options = options.cloned().unwrap_or_default();
+        let provider = read_provider(&self.ctx, urls, &options, format, partitioning).await?;
 
         self.ctx.read_table(provider)
     }
@@ -1037,7 +1056,7 @@ mod tests {
 
     use arrow_array::{create_array, ArrayRef, RecordBatchIterator, RecordBatchReader};
     use arrow_schema::{DataType, Field, Schema};
-    use datafusion::assert_batches_eq;
+    use datafusion::{assert_batches_eq, datasource::file_format::csv::CsvFormatFactory};
     use sedona_datasource::spec::{Object, OpenReaderArgs};
     use sedona_geometry::types::Edges;
     use sedona_schema::{
@@ -1590,6 +1609,155 @@ mod tests {
         assert_eq!(sedona_types[0], SedonaType::Arrow(DataType::Utf8View));
         assert_eq!(
             sedona_types[1],
+            SedonaType::WkbView(Edges::Planar, lnglat())
+        );
+
+        // The generic read path resolves the same registered GeoParquet
+        // factory used by SQL URL tables.
+        let df = ctx
+            .read(example, &HashMap::new(), None, false)
+            .await
+            .unwrap();
+        assert_eq!(
+            df.schema().sedona_types().nth(1).unwrap().unwrap(),
+            SedonaType::WkbView(Edges::Planar, lnglat())
+        );
+    }
+
+    #[tokio::test]
+    async fn read_csv_with_format_options() {
+        use datafusion::datasource::file_format::csv::CsvFormatFactory;
+
+        let tmpdir = tempdir().unwrap();
+        let csv = tmpdir.path().join("values.csv");
+        std::fs::write(&csv, "id;value\n1;one\n2;two\n").unwrap();
+        let ctx = SedonaContext::new_local_interactive().await.unwrap();
+        let options = HashMap::from([("delimiter".to_string(), ";".to_string())]);
+
+        let batches = ctx
+            .read(csv.to_string_lossy().to_string(), &options, None, false)
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+
+        assert_batches_eq!(
+            [
+                "+----+-------+",
+                "| id | value |",
+                "+----+-------+",
+                "| 1  | one   |",
+                "| 2  | two   |",
+                "+----+-------+",
+            ],
+            &batches
+        );
+
+        // An explicit factory is usable without resolving it from the session
+        // registry, including for a path whose suffix does not identify it.
+        let extensionless = tmpdir.path().join("values.data");
+        std::fs::write(&extensionless, "id;value\n3;three\n").unwrap();
+        let batches = ctx
+            .read(
+                extensionless.to_string_lossy().to_string(),
+                &options,
+                Some(Arc::new(CsvFormatFactory::new())),
+                false,
+            )
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        assert_batches_eq!(
+            [
+                "+----+-------+",
+                "| id | value |",
+                "+----+-------+",
+                "| 3  | three |",
+                "+----+-------+",
+            ],
+            &batches
+        );
+    }
+
+    #[tokio::test]
+    async fn read_directory_with_explicit_format_filters_by_extension() {
+        let tmpdir = tempdir().unwrap();
+        std::fs::write(tmpdir.path().join("included.csv"), "id,value\n1,one\n").unwrap();
+        std::fs::write(tmpdir.path().join("ignored.txt"), "id,value\n2,two\n").unwrap();
+
+        let ctx = SedonaContext::new_local_interactive().await.unwrap();
+        let path = tmpdir.path().to_string_lossy().to_string();
+        let format = || Some(Arc::new(CsvFormatFactory::new()) as Arc<dyn FileFormatFactory>);
+
+        let batches = ctx
+            .read(path, &HashMap::new(), format(), false)
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+
+        assert_batches_eq!(
+            [
+                "+----+-------+",
+                "| id | value |",
+                "+----+-------+",
+                "| 1  | one   |",
+                "+----+-------+",
+            ],
+            &batches
+        );
+    }
+
+    #[tokio::test]
+    async fn read_explicit_json_and_parquet_without_expected_extension() {
+        let tmpdir = tempdir().unwrap();
+        let ctx = SedonaContext::new_local_interactive().await.unwrap();
+
+        let json = tmpdir.path().join("records");
+        std::fs::write(&json, "{\"id\":1,\"value\":\"one\"}\n").unwrap();
+        let json_format = ctx.ctx.state().get_file_format_factory("json").unwrap();
+        let batches = ctx
+            .read(
+                json.to_string_lossy().to_string(),
+                &HashMap::new(),
+                Some(json_format),
+                false,
+            )
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        assert_batches_eq!(
+            [
+                "+----+-------+",
+                "| id | value |",
+                "+----+-------+",
+                "| 1  | one   |",
+                "+----+-------+",
+            ],
+            &batches
+        );
+
+        let source = test_geoparquet("example", "geometry").unwrap();
+        let parquet = tmpdir.path().join("items");
+        std::fs::copy(source, &parquet).unwrap();
+        let parquet_format = ctx.ctx.state().get_file_format_factory("parquet").unwrap();
+        let df = ctx
+            .read(
+                parquet.to_string_lossy().to_string(),
+                &HashMap::new(),
+                Some(parquet_format),
+                false,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            df.schema().sedona_types().nth(1).unwrap().unwrap(),
             SedonaType::WkbView(Edges::Planar, lnglat())
         );
     }

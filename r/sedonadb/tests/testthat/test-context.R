@@ -69,6 +69,53 @@ test_that("sd_read_parquet() works", {
   expect_identical(sd_count(sd_read_parquet(c(path, path))), 243 * 2)
 })
 
+test_that("sd_read() resolves registered formats and options", {
+  parquet <- system.file("files/natural-earth_cities_geo.parquet", package = "sedonadb")
+  expect_identical(sd_count(sd_read(parquet)), 243)
+  expect_identical(sd_count(sd_read(c(parquet, parquet), format = "parquet")), 486)
+
+  csv <- tempfile(fileext = ".csv")
+  writeLines(c("x;y", "1;a", "2;b"), csv)
+  expect_equal(
+    sd_read(csv, options = list(delimiter = ";")) |> sd_collect(),
+    data.frame(x = c(1, 2), y = c("a", "b"))
+  )
+
+  expect_error(sd_read(csv, options = list()), NA)
+  expect_error(sd_read(csv, options = c(delimiter = ";")), "named list")
+  expect_error(sd_read(csv, options = list(";")), "named list")
+  expect_error(sd_read(csv, check_extension = NA), "TRUE or FALSE")
+
+  mixed <- tempfile()
+  dir.create(mixed)
+  writeLines(c("x", "1"), file.path(mixed, "included.csv"))
+  writeLines(c("x", "2"), file.path(mixed, "ignored.txt"))
+  expect_identical(sd_count(sd_read(mixed, format = "csv")), 1)
+  expect_identical(
+    sd_count(sd_read(mixed, format = "csv", check_extension = TRUE)),
+    1
+  )
+
+  partitioned <- tempfile()
+  dir.create(file.path(partitioned, "group=a"), recursive = TRUE)
+  writeLines(c("x", "1"), file.path(partitioned, "group=a", "part.csv"))
+  partitioned_out <- sd_read(
+    partitioned,
+    format = "csv",
+    partitioning = "group"
+  ) |>
+    sd_collect()
+  expect_identical(partitioned_out$group, "a")
+
+  unpartitioned_out <- sd_read(
+    partitioned,
+    format = "csv",
+    partitioning = character()
+  ) |>
+    sd_collect()
+  expect_false("group" %in% names(unpartitioned_out))
+})
+
 test_that("sd_read_parquet() forwards reader options", {
   path <- system.file("files/natural-earth_cities_geo.parquet", package = "sedonadb")
 

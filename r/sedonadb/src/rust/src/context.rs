@@ -130,6 +130,59 @@ impl InternalContext {
         Ok(new_data_frame(inner, self.runtime.clone()))
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn read(
+        &self,
+        paths: savvy::Sexp,
+        option_keys: savvy::Sexp,
+        option_values: savvy::Sexp,
+        partitioning: savvy::Sexp,
+        partitioning_set: bool,
+        check_extension: bool,
+        format: Option<&str>,
+    ) -> Result<InternalDataFrame> {
+        let paths = savvy::StringSexp::try_from(paths)?
+            .iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
+        let keys = savvy::StringSexp::try_from(option_keys)?;
+        let values = savvy::StringSexp::try_from(option_values)?;
+        let options = keys
+            .iter()
+            .zip(values.iter())
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect::<HashMap<_, _>>();
+        let format = format
+            .map(|format| format.trim_start_matches('.').to_lowercase())
+            .map(|format| {
+                self.inner
+                    .ctx
+                    .state()
+                    .get_file_format_factory(&format)
+                    .ok_or_else(|| savvy_err!("No format registered for extension '{format}'"))
+            })
+            .transpose()?;
+        let partitioning = if partitioning_set {
+            Some(
+                savvy::StringSexp::try_from(partitioning)?
+                    .iter()
+                    .map(|name| (name.to_string(), DataType::Utf8View))
+                    .collect(),
+            )
+        } else {
+            None
+        };
+
+        let inner_context = self.inner.clone();
+        let inner = wait_for_future_captured_r(&self.runtime, async move {
+            inner_context
+                .read_with_partitioning(paths, &options, format, check_extension, partitioning)
+                .await
+        })??;
+
+        Ok(new_data_frame(inner, self.runtime.clone()))
+    }
+
     pub fn sql(&self, query: &str) -> Result<InternalDataFrame> {
         let query_string = query.to_string();
         let inner_context = self.inner.clone();
