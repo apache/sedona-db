@@ -40,6 +40,7 @@ use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_gdal::vsi::VSIBuffer;
 use sedona_raster::array::RasterRefImpl;
+use sedona_raster::band_builder::MAX_BAND_DATA_LEN;
 use sedona_raster::error::RasterResultExt;
 use sedona_raster::traits::RasterRef;
 use sedona_raster_functions::RasterExecutor;
@@ -250,9 +251,11 @@ impl Drop for VsiMemFileGuard<'_> {
 /// `VSIFree`) follows the array rather than this call.
 fn append_geotiff_view(builder: &mut BinaryViewBuilder, bytes: VSIBuffer) -> Result<()> {
     let len = bytes.len();
-    // A binary-view element addresses at most u32::MAX bytes.
-    let Ok(view_len) = u32::try_from(len) else {
-        return exec_err!("RS_AsGeoTiff: {len}-byte GeoTIFF exceeds the 4 GiB binary output limit");
+    // The Arrow spec stores a view's length as a signed 32-bit integer and Arrow
+    // C++ reads it as int32_t, so a binary-view element addresses at most
+    // i32::MAX bytes even though arrow-rs holds the length in a u32.
+    let Some(view_len) = u32::try_from(len).ok().filter(|_| len <= MAX_BAND_DATA_LEN) else {
+        return exec_err!("RS_AsGeoTiff: {len}-byte GeoTIFF exceeds the 2 GiB binary output limit");
     };
     // Views this small are stored inline in the view struct; wrapping the
     // allocation would save nothing (and a zero-length buffer has no pointer).
