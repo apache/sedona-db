@@ -222,7 +222,7 @@ def test_zero_bands_ignores_the_per_band_size_limit(con):
         .as_py()
     )
     # The same grid with a band is still rejected.
-    with pytest.raises(Exception, match="4 GiB per-band limit"):
+    with pytest.raises(Exception, match="2 GiB per-band limit"):
         con.sql(f"SELECT RS_MakeEmptyRaster(1, {huge})").to_arrow_table()
 
 

@@ -458,15 +458,18 @@ fn validate_grid(num_bands: i64, width: i64, height: i64) -> Result<usize> {
 
 /// Byte length of one band's pixel buffer, rejecting bands too large to address.
 fn band_byte_len(width: i64, height: i64, band_type: BandDataType) -> Result<usize> {
-    // Band data is a BinaryView value, whose length is a u32.
+    // Band data is a BinaryView value. The Arrow spec stores a view's length as a
+    // signed 32-bit integer, and Arrow C++ (so pyarrow) reads it as int32_t, so the
+    // addressable limit is i32::MAX even though arrow-rs happens to hold it in a u32:
+    // a longer band would be built here and then read back as a negative length.
     let band_len = (width as u64)
         .checked_mul(height as u64)
         .and_then(|pixels| pixels.checked_mul(band_type.byte_size() as u64))
-        .filter(|&bytes| bytes <= u32::MAX as u64)
+        .filter(|&bytes| bytes <= i32::MAX as u64)
         .ok_or_else(|| {
             exec_datafusion_err!(
                 "RS_MakeEmptyRaster: a {width} x {height} band of {} pixels exceeds the \
-                 4 GiB per-band limit",
+                 2 GiB per-band limit",
                 band_type.pixel_type_name()
             )
         })?;
@@ -1014,7 +1017,12 @@ mod tests {
 
         // 100k x 100k float64 is 80 GB per band: past the BinaryView limit
         let err = invoke_err(&tester_cell, cell(1, "float64", 100_000, 100_000));
-        assert!(err.contains("4 GiB per-band limit"), "{err}");
+        assert!(err.contains("2 GiB per-band limit"), "{err}");
+
+        // 50k x 50k uint8 is 2.5 GB: under u32::MAX but over the signed int32
+        // length the Arrow spec (and Arrow C++) uses for a view.
+        let err = invoke_err(&tester_cell, cell(1, "uint8", 50_000, 50_000));
+        assert!(err.contains("2 GiB per-band limit"), "{err}");
 
         let tester_extent = tester(extent_types(false, WKB_GEOMETRY));
         let extent = |wkt: &str| {
