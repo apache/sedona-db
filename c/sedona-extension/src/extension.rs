@@ -410,12 +410,11 @@ pub struct SedonaCCatalogProviderList {
             err: *mut SedonaCError,
         ) -> c_int,
     >,
-    /// Register `catalog`, transferring ownership of it to the callback.
-    pub register_catalog: Option<
+    /// Create a catalog and return it.
+    pub create_catalog: Option<
         unsafe extern "C" fn(
             self_: *const SedonaCCatalogProviderList,
             name: *const c_char,
-            catalog: *mut SedonaCCatalogProvider,
             out: *mut SedonaCCatalogProvider,
             err: *mut SedonaCError,
         ) -> c_int,
@@ -469,12 +468,11 @@ pub struct SedonaCCatalogProvider {
             err: *mut SedonaCError,
         ) -> c_int,
     >,
-    /// Register `schema`, transferring ownership of it to the callback.
-    pub register_schema: Option<
+    /// Create a schema and return it.
+    pub create_schema: Option<
         unsafe extern "C" fn(
             self_: *const SedonaCCatalogProvider,
             name: *const c_char,
-            schema: *mut SedonaCSchemaProvider,
             out: *mut SedonaCSchemaProvider,
             err: *mut SedonaCError,
         ) -> c_int,
@@ -539,13 +537,14 @@ pub struct SedonaCSchemaProvider {
             err: *mut SedonaCError,
         ) -> c_int,
     >,
-    /// Register `table`, transferring ownership of it to the callback.
-    pub register_table: Option<
+    /// Create a table from `plan`, transferring ownership of the input plan to the callback.
+    /// Returns an execution plan that performs the create operation.
+    pub create_table: Option<
         unsafe extern "C" fn(
             self_: *const SedonaCSchemaProvider,
             name: *const c_char,
-            table: *mut SedonaCTableProvider,
-            out: *mut SedonaCTableProvider,
+            plan: *mut SedonaCExecutionPlan,
+            out: *mut SedonaCExecutionPlan,
             err: *mut SedonaCError,
         ) -> c_int,
     >,

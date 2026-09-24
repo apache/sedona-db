@@ -439,10 +439,6 @@ struct SedonaCTableProvider {
 
 /// \brief ABI-stable schema provider interface
 ///
-/// Provider arguments to registration callbacks use Arrow-style ownership
-/// transfer: when ownership is taken, the callback sets the input provider's
-/// release callback to NULL. A returned provider is absent when its release
-/// callback is NULL.
 struct SedonaCSchemaProvider {
   /// \brief Get the data type of a property
   int (*get_property_schema)(const struct SedonaCSchemaProvider* self,
@@ -460,10 +456,12 @@ struct SedonaCSchemaProvider {
   int (*table)(const struct SedonaCSchemaProvider* self, const char* name,
                struct SedonaCTableProvider* out, struct SedonaCError* err);
 
-  /// \brief Register a table, taking ownership of `table`
-  int (*register_table)(const struct SedonaCSchemaProvider* self, const char* name,
-                        struct SedonaCTableProvider* table,
-                        struct SedonaCTableProvider* out, struct SedonaCError* err);
+  /// \brief Create a table from `plan`, taking ownership of the input plan
+  ///
+  /// The returned execution plan performs the create operation when executed.
+  int (*create_table)(const struct SedonaCSchemaProvider* self, const char* name,
+                      struct SedonaCExecutionPlan* plan, struct SedonaCExecutionPlan* out,
+                      struct SedonaCError* err);
 
   /// \brief Deregister a table by name
   int (*deregister_table)(const struct SedonaCSchemaProvider* self, const char* name,
@@ -498,10 +496,9 @@ struct SedonaCCatalogProvider {
   int (*schema)(const struct SedonaCCatalogProvider* self, const char* name,
                 struct SedonaCSchemaProvider* out, struct SedonaCError* err);
 
-  /// \brief Register a schema, taking ownership of `schema`
-  int (*register_schema)(const struct SedonaCCatalogProvider* self, const char* name,
-                         struct SedonaCSchemaProvider* schema,
-                         struct SedonaCSchemaProvider* out, struct SedonaCError* err);
+  /// \brief Create a schema and return it
+  int (*create_schema)(const struct SedonaCCatalogProvider* self, const char* name,
+                       struct SedonaCSchemaProvider* out, struct SedonaCError* err);
 
   /// \brief Deregister a schema by name
   int (*deregister_schema)(const struct SedonaCCatalogProvider* self, const char* name,
@@ -537,10 +534,9 @@ struct SedonaCCatalogProviderList {
   int (*catalog)(const struct SedonaCCatalogProviderList* self, const char* name,
                  struct SedonaCCatalogProvider* out, struct SedonaCError* err);
 
-  /// \brief Register a catalog, taking ownership of `catalog`
-  int (*register_catalog)(const struct SedonaCCatalogProviderList* self, const char* name,
-                          struct SedonaCCatalogProvider* catalog,
-                          struct SedonaCCatalogProvider* out, struct SedonaCError* err);
+  /// \brief Create a catalog and return it
+  int (*create_catalog)(const struct SedonaCCatalogProviderList* self, const char* name,
+                        struct SedonaCCatalogProvider* out, struct SedonaCError* err);
 
   /// \brief Reserved for future use. Must be NULL.
   void* reserved;
