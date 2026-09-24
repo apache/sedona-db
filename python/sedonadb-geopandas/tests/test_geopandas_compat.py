@@ -24,7 +24,9 @@ import numpy.ma.mrecords as mrecords
 import pandas as pd
 import pyarrow as pa
 import pytest
+import sedonadb
 from geopandas.testing import assert_geodataframe_equal
+from packaging.version import Version
 from sedonadb.expr import lit
 from shapely.geometry import MultiPoint, Point
 
@@ -1727,26 +1729,15 @@ def test_division_unwraps_dictionary_int():
     assert sorted((gdf["k"] / 2).to_pandas().tolist()) == [0.5, 1.5]
 
 
-def test_run_end_encoded_integer_division_is_true_or_refused():
-    # Expanding a sliced run-end-encoded array reads the wrong rows on some
-    # engine versions (released 0.4.1), so the wrapper never expands one: it
-    # casts only the values, to a run-end-encoded float. Where the engine
-    # supports run-end-encoded arithmetic the result is true division on the
-    # right rows; where it does not, it fails to plan. Never a wrong row.
-    full = pa.RunEndEncodedArray.from_arrays(
-        pa.array([1, 2, 3], pa.int32()), pa.array([10, 20, 30], pa.int64())
+def test_division_unwraps_run_end_encoded_int():
+    # Run-end encoding, like dictionary encoding, changes storage rather than
+    # meaning: an encoded integer column is integer for true division.
+    ree = pa.RunEndEncodedArray.from_arrays(
+        pa.array([2, 3], pa.int32()), pa.array([1, 3], pa.int64())
     )
-    for column, expected in ((full, [5.0, 10.0, 15.0]), (full.slice(1, 1), [10.0])):
-        gdf = GeoDataFrame(
-            sgpd.default_context().create_data_frame(pa.table({"n": column}))
-        )
-        assert gdf["n"].to_pandas().tolist() == [x * 2 for x in expected]
-        try:
-            got = (gdf["n"] / 2).to_pandas().tolist()
-        except Exception as err:
-            assert "RunEndEncoded" in str(err)
-        else:
-            assert got == expected
+    gdf = GeoDataFrame(sgpd.default_context().create_data_frame(pa.table({"n": ree})))
+    assert (gdf["n"] / 2).to_pandas().tolist() == [0.5, 0.5, 1.5]
+    assert (4 / gdf["n"]).to_pandas().tolist() == [4.0, 4.0, 4 / 3]
 
 
 def test_division_by_decimal_stays_decimal():
@@ -1872,26 +1863,22 @@ def test_duration_division_by_infinity_is_zero_preserving_nulls():
     assert pd.isna(got.tolist()[1])
 
 
-def test_duration_multiplication_overflow_is_null_not_wrapped():
+def test_duration_multiplication_overflow_raises():
     # Integer tick multiplication silently wrapped on int64 overflow:
-    # 2**62 ticks * 3 came back as a large negative duration. pandas 3 raises
-    # OverflowError there; a lazy expression cannot raise per row, so rows
-    # whose product would overflow become NaT instead, while in-range rows —
-    # the largest exactly-representable product included — are unaffected.
-
+    # 2**62 ticks * 3 came back as a large negative duration. It raises when
+    # computed instead, as pandas 3 does, while in-range rows, the largest
+    # exactly representable product included, compute normally.
     boundary = (2**63 - 1) // 3
-    pdf = pd.DataFrame({"t": [pd.Timedelta(2**62), pd.Timedelta(boundary), pd.NaT]})
+    pdf = pd.DataFrame({"t": [pd.Timedelta(boundary), pd.NaT]})
     gdf = GeoDataFrame(sgpd.default_context().create_data_frame(pdf))
     got = (gdf["t"] * 3).to_pandas()
-    assert pd.isna(got.tolist()[0])
-    assert got.tolist()[1] == pd.Timedelta(boundary * 3)
-    assert pd.isna(got.tolist()[2])
+    assert got.tolist()[0] == pd.Timedelta(boundary * 3)
+    assert pd.isna(got.tolist()[1])
 
-
-def _duration_frame(values):
-    return GeoDataFrame(
-        sgpd.default_context().create_data_frame(pd.DataFrame({"t": values}))
-    )
+    pdf = pd.DataFrame({"t": [pd.Timedelta(2**62), pd.Timedelta(5)]})
+    gdf = GeoDataFrame(sgpd.default_context().create_data_frame(pdf))
+    with pytest.raises(Exception, match="overflowed the 64-bit tick range"):
+        (gdf["t"] * 3).to_pandas()
 
 
 def test_oversized_integer_duration_operand_raises_overflow():
@@ -1900,7 +1887,11 @@ def test_oversized_integer_duration_operand_raises_overflow():
     # result is representable. pandas raises OverflowError for the operand
     # itself, on multiplication and division alike; so does this layer now.
 
-    gdf = _duration_frame([pd.Timedelta(0), pd.Timedelta(1)])
+    gdf = GeoDataFrame(
+        sgpd.default_context().create_data_frame(
+            pd.DataFrame({"t": [pd.Timedelta(0), pd.Timedelta(1)]})
+        )
+    )
     for operand in (2**63, pa.scalar(2**63, pa.uint64())):
         with pytest.raises(OverflowError):
             gdf["t"] * operand
@@ -1912,39 +1903,46 @@ def test_identity_float_duration_arithmetic_is_exact():
     # `* 1.0` and `/ 1.0` return the input unchanged even at the largest
     # tick, where the float64 round trip cannot represent the value and the
     # cast back aborted. Only the identities ±1.0 take the exact integer
-    # path; other floats keep pandas' float64 semantics.
-
-    gdf = _duration_frame([pd.Timedelta(2**63 - 1)])
+    # path; other floats keep pandas' float64 semantics, so `* 3.0` at the
+    # largest tick overflows.
+    pdf = pd.DataFrame({"t": [pd.Timedelta(2**63 - 1)]})
+    gdf = GeoDataFrame(sgpd.default_context().create_data_frame(pdf))
     assert (gdf["t"] * 1.0).to_pandas().tolist()[0] == pd.Timedelta(2**63 - 1)
     assert (gdf["t"] / 1.0).to_pandas().tolist()[0] == pd.Timedelta(2**63 - 1)
-    got = (gdf["t"] * 3.0).to_pandas()
-    assert got.isna().all()  # float path: past the tick range, so null
+    with pytest.raises(Exception, match="overflowed the 64-bit tick range"):
+        (gdf["t"] * 3.0).to_pandas()
 
 
-def test_float_duration_overflow_is_null_not_abort():
-    # A finite float result past the tick range aborted the whole query at
-    # the int64 cast. Out-of-range rows become NaT while in-range rows and
-    # source nulls are unaffected. pandas clamps positive finite overflow to
-    # Timedelta.max and sends negative overflow to NaT — an asymmetric
-    # casting artifact this layer does not copy: both directions are NaT.
+def test_float_duration_overflow_raises_readably():
+    # A finite float result past the tick range used to abort with an opaque
+    # int64 cast failure. It raises the same overflow error as the integer
+    # path, in both directions (pandas clamps positive float overflow to
+    # Timedelta.max and sends negative overflow to NaT; neither is copied).
+    for value in (pd.Timedelta(2**62), pd.Timedelta(-(2**62))):
+        pdf = pd.DataFrame({"t": [value, pd.Timedelta(5)]})
+        gdf = GeoDataFrame(sgpd.default_context().create_data_frame(pdf))
+        with pytest.raises(Exception, match="overflowed the 64-bit tick range"):
+            (gdf["t"] / 0.5).to_pandas()
 
-    gdf = _duration_frame(
-        [pd.Timedelta(2**62), pd.Timedelta(-(2**62)), pd.Timedelta(5), pd.NaT]
-    )
-    got = (gdf["t"] / 0.5).to_pandas()
-    assert pd.isna(got.tolist()[0])
-    assert pd.isna(got.tolist()[1])
-    assert got.tolist()[2] == pd.Timedelta(10)
-    assert pd.isna(got.tolist()[3])
+    # In-range rows and source nulls are unaffected.
+    pdf = pd.DataFrame({"t": [pd.Timedelta(5), pd.NaT]})
+    gdf = GeoDataFrame(sgpd.default_context().create_data_frame(pdf))
+    got = (gdf["t"] / 0.5).to_pandas().tolist()
+    assert got[0] == pd.Timedelta(10)
+    assert pd.isna(got[1])
 
     # A float operand past int64 stays on the float path the way pandas keeps
-    # it in float arithmetic (it must not raise the integer-operand
-    # OverflowError): zero ticks survive, everything else overflows to NaT.
-    gdf = _duration_frame([pd.Timedelta(0), pd.Timedelta(5), pd.NaT])
-    got = (gdf["t"] * 1e300).to_pandas()
-    assert got.tolist()[0] == pd.Timedelta(0)
-    assert pd.isna(got.tolist()[1])
-    assert pd.isna(got.tolist()[2])
+    # it in float arithmetic, rather than raising the integer-operand
+    # OverflowError up front: zero ticks survive, anything else overflows.
+    pdf = pd.DataFrame({"t": [pd.Timedelta(0), pd.NaT]})
+    gdf = GeoDataFrame(sgpd.default_context().create_data_frame(pdf))
+    got = (gdf["t"] * 1e300).to_pandas().tolist()
+    assert got[0] == pd.Timedelta(0)
+    assert pd.isna(got[1])
+    pdf = pd.DataFrame({"t": [pd.Timedelta(5)]})
+    gdf = GeoDataFrame(sgpd.default_context().create_data_frame(pdf))
+    with pytest.raises(Exception, match="overflowed the 64-bit tick range"):
+        (gdf["t"] * 1e300).to_pandas()
 
 
 def test_int64_min_duration_tick_is_missing():
@@ -1989,19 +1987,16 @@ def test_non_identity_float_duration_arithmetic_matches_pandas():
 
 
 def test_negative_float_overflow_and_exact_boundary():
-    # The earlier negative case computed exactly -2**63, which lands on the
-    # pandas NaT sentinel even without the lower-bound gate, so it could not
-    # prove the gate exists. -2**64 is a genuine negative overflow — it
-    # aborts the cast without the gate — and (2**62 - 512) / 0.5 lands
-    # exactly on the largest float64 inside the tick range, proving the gate
-    # keeps the boundary itself.
-
-    gdf = _duration_frame([pd.Timedelta(-(2**62)), pd.Timedelta(2**62 - 512)])
-    got = (gdf["t"] / 0.25).to_pandas()
-    assert pd.isna(got.tolist()[0])
-    got = (gdf["t"] / 0.5).to_pandas()
-    assert pd.isna(got.tolist()[0])
-    assert got.tolist()[1] == pd.Timedelta(2**63 - 1024)
+    # -2**64 is a genuine negative overflow (unlike exactly -2**63, which lands
+    # on the NaT sentinel), and (2**62 - 512) / 0.5 lands exactly on the
+    # largest float64 inside the tick range, which must stay valid.
+    pdf = pd.DataFrame({"t": [pd.Timedelta(-(2**62))]})
+    gdf = GeoDataFrame(sgpd.default_context().create_data_frame(pdf))
+    with pytest.raises(Exception, match="overflowed the 64-bit tick range"):
+        (gdf["t"] / 0.25).to_pandas()
+    pdf = pd.DataFrame({"t": [pd.Timedelta(2**62 - 512)]})
+    gdf = GeoDataFrame(sgpd.default_context().create_data_frame(pdf))
+    assert (gdf["t"] / 0.5).to_pandas().tolist() == [pd.Timedelta(2**63 - 1024)]
 
 
 def test_sentinel_ticks_are_missing_for_every_operator():
@@ -2064,23 +2059,26 @@ def test_dissolve_temporal_keys_group_sentinels_as_missing():
 
 
 @pytest.mark.parametrize(
-    "make",
+    "value",
     [
-        lambda np, pd, pa: np.timedelta64(3, "us"),
-        lambda np, pd, pa: pd.Timedelta(microseconds=3),
-        lambda np, pd, pa: pa.scalar(3, pa.duration("us")),
-        lambda np, pd, pa: pa.scalar(3000, pa.duration("ns")),
+        np.timedelta64(3, "us"),
+        pd.Timedelta(microseconds=3),
+        pa.scalar(3, pa.duration("us")),
+        pa.scalar(3000, pa.duration("ns")),
     ],
     ids=["numpy-us", "pandas", "arrow-us", "arrow-ns"],
 )
-def test_duration_scalar_representations_are_unit_coerced(make):
+def test_duration_scalar_representations_are_unit_coerced(value):
     # Every representation of the same 3µs must behave identically against a
     # nanosecond column. The engine's own mixed-unit answer widens to its
     # interval type — materializing as DateOffset objects, not timedeltas —
     # so duration scalars are rebuilt in the column's unit first.
 
-    value = make(np, pd, pa)
-    gdf = _duration_frame([pd.Timedelta(1000), pd.NaT])
+    gdf = GeoDataFrame(
+        sgpd.default_context().create_data_frame(
+            pd.DataFrame({"t": [pd.Timedelta(1000), pd.NaT]})
+        )
+    )
     got = (gdf["t"] + value).to_pandas()
     assert got.tolist()[0] == pd.Timedelta(microseconds=4)
     assert pd.isna(got.tolist()[1])
@@ -2144,11 +2142,15 @@ def test_dictionary_duration_columns_treat_sentinel_as_missing():
     assert gdf[gdf["t"] == gdf["t"]]["t"].to_pandas().tolist() == [pd.Timedelta(10)]
 
 
+@pytest.mark.skipif(
+    Version(sedonadb.__version__) < Version("0.5.0a0"),
+    reason="sedonadb < 0.5 expands a sliced run-end-encoded array from the wrong offset (#1345)",
+)
 @pytest.mark.parametrize("type", [pa.duration("ns"), pa.timestamp("ns")])
 def test_sliced_run_end_encoded_temporal_columns_read_correctly(type):
-    # Normalizing the sentinel through a cast decoded a sliced run-end-encoded
-    # column from the wrong offset: [10, 20, 30].slice(1, 1) read back as 10.
-    # Run-end-encoded temporal columns are passed through undecoded.
+    # Sentinel normalization decodes run-end-encoded temporal columns, so a
+    # sliced one must come back from the right offset: [10, 20, 30].slice(1, 1)
+    # is [20], read directly and when copied into another column.
     ree = pa.RunEndEncodedArray.from_arrays(
         pa.array([1, 2, 3], pa.int32()), pa.array([10, 20, 30], type)
     ).slice(1, 1)

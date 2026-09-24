@@ -151,11 +151,9 @@ def sanitize_temporal(df, expr, name):
     from sedonadb.expr import lit
 
     dtype = pa.schema(df.schema).field(name).type
-    # Dictionary encoding changes storage, not meaning: a dictionary-encoded
-    # duration or timestamp column carries the sentinel just the same. A
-    # run-end-encoded column is left untouched: the engine's casts ignore a
-    # sliced run-end-encoded array's offset and would read the wrong rows.
-    if pa.types.is_dictionary(dtype):
+    # Dictionary and run-end encoding change storage, not meaning: an encoded
+    # duration or timestamp column carries the sentinel just the same.
+    if pa.types.is_dictionary(dtype) or pa.types.is_run_end_encoded(dtype):
         dtype = dtype.value_type
     if pa.types.is_duration(dtype) or pa.types.is_timestamp(dtype):
         return expr.cast(pa.int64()).funcs.nullif(lit(TICK_SENTINEL)).cast(dtype)
@@ -192,6 +190,25 @@ def coerce_duration_scalar(dtype, scalar):
             )
         converted = ticks // step
     return pa.scalar(converted, dtype)
+
+
+_OVERFLOW_MESSAGE = "duration arithmetic overflowed the 64-bit tick range"
+
+
+def _overflow_check(in_range):
+    """An int64 expression that is 0 where `in_range` holds and raises where not.
+
+    A lazy expression has no way to raise for a particular row except by
+    failing to evaluate there, so the failure is a cast: rows in range (or
+    null) cast the string "0", and rows out of range cast the overflow
+    message, which fails with that message in the error. Adding the result
+    leaves in-range values unchanged.
+    """
+    from sedonadb.expr import lit
+
+    flag = in_range.funcs.nullif(lit(True)).cast(pa.string())
+    text = flag.funcs.replace(lit("false"), lit(_OVERFLOW_MESSAGE))
+    return text.funcs.coalesce(lit("0")).cast(pa.int64())
 
 
 def duration_arith_expr(dtype, expr, op, other):
@@ -256,16 +273,12 @@ def duration_arith_expr(dtype, expr, op, other):
         if op == "*":
             result = ticks * factor
             if factor not in (-1, 0, 1):
-                # Integer tick multiplication wraps on int64 overflow.
-                # pandas raises there (silently wrapped before pandas 3);
-                # a lazy expression cannot raise per row, so rows whose
-                # product would overflow become null instead: the gate is
-                # 1 in range and null past the (conservatively symmetric)
-                # bound, and multiplying by it preserves in-range values.
+                # Integer tick multiplication wraps on int64 overflow, where
+                # pandas 3 raises; check the (conservatively symmetric) bound
+                # per row and raise instead of wrapping.
                 bound = (2**63 - 1) // abs(factor)
                 in_range = (ticks <= lit(bound)) & (ticks >= lit(-bound))
-                gate = in_range.funcs.nullif(lit(False)).cast(pa.int64())
-                result = result * gate
+                result = result + _overflow_check(in_range)
         else:
             # Exact integer tick division: routing an integral divisor
             # through float64 loses precision above 2**53 ticks, and the
@@ -278,16 +291,13 @@ def duration_arith_expr(dtype, expr, op, other):
             if op == "*"
             else ticks.cast(pa.float64()) / value
         )
-        # Range-gate before casting back to ticks: an out-of-range or
-        # non-finite float result would abort the whole query at the
-        # int64 cast, losing the in-range rows with it. The bound is the
-        # largest float64 that fits the tick range. Rows past it become
-        # null; pandas instead clamps finite positive overflow to
-        # Timedelta.max while negative overflow lands on the NaT
-        # sentinel — an asymmetric casting artifact this layer does not
-        # copy.
+        # Check the range before casting back to ticks, so a result past it
+        # raises the same readable error as the integer path rather than an
+        # opaque cast failure. The bound is the largest float64 that fits
+        # the tick range. (pandas clamps finite positive float overflow to
+        # Timedelta.max and sends negative overflow to NaT, an asymmetric
+        # casting artifact this layer does not copy.)
         fbound = float(2**63 - 1024)
         in_range = (fresult <= lit(fbound)) & (fresult >= lit(-fbound))
-        fgate = in_range.funcs.nullif(lit(False)).cast(pa.float64())
-        result = fresult * fgate
+        result = fresult + _overflow_check(in_range).cast(pa.float64())
     return result.cast(pa.int64()).cast(dtype)

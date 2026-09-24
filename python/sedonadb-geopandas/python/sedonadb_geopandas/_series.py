@@ -273,18 +273,6 @@ def _operand(df, other):
     return normalize_scalar(other)
 
 
-def _value_type(dtype):
-    """The logical value type of a possibly run-end-encoded Arrow type.
-
-    For decisions only (is this integer?): run-end-encoded columns are never
-    expanded, because expanding a sliced one reads the wrong rows on some
-    engine versions.
-    """
-    if pa.types.is_run_end_encoded(dtype):
-        return dtype.value_type
-    return dtype
-
-
 class Series:
     """A single column of a lazy SedonaDB frame, in the shape of a pandas Series.
 
@@ -367,8 +355,9 @@ class Series:
     # integer-like. The cast is scoped that tightly because it is lossy
     # elsewhere: an integer divided by a Decimal must stay in decimal arithmetic
     # (forcing double gives 1/Decimal("0.1") -> binary rounding), and durations
-    # are handled separately below. Dictionary encoding is unwrapped before
-    # deciding, so a dictionary<int64> column does not silently truncate.
+    # are handled separately below. Dictionary and run-end encoding are
+    # unwrapped before deciding, so an encoded integer column does not silently
+    # truncate.
     # `//` is deliberately not implemented rather than mapped onto SQL division,
     # which truncates toward zero where Python floors.
     def __truediv__(self, other):
@@ -409,17 +398,15 @@ class Series:
         return value
 
     def _dtype(self):
-        """This expression's Arrow type, dictionary-unwrapped.
+        """This expression's logical Arrow type, with encodings unwrapped.
 
-        Dictionary encoding changes how values are stored, not what they are,
-        so a dictionary<int64> column is integer for division purposes.
-        Run-end encoding is left wrapped (see `_value_type`): expanding a
-        sliced run-end-encoded array reads the wrong rows on some engine
-        versions, so it is never decoded here. Read from the projected
+        Dictionary and run-end encoding change how values are stored, not
+        what they are, so a dictionary<int64> or run_end_encoded<..., int64>
+        column is integer for division purposes. Read from the projected
         schema, which is a plan build, not an execution.
         """
         dtype = pa.schema(self._df.select(self._expr.alias("x")).schema).field("x").type
-        if pa.types.is_dictionary(dtype):
+        while pa.types.is_dictionary(dtype) or pa.types.is_run_end_encoded(dtype):
             dtype = dtype.value_type
         return dtype
 
@@ -430,11 +417,10 @@ class Series:
         """This expression, cast to double only for integer/integer division."""
         import numbers
 
-        dtype = self._dtype()
-        if not pa.types.is_integer(_value_type(dtype)):
+        if not pa.types.is_integer(self._dtype()):
             return self._expr
         if isinstance(other, Series):
-            other_integer = pa.types.is_integer(_value_type(other._dtype()))
+            other_integer = pa.types.is_integer(other._dtype())
         else:
             # Look through Literal / Arrow-scalar wrappers: `series / lit(2)` is
             # integer division just as much as `series / 2` is.
@@ -443,15 +429,6 @@ class Series:
                 resolved, bool
             )
         if other_integer:
-            if pa.types.is_run_end_encoded(dtype):
-                # Cast the values only, keeping the run-end encoding: expanding
-                # a sliced run-end-encoded array reads the wrong rows on some
-                # engine versions (0.4.1), while a run-end-encoded float divides
-                # correctly where the engine supports the arithmetic and fails
-                # to plan where it does not.
-                return self._expr.cast(
-                    pa.run_end_encoded(dtype.run_end_type, pa.float64())
-                )
             return self._expr.cast(pa.float64())
         return self._expr
 
