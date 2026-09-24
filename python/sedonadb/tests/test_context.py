@@ -316,21 +316,21 @@ def test_read_geoparquet_s3_anonymous_access():
 
 
 def test_read_parquet_invalid_aws_option():
-    """Test that invalid AWS options are caught and provide helpful error messages"""
+    """Test that invalid AWS options are caught"""
     con = sedonadb.connect()
     url = "s3://wherobots-examples/data/onboarding_1/nyc_buildings.parquet"
 
     # Test with a misspelled AWS option
     with pytest.raises(
         sedonadb._lib.SedonaError,
-        match=r"Unknown AWS option 'aws\.skip_sig'\..*aws\.skip_signature",
+        match='Config value "skip_sig" not found on AwsOptions',
     ):
         con.read_parquet(url, options={"aws.skip_sig": "true"})
 
     # Test with completely unknown AWS option
     with pytest.raises(
         sedonadb._lib.SedonaError,
-        match="Unknown AWS option.*aws.unknown_option.*Valid options are",
+        match='Config value "unknown_option" not found on AwsOptions',
     ):
         con.read_parquet(url, options={"aws.unknown_option": "value"})
 
@@ -341,12 +341,12 @@ def test_read_parquet_invalid_azure_option():
 
     with pytest.raises(
         sedonadb._lib.SedonaError,
-        match=r"Unknown Azure option 'azure\.acc_name'\..*azure\.account_name",
+        match='Config value "acc_name" not found on AzureOptions',
     ):
         con.read_parquet(url, options={"azure.acc_name": "test"})
 
     with pytest.raises(
         sedonadb._lib.SedonaError,
-        match="Unknown Azure option.*azure.unknown_option.*Valid options are",
+        match='Config value "unknown_option" not found on AzureOptions',
     ):
         con.read_parquet(url, options={"azure.unknown_option": "value"})

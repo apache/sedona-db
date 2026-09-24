@@ -443,7 +443,7 @@ impl ExtensionOptions for AwsOptions {
                 self.skip_signature.set(rem, value)?;
             }
             _ => {
-                return config_err!("Config value \"{}\" not found on AwsOptions", rem);
+                return config_err!("Config value \"{}\" not found on AwsOptions", key);
             }
         }
         Ok(())
@@ -807,6 +807,17 @@ mod tests {
 
     use super::*;
     use crate::context::SedonaContext;
+
+    #[cfg(feature = "aws")]
+    #[test]
+    fn invalid_aws_option_reports_option_name() {
+        let error = AwsOptions::default()
+            .set("aws.skip_sig", "true")
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("Config value \"skip_sig\" not found on AwsOptions"));
+    }
 
     #[cfg(feature = "aws")]
     #[tokio::test]
