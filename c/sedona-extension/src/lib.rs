@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+pub mod catalog;
 pub mod execution_plan;
 pub mod expr;
 pub mod extension;

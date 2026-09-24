@@ -96,6 +96,66 @@ pub unsafe fn cstr_from_ptr_or_empty<'a>(ptr: *const c_char) -> Cow<'a, str> {
     }
 }
 
+/// Write the schema used by UTF-8 properties to an FFI output pointer.
+///
+/// # Safety
+///
+/// `out` must point to writable memory for an [`FFI_ArrowSchema`]. If non-null,
+/// `err` must point to writable memory for a [`SedonaCError`].
+pub unsafe fn write_utf8_property_schema(
+    out: *mut FFI_ArrowSchema,
+    err: *mut SedonaCError,
+) -> c_int {
+    let field = Field::new("value", DataType::Utf8, false);
+    match FFI_ArrowSchema::try_from(&field) {
+        Ok(schema) => {
+            unsafe { std::ptr::write(out, schema) };
+            ERRNO_OK
+        }
+        Err(error) => {
+            unsafe { crate::set_ffi_error!(err, "Failed to export property schema: {}", error) };
+            libc::EINVAL
+        }
+    }
+}
+
+/// Serialize a property as JSON in a UTF-8 Arrow scalar.
+///
+/// # Safety
+///
+/// `out` must point to writable memory for an [`FFI_ArrowArray`]. If non-null,
+/// `err` must point to writable memory for a [`SedonaCError`].
+pub unsafe fn write_json_property<T: Serialize>(
+    value: &T,
+    out: *mut FFI_ArrowArray,
+    err: *mut SedonaCError,
+) -> c_int {
+    match serde_json::to_string(value) {
+        Ok(value) => {
+            unsafe { std::ptr::write(out, PropertyValue::String(value).into_ffi_array()) };
+            ERRNO_OK
+        }
+        Err(error) => {
+            unsafe { crate::set_ffi_error!(err, "Failed to serialize property: {}", error) };
+            libc::EINVAL
+        }
+    }
+}
+
+/// Deserialize a JSON value from a nullable, null-terminated C string.
+///
+/// # Safety
+///
+/// A non-null `args` pointer must refer to a valid null-terminated C string.
+pub unsafe fn parse_json_c_args<T: DeserializeOwned>(args: *const c_char) -> Result<T> {
+    if args.is_null() {
+        return sedona_internal_err!("Property requires JSON arguments");
+    }
+    serde_json::from_str(&cstr_from_ptr_or_empty(args)).map_err(|error| {
+        sedona_internal_datafusion_err!("Failed to parse property arguments: {error}")
+    })
+}
+
 /// Get a string property from a [SedonaCTableProvider].
 pub fn get_table_provider_string_property(
     provider: &SedonaCTableProvider,
@@ -147,9 +207,6 @@ where
         return sedona_internal_err!("SedonaCExecutionPlan does not have get_property");
     };
 
-    let property_cstr = CString::new(property)
-        .map_err(|e| sedona_internal_datafusion_err!("Invalid property name: {}", e))?;
-
     // Serialize args if provided
     let args_bytes = match args {
         Some(a) => serde_json::to_vec(a)
@@ -171,28 +228,14 @@ where
         reserved: null_mut(),
     };
 
-    let mut ffi_array = arrow_array::ffi::FFI_ArrowArray::empty();
-    let mut err = SedonaCError::default();
-
-    let code = unsafe {
-        get_property(
-            plan,
-            property_cstr.as_ptr(),
-            &mut ffi_args,
-            &mut ffi_array,
-            &mut err,
-        )
-    };
-
-    if code != ERRNO_OK {
-        return sedona_internal_err!("Failed to get property '{}': {}", property, err);
-    }
-
-    // Get the property schema to know how to interpret the array
-    let data_type = get_plan_property_data_type(plan, property)?;
-
-    // Parse the array to get the JSON bytes
-    parse_ffi_array(ffi_array, &data_type)
+    let bytes = call_get_property_impl(
+        property,
+        "SedonaCExecutionPlan",
+        |property, out, err| unsafe { get_property(plan, property, &mut ffi_args, out, err) },
+        || get_plan_property_data_type(plan, property),
+    )?;
+    serde_json::from_slice(&bytes)
+        .map_err(|e| sedona_internal_datafusion_err!("Failed to deserialize property: {}", e))
 }
 
 /// Core implementation for getting property data type via FFI.
@@ -222,6 +265,70 @@ where
     Ok(field.data_type().clone())
 }
 
+/// Core implementation for retrieving the bytes of an FFI property.
+///
+/// The caller adapts its provider-specific callback to `call_get_property` and
+/// supplies the property's data type through `get_data_type`.
+pub fn call_get_property_impl<F, G>(
+    property: &str,
+    type_name: &str,
+    call_get_property: F,
+    get_data_type: G,
+) -> Result<Vec<u8>>
+where
+    F: FnOnce(*const c_char, *mut FFI_ArrowArray, *mut SedonaCError) -> c_int,
+    G: FnOnce() -> Result<DataType>,
+{
+    let property_cstr = CString::new(property)
+        .map_err(|e| sedona_internal_datafusion_err!("Invalid property name: {}", e))?;
+    let mut ffi_array = FFI_ArrowArray::empty();
+    let mut err = SedonaCError::default();
+
+    let code = call_get_property(property_cstr.as_ptr(), &mut ffi_array, &mut err);
+    if code != ERRNO_OK {
+        return sedona_internal_err!("{} failed to get '{}': {}", type_name, property, err);
+    }
+
+    let data_type = get_data_type()?;
+    parse_ffi_array_to_bytes(ffi_array, &data_type)
+}
+
+/// Retrieve and deserialize a JSON property whose optional arguments are
+/// passed as a null-terminated JSON string.
+pub fn call_get_json_property_impl<T, A, F, G>(
+    property: &str,
+    type_name: &str,
+    args: Option<&A>,
+    get_property_schema: G,
+    get_property: F,
+) -> Result<T>
+where
+    T: DeserializeOwned,
+    A: Serialize,
+    F: FnOnce(*const c_char, *const c_char, *mut FFI_ArrowArray, *mut SedonaCError) -> c_int,
+    G: FnOnce(*const c_char, *mut FFI_ArrowSchema, *mut SedonaCError) -> c_int,
+{
+    let args_json = args
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|error| sedona_internal_datafusion_err!("Failed to serialize args: {error}"))?
+        .map(CString::new)
+        .transpose()
+        .map_err(|error| sedona_internal_datafusion_err!("Invalid property args: {error}"))?;
+    let args = args_json
+        .as_ref()
+        .map_or(std::ptr::null(), |args| args.as_ptr());
+    let bytes = call_get_property_impl(
+        property,
+        type_name,
+        |property, out, error| get_property(property, args, out, error),
+        || call_get_property_schema_impl(property, get_property_schema),
+    )?;
+    serde_json::from_slice(&bytes).map_err(|error| {
+        sedona_internal_datafusion_err!("Failed to deserialize property '{}': {}", property, error)
+    })
+}
+
 /// Core implementation for getting a string property via FFI.
 ///
 /// The caller provides closures for the FFI call and data type lookup.
@@ -240,9 +347,6 @@ where
     ) -> c_int,
     G: FnOnce() -> Result<DataType>,
 {
-    let property_cstr = CString::new(property)
-        .map_err(|e| sedona_internal_datafusion_err!("Invalid property name: {}", e))?;
-
     let mut ffi_args = SedonaCExecutionPlanArgs {
         args: std::ptr::null(),
         args_len: 0,
@@ -253,22 +357,12 @@ where
         reserved: null_mut(),
     };
 
-    let mut ffi_array = arrow_array::ffi::FFI_ArrowArray::empty();
-    let mut err = SedonaCError::default();
-
-    let code = call_get_property(
-        property_cstr.as_ptr(),
-        &mut ffi_args,
-        &mut ffi_array,
-        &mut err,
-    );
-
-    if code != ERRNO_OK {
-        return sedona_internal_err!("{} failed to get '{}': {}", type_name, property, err);
-    }
-
-    let data_type = get_data_type()?;
-    let bytes = parse_ffi_array_to_bytes(ffi_array, &data_type)?;
+    let bytes = call_get_property_impl(
+        property,
+        type_name,
+        |property, out, err| call_get_property(property, &mut ffi_args, out, err),
+        get_data_type,
+    )?;
     String::from_utf8(bytes)
         .map_err(|e| sedona_internal_datafusion_err!("Invalid UTF-8 in '{}': {}", property, e))
 }
@@ -285,16 +379,6 @@ fn get_plan_property_data_type(plan: &SedonaCExecutionPlan, property: &str) -> R
     call_get_property_schema_impl(property, |prop, schema, err| unsafe {
         get_property_schema(plan, prop, schema, err)
     })
-}
-
-/// Parse an FFI array containing JSON and deserialize to the target type.
-fn parse_ffi_array<T: DeserializeOwned>(
-    ffi_array: arrow_array::ffi::FFI_ArrowArray,
-    data_type: &DataType,
-) -> Result<T> {
-    let bytes = parse_ffi_array_to_bytes(ffi_array, data_type)?;
-    serde_json::from_slice::<T>(&bytes)
-        .map_err(|e| sedona_internal_datafusion_err!("Failed to deserialize property: {}", e))
 }
 
 /// Parse an FFI array and return the raw bytes.

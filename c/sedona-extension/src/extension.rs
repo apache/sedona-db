@@ -377,6 +377,203 @@ impl Drop for SedonaCExecutionPlan {
     }
 }
 
+/// Raw FFI representation of a [`datafusion_catalog::CatalogProviderList`].
+#[derive(Default)]
+#[repr(C)]
+pub struct SedonaCCatalogProviderList {
+    /// Get the data type of a property.
+    pub get_property_schema: Option<
+        unsafe extern "C" fn(
+            self_: *const SedonaCCatalogProviderList,
+            property: *const c_char,
+            out: *mut FFI_ArrowSchema,
+            err: *mut SedonaCError,
+        ) -> c_int,
+    >,
+    /// Extract a JSON-encoded property from this catalog list.
+    pub get_property: Option<
+        unsafe extern "C" fn(
+            self_: *const SedonaCCatalogProviderList,
+            property: *const c_char,
+            args: *const c_char,
+            out: *mut FFI_ArrowArray,
+            err: *mut SedonaCError,
+        ) -> c_int,
+    >,
+    /// Look up a catalog. A missing catalog is represented by an output whose
+    /// `release` callback is NULL.
+    pub catalog: Option<
+        unsafe extern "C" fn(
+            self_: *const SedonaCCatalogProviderList,
+            name: *const c_char,
+            out: *mut SedonaCCatalogProvider,
+            err: *mut SedonaCError,
+        ) -> c_int,
+    >,
+    /// Create a catalog and return it.
+    pub create_catalog: Option<
+        unsafe extern "C" fn(
+            self_: *const SedonaCCatalogProviderList,
+            name: *const c_char,
+            out: *mut SedonaCCatalogProvider,
+            err: *mut SedonaCError,
+        ) -> c_int,
+    >,
+    pub reserved: *mut c_void,
+    pub release: Option<unsafe extern "C" fn(self_: *mut SedonaCCatalogProviderList)>,
+    pub private_data: *mut c_void,
+}
+
+unsafe impl Send for SedonaCCatalogProviderList {}
+unsafe impl Sync for SedonaCCatalogProviderList {}
+
+impl Drop for SedonaCCatalogProviderList {
+    fn drop(&mut self) {
+        if let Some(releaser) = self.release {
+            unsafe { releaser(self) }
+            self.release = None;
+            self.private_data = null_mut();
+        }
+    }
+}
+
+/// Raw FFI representation of a [`datafusion_catalog::CatalogProvider`].
+#[derive(Default)]
+#[repr(C)]
+pub struct SedonaCCatalogProvider {
+    /// Get the data type of a property.
+    pub get_property_schema: Option<
+        unsafe extern "C" fn(
+            self_: *const SedonaCCatalogProvider,
+            property: *const c_char,
+            out: *mut FFI_ArrowSchema,
+            err: *mut SedonaCError,
+        ) -> c_int,
+    >,
+    /// Extract a JSON-encoded property from this catalog.
+    pub get_property: Option<
+        unsafe extern "C" fn(
+            self_: *const SedonaCCatalogProvider,
+            property: *const c_char,
+            args: *const c_char,
+            out: *mut FFI_ArrowArray,
+            err: *mut SedonaCError,
+        ) -> c_int,
+    >,
+    pub schema: Option<
+        unsafe extern "C" fn(
+            self_: *const SedonaCCatalogProvider,
+            name: *const c_char,
+            out: *mut SedonaCSchemaProvider,
+            err: *mut SedonaCError,
+        ) -> c_int,
+    >,
+    /// Create a schema and return it.
+    pub create_schema: Option<
+        unsafe extern "C" fn(
+            self_: *const SedonaCCatalogProvider,
+            name: *const c_char,
+            out: *mut SedonaCSchemaProvider,
+            err: *mut SedonaCError,
+        ) -> c_int,
+    >,
+    pub deregister_schema: Option<
+        unsafe extern "C" fn(
+            self_: *const SedonaCCatalogProvider,
+            name: *const c_char,
+            cascade: bool,
+            out: *mut SedonaCSchemaProvider,
+            err: *mut SedonaCError,
+        ) -> c_int,
+    >,
+    pub reserved: *mut c_void,
+    pub release: Option<unsafe extern "C" fn(self_: *mut SedonaCCatalogProvider)>,
+    pub private_data: *mut c_void,
+}
+
+unsafe impl Send for SedonaCCatalogProvider {}
+unsafe impl Sync for SedonaCCatalogProvider {}
+
+impl Drop for SedonaCCatalogProvider {
+    fn drop(&mut self) {
+        if let Some(releaser) = self.release {
+            unsafe { releaser(self) }
+            self.release = None;
+            self.private_data = null_mut();
+        }
+    }
+}
+
+/// Raw FFI representation of a [`datafusion_catalog::SchemaProvider`].
+#[derive(Default)]
+#[repr(C)]
+pub struct SedonaCSchemaProvider {
+    /// Get the data type of a property.
+    pub get_property_schema: Option<
+        unsafe extern "C" fn(
+            self_: *const SedonaCSchemaProvider,
+            property: *const c_char,
+            out: *mut FFI_ArrowSchema,
+            err: *mut SedonaCError,
+        ) -> c_int,
+    >,
+    /// Extract a JSON-encoded property from this schema.
+    ///
+    /// `table_exist` accepts `{ "name": "..." }` in `args`.
+    pub get_property: Option<
+        unsafe extern "C" fn(
+            self_: *const SedonaCSchemaProvider,
+            property: *const c_char,
+            args: *const c_char,
+            out: *mut FFI_ArrowArray,
+            err: *mut SedonaCError,
+        ) -> c_int,
+    >,
+    pub table: Option<
+        unsafe extern "C" fn(
+            self_: *const SedonaCSchemaProvider,
+            name: *const c_char,
+            out: *mut SedonaCTableProvider,
+            err: *mut SedonaCError,
+        ) -> c_int,
+    >,
+    /// Create a table from `plan`, transferring ownership of the input plan to the callback.
+    /// Returns an execution plan that performs the create operation.
+    pub create_table: Option<
+        unsafe extern "C" fn(
+            self_: *const SedonaCSchemaProvider,
+            name: *const c_char,
+            plan: *mut SedonaCExecutionPlan,
+            out: *mut SedonaCExecutionPlan,
+            err: *mut SedonaCError,
+        ) -> c_int,
+    >,
+    pub deregister_table: Option<
+        unsafe extern "C" fn(
+            self_: *const SedonaCSchemaProvider,
+            name: *const c_char,
+            out: *mut SedonaCTableProvider,
+            err: *mut SedonaCError,
+        ) -> c_int,
+    >,
+    pub reserved: *mut c_void,
+    pub release: Option<unsafe extern "C" fn(self_: *mut SedonaCSchemaProvider)>,
+    pub private_data: *mut c_void,
+}
+
+unsafe impl Send for SedonaCSchemaProvider {}
+unsafe impl Sync for SedonaCSchemaProvider {}
+
+impl Drop for SedonaCSchemaProvider {
+    fn drop(&mut self) {
+        if let Some(releaser) = self.release {
+            unsafe { releaser(self) }
+            self.release = None;
+            self.private_data = null_mut();
+        }
+    }
+}
+
 /// Raw FFI representation of a TableProvider.
 ///
 /// This provides a minimal interface for importing a TableProvider
