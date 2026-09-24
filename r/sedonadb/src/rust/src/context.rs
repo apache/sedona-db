@@ -130,6 +130,7 @@ impl InternalContext {
         Ok(new_data_frame(inner, self.runtime.clone()))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn read(
         &self,
         paths: savvy::Sexp,
