@@ -39,15 +39,21 @@ use arrow_buffer::{Buffer, MutableBuffer};
 use arrow_schema::DataType;
 use datafusion_common::{
     cast::{as_float64_array, as_int64_array, as_string_array},
+    config::ConfigOptions,
     error::Result,
     exec_datafusion_err, exec_err,
 };
 use datafusion_expr::{ColumnarValue, Volatility};
+use sedona_common::option::SedonaOptions;
 use sedona_expr::{
     item_crs::parse_item_crs_arg_type,
     scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
 };
-use sedona_geometry::{bounds::wkb_bounds_xy, interval::IntervalTrait};
+use sedona_geometry::{
+    bounds::{WkbBounder2D, wkb_bounds_xy},
+    interval::IntervalTrait,
+    types::Edges,
+};
 use sedona_raster::builder::RasterBuilder;
 use sedona_schema::{
     crs::CachedSRIDToCrs, datatypes::SedonaType, matchers::ArgMatcher, raster::BandDataType,
@@ -114,7 +120,7 @@ impl SedonaScalarKernel for RsMakeEmptyRaster {
         let mut arg_types = args.to_vec();
         match self.grid {
             Grid::Extent => {
-                matchers.push(ArgMatcher::is_geometry());
+                matchers.push(ArgMatcher::is_geometry_or_geography());
                 let idx = self.grid_arg_index();
                 if let Some(extent_type) = arg_types.get(idx) {
                     let (item_type, _) = parse_item_crs_arg_type(extent_type)?;
@@ -138,6 +144,28 @@ impl SedonaScalarKernel for RsMakeEmptyRaster {
         arg_types: &[SedonaType],
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
+        self.invoke(arg_types, args, None)
+    }
+
+    fn invoke_batch_from_args(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+        _return_type: &SedonaType,
+        _num_rows: usize,
+        config_options: Option<&ConfigOptions>,
+    ) -> Result<ColumnarValue> {
+        self.invoke(arg_types, args, config_options)
+    }
+}
+
+impl RsMakeEmptyRaster {
+    fn invoke(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+        config_options: Option<&ConfigOptions>,
+    ) -> Result<ColumnarValue> {
         let executor = RasterExecutor::new(arg_types, args);
         let n = executor.num_iterations();
 
@@ -152,7 +180,15 @@ impl SedonaScalarKernel for RsMakeEmptyRaster {
         let height = int_column(&args[g - 1], n)?;
 
         let mut placement = match self.grid {
-            Grid::Extent => Placement::Extent(executor.make_geom_wkb_crs_accessor(g)?),
+            Grid::Extent => Placement::Extent {
+                accessor: executor.make_geom_wkb_crs_accessor(g)?,
+                // A geography's envelope follows spherical edges, so it needs the
+                // bounder registered for them rather than a planar coordinate scan.
+                bounder: match edges_of(&arg_types[g]) {
+                    Edges::Spherical => Some(spherical_bounder(config_options)?),
+                    _ => None,
+                },
+            },
             Grid::CellSize => Placement::CellSize {
                 upper_left_x: f64_column(&args[g], n)?,
                 upper_left_y: f64_column(&args[g + 1], n)?,
@@ -244,7 +280,11 @@ struct GridGeometry {
 
 /// Per-row accessors for the grid-placement arguments of one kernel form.
 enum Placement {
-    Extent(crate::executor::GeomWkbCrsAccessor),
+    Extent {
+        accessor: crate::executor::GeomWkbCrsAccessor,
+        /// Set when the extent is a geography; bounds follow spherical edges.
+        bounder: Option<Box<dyn WkbBounder2D>>,
+    },
     CellSize {
         upper_left_x: Float64Array,
         upper_left_y: Float64Array,
@@ -269,12 +309,12 @@ impl Placement {
     /// Resolve row `i`'s placement, or `None` when any of its inputs is null.
     fn geometry(&mut self, i: usize, width: i64, height: i64) -> Result<Option<GridGeometry>> {
         match self {
-            Placement::Extent(accessor) => {
+            Placement::Extent { accessor, bounder } => {
                 let (maybe_wkb, crs) = accessor.get(i)?;
                 let Some(wkb) = maybe_wkb else {
                     return Ok(None);
                 };
-                let (xmin, ymin, xmax, ymax) = extent_bounds(wkb)?;
+                let (xmin, ymin, xmax, ymax) = extent_bounds(wkb, bounder.as_mut())?;
                 Ok(Some(GridGeometry {
                     upper_left_x: xmin,
                     upper_left_y: ymax,
@@ -331,14 +371,38 @@ impl Placement {
 
 /// The `(xmin, ymin, xmax, ymax)` envelope of an extent geometry, which must
 /// span a positive width and height for the pixel size to be defined.
-fn extent_bounds(wkb: &[u8]) -> Result<(f64, f64, f64, f64)> {
-    let bbox = wkb_bounds_xy(wkb)
-        .map_err(|e| exec_datafusion_err!("RS_MakeEmptyRaster: invalid extent geometry: {e}"))?;
-    if bbox.is_empty() {
-        return exec_err!("RS_MakeEmptyRaster: extent geometry is empty");
-    }
-    let (xmin, xmax) = (bbox.x().lo(), bbox.x().hi());
-    let (ymin, ymax) = (bbox.y().lo(), bbox.y().hi());
+fn extent_bounds(
+    wkb: &[u8],
+    bounder: Option<&mut Box<dyn WkbBounder2D>>,
+) -> Result<(f64, f64, f64, f64)> {
+    let ((xmin, xmax), (ymin, ymax)) = match bounder {
+        // Geography: the registered spherical bounder decides the envelope,
+        // which is not the planar extent of the coordinates (it accounts for
+        // geodesic edges and antimeridian wraparound).
+        Some(bounder) => {
+            bounder.clear();
+            bounder.update_wkb_bytes(wkb).map_err(|e| {
+                exec_datafusion_err!("RS_MakeEmptyRaster: invalid extent geography: {e}")
+            })?;
+            let (x, y) = bounder.finish();
+            if x.is_empty() || y.is_empty() {
+                return exec_err!("RS_MakeEmptyRaster: extent geometry is empty");
+            }
+            ((x.lo(), x.hi()), (y.lo(), y.hi()))
+        }
+        None => {
+            let bbox = wkb_bounds_xy(wkb).map_err(|e| {
+                exec_datafusion_err!("RS_MakeEmptyRaster: invalid extent geometry: {e}")
+            })?;
+            if bbox.is_empty() {
+                return exec_err!("RS_MakeEmptyRaster: extent geometry is empty");
+            }
+            (
+                (bbox.x().lo(), bbox.x().hi()),
+                (bbox.y().lo(), bbox.y().hi()),
+            )
+        }
+    };
     if !(xmax > xmin && ymax > ymin) {
         return exec_err!(
             "RS_MakeEmptyRaster: extent must span a positive width and height, \
@@ -346,6 +410,36 @@ fn extent_bounds(wkb: &[u8]) -> Result<(f64, f64, f64, f64)> {
         );
     }
     Ok((xmin, ymin, xmax, ymax))
+}
+
+/// Edge interpretation of a geometry/geography argument type.
+fn edges_of(arg_type: &SedonaType) -> Edges {
+    match arg_type {
+        SedonaType::Wkb(edges, _) | SedonaType::WkbView(edges, _) => *edges,
+        _ => Edges::Planar,
+    }
+}
+
+/// The spherical bounder registered in the session.
+///
+/// Spherical bounding needs an external implementation (s2geography), so unlike
+/// the planar case there is no built-in fallback: a geography extent without a
+/// registered bounder is an error rather than a silently planar envelope.
+fn spherical_bounder(config_options: Option<&ConfigOptions>) -> Result<Box<dyn WkbBounder2D>> {
+    config_options
+        .and_then(|options| options.extensions.get::<SedonaOptions>())
+        .and_then(|options| {
+            options
+                .runtime
+                .bounder_factory()
+                .bounder_for_edge_type(Edges::Spherical)
+        })
+        .ok_or_else(|| {
+            exec_datafusion_err!(
+                "RS_MakeEmptyRaster: a geography extent needs a spherical bounder, \
+                 but none is registered in this session"
+            )
+        })
 }
 
 /// Check the band count and grid size, returning the band count and the byte
@@ -404,7 +498,7 @@ mod tests {
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use sedona_schema::crs::{deserialize_crs, lnglat};
-    use sedona_schema::datatypes::{Edges, WKB_GEOMETRY};
+    use sedona_schema::datatypes::{Edges, WKB_GEOGRAPHY, WKB_GEOMETRY};
     use sedona_schema::raster::{band_indices, raster_indices};
     use sedona_testing::create::{create_scalar_item_crs, create_scalar_value};
     use sedona_testing::raster_spec::{
@@ -699,6 +793,107 @@ mod tests {
             .transform([0.0, 1.0, 0.0, 0.0, 0.0, -1.0])
             .crs(None);
         assert_raster_scalar_equals(&result, &expected);
+    }
+
+    /// Reports a fixed envelope, standing in for a real spherical bounder so the
+    /// geography path can be exercised without depending on s2geography.
+    #[derive(Debug, Default)]
+    struct StubSphericalBounder;
+
+    impl sedona_geometry::bounds::WkbBounder2D for StubSphericalBounder {
+        fn clear(&mut self) {}
+        fn update_bounds(
+            &mut self,
+            _x: sedona_geometry::interval::WraparoundInterval,
+            _y: sedona_geometry::interval::Interval,
+        ) -> std::result::Result<(), sedona_geometry::error::SedonaGeometryError> {
+            Ok(())
+        }
+        fn update_wkb_bytes(
+            &mut self,
+            _wkb_value: &[u8],
+        ) -> std::result::Result<(), sedona_geometry::error::SedonaGeometryError> {
+            Ok(())
+        }
+        fn expand_by_distance(
+            &mut self,
+            _distance: f64,
+            _radius: Option<f64>,
+        ) -> std::result::Result<(), sedona_geometry::error::SedonaGeometryError> {
+            Ok(())
+        }
+        fn finish(
+            &self,
+        ) -> (
+            sedona_geometry::interval::WraparoundInterval,
+            sedona_geometry::interval::Interval,
+        ) {
+            (
+                sedona_geometry::interval::WraparoundInterval::new(100.0, 140.0),
+                sedona_geometry::interval::Interval::new(10.0, 30.0),
+            )
+        }
+        fn mem_used(&self) -> usize {
+            0
+        }
+        fn create_instance(&self) -> Box<dyn sedona_geometry::bounds::WkbBounder2D> {
+            Box::new(StubSphericalBounder)
+        }
+    }
+
+    fn config_with_spherical_bounder() -> ConfigOptions {
+        let mut sedona_options = SedonaOptions::default();
+        sedona_options.runtime = sedona_options
+            .runtime
+            .with_bounder(Edges::Spherical, Arc::new(StubSphericalBounder))
+            .unwrap();
+        let mut config = ConfigOptions::default();
+        config.extensions.insert(sedona_options);
+        config
+    }
+
+    #[test]
+    fn geography_extent_uses_the_configured_spherical_bounder() {
+        // The geography's envelope comes from the registered bounder, not from a
+        // planar scan of its coordinates: the stub reports x [100, 140], y [10, 30]
+        // for a geography whose planar extent is entirely different.
+        let kernel = RsMakeEmptyRaster::new(Grid::Extent, false);
+        let arg_types = extent_types(false, WKB_GEOGRAPHY);
+        let args = vec![
+            int(1),
+            int(4),
+            int(2),
+            create_scalar_value(Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"), &WKB_GEOGRAPHY),
+        ];
+
+        let result = kernel
+            .invoke(&arg_types, &args, Some(&config_with_spherical_bounder()))
+            .unwrap();
+        let ColumnarValue::Scalar(scalar) = result else {
+            panic!("expected a scalar result");
+        };
+        let expected = RasterSpec::d2(4, 2)
+            .transform([100.0, 10.0, 0.0, 30.0, 0.0, -10.0])
+            .crs(None)
+            .band_values(&[0f64; 8]);
+        assert_raster_scalar_equals(&scalar, &expected);
+    }
+
+    #[test]
+    fn geography_extent_without_a_bounder_is_an_error() {
+        let kernel = RsMakeEmptyRaster::new(Grid::Extent, false);
+        let arg_types = extent_types(false, WKB_GEOGRAPHY);
+        let args = vec![
+            int(1),
+            int(4),
+            int(2),
+            create_scalar_value(Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"), &WKB_GEOGRAPHY),
+        ];
+        let err = kernel.invoke(&arg_types, &args, None).unwrap_err();
+        assert!(
+            err.to_string().contains("needs a spherical bounder"),
+            "{err}"
+        );
     }
 
     #[test]

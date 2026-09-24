@@ -38,7 +38,8 @@ kernels:
       type: geometry
       description: >
         The grid covers this geometry's envelope with north-up pixels, in the
-        geometry's CRS.
+        geometry's CRS. A geography is accepted too, in which case the envelope
+        follows spherical edges and comes from the session's geography bounder.
   - returns: raster
     args:
     - name: num_bands

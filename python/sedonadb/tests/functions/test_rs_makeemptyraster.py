@@ -26,6 +26,8 @@ flow of rasterizing onto the grid.
 import numpy as np
 import pytest
 
+import sedonadb
+
 from sedonadb.raster import Raster
 
 
@@ -188,6 +190,25 @@ def test_table_driven_grids(con):
         (10, 5, 10.0),
         (None, None, None),
     ]
+
+
+def test_geography_extent(con):
+    """A geography extent is accepted, and its envelope follows spherical edges
+    via the session's geography bounder rather than a planar coordinate scan."""
+    if "s2geography" not in sedonadb.__features__:
+        pytest.skip("Geography bounds require a build with feature s2geography")
+
+    wkt = "POLYGON ((0 0, 10 0, 10 20, 0 20, 0 0))"
+    raster = _raster(con, f"RS_MakeEmptyRaster(1, 4, 2, ST_GeogFromText('{wkt}'))")
+    ulx, scale_x, _, uly, _, scale_y = raster.transform
+
+    # Geodesic edges bow away from the straight lines between the vertices, so
+    # the spherical envelope contains the planar one; assert that containment
+    # rather than pinning S2's exact bulge.
+    assert ulx <= 0.0
+    assert uly >= 20.0
+    assert ulx + 4 * scale_x >= 10.0
+    assert uly + 2 * scale_y <= 0.0
 
 
 def test_zero_bands_ignores_the_per_band_size_limit(con):
