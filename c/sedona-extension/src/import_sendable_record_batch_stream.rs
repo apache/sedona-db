@@ -49,7 +49,7 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
 use arrow_array::ffi::{from_ffi_and_data_type, FFI_ArrowArray, FFI_ArrowSchema};
-use arrow_array::{RecordBatch, StructArray};
+use arrow_array::{Array, RecordBatch, RecordBatchOptions, StructArray};
 use arrow_schema::{ArrowError, DataType, Schema, SchemaRef};
 use datafusion_common::Result;
 use datafusion_execution::RecordBatchStream;
@@ -151,8 +151,10 @@ impl ImportedStreamState {
         let pending = self.pending_requests.load(Ordering::Acquire);
         let prefetch = producer_state.prefetch_count;
 
-        // Request more when we're running low
-        if pending < prefetch / 2 {
+        // Request more when we're running low. Round the threshold up so a
+        // prefetch count of one still issues its initial request.
+        let refill_threshold = prefetch / 2 + prefetch % 2;
+        if pending < refill_threshold {
             let to_request = prefetch - pending;
             if let Some(request_fn) = unsafe { (*producer_state.producer).request } {
                 unsafe { request_fn(producer_state.producer, to_request as i64) };
@@ -334,6 +336,9 @@ impl ImportedAsyncDeviceStream {
         prefetch_count: u64,
         schema: Option<SchemaRef>,
     ) -> (Self, AsyncDeviceStreamHandler) {
+        // A zero-sized window can never make progress; treat it as the minimum
+        // useful prefetch size.
+        let prefetch_count = prefetch_count.max(1);
         let (sender, receiver) = mpsc::unbounded();
         let state = Arc::new(ImportedStreamState::new(prefetch_count, sender));
 
@@ -469,7 +474,22 @@ impl ImportedAsyncDeviceStream {
         let array_data =
             unsafe { from_ffi_and_data_type(device_array.array, struct_type.clone())? };
         let struct_array: StructArray = array_data.into();
-        Ok(struct_array.into())
+        let Some(schema) = self.schema.clone() else {
+            return Err(ArrowError::CDataInterface("Schema not yet received".to_string()).into());
+        };
+        let row_count = struct_array.len();
+        let (_, columns, nulls) = struct_array.into_parts();
+        if nulls.is_some_and(|nulls| nulls.null_count() != 0) {
+            return Err(ArrowError::CDataInterface(
+                "Cannot convert nullable struct array to record batch".to_string(),
+            )
+            .into());
+        }
+
+        let options = RecordBatchOptions::new().with_row_count(Some(row_count));
+        Ok(RecordBatch::try_new_with_options(
+            schema, columns, &options,
+        )?)
     }
 }
 

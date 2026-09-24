@@ -110,6 +110,7 @@ struct ArrowArrayStream {
 };
 
 #endif  // ARROW_C_STREAM_INTERFACE
+#endif  // ARROW_FLAG_DICTIONARY_ORDERED
 
 #ifndef ARROW_C_DEVICE_DATA_INTERFACE
 #define ARROW_C_DEVICE_DATA_INTERFACE
@@ -157,7 +158,6 @@ struct ArrowAsyncDeviceStreamHandler {
 };
 
 #endif  // ARROW_C_ASYNC_STREAM_INTERFACE
-#endif  // ARROW_FLAG_DICTIONARY_ORDERED
 
 /// \brief Simple ABI-stable scalar function implementation
 ///

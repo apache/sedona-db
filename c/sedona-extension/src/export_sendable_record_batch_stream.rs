@@ -29,10 +29,11 @@ use std::ffi::{c_int, c_void, CString};
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::task::{Poll, Waker};
+use std::task::Poll;
 
 use arrow_array::ffi::{to_ffi, FFI_ArrowSchema};
 use arrow_array::RecordBatch;
+use futures::task::AtomicWaker;
 use futures::StreamExt;
 
 pub use datafusion_execution::SendableRecordBatchStream;
@@ -65,7 +66,7 @@ struct ProducerState {
     /// Set to true when consumer calls cancel().
     cancelled: AtomicBool,
     /// Waker to wake when requests are available or cancelled.
-    waker: std::sync::Mutex<Option<Waker>>,
+    waker: AtomicWaker,
 }
 
 impl ProducerState {
@@ -73,7 +74,7 @@ impl ProducerState {
         Self {
             requested: AtomicU64::new(0),
             cancelled: AtomicBool::new(false),
-            waker: std::sync::Mutex::new(None),
+            waker: AtomicWaker::new(),
         }
     }
 
@@ -112,16 +113,8 @@ impl ProducerState {
         self.requested.load(Ordering::SeqCst) > 0
     }
 
-    fn register_waker(&self, waker: Waker) {
-        // Lock cannot be poisoned: we never panic while holding it
-        *self.waker.lock().expect("waker mutex poisoned") = Some(waker);
-    }
-
     fn wake(&self) {
-        // Lock cannot be poisoned: we never panic while holding it
-        if let Some(waker) = self.waker.lock().expect("waker mutex poisoned").take() {
-            waker.wake();
-        }
+        self.waker.wake();
     }
 }
 
@@ -214,12 +207,13 @@ async fn drive_stream_inner(
         }
 
         // Wait for consumer to request batches (back-pressure)
-        // Use poll_fn to properly register our waker with ProducerState
+        // Register before checking the state so a concurrent request cannot be
+        // lost between the state check and waker registration.
         futures::future::poll_fn(|cx| {
+            state.waker.register(cx.waker());
             if state.has_requests() || state.is_cancelled() {
                 Poll::Ready(())
             } else {
-                state.register_waker(cx.waker().clone());
                 Poll::Pending
             }
         })
@@ -236,8 +230,32 @@ async fn drive_stream_inner(
             continue;
         }
 
-        // Get next batch
-        match stream.next().await {
+        // Poll cancellation and the source together. A source is allowed to
+        // remain pending indefinitely, so cancellation must wake and interrupt
+        // this wait instead of only being observed between batches.
+        let next = futures::future::poll_fn(|cx| {
+            state.waker.register(cx.waker());
+            if state.is_cancelled() {
+                return Poll::Ready(Err(()));
+            }
+
+            match stream.poll_next_unpin(cx) {
+                Poll::Ready(batch) => Poll::Ready(Ok(batch)),
+                Poll::Pending if state.is_cancelled() => Poll::Ready(Err(())),
+                Poll::Pending => Poll::Pending,
+            }
+        })
+        .await;
+
+        let next = match next {
+            Ok(next) => next,
+            Err(()) => {
+                signal_end_of_stream(handler_ref, handler);
+                return Ok(());
+            }
+        };
+
+        match next {
             Some(Ok(batch)) => {
                 if let Err(e) = send_batch_to_handler(handler_ref, handler, batch) {
                     call_on_error(handler_ref, 1, &e);
@@ -432,7 +450,7 @@ unsafe extern "C" fn async_task_extract_data(
     self_: *mut FFI_ArrowAsyncTask,
     out: *mut FFI_ArrowDeviceArray,
 ) -> c_int {
-    if self_.is_null() || out.is_null() {
+    if self_.is_null() {
         return 1;
     }
 
@@ -441,7 +459,16 @@ unsafe extern "C" fn async_task_extract_data(
         return 1;
     }
 
-    let private = &mut *(task.private_data as *mut AsyncTaskPrivate);
+    // extract_data is the task's one-shot cleanup callback. Take ownership of
+    // the private allocation before doing any work so all exit paths release it.
+    let mut private = Box::from_raw(task.private_data as *mut AsyncTaskPrivate);
+    task.private_data = null_mut();
+    task.extract_data = None;
+
+    // A null output means the consumer is abandoning the task.
+    if out.is_null() {
+        return 0;
+    }
 
     // Take the batch (can only extract once)
     let Some(batch) = private.batch.take() else {
@@ -463,10 +490,13 @@ unsafe extern "C" fn async_task_extract_data(
 
 impl Drop for FFI_ArrowAsyncTask {
     fn drop(&mut self) {
-        if !self.private_data.is_null() {
-            // Drop the private data
-            let _ = unsafe { Box::from_raw(self.private_data as *mut AsyncTaskPrivate) };
-            self.private_data = null_mut();
+        // ArrowAsyncTask private_data is producer-owned. Consumers must use
+        // extract_data(NULL), even when abandoning the task, so foreign tasks
+        // are cleaned up by the producer that created them.
+        if let Some(extract_data) = self.extract_data.take() {
+            unsafe {
+                extract_data(self, null_mut());
+            }
         }
     }
 }
