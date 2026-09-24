@@ -22,6 +22,7 @@
 <url><loc>/reference/sd_join_select.html</loc></url>
 <url><loc>/reference/sd_join_select_default.html</loc></url>
 <url><loc>/reference/sd_preview.html</loc></url>
+<url><loc>/reference/sd_read.html</loc></url>
 <url><loc>/reference/sd_read_parquet.html</loc></url>
 <url><loc>/reference/sd_read_sf.html</loc></url>
 <url><loc>/reference/sd_register_udf.html</loc></url>
