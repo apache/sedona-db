@@ -17,10 +17,10 @@
 
 //! Version-agnostic FFI wrappers for DataFusion's catalog hierarchy.
 
-use std::ffi::{c_char, c_int, CString};
+use std::ffi::{CString, c_char, c_int};
 use std::fmt::{Debug, Formatter};
 use std::ptr::null_mut;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use arrow_array::ffi::FFI_ArrowArray;
 use arrow_schema::ffi::FFI_ArrowSchema;
@@ -28,8 +28,8 @@ use async_trait::async_trait;
 use datafusion_catalog::{
     CatalogProvider, CatalogProviderList, SchemaProvider, Session, TableProvider,
 };
-use datafusion_common::{not_impl_err, Result};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use datafusion_common::{Result, not_impl_err};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::extension::{
     SedonaCCatalogProvider, SedonaCCatalogProviderList, SedonaCError, SedonaCSchemaProvider,
@@ -39,8 +39,8 @@ use crate::runtime::RuntimeHandle;
 use crate::set_ffi_error;
 use crate::table_provider::{ExportedTableProvider, ImportedTableProvider};
 use crate::utils::{
-    call_get_json_property_impl, cstr_from_ptr_or_empty, parse_json_c_args, write_json_property,
-    write_utf8_property_schema, ERRNO_OK,
+    ERRNO_OK, call_get_json_property_impl, cstr_from_ptr_or_empty, parse_json_c_args,
+    write_json_property, write_utf8_property_schema,
 };
 
 /// Exports a [`CatalogProviderList`] through [`SedonaCCatalogProviderList`].
@@ -148,7 +148,7 @@ unsafe extern "C" fn c_catalog_list_register(
     let catalog = std::ptr::replace(catalog, SedonaCCatalogProvider::default());
     let imported = match ImportedCatalogProvider::try_new(
         catalog,
-        exported.session.clone(),
+        Arc::downgrade(&exported.session),
         exported.runtime.clone(),
     ) {
         Ok(provider) => Arc::new(provider) as Arc<dyn CatalogProvider>,
@@ -183,7 +183,7 @@ unsafe extern "C" fn c_catalog_list_release(self_: *mut SedonaCCatalogProviderLi
 /// Imports a [`SedonaCCatalogProviderList`] as a DataFusion catalog list.
 pub struct ImportedCatalogProviderList {
     inner: SedonaCCatalogProviderList,
-    session: Arc<dyn Session>,
+    session: Weak<dyn Session>,
     runtime: Arc<RuntimeHandle>,
 }
 
@@ -196,7 +196,7 @@ impl Debug for ImportedCatalogProviderList {
 impl ImportedCatalogProviderList {
     pub fn try_new(
         inner: SedonaCCatalogProviderList,
-        session: Arc<dyn Session>,
+        session: Weak<dyn Session>,
         runtime: Arc<RuntimeHandle>,
     ) -> Result<Self> {
         if inner.release.is_none() {
@@ -231,9 +231,12 @@ impl ImportedCatalogProviderList {
             );
         };
         let name = c_string(name)?;
-        let mut input =
-            ExportedCatalogProvider::new(catalog, self.session.clone(), self.runtime.clone())
-                .into();
+        let mut input = ExportedCatalogProvider::new(
+            catalog,
+            upgrade_session(&self.session)?,
+            self.runtime.clone(),
+        )
+        .into();
         let mut out = SedonaCCatalogProvider::default();
         let mut error = SedonaCError::default();
         let code =
@@ -396,7 +399,7 @@ unsafe extern "C" fn c_catalog_register_schema(
     let schema = std::ptr::replace(schema, SedonaCSchemaProvider::default());
     let imported = match ImportedSchemaProvider::try_new(
         schema,
-        exported.session.clone(),
+        Arc::downgrade(&exported.session),
         exported.runtime.clone(),
     ) {
         Ok(provider) => Arc::new(provider) as Arc<dyn SchemaProvider>,
@@ -477,7 +480,7 @@ unsafe extern "C" fn c_catalog_release(self_: *mut SedonaCCatalogProvider) {
 /// Imports a [`SedonaCCatalogProvider`] as a DataFusion catalog.
 pub struct ImportedCatalogProvider {
     inner: SedonaCCatalogProvider,
-    session: Arc<dyn Session>,
+    session: Weak<dyn Session>,
     runtime: Arc<RuntimeHandle>,
 }
 
@@ -490,7 +493,7 @@ impl Debug for ImportedCatalogProvider {
 impl ImportedCatalogProvider {
     pub fn try_new(
         inner: SedonaCCatalogProvider,
-        session: Arc<dyn Session>,
+        session: Weak<dyn Session>,
         runtime: Arc<RuntimeHandle>,
     ) -> Result<Self> {
         if inner.release.is_none() {
@@ -559,8 +562,12 @@ impl CatalogProvider for ImportedCatalogProvider {
             return not_impl_err!("Registering schemas is not supported by the foreign catalog");
         };
         let name = c_string(name)?;
-        let mut input =
-            ExportedSchemaProvider::new(schema, self.session.clone(), self.runtime.clone()).into();
+        let mut input = ExportedSchemaProvider::new(
+            schema,
+            upgrade_session(&self.session)?,
+            self.runtime.clone(),
+        )
+        .into();
         let mut out = SedonaCSchemaProvider::default();
         let mut error = SedonaCError::default();
         let code =
@@ -805,7 +812,7 @@ unsafe extern "C" fn c_schema_release(self_: *mut SedonaCSchemaProvider) {
 pub struct ImportedSchemaProvider {
     inner: SedonaCSchemaProvider,
     owner_name: Option<String>,
-    session: Arc<dyn Session>,
+    session: Weak<dyn Session>,
     runtime: Arc<RuntimeHandle>,
 }
 
@@ -818,7 +825,7 @@ impl Debug for ImportedSchemaProvider {
 impl ImportedSchemaProvider {
     pub fn try_new(
         inner: SedonaCSchemaProvider,
-        session: Arc<dyn Session>,
+        session: Weak<dyn Session>,
         runtime: Arc<RuntimeHandle>,
     ) -> Result<Self> {
         if inner.release.is_none() {
@@ -920,8 +927,12 @@ impl SchemaProvider for ImportedSchemaProvider {
             return not_impl_err!("Registering tables is not supported by the foreign schema");
         };
         let name = c_string(name)?;
-        let mut input =
-            ExportedTableProvider::new(table, self.session.clone(), self.runtime.clone()).into();
+        let mut input = ExportedTableProvider::new(
+            table,
+            upgrade_session(&self.session)?,
+            self.runtime.clone(),
+        )
+        .into();
         let mut out = SedonaCTableProvider::default();
         let mut error = SedonaCError::default();
         let code =
@@ -959,7 +970,7 @@ fn c_string(value: impl Into<Vec<u8>>) -> Result<CString> {
 
 fn optional_catalog(
     raw: SedonaCCatalogProvider,
-    session: Arc<dyn Session>,
+    session: Weak<dyn Session>,
     runtime: Arc<RuntimeHandle>,
 ) -> Result<Option<Arc<dyn CatalogProvider>>> {
     if raw.release.is_none() {
@@ -973,7 +984,7 @@ fn optional_catalog(
 
 fn optional_schema(
     raw: SedonaCSchemaProvider,
-    session: Arc<dyn Session>,
+    session: Weak<dyn Session>,
     runtime: Arc<RuntimeHandle>,
 ) -> Result<Option<Arc<dyn SchemaProvider>>> {
     if raw.release.is_none() {
@@ -983,6 +994,14 @@ fn optional_schema(
             raw, session, runtime,
         )?)))
     }
+}
+
+fn upgrade_session(session: &Weak<dyn Session>) -> Result<Arc<dyn Session>> {
+    session.upgrade().ok_or_else(|| {
+        datafusion_common::DataFusionError::External(
+            "Cannot export a provider after its session has been dropped".into(),
+        )
+    })
 }
 
 fn optional_table(raw: SedonaCTableProvider) -> Result<Option<Arc<dyn TableProvider>>> {
@@ -1046,11 +1065,13 @@ mod tests {
         catalogs.register_catalog("catalog_one".to_owned(), catalog);
 
         let context = SessionContext::new();
-        let session = Arc::new(context.state());
+        let session: Arc<dyn Session> = Arc::new(context.state());
         let runtime = runtime();
         let raw =
             ExportedCatalogProviderList::new(catalogs, session.clone(), runtime.clone()).into();
-        let imported = ImportedCatalogProviderList::try_new(raw, session, runtime.clone()).unwrap();
+        let imported =
+            ImportedCatalogProviderList::try_new(raw, Arc::downgrade(&session), runtime.clone())
+                .unwrap();
         (imported, runtime)
     }
 
@@ -1081,29 +1102,37 @@ mod tests {
         let catalog = catalogs.catalog("catalog_one").unwrap();
         let schema = catalog.schema("schema_one").unwrap();
 
-        assert!(schema
-            .register_table("table_two".to_owned(), empty_table())
-            .unwrap()
-            .is_none());
+        assert!(
+            schema
+                .register_table("table_two".to_owned(), empty_table())
+                .unwrap()
+                .is_none()
+        );
         assert!(schema.table_names().contains(&"table_two".to_owned()));
         assert!(schema.deregister_table("table_two").unwrap().is_some());
 
-        assert!(catalog
-            .register_schema("schema_two", Arc::new(MemorySchemaProvider::new()))
-            .unwrap()
-            .is_none());
+        assert!(
+            catalog
+                .register_schema("schema_two", Arc::new(MemorySchemaProvider::new()))
+                .unwrap()
+                .is_none()
+        );
         assert!(catalog.schema("schema_two").is_some());
-        assert!(catalog
-            .deregister_schema("schema_two", false)
-            .unwrap()
-            .is_some());
+        assert!(
+            catalog
+                .deregister_schema("schema_two", false)
+                .unwrap()
+                .is_some()
+        );
 
-        assert!(catalogs
-            .register_catalog(
-                "catalog_two".to_owned(),
-                Arc::new(MemoryCatalogProvider::new()),
-            )
-            .is_none());
+        assert!(
+            catalogs
+                .register_catalog(
+                    "catalog_two".to_owned(),
+                    Arc::new(MemoryCatalogProvider::new()),
+                )
+                .is_none()
+        );
         assert!(catalogs.catalog("catalog_two").is_some());
 
         let replaced = catalogs.register_catalog(
@@ -1118,35 +1147,65 @@ mod tests {
     }
 
     #[test]
+    fn imported_catalog_does_not_retain_host_session() {
+        let host = SessionContext::new();
+        let session: Arc<dyn Session> = Arc::new(host.state());
+        let weak_session = Arc::downgrade(&session);
+        let runtime = runtime();
+        let plugin_session: Arc<dyn Session> = Arc::new(SessionContext::new().state());
+        let raw = ExportedCatalogProvider::new(
+            Arc::new(MemoryCatalogProvider::new()),
+            plugin_session,
+            runtime.clone(),
+        )
+        .into();
+        let imported =
+            ImportedCatalogProvider::try_new(raw, weak_session.clone(), runtime.clone()).unwrap();
+        host.register_catalog("foreign", Arc::new(imported));
+
+        drop(session);
+        drop(runtime);
+        drop(host);
+
+        assert!(weak_session.upgrade().is_none());
+    }
+
+    #[test]
     fn rejects_invalid_raw_providers() {
         let context = SessionContext::new();
-        let session = Arc::new(context.state());
+        let session: Arc<dyn Session> = Arc::new(context.state());
         let runtime = runtime();
 
-        assert!(ImportedCatalogProviderList::try_new(
-            SedonaCCatalogProviderList::default(),
-            session.clone(),
-            runtime.clone(),
-        )
-        .is_err());
-        assert!(ImportedCatalogProvider::try_new(
-            SedonaCCatalogProvider::default(),
-            session.clone(),
-            runtime.clone(),
-        )
-        .is_err());
-        assert!(ImportedSchemaProvider::try_new(
-            SedonaCSchemaProvider::default(),
-            session,
-            runtime,
-        )
-        .is_err());
+        assert!(
+            ImportedCatalogProviderList::try_new(
+                SedonaCCatalogProviderList::default(),
+                Arc::downgrade(&session),
+                runtime.clone(),
+            )
+            .is_err()
+        );
+        assert!(
+            ImportedCatalogProvider::try_new(
+                SedonaCCatalogProvider::default(),
+                Arc::downgrade(&session),
+                runtime.clone(),
+            )
+            .is_err()
+        );
+        assert!(
+            ImportedSchemaProvider::try_new(
+                SedonaCSchemaProvider::default(),
+                Arc::downgrade(&session),
+                runtime,
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn fallible_catalog_list_methods_preserve_ffi_errors() {
         let context = SessionContext::new();
-        let session = Arc::new(context.state());
+        let session: Arc<dyn Session> = Arc::new(context.state());
         let runtime = runtime();
         let mut raw: SedonaCCatalogProviderList = ExportedCatalogProviderList::new(
             Arc::new(MemoryCatalogProviderList::new()),
@@ -1155,7 +1214,8 @@ mod tests {
         )
         .into();
         raw.register_catalog = Some(failing_register_catalog);
-        let imported = ImportedCatalogProviderList::try_new(raw, session, runtime).unwrap();
+        let imported =
+            ImportedCatalogProviderList::try_new(raw, Arc::downgrade(&session), runtime).unwrap();
 
         let error = imported
             .try_register_catalog("catalog".to_owned(), Arc::new(MemoryCatalogProvider::new()))
@@ -1164,9 +1224,11 @@ mod tests {
 
         // The DataFusion trait cannot return this error and deliberately keeps
         // its Option-only behavior.
-        assert!(imported
-            .register_catalog("catalog".to_owned(), Arc::new(MemoryCatalogProvider::new()),)
-            .is_none());
+        assert!(
+            imported
+                .register_catalog("catalog".to_owned(), Arc::new(MemoryCatalogProvider::new()),)
+                .is_none()
+        );
     }
 
     #[test]
