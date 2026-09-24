@@ -212,3 +212,11 @@ and from a full affine transform and SRID:
 ```sql
 SELECT RS_MakeEmptyRaster(2, 'I', 10, 10, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, 4326);
 ```
+
+::: callout-note
+The corner-and-pixel-size and affine forms mirror Sedona Spark's
+`RS_MakeEmptyRaster`, including its leading band count and band type argument.
+This departs from PostGIS, whose `ST_MakeEmptyRaster` takes no band arguments
+and returns a bandless raster that `ST_AddBand` then fills in. Passing
+`num_bands = 0` here gives that same bandless grid template.
+:::

@@ -198,7 +198,7 @@ impl SedonaScalarKernel for RsMakeEmptyRaster {
                 continue;
             };
 
-            let (num_bands, band_len) = validate_shape(num_bands, width, height, band_type)?;
+            let num_bands = validate_grid(num_bands, width, height)?;
 
             builder.start_raster_2d(
                 width,
@@ -211,13 +211,18 @@ impl SedonaScalarKernel for RsMakeEmptyRaster {
                 geom.skew_y,
                 geom.crs.as_deref(),
             )?;
-            let buffer = zeros
-                .entry(band_len)
-                .or_insert_with(|| MutableBuffer::from_len_zeroed(band_len).into());
-            for _ in 0..num_bands {
-                builder.start_band_2d(band_type, None)?;
-                builder.append_band_data_buffer(buffer, 0, band_len as u32)?;
-                builder.finish_band()?;
+            // A bandless template carries only grid metadata, so it allocates no
+            // pixel buffer and is not subject to the per-band size limit.
+            if num_bands > 0 {
+                let band_len = band_byte_len(width, height, band_type)?;
+                let buffer = zeros
+                    .entry(band_len)
+                    .or_insert_with(|| MutableBuffer::from_len_zeroed(band_len).into());
+                for _ in 0..num_bands {
+                    builder.start_band_2d(band_type, None)?;
+                    builder.append_band_data_buffer(buffer, 0, band_len as u32)?;
+                    builder.finish_band()?;
+                }
             }
             builder.finish_raster()?;
         }
@@ -345,12 +350,7 @@ fn extent_bounds(wkb: &[u8]) -> Result<(f64, f64, f64, f64)> {
 
 /// Check the band count and grid size, returning the band count and the byte
 /// length of one band's pixel data.
-fn validate_shape(
-    num_bands: i64,
-    width: i64,
-    height: i64,
-    band_type: BandDataType,
-) -> Result<(usize, usize)> {
+fn validate_grid(num_bands: i64, width: i64, height: i64) -> Result<usize> {
     if num_bands < 0 {
         return exec_err!("RS_MakeEmptyRaster: num_bands must be >= 0, got {num_bands}");
     }
@@ -359,6 +359,11 @@ fn validate_shape(
             "RS_MakeEmptyRaster: width and height must be positive, got {width} x {height}"
         );
     }
+    Ok(num_bands as usize)
+}
+
+/// Byte length of one band's pixel buffer, rejecting bands too large to address.
+fn band_byte_len(width: i64, height: i64, band_type: BandDataType) -> Result<usize> {
     // Band data is a BinaryView value, whose length is a u32.
     let band_len = (width as u64)
         .checked_mul(height as u64)
@@ -371,7 +376,7 @@ fn validate_shape(
                 band_type.pixel_type_name()
             )
         })?;
-    Ok((num_bands as usize, band_len as usize))
+    Ok(band_len as usize)
 }
 
 fn int_column(arg: &ColumnarValue, n: usize) -> Result<Int64Array> {
@@ -395,7 +400,7 @@ fn string_column(arg: &ColumnarValue, n: usize) -> Result<StringArray> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::{ArrayRef, BinaryViewArray, ListArray, StructArray};
+    use arrow_array::{ArrayRef, BinaryViewArray, ListArray, NullArray, StructArray};
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use sedona_schema::crs::{deserialize_crs, lnglat};
@@ -671,6 +676,44 @@ mod tests {
             .transform([0.0, 1.0, 0.0, 0.0, 0.0, -1.0])
             .crs(None);
         assert_raster_scalar_equals(&result, &expected);
+    }
+
+    #[test]
+    fn zero_bands_skips_the_per_band_size_limit() {
+        // A bandless template holds only grid metadata, so a grid whose band
+        // would be too large to address is still valid when no band exists.
+        // The same grid with one band is rejected (see invalid_arguments).
+        let tester = tester(cell_size_types(false));
+        let result = invoke_scalar(
+            &tester,
+            vec![
+                int(0),
+                int(100_000),
+                int(100_000),
+                num(0.0),
+                num(0.0),
+                num(1.0),
+            ],
+        );
+        let expected = RasterSpec::d2(100_000, 100_000)
+            .transform([0.0, 1.0, 0.0, 0.0, 0.0, -1.0])
+            .crs(None);
+        assert_raster_scalar_equals(&result, &expected);
+    }
+
+    #[test]
+    fn null_typed_extent_column_yields_null_rasters() {
+        // An all-null extent column arrives typed as Null rather than as WKB;
+        // every row is a null geometry, as a NULL extent scalar already was.
+        let tester = tester(extent_types(false, SedonaType::Arrow(DataType::Null)));
+        let extents: ArrayRef = Arc::new(NullArray::new(2));
+        let result = tester
+            .invoke(vec![int(1), int(2), int(2), ColumnarValue::Array(extents)])
+            .unwrap();
+        let ColumnarValue::Array(array) = result else {
+            panic!("expected an array result");
+        };
+        assert_rasters_equal(&array, &[None, None]);
     }
 
     #[test]

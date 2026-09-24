@@ -668,6 +668,9 @@ impl<'a, 'b> RasterExecutor<'a, 'b> {
                             static_crs,
                         })
                     }
+                    // An all-null column arrives typed as Null. Every row is a null
+                    // geometry, which matches what a NULL geometry scalar produces.
+                    SedonaType::Arrow(DataType::Null) => Ok(GeomWkbCrsAccessor::Null),
                     other => sedona_internal_err!("Unsupported geometry type: {other:?}"),
                 },
                 ColumnarValue::Scalar(scalar_value) => {
