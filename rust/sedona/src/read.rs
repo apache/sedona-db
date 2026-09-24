@@ -255,6 +255,7 @@ fn infer_path_format(table_paths: &[ListingTableUrl]) -> Result<(String, Option<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use datafusion::datasource::file_format::csv::CsvFormatFactory;
 
     #[test]
     fn sql_style_options_excludes_table_option_namespaces() {
@@ -291,5 +292,31 @@ mod tests {
             error.strip_backtrace(),
             "Execution error: No table paths were provided"
         );
+    }
+
+    #[test]
+    fn check_extension_controls_explicit_format_inference() {
+        let state = SessionContext::new().state();
+        let paths = [ListingTableUrl::parse("file:///tmp/values.csv.gz").unwrap()];
+
+        let unchecked = resolve_read_format(
+            &state,
+            &paths,
+            Some(Arc::new(CsvFormatFactory::new())),
+            false,
+        )
+        .unwrap();
+        assert_eq!(unchecked.compression, None);
+        assert_eq!(unchecked.listing_extension, None);
+
+        let checked = resolve_read_format(
+            &state,
+            &paths,
+            Some(Arc::new(CsvFormatFactory::new())),
+            true,
+        )
+        .unwrap();
+        assert_eq!(checked.compression.as_deref(), Some("gz"));
+        assert_eq!(checked.listing_extension.as_deref(), Some("csv.gz"));
     }
 }

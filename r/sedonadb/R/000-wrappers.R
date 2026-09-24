@@ -136,6 +136,7 @@ NULL
     `option_values`,
     `partitioning`,
     `partitioning_set`,
+    `check_extension`,
     `format` = NULL
   ) {
     .savvy_wrap_InternalDataFrame(.Call(
@@ -146,6 +147,7 @@ NULL
       `option_values`,
       `partitioning`,
       `partitioning_set`,
+      `check_extension`,
       `format`
     ))
   }

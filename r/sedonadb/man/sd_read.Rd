@@ -4,14 +4,21 @@
 \alias{sd_ctx_read}
 \title{Read one or more files into a DataFrame}
 \usage{
-sd_read(file_or_files, options = list(), format = NULL, partitioning = NULL)
+sd_read(
+  file_or_files,
+  options = list(),
+  format = NULL,
+  partitioning = NULL,
+  check_extension = FALSE
+)
 
 sd_ctx_read(
   ctx,
   file_or_files,
   options = list(),
   format = NULL,
-  partitioning = NULL
+  partitioning = NULL,
+  check_extension = FALSE
 )
 }
 \arguments{
@@ -24,6 +31,10 @@ or \code{"json"}. By default the format is inferred from the path extension.}
 
 \item{partitioning}{Optional character vector of hive-style partition column
 names. \code{NULL} auto-discovers partitions; \code{character()} disables discovery.}
+
+\item{check_extension}{Whether to check extensions for explicitly selected
+formats, including compression inference. Directory listings are always
+filtered to matching files. Defaults to \code{FALSE}.}
 
 \item{ctx}{A SedonaDB context.}
 }

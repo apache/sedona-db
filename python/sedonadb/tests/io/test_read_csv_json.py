@@ -130,6 +130,20 @@ def test_generic_read_explicit_format_without_matching_extension(con):
     pdt.assert_frame_equal(out, pd.DataFrame({"a": [1], "b": ["x"]}))
 
 
+def test_generic_read_explicit_format_check_extension(con):
+    with tempfile.TemporaryDirectory() as td:
+        directory = Path(td)
+        (directory / "included.csv").write_text("a,b\n1,x\n")
+        (directory / "ignored.txt").write_text("a,b\n2,y\n")
+
+        unchecked = con.read(directory, format="csv", check_extension=False).to_pandas()
+        checked = con.read(directory, format="csv", check_extension=True).to_pandas()
+
+    # Directories are always filtered to protect schema inference and scans.
+    pdt.assert_frame_equal(unchecked, pd.DataFrame({"a": [1], "b": ["x"]}))
+    pdt.assert_frame_equal(checked, pd.DataFrame({"a": [1], "b": ["x"]}))
+
+
 def test_generic_read_guesses_json_extension(con):
     # sd.read("x.json") should route to the JSON reader by extension.
     with tempfile.TemporaryDirectory() as td:

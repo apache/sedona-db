@@ -137,6 +137,7 @@ impl InternalContext {
         option_values: savvy::Sexp,
         partitioning: savvy::Sexp,
         partitioning_set: bool,
+        check_extension: bool,
         format: Option<&str>,
     ) -> Result<InternalDataFrame> {
         let paths = savvy::StringSexp::try_from(paths)?
@@ -174,7 +175,7 @@ impl InternalContext {
         let inner_context = self.inner.clone();
         let inner = wait_for_future_captured_r(&self.runtime, async move {
             inner_context
-                .read_with_partitioning(paths, &options, format, partitioning)
+                .read_with_partitioning(paths, &options, format, check_extension, partitioning)
                 .await
         })??;
 

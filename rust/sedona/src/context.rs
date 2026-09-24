@@ -655,13 +655,17 @@ impl SedonaContext {
     /// key/value convention as SQL `CREATE EXTERNAL TABLE`; object-store options
     /// such as `aws.*` configure the store for each path. Formats that declare
     /// themselves single-object formats are scanned without listing contents.
+    /// Directory listings are always filtered using an explicitly supplied
+    /// factory's extension. For individual paths, `check_extension` controls
+    /// whether extension-derived settings such as compression are applied.
     pub async fn read<P: DataFilePaths>(
         &self,
         table_paths: P,
         options: &HashMap<String, String>,
         format: Option<Arc<dyn FileFormatFactory>>,
+        check_extension: bool,
     ) -> Result<DataFrame> {
-        self.read_with_partitioning(table_paths, options, format, None)
+        self.read_with_partitioning(table_paths, options, format, check_extension, None)
             .await
     }
 
@@ -672,10 +676,11 @@ impl SedonaContext {
         table_paths: P,
         options: &HashMap<String, String>,
         format: Option<Arc<dyn FileFormatFactory>>,
+        check_extension: bool,
         partitioning: Option<Vec<(String, DataType)>>,
     ) -> Result<DataFrame> {
         let urls = table_paths.to_urls()?;
-        let format = resolve_read_format(&self.ctx.state(), &urls, format, true)?;
+        let format = resolve_read_format(&self.ctx.state(), &urls, format, check_extension)?;
         let provider = read_provider(&self.ctx, urls, options, format, partitioning).await?;
         self.ctx.read_table(provider)
     }
@@ -1535,7 +1540,10 @@ mod tests {
 
         // The generic read path resolves the same registered GeoParquet
         // factory used by SQL URL tables.
-        let df = ctx.read(example, &HashMap::new(), None).await.unwrap();
+        let df = ctx
+            .read(example, &HashMap::new(), None, false)
+            .await
+            .unwrap();
         assert_eq!(
             df.schema().sedona_types().nth(1).unwrap().unwrap(),
             SedonaType::WkbView(Edges::Planar, lnglat())
@@ -1553,7 +1561,7 @@ mod tests {
         let options = HashMap::from([("delimiter".to_string(), ";".to_string())]);
 
         let batches = ctx
-            .read(csv.to_string_lossy().to_string(), &options, None)
+            .read(csv.to_string_lossy().to_string(), &options, None, false)
             .await
             .unwrap()
             .collect()
@@ -1581,6 +1589,7 @@ mod tests {
                 extensionless.to_string_lossy().to_string(),
                 &options,
                 Some(Arc::new(CsvFormatFactory::new())),
+                false,
             )
             .await
             .unwrap()
@@ -1606,12 +1615,11 @@ mod tests {
         std::fs::write(tmpdir.path().join("ignored.txt"), "id,value\n2,two\n").unwrap();
 
         let ctx = SedonaContext::new_local_interactive().await.unwrap();
+        let path = tmpdir.path().to_string_lossy().to_string();
+        let format = || Some(Arc::new(CsvFormatFactory::new()) as Arc<dyn FileFormatFactory>);
+
         let batches = ctx
-            .read(
-                tmpdir.path().to_string_lossy().to_string(),
-                &HashMap::new(),
-                Some(Arc::new(CsvFormatFactory::new())),
-            )
+            .read(path, &HashMap::new(), format(), false)
             .await
             .unwrap()
             .collect()
@@ -1643,6 +1651,7 @@ mod tests {
                 json.to_string_lossy().to_string(),
                 &HashMap::new(),
                 Some(json_format),
+                false,
             )
             .await
             .unwrap()
@@ -1669,6 +1678,7 @@ mod tests {
                 parquet.to_string_lossy().to_string(),
                 &HashMap::new(),
                 Some(parquet_format),
+                false,
             )
             .await
             .unwrap();

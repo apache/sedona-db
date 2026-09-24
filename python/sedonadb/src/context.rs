@@ -215,6 +215,7 @@ impl InternalContext {
         table_paths: Vec<String>,
         options: HashMap<String, Py<PyAny>>,
         format: Option<&str>,
+        check_extension: bool,
         partitioning: Option<Vec<String>>,
     ) -> Result<InternalDataFrame, PySedonaError> {
         let rust_options = stringify_options(py, options);
@@ -239,6 +240,7 @@ impl InternalContext {
                 table_paths,
                 &rust_options,
                 format,
+                check_extension,
                 partitioning.map(|cols| {
                     cols.into_iter()
                         .map(|name| (name, DataType::Utf8View))

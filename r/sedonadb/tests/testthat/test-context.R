@@ -84,6 +84,17 @@ test_that("sd_read() resolves registered formats and options", {
   expect_error(sd_read(csv, options = list()), NA)
   expect_error(sd_read(csv, options = c(delimiter = ";")), "named list")
   expect_error(sd_read(csv, options = list(";")), "named list")
+  expect_error(sd_read(csv, check_extension = NA), "TRUE or FALSE")
+
+  mixed <- tempfile()
+  dir.create(mixed)
+  writeLines(c("x", "1"), file.path(mixed, "included.csv"))
+  writeLines(c("x", "2"), file.path(mixed, "ignored.txt"))
+  expect_identical(sd_count(sd_read(mixed, format = "csv")), 1)
+  expect_identical(
+    sd_count(sd_read(mixed, format = "csv", check_extension = TRUE)),
+    1
+  )
 
   partitioned <- tempfile()
   dir.create(file.path(partitioned, "group=a"), recursive = TRUE)

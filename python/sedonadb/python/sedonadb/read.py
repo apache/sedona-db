@@ -75,8 +75,10 @@ class Read:
             format: Explicit format specification. Can be a string (e.g., `"parquet"`,
                 `"fgb"`) or an `ExternalFormatSpec` object. If `None` (the default),
                 the format is guessed from the file extension.
-            check_extension: When `True`, validates that file extensions match the
-                specified format. Defaults to `False`.
+            check_extension: When `True`, checks extensions for explicitly selected
+                formats, including compression inference and external-format
+                validation. Directory listings are always filtered to matching
+                files. Defaults to `False`.
 
         Examples:
 
@@ -158,6 +160,7 @@ class Read:
                 table_paths,
                 options,
                 None if requested_format is None else format,
+                check_extension,
                 None if partitioning is None else list(partitioning),
             ),
         )

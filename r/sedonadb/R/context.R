@@ -221,6 +221,9 @@ sd_ctx_read_parquet <- function(
 #'   or `"json"`. By default the format is inferred from the path extension.
 #' @param partitioning Optional character vector of hive-style partition column
 #'   names. `NULL` auto-discovers partitions; `character()` disables discovery.
+#' @param check_extension Whether to check extensions for explicitly selected
+#'   formats, including compression inference. Directory listings are always
+#'   filtered to matching files. Defaults to `FALSE`.
 #' @param ctx A SedonaDB context.
 #'
 #' @returns A sedonadb_dataframe
@@ -229,8 +232,14 @@ sd_ctx_read_parquet <- function(
 #' @examples
 #' path <- system.file("files/natural-earth_cities_geo.parquet", package = "sedonadb")
 #' sd_read(path) |> head(5) |> sd_preview()
-sd_read <- function(file_or_files, options = list(), format = NULL, partitioning = NULL) {
-  sd_ctx_read(ctx(), file_or_files, options, format, partitioning)
+sd_read <- function(
+  file_or_files,
+  options = list(),
+  format = NULL,
+  partitioning = NULL,
+  check_extension = FALSE
+) {
+  sd_ctx_read(ctx(), file_or_files, options, format, partitioning, check_extension)
 }
 
 #' @rdname sd_read
@@ -240,7 +249,8 @@ sd_ctx_read <- function(
   file_or_files,
   options = list(),
   format = NULL,
-  partitioning = NULL
+  partitioning = NULL,
+  check_extension = FALSE
 ) {
   check_ctx(ctx)
 
@@ -249,6 +259,14 @@ sd_ctx_read <- function(
       (length(options) > 0 && (is.null(names(options)) || any(names(options) == "")))
   ) {
     stop("`options` must be a named list", call. = FALSE)
+  }
+
+  if (
+    !is.logical(check_extension) ||
+      length(check_extension) != 1L ||
+      is.na(check_extension)
+  ) {
+    stop("`check_extension` must be TRUE or FALSE", call. = FALSE)
   }
 
   df <- ctx$read(
@@ -267,6 +285,7 @@ sd_ctx_read <- function(
     ),
     if (is.null(partitioning)) character() else as.character(partitioning),
     !is.null(partitioning),
+    check_extension,
     format
   )
   new_sedonadb_dataframe(ctx, df)
