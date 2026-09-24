@@ -26,7 +26,9 @@
 //! - Proper end-of-stream signaling
 
 use std::ffi::{c_int, c_void, CString};
+use std::future::Future;
 use std::ptr::null_mut;
+use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::task::Poll;
@@ -125,7 +127,7 @@ impl ProducerState {
 /// - Respects back-pressure: waits for consumer to call `producer.request(n)` before sending batches
 /// - Handles consumer cancellation via `producer.cancel()`
 /// - Signals end-of-stream by calling `on_next_task` with `NULL`
-/// - Calls `on_error` if an error occurs (including cancellation)
+/// - Calls `on_error` if the producer encounters an error
 ///
 /// # Safety
 ///
@@ -140,54 +142,68 @@ impl ProducerState {
 /// // The consumer should call handler.producer.request(n) to receive batches
 /// drive_stream_to_handler(stream, handler).await;
 /// ```
-pub async fn drive_stream_to_handler(
+pub fn drive_stream_to_handler(
     stream: SendableRecordBatchStream,
     handler: *mut FFI_ArrowAsyncDeviceStreamHandler,
-) {
-    if handler.is_null() {
-        return;
+) -> impl Future<Output = ()> + Send {
+    // Construct the handler guard before creating the future so dropping an
+    // unpolled spawned task still releases the handler.
+    let handler = SendableHandlerGuard::new(handler);
+
+    async move {
+        let Some(handler) = handler else {
+            return;
+        };
+
+        let state = Arc::new(ProducerState::new());
+        let producer = SendableProducerGuard::new(create_producer(Arc::clone(&state)));
+        let mut resources = SendableDriverResources { handler, producer };
+
+        let _result = drive_stream_inner(
+            stream,
+            resources.handler_address(),
+            resources.producer_address(),
+            state,
+        )
+        .await;
+
+        // Normal completion (success or callback rejection).
+        resources.release_handler();
     }
-
-    // Create shared state for producer callbacks
-    let state = Arc::new(ProducerState::new());
-
-    // Create the producer
-    let mut producer = ProducerGuard(create_producer(Arc::clone(&state)));
-
-    // Use a guard to handle unexpected drops (panics)
-    let mut guard = StreamDriverGuard::new(handler);
-
-    let _result = drive_stream_inner(stream, handler, &mut producer.0, state).await;
-
-    // Normal completion (success or error) - disarm the guard and release handler
-    guard.disarm();
-    release_handler(handler);
 }
 
 /// Inner implementation that returns a Result for cleaner control flow.
 async fn drive_stream_inner(
     mut stream: SendableRecordBatchStream,
-    handler: *mut FFI_ArrowAsyncDeviceStreamHandler,
-    producer: &mut FFI_ArrowAsyncProducer,
+    handler_address: usize,
+    producer_address: usize,
     state: Arc<ProducerState>,
 ) -> Result<(), ()> {
-    let handler_ref = unsafe { &mut *handler };
-
     // Set the producer on the handler BEFORE calling on_schema (per Arrow spec)
-    handler_ref.producer = producer;
+    unsafe {
+        (*(handler_address as *mut FFI_ArrowAsyncDeviceStreamHandler)).producer =
+            producer_address as *mut FFI_ArrowAsyncProducer;
+    }
 
     // Send the schema
     let schema = stream.schema();
     let mut ffi_schema = match FFI_ArrowSchema::try_from(schema.as_ref()) {
         Ok(s) => s,
         Err(e) => {
-            call_on_error(handler_ref, 1, &e.to_string());
+            call_on_error(handler_address, 1, &e.to_string());
             return Err(());
         }
     };
 
-    if let Some(on_schema) = handler_ref.on_schema {
-        let ret = unsafe { on_schema(handler, &mut ffi_schema) };
+    let on_schema =
+        unsafe { (*(handler_address as *mut FFI_ArrowAsyncDeviceStreamHandler)).on_schema };
+    if let Some(on_schema) = on_schema {
+        let ret = unsafe {
+            on_schema(
+                handler_address as *mut FFI_ArrowAsyncDeviceStreamHandler,
+                &mut ffi_schema,
+            )
+        };
         // Ownership of the schema contents transfers to the handler when the
         // callback is invoked, regardless of its return value.
         std::mem::forget(ffi_schema);
@@ -203,7 +219,7 @@ async fn drive_stream_inner(
         if state.is_cancelled() {
             // Per Arrow spec: successful cancel should NOT call on_error,
             // just signal end of stream and release
-            signal_end_of_stream(handler_ref, handler);
+            signal_end_of_stream(handler_address);
             return Ok(());
         }
 
@@ -222,7 +238,7 @@ async fn drive_stream_inner(
 
         // Re-check cancellation after waiting
         if state.is_cancelled() {
-            signal_end_of_stream(handler_ref, handler);
+            signal_end_of_stream(handler_address);
             return Ok(());
         }
 
@@ -251,21 +267,21 @@ async fn drive_stream_inner(
         let next = match next {
             Ok(next) => next,
             Err(()) => {
-                signal_end_of_stream(handler_ref, handler);
+                signal_end_of_stream(handler_address);
                 return Ok(());
             }
         };
 
         match next {
             Some(Ok(batch)) => {
-                match send_batch_to_handler(handler_ref, handler, batch) {
+                match send_batch_to_handler(handler_address, batch) {
                     Ok(()) => {}
                     Err(SendBatchError::HandlerRejected) => {
                         // A rejected callback may only be followed by release.
                         return Err(());
                     }
                     Err(SendBatchError::Producer(error)) => {
-                        call_on_error(handler_ref, 1, &error);
+                        call_on_error(handler_address, 1, &error);
                         return Err(());
                     }
                 }
@@ -274,12 +290,12 @@ async fn drive_stream_inner(
                 yield_once().await;
             }
             Some(Err(e)) => {
-                call_on_error(handler_ref, 1, &e.to_string());
+                call_on_error(handler_address, 1, &e.to_string());
                 return Err(());
             }
             None => {
                 // End of stream
-                signal_end_of_stream(handler_ref, handler);
+                signal_end_of_stream(handler_address);
                 return Ok(());
             }
         }
@@ -339,69 +355,117 @@ unsafe extern "C" fn producer_release(self_: *mut FFI_ArrowAsyncProducer) {
     producer.private_data = null_mut();
 }
 
-struct ProducerGuard(FFI_ArrowAsyncProducer);
+/// Owns this implementation's producer while allowing the async driver to move
+/// between Tokio worker threads. The box keeps the pointer exposed to the
+/// consumer stable even when this wrapper moves.
+struct SendableProducerGuard(Box<FFI_ArrowAsyncProducer>);
 
-impl Drop for ProducerGuard {
-    fn drop(&mut self) {
-        unsafe { producer_release(&mut self.0) };
+impl SendableProducerGuard {
+    fn new(producer: FFI_ArrowAsyncProducer) -> Self {
+        Self(Box::new(producer))
+    }
+
+    fn address(&mut self) -> usize {
+        self.0.as_mut() as *mut FFI_ArrowAsyncProducer as usize
     }
 }
 
-/// Guard that calls `on_error` if dropped without being disarmed.
-struct StreamDriverGuard {
-    handler: *mut FFI_ArrowAsyncDeviceStreamHandler,
+// SAFETY: This wrapper is only constructed for the producer defined in this
+// module. Its private state is an Arc containing atomics and an AtomicWaker,
+// its callbacks are thread-safe, and the boxed producer has a stable address.
+unsafe impl Send for SendableProducerGuard {}
+
+impl Drop for SendableProducerGuard {
+    fn drop(&mut self) {
+        unsafe { producer_release(self.0.as_mut()) };
+    }
+}
+
+/// Owns the producer-side right to invoke and release one foreign handler.
+/// Dropping an armed guard reports cancellation and releases it exactly once.
+struct SendableHandlerGuard {
+    handler: NonNull<FFI_ArrowAsyncDeviceStreamHandler>,
     armed: bool,
 }
 
-impl StreamDriverGuard {
-    fn new(handler: *mut FFI_ArrowAsyncDeviceStreamHandler) -> Self {
-        Self {
+impl SendableHandlerGuard {
+    fn new(handler: *mut FFI_ArrowAsyncDeviceStreamHandler) -> Option<Self> {
+        NonNull::new(handler).map(|handler| Self {
             handler,
             armed: true,
-        }
+        })
     }
 
-    fn disarm(&mut self) {
+    fn address(&self) -> usize {
+        self.handler.as_ptr() as usize
+    }
+
+    fn release(&mut self) {
+        if !self.armed {
+            return;
+        }
+
+        // Disarm before invoking foreign code: after release returns the
+        // handler may already have been freed.
         self.armed = false;
+        let handler = self.handler.as_ptr();
+        let release = unsafe { (*handler).release };
+        if let Some(release) = release {
+            unsafe { release(handler) };
+        }
     }
 }
 
-impl Drop for StreamDriverGuard {
+// SAFETY: The guard is uniquely owned by the producer task. Arrow requires
+// handler callbacks to be serialized but permits consecutive callbacks to run
+// on different threads. No reference into the handler is retained across an
+// await or a thread migration.
+unsafe impl Send for SendableHandlerGuard {}
+
+impl Drop for SendableHandlerGuard {
     fn drop(&mut self) {
-        if self.armed && !self.handler.is_null() {
-            let handler_ref = unsafe { &mut *self.handler };
+        if self.armed {
             call_on_error(
-                handler_ref,
+                self.address(),
                 libc::ECANCELED,
                 "Stream driver dropped unexpectedly",
             );
-            // Still need to release the handler
-            release_handler(self.handler);
+            self.release();
         }
+    }
+}
+
+/// Keeps the handler alive through its release callback, then drops the
+/// producer. Field order is significant because Rust drops fields in
+/// declaration order.
+struct SendableDriverResources {
+    handler: SendableHandlerGuard,
+    producer: SendableProducerGuard,
+}
+
+impl SendableDriverResources {
+    fn handler_address(&self) -> usize {
+        self.handler.address()
+    }
+
+    fn producer_address(&mut self) -> usize {
+        self.producer.address()
+    }
+
+    fn release_handler(&mut self) {
+        self.handler.release();
     }
 }
 
 /// Signal end of stream by calling on_next_task with NULL.
-fn signal_end_of_stream(
-    handler_ref: &mut FFI_ArrowAsyncDeviceStreamHandler,
-    handler: *mut FFI_ArrowAsyncDeviceStreamHandler,
-) {
-    if let Some(on_next_task) = handler_ref.on_next_task {
+fn signal_end_of_stream(handler_address: usize) {
+    let handler = handler_address as *mut FFI_ArrowAsyncDeviceStreamHandler;
+    let on_next_task = unsafe { (*handler).on_next_task };
+    if let Some(on_next_task) = on_next_task {
         // Per Arrow spec: pass NULL task pointer to signal end of stream
         unsafe {
             on_next_task(handler, std::ptr::null_mut(), std::ptr::null());
         }
-    }
-}
-
-/// Release the handler (call its release callback).
-fn release_handler(handler: *mut FFI_ArrowAsyncDeviceStreamHandler) {
-    if handler.is_null() {
-        return;
-    }
-    let handler_ref = unsafe { &*handler };
-    if let Some(release) = handler_ref.release {
-        unsafe { release(handler) };
     }
 }
 
@@ -410,12 +474,10 @@ enum SendBatchError {
     Producer(String),
 }
 
-fn send_batch_to_handler(
-    handler_ref: &mut FFI_ArrowAsyncDeviceStreamHandler,
-    handler: *mut FFI_ArrowAsyncDeviceStreamHandler,
-    batch: RecordBatch,
-) -> Result<(), SendBatchError> {
-    let Some(on_next_task) = handler_ref.on_next_task else {
+fn send_batch_to_handler(handler_address: usize, batch: RecordBatch) -> Result<(), SendBatchError> {
+    let handler = handler_address as *mut FFI_ArrowAsyncDeviceStreamHandler;
+    let on_next_task = unsafe { (*handler).on_next_task };
+    let Some(on_next_task) = on_next_task else {
         return Err(SendBatchError::Producer(
             "on_next_task callback is null".to_string(),
         ));
@@ -433,8 +495,10 @@ fn send_batch_to_handler(
     Ok(())
 }
 
-fn call_on_error(handler: &mut FFI_ArrowAsyncDeviceStreamHandler, code: c_int, message: &str) {
-    if let Some(on_error) = handler.on_error {
+fn call_on_error(handler_address: usize, code: c_int, message: &str) {
+    let handler = handler_address as *mut FFI_ArrowAsyncDeviceStreamHandler;
+    let on_error = unsafe { (*handler).on_error };
+    if let Some(on_error) = on_error {
         let c_message = CString::new(message).unwrap_or_else(|_| CString::new("error").unwrap());
         unsafe {
             on_error(

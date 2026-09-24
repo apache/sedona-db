@@ -26,6 +26,7 @@ use arrow_array::{Int32Array, RecordBatch};
 use arrow_schema::{DataType, Field, Schema, SchemaRef};
 use datafusion_common::Result;
 use datafusion_execution::RecordBatchStream;
+use futures::channel::oneshot;
 use futures::{Stream, StreamExt};
 use sedona_extension::export_sendable_record_batch_stream::drive_stream_to_handler;
 use sedona_extension::extension::{
@@ -64,6 +65,37 @@ impl RecordBatchStream for PendingStream {
 }
 
 impl Drop for PendingStream {
+    fn drop(&mut self) {
+        self.drops.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+struct DelayedEmptyStream {
+    schema: SchemaRef,
+    ready: oneshot::Receiver<()>,
+    polls: Arc<AtomicUsize>,
+    drops: Arc<AtomicUsize>,
+}
+
+impl Stream for DelayedEmptyStream {
+    type Item = Result<RecordBatch>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.polls.fetch_add(1, Ordering::SeqCst);
+        match Pin::new(&mut self.ready).poll(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(_) => Poll::Ready(None),
+        }
+    }
+}
+
+impl RecordBatchStream for DelayedEmptyStream {
+    fn schema(&self) -> SchemaRef {
+        self.schema.clone()
+    }
+}
+
+impl Drop for DelayedEmptyStream {
     fn drop(&mut self) {
         self.drops.fetch_add(1, Ordering::SeqCst);
     }
@@ -193,6 +225,40 @@ fn prefetch_one_requests_a_batch() {
     assert_eq!(polls.load(Ordering::SeqCst), 1);
 }
 
+#[tokio::test]
+async fn delayed_empty_stream_completes_without_a_batch() {
+    let polls = Arc::new(AtomicUsize::new(0));
+    let drops = Arc::new(AtomicUsize::new(0));
+    let (ready_tx, ready_rx) = oneshot::channel();
+    let source = Box::pin(DelayedEmptyStream {
+        schema: schema(),
+        ready: ready_rx,
+        polls: polls.clone(),
+        drops: drops.clone(),
+    });
+    let (mut consumer, handler) = ImportedAsyncDeviceStream::new(2);
+
+    let consumption = async {
+        assert!(consumer.next().await.is_none());
+    };
+    let release_source = async {
+        // Ensure the driver and consumer both observe the pending phase before
+        // allowing the source to complete without producing a batch.
+        tokio::task::yield_now().await;
+        tokio::task::yield_now().await;
+        ready_tx.send(()).unwrap();
+    };
+
+    futures::join!(
+        consumption,
+        drive_stream_to_handler(source, handler.as_ptr()),
+        release_source
+    );
+
+    assert!(polls.load(Ordering::SeqCst) >= 2);
+    assert_eq!(drops.load(Ordering::SeqCst), 1);
+}
+
 static FOREIGN_TASK_CLEANUPS: AtomicUsize = AtomicUsize::new(0);
 
 unsafe extern "C" fn foreign_request(_: *mut FFI_ArrowAsyncProducer, _: i64) {}
@@ -320,6 +386,68 @@ unsafe extern "C" fn count_release(handler: *mut FFI_ArrowAsyncDeviceStreamHandl
     let state = &*((*handler).private_data as *const RejectingHandlerState);
     state.release_calls.fetch_add(1, Ordering::SeqCst);
     (*handler).release = None;
+}
+
+#[test]
+fn unpolled_sendable_driver_releases_handler_once() {
+    fn assert_send<T: Send>(_: &T) {}
+
+    let state = RejectingHandlerState::default();
+    let mut handler = FFI_ArrowAsyncDeviceStreamHandler {
+        on_schema: Some(reject_schema),
+        on_next_task: Some(reject_task),
+        on_error: Some(count_error),
+        release: Some(count_release),
+        producer: std::ptr::null_mut(),
+        private_data: (&state as *const RejectingHandlerState).cast_mut().cast(),
+    };
+    let source_drops = Arc::new(AtomicUsize::new(0));
+    let source = Box::pin(PendingStream {
+        schema: schema(),
+        polls: Arc::new(AtomicUsize::new(0)),
+        drops: source_drops.clone(),
+    });
+
+    let driver = drive_stream_to_handler(source, &mut handler);
+    assert_send(&driver);
+    drop(driver);
+
+    assert_eq!(state.schema_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(state.next_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(state.error_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(state.release_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(source_drops.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn runtime_shutdown_before_first_poll_releases_handler_once() {
+    let state = RejectingHandlerState::default();
+    let mut handler = FFI_ArrowAsyncDeviceStreamHandler {
+        on_schema: Some(reject_schema),
+        on_next_task: Some(reject_task),
+        on_error: Some(count_error),
+        release: Some(count_release),
+        producer: std::ptr::null_mut(),
+        private_data: (&state as *const RejectingHandlerState).cast_mut().cast(),
+    };
+    let source_drops = Arc::new(AtomicUsize::new(0));
+    let source = Box::pin(PendingStream {
+        schema: schema(),
+        polls: Arc::new(AtomicUsize::new(0)),
+        drops: source_drops.clone(),
+    });
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+
+    runtime.spawn(drive_stream_to_handler(source, &mut handler));
+    drop(runtime);
+
+    assert_eq!(state.schema_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(state.next_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(state.error_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(state.release_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(source_drops.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]

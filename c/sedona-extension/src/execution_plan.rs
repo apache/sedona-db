@@ -304,16 +304,12 @@ unsafe extern "C" fn c_exec_plan_execute_async(
 
     match plan.execute(execute_args.partition) {
         Ok(stream) => {
-            // Raw pointers are not Send; transport the address into the task as
-            // an integer and reconstruct it only on the runtime worker.
-            let handler_addr = out as usize;
-            let runtime = plan.runtime.clone();
-            plan.runtime.spawn_blocking(move || {
-                runtime.block_on(drive_stream_to_handler(
-                    stream,
-                    handler_addr as *mut FFI_ArrowAsyncDeviceStreamHandler,
-                ));
-            });
+            // The driver owns sendable guards for the handler and producer, so
+            // slow streams remain ordinary async tasks instead of occupying a
+            // blocking-pool thread for their entire lifetime.
+            let driver =
+                drive_stream_to_handler(stream, out as *mut FFI_ArrowAsyncDeviceStreamHandler);
+            plan.runtime.spawn(driver);
             ERRNO_OK
         }
         Err(e) => {
@@ -669,7 +665,7 @@ mod tests {
         metrics::{ExecutionPlanMetricsSet, MetricBuilder},
         stream::RecordBatchStreamAdapter,
     };
-    use futures::{stream, StreamExt};
+    use futures::{future, pin_mut, stream, StreamExt};
     use std::fmt::Formatter;
 
     /// A dummy ExecutionPlan with fixed, predictable values for testing FFI roundtrip.
@@ -1046,5 +1042,71 @@ ImportedSedonaCExec
                 &batches
             );
         });
+    }
+
+    #[test]
+    fn test_async_execution_does_not_use_the_blocking_pool() {
+        let runtime = Arc::new(RuntimeHandle::new(
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .max_blocking_threads(1)
+                .build()
+                .unwrap(),
+        ));
+        let task_ctx = Arc::new(TaskContext::default());
+        let exported = ExportedExecutionPlan::new(
+            Arc::new(DummyExec::new()),
+            task_ctx.clone(),
+            runtime.clone(),
+        );
+        let imported = ImportedSedonaCExec::try_new(exported.into())
+            .unwrap()
+            .with_async_execution(true);
+
+        // Occupy the runtime's only blocking worker. The async FFI driver must
+        // still start and complete on the current-thread scheduler.
+        let (blocker_started_tx, blocker_started_rx) = std::sync::mpsc::channel();
+        let (release_blocker_tx, release_blocker_rx) = std::sync::mpsc::channel();
+        let blocker = runtime.spawn_blocking(move || {
+            blocker_started_tx.send(()).unwrap();
+            release_blocker_rx.recv().unwrap();
+        });
+        blocker_started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("blocking worker did not start");
+
+        let (timeout_tx, timeout_rx) = futures::channel::oneshot::channel();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(2));
+            let _ = timeout_tx.send(());
+        });
+
+        let completed = runtime.block_on(async {
+            let collection = async {
+                let stream = imported.execute(0, task_ctx).unwrap();
+                stream
+                    .collect::<Vec<_>>()
+                    .await
+                    .into_iter()
+                    .collect::<Result<Vec<_>>>()
+                    .unwrap()
+            };
+            pin_mut!(collection);
+            pin_mut!(timeout_rx);
+            match future::select(collection, timeout_rx).await {
+                future::Either::Left((batches, _)) => {
+                    assert_eq!(batches.len(), 1);
+                    true
+                }
+                future::Either::Right(_) => false,
+            }
+        });
+
+        release_blocker_tx.send(()).unwrap();
+        runtime.block_on(blocker).unwrap();
+        assert!(
+            completed,
+            "async FFI execution waited for the blocking pool"
+        );
     }
 }
