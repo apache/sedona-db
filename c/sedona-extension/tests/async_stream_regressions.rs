@@ -141,7 +141,7 @@ fn request_racing_waker_registration_is_not_lost() {
         handler: *mut FFI_ArrowAsyncDeviceStreamHandler,
         schema: *mut arrow_array::ffi::FFI_ArrowSchema,
     ) -> std::ffi::c_int {
-        drop(std::ptr::read(schema));
+        drop(arrow_array::ffi::FFI_ArrowSchema::from_raw(schema));
         (*((*handler).private_data as *const WakeState))
             .producer
             .store((*handler).producer, Ordering::SeqCst);
@@ -172,7 +172,7 @@ fn request_racing_waker_registration_is_not_lost() {
         polls: source_polls.clone(),
         drops: Arc::new(AtomicUsize::new(0)),
     });
-    let mut driver = Box::pin(drive_stream_to_handler(source, &mut handler));
+    let mut driver = Box::pin(unsafe { drive_stream_to_handler(source, &mut handler) });
     let mut cx = Context::from_waker(&waker);
     let result = driver.as_mut().poll(&mut cx);
 
@@ -194,7 +194,7 @@ fn cancellation_interrupts_pending_source() {
         drops: drops.clone(),
     });
     let (mut consumer, handler) = ImportedAsyncDeviceStream::new(2);
-    let mut driver = Box::pin(drive_stream_to_handler(source, handler.as_ptr()));
+    let mut driver = Box::pin(unsafe { drive_stream_to_handler(source, handler.as_ptr()) });
     let mut cx = Context::from_waker(futures::task::noop_waker_ref());
 
     assert!(driver.as_mut().poll(&mut cx).is_pending());
@@ -207,6 +207,25 @@ fn cancellation_interrupts_pending_source() {
     assert_eq!(drops.load(Ordering::SeqCst), 1);
 }
 
+#[tokio::test]
+async fn cancellation_before_first_poll_does_not_poll_source() {
+    let polls = Arc::new(AtomicUsize::new(0));
+    let drops = Arc::new(AtomicUsize::new(0));
+    let source = Box::pin(PendingStream {
+        schema: schema(),
+        polls: polls.clone(),
+        drops: drops.clone(),
+    });
+    let (mut consumer, handler) = ImportedAsyncDeviceStream::new(2);
+    consumer.cancel();
+    // SAFETY: into_raw transfers the handler to this driver's sole ownership.
+    unsafe { drive_stream_to_handler(source, handler.into_raw()) }.await;
+
+    assert!(consumer.next().await.is_none());
+    assert_eq!(polls.load(Ordering::SeqCst), 0);
+    assert_eq!(drops.load(Ordering::SeqCst), 1);
+}
+
 #[test]
 fn prefetch_one_requests_a_batch() {
     let polls = Arc::new(AtomicUsize::new(0));
@@ -216,7 +235,7 @@ fn prefetch_one_requests_a_batch() {
         drops: Arc::new(AtomicUsize::new(0)),
     });
     let (mut consumer, handler) = ImportedAsyncDeviceStream::new(1);
-    let mut driver = Box::pin(drive_stream_to_handler(source, handler.as_ptr()));
+    let mut driver = Box::pin(unsafe { drive_stream_to_handler(source, handler.as_ptr()) });
     let mut cx = Context::from_waker(futures::task::noop_waker_ref());
 
     assert!(driver.as_mut().poll(&mut cx).is_pending());
@@ -251,7 +270,7 @@ async fn delayed_empty_stream_completes_without_a_batch() {
 
     futures::join!(
         consumption,
-        drive_stream_to_handler(source, handler.as_ptr()),
+        unsafe { drive_stream_to_handler(source, handler.as_ptr()) },
         release_source
     );
 
@@ -292,7 +311,7 @@ fn abandoning_a_foreign_task_calls_extract_null() {
         unsafe { ((*ptr).on_schema.unwrap())(ptr, &mut ffi_schema) },
         0
     );
-    std::mem::forget(ffi_schema);
+    assert!(ffi_schema.release.is_none());
     let mut cx = Context::from_waker(futures::task::noop_waker_ref());
     assert!(Pin::new(&mut consumer).poll_next(&mut cx).is_pending());
 
@@ -344,7 +363,7 @@ unsafe extern "C" fn reject_schema(
     handler: *mut FFI_ArrowAsyncDeviceStreamHandler,
     schema: *mut arrow_array::ffi::FFI_ArrowSchema,
 ) -> std::ffi::c_int {
-    drop(std::ptr::read(schema));
+    drop(arrow_array::ffi::FFI_ArrowSchema::from_raw(schema));
     let state = &*((*handler).private_data as *const RejectingHandlerState);
     state.schema_calls.fetch_add(1, Ordering::SeqCst);
     libc::EINVAL
@@ -354,7 +373,7 @@ unsafe extern "C" fn accept_schema_and_request_one(
     handler: *mut FFI_ArrowAsyncDeviceStreamHandler,
     schema: *mut arrow_array::ffi::FFI_ArrowSchema,
 ) -> std::ffi::c_int {
-    drop(std::ptr::read(schema));
+    drop(arrow_array::ffi::FFI_ArrowSchema::from_raw(schema));
     let state = &*((*handler).private_data as *const RejectingHandlerState);
     state.schema_calls.fetch_add(1, Ordering::SeqCst);
     let producer = (*handler).producer;
@@ -408,7 +427,7 @@ fn unpolled_sendable_driver_releases_handler_once() {
         drops: source_drops.clone(),
     });
 
-    let driver = drive_stream_to_handler(source, &mut handler);
+    let driver = unsafe { drive_stream_to_handler(source, &mut handler) };
     assert_send(&driver);
     drop(driver);
 
@@ -440,7 +459,7 @@ fn runtime_shutdown_before_first_poll_releases_handler_once() {
         .build()
         .unwrap();
 
-    runtime.spawn(drive_stream_to_handler(source, &mut handler));
+    runtime.spawn(unsafe { drive_stream_to_handler(source, &mut handler) });
     drop(runtime);
 
     assert_eq!(state.schema_calls.load(Ordering::SeqCst), 0);
@@ -466,7 +485,7 @@ async fn rejected_schema_is_consumed_and_only_followed_by_release() {
         batch: None,
     });
 
-    drive_stream_to_handler(source, &mut handler).await;
+    unsafe { drive_stream_to_handler(source, &mut handler) }.await;
 
     assert_eq!(state.schema_calls.load(Ordering::SeqCst), 1);
     assert_eq!(state.next_calls.load(Ordering::SeqCst), 0);
@@ -491,7 +510,7 @@ async fn rejected_task_is_only_followed_by_release() {
         batch: Some(batch),
     });
 
-    drive_stream_to_handler(source, &mut handler).await;
+    unsafe { drive_stream_to_handler(source, &mut handler) }.await;
 
     assert_eq!(state.schema_calls.load(Ordering::SeqCst), 1);
     assert_eq!(state.next_calls.load(Ordering::SeqCst), 1);
@@ -518,10 +537,9 @@ async fn roundtrip_preserves_schema_metadata() {
         (batches, consumer.schema())
     };
 
-    let ((batches, actual_schema), _) = futures::join!(
-        consumption,
+    let ((batches, actual_schema), _) = futures::join!(consumption, unsafe {
         drive_stream_to_handler(source, handler.as_ptr())
-    );
+    });
 
     assert_eq!(actual_schema, schema);
     assert_eq!(batches[0].schema(), schema);

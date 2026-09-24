@@ -309,7 +309,13 @@ unsafe extern "C" fn c_exec_plan_execute_async(
             // blocking-pool thread for their entire lifetime.
             let driver =
                 drive_stream_to_handler(stream, out as *mut FFI_ArrowAsyncDeviceStreamHandler);
-            plan.runtime.spawn(driver);
+            // A returned stream may outlive the exported plan and context.
+            // Keep their runtime alive until the driver has released the handler.
+            let runtime = plan.runtime.clone();
+            plan.runtime.spawn(async move {
+                let _runtime = runtime;
+                driver.await;
+            });
             ERRNO_OK
         }
         Err(e) => {

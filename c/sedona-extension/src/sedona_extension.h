@@ -117,6 +117,19 @@ struct ArrowArrayStream {
 
 typedef int32_t ArrowDeviceType;
 #define ARROW_DEVICE_CPU 1
+#define ARROW_DEVICE_CUDA 2
+#define ARROW_DEVICE_CUDA_HOST 3
+#define ARROW_DEVICE_OPENCL 4
+#define ARROW_DEVICE_VULKAN 7
+#define ARROW_DEVICE_METAL 8
+#define ARROW_DEVICE_VPI 9
+#define ARROW_DEVICE_ROCM 10
+#define ARROW_DEVICE_ROCM_HOST 11
+#define ARROW_DEVICE_EXT_DEV 12
+#define ARROW_DEVICE_CUDA_MANAGED 13
+#define ARROW_DEVICE_ONEAPI 14
+#define ARROW_DEVICE_WEBGPU 15
+#define ARROW_DEVICE_HEXAGON 16
 
 struct ArrowDeviceArray {
   struct ArrowArray array;

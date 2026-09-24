@@ -131,8 +131,13 @@ impl ProducerState {
 ///
 /// # Safety
 ///
-/// The `handler` pointer must be valid and point to a properly initialized
-/// [`FFI_ArrowAsyncDeviceStreamHandler`].
+/// A non-null `handler` must point to a properly initialized
+/// [`FFI_ArrowAsyncDeviceStreamHandler`] that remains valid until its release
+/// callback is invoked. This function takes exclusive responsibility for
+/// invoking and releasing the handler, including if the returned future is
+/// dropped without being polled. The caller must not release it independently.
+/// Its callbacks and private state must support serialized calls from any
+/// thread, since the returned future is `Send`.
 ///
 /// # Example
 ///
@@ -140,9 +145,20 @@ impl ProducerState {
 /// use sedona_extension::export_sendable_record_batch_stream::drive_stream_to_handler;
 ///
 /// // The consumer should call handler.producer.request(n) to receive batches
-/// drive_stream_to_handler(stream, handler).await;
+/// unsafe { drive_stream_to_handler(stream, handler) }.await;
 /// ```
-pub fn drive_stream_to_handler(
+///
+/// Raw handler ownership must be explicitly acknowledged by the caller:
+///
+/// ```compile_fail,E0133
+/// use sedona_extension::export_sendable_record_batch_stream::drive_stream_to_handler;
+/// use sedona_extension::extension::FFI_ArrowAsyncDeviceStreamHandler;
+/// use datafusion_execution::SendableRecordBatchStream;
+/// fn start(stream: SendableRecordBatchStream, handler: *mut FFI_ArrowAsyncDeviceStreamHandler) {
+///     let _driver = drive_stream_to_handler(stream, handler);
+/// }
+/// ```
+pub unsafe fn drive_stream_to_handler(
     stream: SendableRecordBatchStream,
     handler: *mut FFI_ArrowAsyncDeviceStreamHandler,
 ) -> impl Future<Output = ()> + Send {

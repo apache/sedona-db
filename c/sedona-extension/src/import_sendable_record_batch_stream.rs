@@ -54,7 +54,6 @@ use arrow_schema::{ArrowError, DataType, Schema, SchemaRef};
 use datafusion_common::Result;
 use datafusion_execution::RecordBatchStream;
 use futures::channel::mpsc;
-use futures::task::AtomicWaker;
 use futures::Stream;
 
 use crate::extension::{
@@ -68,8 +67,6 @@ enum StreamMessage {
     Schema(SchemaRef),
     /// A record batch task received.
     Task(FFI_ArrowAsyncTask),
-    /// End of stream (NULL task received).
-    EndOfStream,
     /// Error from producer.
     Error(ArrowError),
 }
@@ -81,6 +78,8 @@ struct ProducerState {
     producer: *mut FFI_ArrowAsyncProducer,
     /// Number of batches to request at a time (for back-pressure).
     prefetch_count: u64,
+    /// Remember cancellation even before the producer connects.
+    cancelled: bool,
 }
 
 // Safety: Producer pointer is only dereferenced while holding the lock
@@ -91,10 +90,6 @@ unsafe impl Sync for ProducerState {}
 struct ImportedStreamState {
     /// Sender for messages from callbacks to stream (lock-free).
     sender: mpsc::UnboundedSender<StreamMessage>,
-    /// Waker for the stream (lock-free).
-    waker: AtomicWaker,
-    /// Whether the stream has ended.
-    ended: AtomicBool,
     /// Number of outstanding requests (for back-pressure).
     pending_requests: AtomicU64,
     /// Set to true when the stream is dropped but producer hasn't called release yet.
@@ -116,8 +111,6 @@ impl ImportedStreamState {
     fn new(prefetch_count: u64, sender: mpsc::UnboundedSender<StreamMessage>) -> Self {
         Self {
             sender,
-            waker: AtomicWaker::new(),
-            ended: AtomicBool::new(false),
             pending_requests: AtomicU64::new(0),
             abandoned: AtomicBool::new(false),
             handler_released: AtomicBool::new(false),
@@ -125,26 +118,20 @@ impl ImportedStreamState {
             producer_state: Mutex::new(ProducerState {
                 producer: null_mut(),
                 prefetch_count,
+                cancelled: false,
             }),
         }
     }
 
-    fn wake(&self) {
-        self.waker.wake();
-    }
-
     /// Request more data from the producer if needed.
     fn maybe_request_more(&self) {
-        if self.ended.load(Ordering::Acquire) {
-            return;
-        }
-
         // Lock cannot be poisoned: we never panic while holding it
         let producer_state = self
             .producer_state
             .lock()
             .expect("producer_state mutex poisoned");
-        if producer_state.producer.is_null() {
+        if producer_state.producer.is_null() || producer_state.cancelled || self.sender.is_closed()
+        {
             return;
         }
 
@@ -164,14 +151,19 @@ impl ImportedStreamState {
         }
     }
 
-    fn set_producer(&self, producer: *mut FFI_ArrowAsyncProducer) {
+    /// Returns false if cancellation preceded the producer's connection.
+    fn set_producer(&self, producer: *mut FFI_ArrowAsyncProducer) -> bool {
         // Lock cannot be poisoned: we never panic while holding it
         let mut state = self
             .producer_state
             .lock()
             .expect("producer_state mutex poisoned");
-        state.producer = producer;
         self.producer_connected.store(true, Ordering::Release);
+        if state.cancelled {
+            return false;
+        }
+        state.producer = producer;
+        true
     }
 
     fn clear_producer(&self) {
@@ -185,10 +177,14 @@ impl ImportedStreamState {
 
     fn cancel(&self) {
         // Lock cannot be poisoned: we never panic while holding it
-        let state = self
+        let mut state = self
             .producer_state
             .lock()
             .expect("producer_state mutex poisoned");
+        if state.cancelled {
+            return;
+        }
+        state.cancelled = true;
         if !state.producer.is_null() {
             if let Some(cancel_fn) = unsafe { (*state.producer).cancel } {
                 unsafe { cancel_fn(state.producer) };
@@ -289,7 +285,7 @@ impl Drop for AsyncDeviceStreamHandler {
 
         let handler = unsafe { &mut *self.ptr };
 
-        self.state.ended.store(true, Ordering::Release);
+        self.state.sender.close_channel();
 
         if !handler.private_data.is_null() {
             let state_ptr = handler.private_data as *const ImportedStreamState;
@@ -379,17 +375,16 @@ impl ImportedAsyncDeviceStream {
     }
 
     /// Cancel the stream, signaling to the producer to stop sending data.
+    /// If the producer has not connected yet, its schema callback is rejected.
     pub fn cancel(&self) {
         self.state.cancel();
     }
 
     /// Poll for the next message, handling schema initialization.
     fn poll_next_inner(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<RecordBatch>>> {
-        // Register waker (lock-free)
-        self.state.waker.register(cx.waker());
-
-        // Poll the channel for messages first (lock-free)
-        // This ensures we drain all messages before returning None due to ended flag
+        // Channel closure both wakes the receiver and preserves queued messages.
+        // A separate end flag could race with this poll and hide a queued error
+        // or batch behind a premature end-of-stream result.
         match Pin::new(&mut self.receiver).poll_next(cx) {
             Poll::Ready(Some(msg)) => match msg {
                 StreamMessage::Schema(schema) => {
@@ -413,28 +408,10 @@ impl ImportedAsyncDeviceStream {
                     let batch = self.extract_batch_from_task(&mut task);
                     Poll::Ready(Some(batch))
                 }
-                StreamMessage::EndOfStream => {
-                    self.state.ended.store(true, Ordering::Release);
-                    Poll::Ready(None)
-                }
-                StreamMessage::Error(e) => {
-                    self.state.ended.store(true, Ordering::Release);
-                    Poll::Ready(Some(Err(e.into())))
-                }
+                StreamMessage::Error(e) => Poll::Ready(Some(Err(e.into()))),
             },
-            Poll::Ready(None) => {
-                // Channel closed (shouldn't happen in normal operation)
-                self.state.ended.store(true, Ordering::Release);
-                Poll::Ready(None)
-            }
-            Poll::Pending => {
-                // No messages in channel - check if stream has ended (lock-free)
-                if self.state.ended.load(Ordering::Acquire) {
-                    Poll::Ready(None)
-                } else {
-                    Poll::Pending
-                }
-            }
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => Poll::Pending,
         }
     }
 
@@ -453,6 +430,9 @@ impl ImportedAsyncDeviceStream {
         };
 
         let ret = unsafe { extract_data(task, &mut device_array) };
+        // Extraction consumes the task even on error. Foreign producers are
+        // not required to clear the callback or private_data themselves.
+        task.extract_data = None;
         if ret != 0 {
             return Err(ArrowError::CDataInterface("extract_data failed".to_string()).into());
         }
@@ -531,7 +511,7 @@ unsafe extern "C" fn handler_on_schema(
 
     // The handler owns the schema contents as soon as this callback is
     // invoked, including on every error path.
-    let ffi_schema = std::ptr::read(schema);
+    let ffi_schema = FFI_ArrowSchema::from_raw(schema);
 
     if self_.is_null() {
         return 1;
@@ -553,7 +533,14 @@ unsafe extern "C" fn handler_on_schema(
     }
 
     // Store the producer pointer (acquires lock)
-    state_arc.set_producer(handler.producer);
+    if !state_arc.set_producer(handler.producer) {
+        // Rejecting on_schema obliges the producer to release the handler.
+        // Avoid calling cancel here: a foreign cancel callback may invoke
+        // on_error synchronously and reenter this handler.
+        state_arc.sender.close_channel();
+        let _ = Arc::into_raw(state_arc);
+        return libc::ECANCELED;
+    }
 
     // Import the schema
     let result = match Schema::try_from(&ffi_schema) {
@@ -562,12 +549,11 @@ unsafe extern "C" fn handler_on_schema(
             let _ = state_arc
                 .sender
                 .unbounded_send(StreamMessage::Schema(Arc::new(s)));
-            state_arc.wake();
             0
         }
         Err(e) => {
             let _ = state_arc.sender.unbounded_send(StreamMessage::Error(e));
-            state_arc.wake();
+            state_arc.sender.close_channel();
             1
         }
     };
@@ -603,7 +589,7 @@ unsafe extern "C" fn handler_on_next_task(
     // Send message through channel (lock-free)
     if task.is_null() {
         // NULL task signals end of stream
-        let _ = state_arc.sender.unbounded_send(StreamMessage::EndOfStream);
+        state_arc.sender.close_channel();
     } else {
         // Take ownership of the task by copying it
         let task_copy = std::ptr::read(task);
@@ -611,7 +597,6 @@ unsafe extern "C" fn handler_on_next_task(
             .sender
             .unbounded_send(StreamMessage::Task(task_copy));
     }
-    state_arc.wake();
 
     let _ = Arc::into_raw(state_arc);
     0
@@ -646,8 +631,7 @@ unsafe extern "C" fn handler_on_error(
     let _ = state_arc
         .sender
         .unbounded_send(StreamMessage::Error(ArrowError::CDataInterface(error_msg)));
-    state_arc.ended.store(true, Ordering::Release);
-    state_arc.wake();
+    state_arc.sender.close_channel();
 
     let _ = Arc::into_raw(state_arc);
 }
@@ -671,7 +655,7 @@ unsafe extern "C" fn handler_release(self_: *mut FFI_ArrowAsyncDeviceStreamHandl
     let state_arc = Arc::from_raw(state_ptr);
 
     state_arc.clear_producer();
-    state_arc.ended.store(true, Ordering::Release);
+    state_arc.sender.close_channel();
 
     // Mark handler as released so AsyncDeviceStreamHandler::drop knows not to free it
     state_arc.handler_released.store(true, Ordering::Release);
@@ -792,7 +776,7 @@ mod tests {
             (received, consumer.schema())
         };
 
-        let producer_future = drive_stream_to_handler(source_stream, handler.as_ptr());
+        let producer_future = unsafe { drive_stream_to_handler(source_stream, handler.as_ptr()) };
 
         let ((received, result_schema), _) = futures::join!(consumer_future, producer_future);
 
@@ -816,7 +800,7 @@ mod tests {
             received
         };
 
-        let producer_future = drive_stream_to_handler(source_stream, handler.as_ptr());
+        let producer_future = unsafe { drive_stream_to_handler(source_stream, handler.as_ptr()) };
 
         let (received, _) = futures::join!(consumer_future, producer_future);
 
@@ -858,7 +842,7 @@ mod tests {
             received
         };
 
-        let producer_future = drive_stream_to_handler(source_stream, handler.as_ptr());
+        let producer_future = unsafe { drive_stream_to_handler(source_stream, handler.as_ptr()) };
 
         let (received, _) = futures::join!(consumer_future, producer_future);
 
@@ -885,7 +869,7 @@ mod tests {
             received
         };
 
-        let producer_future = drive_stream_to_handler(source_stream, handler.as_ptr());
+        let producer_future = unsafe { drive_stream_to_handler(source_stream, handler.as_ptr()) };
 
         let (received, _) = futures::join!(consumer_future, producer_future);
 
@@ -923,7 +907,7 @@ mod tests {
             count
         };
 
-        let producer_future = drive_stream_to_handler(source_stream, handler.as_ptr());
+        let producer_future = unsafe { drive_stream_to_handler(source_stream, handler.as_ptr()) };
 
         let (count, _) = futures::join!(consumer_future, producer_future);
 
@@ -967,7 +951,7 @@ mod tests {
             count
         };
 
-        let producer_future = drive_stream_to_handler(source_stream, handler_ptr);
+        let producer_future = unsafe { drive_stream_to_handler(source_stream, handler_ptr) };
 
         // Both futures should complete without panic or hang
         let (count, _) = futures::join!(consumer_future, producer_future);
@@ -987,7 +971,7 @@ mod tests {
         let handler_ptr = handler.as_ptr();
 
         // Start producer
-        let producer_future = drive_stream_to_handler(source_stream, handler_ptr);
+        let producer_future = unsafe { drive_stream_to_handler(source_stream, handler_ptr) };
 
         // Consume all batches, but drop the handler wrapper early
         let consumer_future = async {
@@ -1026,7 +1010,7 @@ mod tests {
         drop(handler);
 
         // Stream should still be usable (though it will never receive data)
-        // The ended flag should be set by handler drop
+        // The channel should be closed by handler drop
     }
 
     #[tokio::test]
