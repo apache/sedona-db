@@ -1038,7 +1038,7 @@ mod tests {
 
     use arrow_array::{create_array, ArrayRef, RecordBatchIterator, RecordBatchReader};
     use arrow_schema::{DataType, Field, Schema};
-    use datafusion::assert_batches_eq;
+    use datafusion::{assert_batches_eq, datasource::file_format::csv::CsvFormatFactory};
     use sedona_datasource::spec::{Object, OpenReaderArgs};
     use sedona_geometry::types::Edges;
     use sedona_schema::{
@@ -1593,6 +1593,37 @@ mod tests {
                 "| id | value |",
                 "+----+-------+",
                 "| 3  | three |",
+                "+----+-------+",
+            ],
+            &batches
+        );
+    }
+
+    #[tokio::test]
+    async fn read_directory_with_explicit_format_filters_by_extension() {
+        let tmpdir = tempdir().unwrap();
+        std::fs::write(tmpdir.path().join("included.csv"), "id,value\n1,one\n").unwrap();
+        std::fs::write(tmpdir.path().join("ignored.txt"), "id,value\n2,two\n").unwrap();
+
+        let ctx = SedonaContext::new_local_interactive().await.unwrap();
+        let batches = ctx
+            .read(
+                tmpdir.path().to_string_lossy().to_string(),
+                &HashMap::new(),
+                Some(Arc::new(CsvFormatFactory::new())),
+            )
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+
+        assert_batches_eq!(
+            [
+                "+----+-------+",
+                "| id | value |",
+                "+----+-------+",
+                "| 1  | one   |",
                 "+----+-------+",
             ],
             &batches

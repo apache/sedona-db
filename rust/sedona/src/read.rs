@@ -157,6 +157,20 @@ pub(crate) fn resolve_read_format(
     }
 
     if let Some(factory) = requested {
+        let requested_extension = factory.get_ext().trim_start_matches('.').to_lowercase();
+
+        // A collection's own path does not identify the format of the files it
+        // contains. Use the explicitly requested format to keep unrelated files
+        // in the collection out of schema inference and scans.
+        if table_paths.iter().all(ListingTableUrl::is_collection) {
+            return Ok(ResolvedReadFormat {
+                factory,
+                compression: None,
+                listing_extension: Some(requested_extension),
+            });
+        }
+
+        // If we've been instructed not to check the extension, skip
         if !check_extension {
             return Ok(ResolvedReadFormat {
                 factory,
@@ -164,7 +178,6 @@ pub(crate) fn resolve_read_format(
                 listing_extension: None,
             });
         }
-        let requested_extension = factory.get_ext().trim_start_matches('.').to_lowercase();
 
         // Keep extension filtering when the paths have the requested suffix,
         // but allow an explicit format to read extensionless or differently
