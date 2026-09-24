@@ -18,7 +18,11 @@
 
 import pyarrow as pa
 
-from sedonadb_geopandas._temporal import normalize_temporal_scalar
+from sedonadb_geopandas._temporal import (
+    coerce_duration_scalar,
+    duration_arith_expr,
+    normalize_temporal_scalar,
+)
 
 
 def is_scalar(value):
@@ -324,26 +328,26 @@ class Series:
     # operand Python falls through to the underlying expression's reflected
     # operator, so no special-casing is needed here.
     def __add__(self, other):
-        return Series(self._df, self._expr + _operand(self._df, other), self._name)
+        return Series(self._df, self._expr + self._binary_operand(other), self._name)
 
     def __radd__(self, other):
-        return Series(self._df, _operand(self._df, other) + self._expr, self._name)
+        return Series(self._df, self._binary_operand(other) + self._expr, self._name)
 
     def __sub__(self, other):
-        return Series(self._df, self._expr - _operand(self._df, other), self._name)
+        return Series(self._df, self._expr - self._binary_operand(other), self._name)
 
     def __rsub__(self, other):
-        return Series(self._df, _operand(self._df, other) - self._expr, self._name)
+        return Series(self._df, self._binary_operand(other) - self._expr, self._name)
 
     def __mul__(self, other):
         if self._is_duration():
             return self._duration_arith("*", other)
-        return Series(self._df, self._expr * _operand(self._df, other), self._name)
+        return Series(self._df, self._expr * self._binary_operand(other), self._name)
 
     def __rmul__(self, other):
         if self._is_duration():
             return self._duration_arith("*", other)
-        return Series(self._df, _operand(self._df, other) * self._expr, self._name)
+        return Series(self._df, self._binary_operand(other) * self._expr, self._name)
 
     # `/` is true division here, as in pandas. The engine follows SQL, where
     # dividing two integers truncates (`1 / 2` is 0), so an integer expression is
@@ -361,32 +365,48 @@ class Series:
             return self._duration_arith("/", other)
         return Series(
             self._df,
-            self._for_division(other) / _operand(self._df, other),
+            self._for_division(other) / self._binary_operand(other),
             self._name,
         )
 
     def __rtruediv__(self, other):
         return Series(
             self._df,
-            _operand(self._df, other) / self._for_division(other),
+            self._binary_operand(other) / self._for_division(other),
             self._name,
         )
 
     def __neg__(self):
         return Series(self._df, -self._expr, self._name)
 
+    def _binary_operand(self, other):
+        """`_operand`, plus lossless unit coercion for duration scalars.
+
+        The engine widens mixed-unit duration arithmetic to its interval
+        type, which materializes as DateOffset objects rather than
+        timedeltas, so a duration scalar operand against a duration column
+        is rebuilt in the column's own unit first. Arithmetic operators only:
+        comparisons across units are already correct, and requiring an exact
+        conversion there would reject valid comparisons (a µs column against
+        1500 ns).
+        """
+        value = _operand(self._df, other)
+        if isinstance(value, pa.Scalar) and pa.types.is_duration(value.type):
+            dtype = self._dtype()
+            if pa.types.is_duration(dtype) and dtype != value.type:
+                value = coerce_duration_scalar(dtype, value)
+        return value
+
     def _dtype(self):
         """This expression's logical Arrow type, with encodings unwrapped.
 
-        Dictionary and run-end encoding change how values are stored, not what
-        they are, so a dictionary<int64> or run_end_encoded<..., int64> column
-        is integer for division purposes. Read from the projected schema,
-        which is a plan build, not an execution.
+        Dictionary and run-end encoding change how values are stored, not
+        what they are, so a dictionary<int64> or run_end_encoded<..., int64>
+        column is integer for division purposes. Read from the projected
+        schema, which is a plan build, not an execution.
         """
         dtype = pa.schema(self._df.select(self._expr.alias("x")).schema).field("x").type
-        if pa.types.is_dictionary(dtype):
-            dtype = dtype.value_type
-        elif pa.types.is_run_end_encoded(dtype):
+        while pa.types.is_dictionary(dtype) or pa.types.is_run_end_encoded(dtype):
             dtype = dtype.value_type
         return dtype
 
@@ -413,10 +433,12 @@ class Series:
         return self._expr
 
     def _duration_arith(self, op, other):
-        # Tick-level arithmetic needs overflow, precision, and missing-value
-        # handling — the pandas NaT sentinel arrives from Arrow data as a
-        # representable tick — that lands with the dedicated temporal support.
-        raise NotImplementedError("duration arithmetic is not supported yet")
+        """Duration * number and duration / number, as in pandas."""
+        return Series(
+            self._df,
+            duration_arith_expr(self._dtype(), self._expr, op, other),
+            self._name,
+        )
 
     __hash__ = None
 
