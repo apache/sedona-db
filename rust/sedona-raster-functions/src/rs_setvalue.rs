@@ -41,11 +41,11 @@ use arrow_array::cast::AsArray;
 use arrow_array::types::{Float64Type, Int64Type};
 use arrow_buffer::Buffer;
 use arrow_schema::DataType;
-use datafusion_common::{Result, exec_err};
+use datafusion_common::{Result, exec_datafusion_err, exec_err};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_raster::builder::{RasterBuilder, RasterOverrides};
-use sedona_raster::traits::{BandOverrides, BandRef, Override, RasterRef};
+use sedona_raster::traits::{BandOverrides, BandRef, Override, RasterRef, pixel_f64_to_bytes};
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;
 use sedona_schema::raster::BandDataType;
@@ -210,40 +210,13 @@ fn set_pixel(band: &dyn BandRef, col: i64, row: i64, value: f64) -> Result<Buffe
     Ok(Buffer::from_vec(data))
 }
 
-/// `value` as the little-endian bytes of one `data_type` pixel, stored the way
-/// Sedona Spark stores it: integer types truncate toward zero and Float32
-/// rounds to nearest. Errors on NaN or an out-of-range value for an integer
-/// type, where Spark's Java cast would wrap around instead.
+/// `value` packed as a pixel of `data_type`, via the shared
+/// [`pixel_f64_to_bytes`] (Spark's truncation toward zero for integer bands).
+/// A value that does not fit is an error, where Spark's Java cast would wrap
+/// around instead.
 fn pixel_bytes(value: f64, data_type: &BandDataType) -> Result<Vec<u8>> {
-    macro_rules! integer {
-        ($t:ty) => {{
-            let truncated = value.trunc();
-            // `MAX as f64 + 1.0` is the exclusive upper bound even where `MAX`
-            // itself rounds up as an f64 (2^63 for i64, 2^64 for u64); NaN
-            // fails both comparisons.
-            let in_range = truncated >= <$t>::MIN as f64 && truncated < <$t>::MAX as f64 + 1.0;
-            if !in_range {
-                return exec_err!(
-                    "{FUNC}: {value} does not fit a {data_type:?} pixel (range {} to {})",
-                    <$t>::MIN,
-                    <$t>::MAX
-                );
-            }
-            (truncated as $t).to_le_bytes().to_vec()
-        }};
-    }
-    Ok(match data_type {
-        BandDataType::UInt8 => integer!(u8),
-        BandDataType::Int8 => integer!(i8),
-        BandDataType::UInt16 => integer!(u16),
-        BandDataType::Int16 => integer!(i16),
-        BandDataType::UInt32 => integer!(u32),
-        BandDataType::Int32 => integer!(i32),
-        BandDataType::UInt64 => integer!(u64),
-        BandDataType::Int64 => integer!(i64),
-        BandDataType::Float32 => (value as f32).to_le_bytes().to_vec(),
-        BandDataType::Float64 => value.to_le_bytes().to_vec(),
-    })
+    pixel_f64_to_bytes(value, data_type)
+        .map_err(|_| exec_datafusion_err!("{FUNC}: {value} does not fit a {data_type:?} pixel"))
 }
 
 #[cfg(test)]
@@ -384,6 +357,21 @@ mod tests {
             let err = set(vec![spec()], 1, 1, 1, value).unwrap_err().to_string();
             assert!(err.contains("does not fit a UInt8 pixel"), "{value}: {err}");
         }
+    }
+
+    #[test]
+    fn int64_values_stop_at_the_exact_double_range() {
+        // A 64-bit band takes integers up to ±2^53, the largest a double holds
+        // exactly; beyond that the value is rejected rather than stored lossily.
+        let spec = || Some(RasterSpec::d2(1, 1).band_values(&[0i64]));
+        let limit = (1i64 << 53) as f64;
+        let result = set(vec![spec()], 1, 1, 1, -limit).unwrap();
+        assert_rasters_equal(
+            &result,
+            &[Some(RasterSpec::d2(1, 1).band_values(&[-(1i64 << 53)]))],
+        );
+        let err = set(vec![spec()], 1, 1, 1, 1e18).unwrap_err().to_string();
+        assert!(err.contains("does not fit a Int64 pixel"), "{err}");
     }
 
     #[test]

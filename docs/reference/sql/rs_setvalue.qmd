@@ -59,9 +59,10 @@ nodata value, and the band's nodata value is unchanged.
 
 The value is stored in the band's pixel type: an integer band truncates it
 toward zero (3.9 is stored as 3) and a float32 band rounds it to the nearest
-float32. A value outside an integer band's range, NaN, a pixel outside the
-grid, or a band the raster does not have is an error. Only 2-D rasters are
-supported.
+float32. A value outside an integer band's range (for a 64-bit integer band,
+beyond ±2^53, the largest integers a double holds exactly), NaN, a pixel
+outside the grid, or a band the raster does not have is an error. Only 2-D
+rasters are supported.
 
 ## Examples
 
