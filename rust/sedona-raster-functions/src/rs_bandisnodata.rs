@@ -116,10 +116,12 @@ impl SedonaScalarKernel for RsBandIsNoData {
 /// Whether every pixel of the 1-based band `band_num` holds its nodata value.
 fn band_is_nodata(raster: &dyn RasterRef, band_num: usize) -> Result<bool> {
     let band = resolve_band("RS_BandIsNoData", raster, band_num)?;
+    // Check the shape first so a non-2-D band errors whether or not it has a
+    // nodata value.
+    let buffer = spatial_2d_buffer("RS_BandIsNoData", band.as_ref())?;
     let Some(nodata) = NodataMatcher::for_band("RS_BandIsNoData", band.as_ref())? else {
         return Ok(false);
     };
-    let buffer = spatial_2d_buffer("RS_BandIsNoData", band.as_ref())?;
     let mut all_nodata = true;
     scan_pixels("RS_BandIsNoData", &buffer, |_, _, pixel| {
         if nodata.matches(pixel) {
@@ -217,10 +219,11 @@ mod tests {
 
     #[test]
     fn non_2d_band_errors() {
-        let spec = RasterSpec::d2(2, 1)
-            .band_values_nd(&["time", "y", "x"], &[1, 1, 2], &[0u8, 0])
-            .nodata(0u8);
-        let err = is_nodata(spec, 1).unwrap_err().to_string();
+        // With or without a nodata value.
+        let spec = RasterSpec::d2(2, 1).band_values_nd(&["time", "y", "x"], &[1, 1, 2], &[0u8, 0]);
+        let err = is_nodata(spec.clone(), 1).unwrap_err().to_string();
+        assert!(err.contains("2-D"), "{err}");
+        let err = is_nodata(spec.nodata(0u8), 1).unwrap_err().to_string();
         assert!(err.contains("2-D"), "{err}");
     }
 

@@ -75,7 +75,7 @@ def test_rs_bandisnodata_without_nodata_value(tmp_path):
 def test_rs_bandisnodata_null_band(tmp_path):
     sedona, spark = _two_band(tmp_path)
     sql = "SELECT RS_BandIsNoData(rast, CAST(NULL AS INT)) FROM isnd_src"
-    compare(sql, sedona, spark, expected=None)
+    compare(sql, sedona, spark, expected=[(None,)])
 
 
 def test_rs_bandisnodata_band_out_of_range(tmp_path):
