@@ -83,6 +83,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::rs_srid::rs_crs_udf,
         crate::rs_srid::rs_srid_udf,
         crate::rs_summarystats::rs_summarystats_udf,
+        crate::rs_union::rs_union_udf,
         crate::rs_value::rs_value_udf,
         crate::rs_values::rs_values_udf,
         crate::rs_worldcoordinate::rs_rastertoworldcoord_udf,
