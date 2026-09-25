@@ -107,24 +107,49 @@ def test_rs_band_nodata_nan(dtype, tmp_path):
     compare(sql, sedona, spark)
 
 
-@pytest.mark.xfail(
-    reason="SedonaDB packs the file nodata into the band dtype (0.5 becomes 0); "
-    "Sedona Spark reports the GDAL metadata value verbatim (0.5)"
-)
-def test_rs_band_nodata_fractional_on_int_band(tmp_path):
+def test_rs_band_nodata_nan_on_int_band(tmp_path):
     """TIFFTAG_GDAL_NODATA is ASCII metadata, so a file can claim a nodata its
-    band dtype cannot hold. rasterio refuses to write one beyond the dtype's
-    range, so the writable case is a fractional nodata on an integer band."""
+    band dtype cannot hold. NaN on an integer band matches no pixel, and both
+    engines read the band as having no nodata."""
     sedona, spark = SedonaDB(), SedonaSpark()
     for eng in (sedona, spark):
         eng.create_random_raster_view(
-            "frac_nd_raster",
-            tmp_path / "frac_nd.tif",
-            dtype="int32",
+            "nan_int_nd_raster",
+            tmp_path / "nan_int_nd.tif",
+            dtype="uint8",
             bands=1,
-            nodata=0.5,
+            nodata=float("nan"),
         )
-    sql = "SELECT RS_BandNoDataValue(rast, 1) FROM frac_nd_raster"
+    sql = "SELECT RS_BandNoDataValue(rast, 1) FROM nan_int_nd_raster"
+    compare(sql, sedona, spark, expected=[(None,)])
+
+
+@pytest.mark.parametrize(
+    ("dtype", "nodata"),
+    [
+        pytest.param("uint8", -9999.0, id="below_range"),
+        pytest.param("uint8", 256.0, id="above_range"),
+        pytest.param("int32", 0.5, id="fraction"),
+    ],
+)
+@pytest.mark.xfail(
+    reason="SedonaDB stores nodata in the band dtype, so it reads a file nodata "
+    "the dtype cannot hold as none (NULL); Sedona Spark reports the GDAL "
+    "metadata value verbatim. Both match no pixel (see test_rs_value.py)"
+)
+def test_rs_band_nodata_unrepresentable_on_int_band(dtype, nodata, tmp_path):
+    """A finite file nodata the integer band dtype cannot hold exactly —
+    out of range, or fractional — reads back the same from both engines."""
+    sedona, spark = SedonaDB(), SedonaSpark()
+    for eng in (sedona, spark):
+        eng.create_random_raster_view(
+            "unrep_nd_raster",
+            tmp_path / "unrep_nd.tif",
+            dtype=dtype,
+            bands=1,
+            nodata=nodata,
+        )
+    sql = "SELECT RS_BandNoDataValue(rast, 1) FROM unrep_nd_raster"
     compare(sql, sedona, spark)
 
 

@@ -48,7 +48,7 @@ mod utils;
 // Re-export main dataset conversion functions
 pub use gdal_common::{
     GdalBandLayout, GdalBandPlan, band_data_type_to_gdal, bytes_to_f64, gdal_to_band_data_type,
-    gdal_type_byte_size, nodata_bytes_to_f64, nodata_f64_to_bytes,
+    gdal_type_byte_size, nodata_bytes_to_f64,
 };
 pub use raster_loader::{GDAL_FORMAT, GdalLoader};
 pub use rs_as_geotiff::rs_as_geotiff_udf;
