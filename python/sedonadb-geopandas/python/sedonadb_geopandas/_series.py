@@ -16,6 +16,9 @@
 # under the License.
 """pandas/GeoPandas-style Series backed by a SedonaDB expression."""
 
+import math
+import numbers
+
 import pyarrow as pa
 
 from sedonadb_geopandas._temporal import (
@@ -761,14 +764,39 @@ class GeoSeries(Series):
         compare geometries with mismatched CRS. A `Literal` passes through
         unchanged, keeping whatever CRS it was given.
         """
+        from sedonadb.expr import Literal
         from shapely.geometry.base import BaseGeometry
 
+        ctx = self._df._ctx
         value = _operand(self._df, other)
+        if isinstance(value, Literal):
+            # Rebound to this frame's context, so functions can be applied to
+            # it (a bare lit() has none). A geometry literal without a CRS of
+            # its own takes this column's, like a bare Shapely geometry; one
+            # that carries a CRS keeps it.
+            expr = ctx.lit(value)
+            crs = self.crs
+            if crs is not None:
+                projected = self._df.select(expr.alias("x")).schema
+                if (
+                    projected.geometry_column_indices
+                    and projected.field("x").type.crs is None
+                ):
+                    expr = expr.funcs.st_setcrs(ctx.lit(crs.to_json()))
+            return expr
         if not isinstance(value, BaseGeometry):
             return value
-        ctx = self._df._ctx
-        expr = ctx.lit(value)
         crs = self.crs
+        if self._is_geography():
+            # Built with this column's spatial kind: the engine has no kernel
+            # pairing geography with geometry. The geography constructor
+            # synthesizes CRS84, so the column's CRS (or its absence) is
+            # applied explicitly.
+            expr = ctx.lit(value.wkb).funcs.st_geogfromwkb()
+            if crs is None:
+                return expr.funcs.st_setsrid(ctx.lit(0))
+        else:
+            expr = ctx.lit(value)
         if crs is not None:
             expr = expr.funcs.st_setcrs(ctx.lit(crs.to_json()))
         return expr
@@ -843,7 +871,11 @@ class GeoSeries(Series):
         from sedonadb.expr import lit
 
         _check_align(align)
-        expr = self._expr.geo.equals(self._other(other))
+        other_expr = self._other(other)
+        # Two empty geometries are equal, whatever their types, as in
+        # GeoPandas; the engine says they are not.
+        both_empty = self._expr.geo.is_empty() & other_expr.geo.is_empty()
+        expr = self._expr.geo.equals(other_expr) | both_empty
         return Series(self._df, expr.funcs.coalesce(lit(False)), "geom_equals")
 
     def dwithin(self, other, distance, align=None):
@@ -855,11 +887,31 @@ class GeoSeries(Series):
 
         _check_align(align)
         other_expr = self._other(other)
+        # `distance` may be one number or a numeric Series of this frame,
+        # applied row by row as in GeoPandas.
+        threshold = _operand(self._df, distance)
+        row_wise = isinstance(distance, Series)
+        if row_wise:
+            threshold = threshold.cast(pa.float64())
+        elif isinstance(threshold, numbers.Real) and not isinstance(threshold, bool):
+            if math.isnan(threshold):
+                # Nothing is within NaN; the engine orders NaN above every
+                # number, so the comparison alone would say True.
+                return Series(self._df, lit(False), "dwithin")
+            threshold = lit(float(threshold))
+        else:
+            raise TypeError(
+                f"dwithin() distance must be a number or a numeric Series of this "
+                f"frame, got {type(distance).__name__}"
+            )
         # Measured through ST_Distance so an empty operand gives a missing
         # distance (and so False), which ST_DWithin treats as distance 0.
         dist = self._without_empty(self._expr.geo.distance(other_expr), other_expr)
-        expr = (dist <= lit(float(distance))).funcs.coalesce(lit(False))
-        return Series(self._df, expr, "dwithin")
+        within = dist <= threshold
+        if row_wise:
+            # The same NaN rule, per row.
+            within = within & ~threshold.funcs.isnan()
+        return Series(self._df, within.funcs.coalesce(lit(False)), "dwithin")
 
     def distance(self, other, align=None):
         """The distance from each geometry to `other` (`ST_Distance`).

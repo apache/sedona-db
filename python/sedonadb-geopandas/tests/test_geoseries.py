@@ -29,6 +29,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import shapely
+from sedonadb.expr import lit
 
 import sedonadb_geopandas as sgpd
 
@@ -442,3 +443,62 @@ def test_known_boundary_predicate_issues(name, left, right):
     expected = getattr(gs, name)(shapely.from_wkt(right)).tolist()
     assert expected == [True]
     assert getattr(g, name)(shapely.from_wkt(right)).to_pandas().tolist() == expected
+
+
+def test_shapely_operand_takes_a_geography_columns_kind():
+    # A Shapely operand was built as planar geometry, and the engine has no
+    # kernel pairing geography with geometry.
+    gdf = sgpd.GeoDataFrame(
+        sgpd.default_context().sql("SELECT ST_GeogFromWKT('POINT (0 0)') AS g"),
+        geometry="g",
+    )
+    assert gdf.geometry.intersects(shapely.Point(0, 0)).to_pandas().tolist() == [True]
+    # Spherical distance, in meters: one degree of latitude.
+    distance = gdf.geometry.distance(shapely.Point(0, 1)).to_pandas().tolist()[0]
+    assert 111_000 < distance < 111_400
+
+
+def test_literal_operands_are_bound_and_take_the_column_crs():
+    # A bare lit() has no context, so functions could not be applied to it;
+    # once bound, a CRS-less geometry literal takes the column's CRS, while
+    # one carrying a different CRS of its own is still refused.
+    gs = gpd.GeoSeries.from_wkt(["POINT (0 0)"], crs="EPSG:3857")
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    assert g.distance(lit(shapely.Point(3, 4))).to_pandas().tolist() == [5.0]
+    assert g.dwithin(lit(shapely.Point(3, 4)), 10).to_pandas().tolist() == [True]
+    other_crs = lit(gpd.GeoSeries([shapely.Point(3, 4)], crs="EPSG:4326"))
+    with pytest.raises(Exception, match="CRS"):
+        g.distance(other_crs).to_pandas()
+
+
+def test_two_empty_geometries_are_equal():
+    # GeoPandas treats any two empty geometries as equal; the engine does not.
+    gs = gpd.GeoSeries.from_wkt(["POINT EMPTY", "POLYGON EMPTY", None], crs="EPSG:3857")
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    empty = shapely.from_wkt("POINT EMPTY")
+    assert g.geom_equals(empty).to_pandas().tolist() == gs.geom_equals(empty).tolist()
+
+
+def test_dwithin_nan_threshold_is_never_within():
+    # The engine orders NaN above every number, so `distance <= NaN` was True.
+    gs = gpd.GeoSeries.from_wkt(["POINT (0 0)", "POINT (1 1)"], crs="EPSG:3857")
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    got = g.dwithin(shapely.Point(0, 0), float("nan")).to_pandas().tolist()
+    assert (
+        got == gs.dwithin(shapely.Point(0, 0), float("nan")).tolist() == [False, False]
+    )
+
+
+def test_dwithin_accepts_a_row_wise_threshold():
+    # GeoPandas applies a Series of thresholds row by row; the same NaN rule
+    # holds per row.
+    gs = gpd.GeoSeries.from_wkt(
+        ["POINT (0 0)", "POINT (3 4)", "POINT (1 0)", "POINT (0 0)"], crs="EPSG:3857"
+    )
+    thresholds = [1.0, 5.0, 0.5, float("nan")]
+    gdf = sgpd.from_geopandas(gpd.GeoDataFrame({"d": thresholds}, geometry=gs))
+    got = gdf.geometry.dwithin(shapely.Point(0, 0), gdf["d"]).to_pandas().tolist()
+    expected = gs.dwithin(shapely.Point(0, 0), pd.Series(thresholds)).tolist()
+    assert got == expected == [True, True, False, False]
+    with pytest.raises(TypeError, match="distance"):
+        gdf.geometry.dwithin(shapely.Point(0, 0), "far")
