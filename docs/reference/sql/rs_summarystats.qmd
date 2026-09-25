@@ -1,0 +1,76 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: RS_SummaryStats
+description: >
+  Returns one summary statistic of a band's pixel values as a double.
+kernels:
+  - returns: double
+    args:
+    - raster
+    - name: stat_type
+      type: string
+      description: >
+        One of `count`, `sum`, `mean`, `stddev`, `min` or `max`
+        (case-insensitive). `stddev` is the population standard deviation.
+  - returns: double
+    args:
+    - raster
+    - name: stat_type
+      type: string
+      description: >
+        One of `count`, `sum`, `mean`, `stddev`, `min` or `max`
+        (case-insensitive). `stddev` is the population standard deviation.
+    - name: band
+      type: integer
+      description: Band index (1-based). Defaults to 1 if not specified.
+  - returns: double
+    args:
+    - raster
+    - name: stat_type
+      type: string
+      description: >
+        One of `count`, `sum`, `mean`, `stddev`, `min` or `max`
+        (case-insensitive). `stddev` is the population standard deviation.
+    - name: band
+      type: integer
+      description: Band index (1-based). Defaults to 1 if not specified.
+    - name: exclude_nodata
+      type: boolean
+      description: >
+        Whether to leave pixels holding the band's nodata value out of the
+        statistic. Defaults to true.
+---
+
+## Description
+
+Over no pixels (for example, a band that is entirely nodata), `count` and
+`sum` are 0 and the other statistics are NaN. A NaN pixel is left out as
+nodata when the band's nodata value is NaN; otherwise it is data and makes
+`sum`, `mean` and `stddev` NaN, while `min` and `max` skip it. Only
+2-D rasters are supported.
+
+## Examples
+
+```sql
+SELECT RS_SummaryStats(RS_Example(), 'mean');
+```
+
+```sql
+SELECT RS_SummaryStats(RS_Example(), 'count', 1, false);
+```
