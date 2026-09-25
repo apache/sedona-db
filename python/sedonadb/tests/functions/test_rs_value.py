@@ -29,6 +29,7 @@ differ only for negative fractional indices).
 
 import pyarrow as pa
 import pytest
+import sedonadb
 
 from sedonadb.raster_testing import (
     _is_nodata,
@@ -241,6 +242,19 @@ def test_rs_values_matches_comparators(con, tmp_path, dtype):
         got = _sedonadb_values(con, tiff, points, band=band)
         expected = _rasterio_values(tiff, points, band=band)
         assert got == expected, f"band {band}"
+
+
+def test_out_of_range_band_error_names_the_band(con, tmp_path):
+    """An out-of-range band is reported by the 1-based number the query
+    passed, not the 0-based index it maps to (band 3 of 2 used to read
+    "Band index 2")."""
+    tiff = _write_fixture(tmp_path, "uint8", nodata=None)
+    x, y = pixel_center(0, 0)
+    message = "Band 3 is out of range: this raster has 2 bands"
+    with pytest.raises(sedonadb._lib.SedonaError, match=message):
+        _sedonadb_value(con, tiff, x, y, band=3)
+    with pytest.raises(sedonadb._lib.SedonaError, match=message):
+        _sedonadb_values(con, tiff, [(x, y)], band=3)
 
 
 @pytest.mark.parametrize("dtype", ["uint8", "float64"])

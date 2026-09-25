@@ -625,9 +625,14 @@ mod tests {
 
     #[test]
     fn band_out_of_range_errors() {
+        // The error names the 1-based band the caller asked for, not the
+        // accessor's 0-based index (which read "Band index 1" here).
         let spec = RasterSpec::d2(2, 1).band_values(&[1u8, 2]);
         let err = sample(spec, 0, 0, 2).unwrap_err().to_string();
-        assert!(err.contains("RS_Value"), "unexpected error: {err}");
+        assert!(
+            err.contains("RS_Value: Band 2 is out of range: this raster has 1 bands"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
