@@ -66,11 +66,13 @@ def test_rs_pixelaspoint(col, row, point, crs, tmp_path):
     [pytest.param(0, 0, id="before-origin"), pytest.param(8, 7, id="past-end")],
 )
 @pytest.mark.xfail(
-    reason="out of the grid SedonaDB extrapolates along the geotransform "
-    "((0, 0) answers POINT (98 503)); Sedona Spark raises "
-    "IndexOutOfBoundsException ('Specified pixel coordinates (0, 0) do not "
-    "lie in the raster') — although its own RS_PixelAsCentroid and "
-    "RS_PixelAsPolygon extrapolate"
+    reason="tracked upstream as apache/sedona#3395 — out of the grid SedonaDB "
+    "extrapolates along the geotransform ((0, 0) answers POINT (98 503)); "
+    "Sedona Spark raises IndexOutOfBoundsException ('Specified pixel "
+    "coordinates (0, 0) do not lie in the raster') although its own "
+    "RS_PixelAsCentroid and RS_PixelAsPolygon extrapolate — and its "
+    "RS_PixelAsPolygon(0, 0) already returns POINT (98 503) as the first "
+    "corner of its footprint"
 )
 def test_rs_pixelaspoint_outside(col, row, tmp_path):
     """An out-of-grid pixel coordinate gets the same treatment from both
