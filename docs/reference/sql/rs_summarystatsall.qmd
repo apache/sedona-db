@@ -1,0 +1,65 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: RS_SummaryStatsAll
+description: >
+  Returns every summary statistic of a band's pixel values as a struct of
+  six doubles: count, sum, mean, stddev, min and max.
+kernels:
+  - returns: struct
+    args: [raster]
+  - returns: struct
+    args:
+    - raster
+    - name: band
+      type: integer
+      description: Band index (1-based). Defaults to 1 if not specified.
+  - returns: struct
+    args:
+    - raster
+    - name: band
+      type: integer
+      description: Band index (1-based). Defaults to 1 if not specified.
+    - name: exclude_nodata
+      type: boolean
+      description: >
+        Whether to leave pixels holding the band's nodata value out of the
+        statistics. Defaults to true.
+---
+
+## Description
+
+The fields are the statistics `RS_SummaryStats` returns one at a time, with
+the same values: `stddev` is the population standard deviation, and over no
+pixels (for example, a band that is entirely nodata) `count` and `sum` are 0
+and the other fields are NaN. Computing them together scans the band three
+times, where six `RS_SummaryStats` calls would scan it more often.
+
+A band the raster does not have, or a 64-bit integer pixel beyond 2^53 in
+magnitude (which a double cannot hold exactly), is an error. Only 2-D rasters
+are supported.
+
+## Examples
+
+```sql
+SELECT RS_SummaryStatsAll(RS_Example());
+```
+
+```sql
+SELECT RS_SummaryStatsAll(RS_Example(), 1, false);
+```
