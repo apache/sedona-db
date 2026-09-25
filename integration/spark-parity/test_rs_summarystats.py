@@ -17,13 +17,20 @@
 
 """SedonaDB vs Sedona Spark parity for RS_SummaryStats.
 
-The float cases mix a large magnitude with small fractions, so the sum, mean
-and standard deviation are inexact and their low bits depend on the order of
-every operation. The anchors are Sedona Spark 1.9.1's own output and compare
-exactly: SedonaDB repeats Commons Math's arithmetic step for step rather than
-agreeing to within a tolerance. Excluding NaN pixels under a NaN nodata value
-is fixed on Sedona's main branch (apache/sedona#3366) but not in the 1.9.1
-release the suite pins, so that case is an xfail until the pin moves.
+The float64 case holds six values near 1e8 with fractional parts, where
+Commons Math's arithmetic and every shortcut from it (another summation
+order, a mean without the correction pass, a variance without the accum2
+term or around the naive mean) round differently; the Rust unit test
+`fixture_separates_the_shortcuts` checks that they do. The anchors are Sedona
+Spark 1.9.1's own output and compare exactly: SedonaDB repeats the arithmetic
+step for step rather than agreeing to within a tolerance.
+
+Three known divergences are xfails. Excluding NaN pixels under a NaN nodata
+value is fixed on Sedona's main branch (apache/sedona#3366) but not in the
+1.9.1 release the suite pins. Sedona Spark reads UInt32 pixels as signed. And
+SedonaDB rounds a fractional file nodata into an integer band's type (the
+catalog entry in test_rs_bandnodatavalue.py), which changes which pixels are
+left out.
 """
 
 import numpy as np
@@ -38,11 +45,11 @@ BBOX = (100, 494, 106, 500)
 # (statType, anchor) over the six pixels of _float_band.
 FLOAT_STATS = [
     ("count", 6.0),
-    ("sum", 1.000000000435e10),
-    ("mean", 1666666667.3916667),
-    ("stddev", 3726779962.17542),
-    ("min", -3.5),
-    ("max", 1e10),
+    ("sum", 600000006.9000001),
+    ("mean", 100000001.15),
+    ("stddev", 0.7017834414254126),
+    ("min", 100000000.2),
+    ("max", 100000002.5),
 ]
 
 
@@ -56,7 +63,15 @@ def _engines(name, tmp_path, data, nodata=None):
 
 
 def _float_band(tmp_path):
-    data = np.array([[[0.1, 0.2, 0.3], [1e10, -3.5, 7.25]]], dtype="float64")
+    data = np.array(
+        [
+            [
+                [100000001.3, 100000000.2, 100000002.5],
+                [100000001.1, 100000001.1, 100000000.7],
+            ]
+        ],
+        dtype="float64",
+    )
     return _engines("ss_f_src", tmp_path, data)
 
 
@@ -78,13 +93,13 @@ def test_rs_summarystats_explicit_arguments(args, tmp_path):
     """The band and exclude-nodata forms give the defaults' answer."""
     sedona, spark = _float_band(tmp_path)
     sql = f"SELECT RS_SummaryStats(rast, 'stddev'{args}) FROM ss_f_src"
-    compare(sql, sedona, spark, expected=3726779962.17542)
+    compare(sql, sedona, spark, expected=0.7017834414254126)
 
 
 def test_rs_summarystats_stat_type_is_case_insensitive(tmp_path):
     sedona, spark = _float_band(tmp_path)
     sql = "SELECT RS_SummaryStats(rast, 'MeAn') FROM ss_f_src"
-    compare(sql, sedona, spark, expected=1666666667.3916667)
+    compare(sql, sedona, spark, expected=100000001.15)
 
 
 @pytest.mark.parametrize(
@@ -130,7 +145,66 @@ def test_rs_summarystats_all_nodata(stat_type, expected, tmp_path):
 def test_rs_summarystats_null_stat_type(tmp_path):
     sedona, spark = _float_band(tmp_path)
     sql = "SELECT RS_SummaryStats(rast, CAST(NULL AS STRING)) FROM ss_f_src"
-    compare(sql, sedona, spark, expected=None)
+    compare(sql, sedona, spark, expected=[(None,)])
+
+
+@pytest.mark.parametrize(
+    "stat_type,expected",
+    [
+        ("sum", 10000001.650000013),
+        ("mean", 1666666.941666669),
+        ("stddev", 3726779.839516354),
+        ("min", -2.5),
+    ],
+)
+def test_rs_summarystats_float32(stat_type, expected, tmp_path):
+    """Float32 pixels widen to double exactly on both engines."""
+    data = np.array([[[0.1, -2.5, 3.75], [1e7, 0.3, -0.0]]], dtype="float32")
+    sedona, spark = _engines("ss_f32_src", tmp_path, data)
+    sql = f"SELECT RS_SummaryStats(rast, '{stat_type}') FROM ss_f32_src"
+    compare(sql, sedona, spark, expected=expected)
+
+
+@pytest.mark.parametrize(
+    "stat_type,expected",
+    [
+        ("count", 5.0),
+        ("sum", 106.0),
+        ("mean", 21.200000000000433),
+        ("stddev", 20724.024294523493),
+        ("min", -32768.0),
+        ("max", 32767.0),
+    ],
+)
+def test_rs_summarystats_int16(stat_type, expected, tmp_path):
+    """Signed 16-bit pixels, including both extremes, with a negative nodata
+    value left out."""
+    data = np.array([[[-32768, 32767, -5], [7, 0, 100]]], dtype="int16")
+    sedona, spark = _engines("ss_i16_src", tmp_path, data, nodata=-5)
+    sql = f"SELECT RS_SummaryStats(rast, '{stat_type}') FROM ss_i16_src"
+    compare(sql, sedona, spark, expected=expected)
+
+
+@pytest.mark.xfail(
+    reason="Sedona Spark 1.9.1 reads UInt32 pixels as signed 32-bit integers, "
+    "so values at or above 2^31 wrap negative"
+)
+def test_rs_summarystats_uint32_high_values(tmp_path):
+    data = np.array([[[4294967295, 2147483648, 1], [3000000000, 0, 7]]], dtype="uint32")
+    sedona, spark = _engines("ss_u32_src", tmp_path, data)
+    sql = "SELECT RS_SummaryStats(rast, 'sum') FROM ss_u32_src"
+    compare(sql, sedona, spark, expected=9442450951.0)
+
+
+@pytest.mark.xfail(
+    reason="SedonaDB packs the file nodata into the band dtype (0.5 becomes 0), "
+    "so it leaves out real 0 pixels; Sedona Spark's 0.5 matches no pixel"
+)
+def test_rs_summarystats_fractional_nodata_on_int_band(tmp_path):
+    data = np.array([[[0, 0, 1], [2, 3, 0]]], dtype="uint8")
+    sedona, spark = _engines("ss_frac_src", tmp_path, data, nodata=0.5)
+    sql = "SELECT RS_SummaryStats(rast, 'count') FROM ss_frac_src"
+    compare(sql, sedona, spark, expected=6.0)
 
 
 @pytest.mark.parametrize(

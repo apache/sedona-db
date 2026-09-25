@@ -38,8 +38,7 @@ use datafusion_common::cast::{as_boolean_array, as_int32_array, as_string_array}
 use datafusion_common::{Result, exec_err};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
-use sedona_raster::error::RasterResultExt;
-use sedona_raster::traits::{RasterRef, nodata_bytes_to_f64_lossless};
+use sedona_raster::traits::{NdBuffer, RasterRef, nodata_bytes_to_f64_lossless};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 use crate::executor::RasterExecutor;
@@ -110,8 +109,6 @@ impl SedonaScalarKernel for RsSummaryStats {
             .map(|a| as_boolean_array(a))
             .transpose()?;
 
-        // Scratch buffer for a band's values, reused across rows.
-        let mut values = Vec::new();
         executor.execute_raster_void(|i, raster_opt| {
             let Some(raster) = raster_opt else {
                 builder.append_null();
@@ -129,8 +126,7 @@ impl SedonaScalarKernel for RsSummaryStats {
             // 1-based rather than wrapping it into a huge usize.
             let band_num = band.map_or(1, |b| b.value(i).max(0) as usize);
             let exclude_nodata = exclude.is_none_or(|e| e.value(i));
-            band_values(raster, band_num, exclude_nodata, &mut values)?;
-            builder.append_value(stat_type.compute(&values));
+            builder.append_value(summary_stat(raster, band_num, exclude_nodata, stat_type)?);
             Ok(())
         })?;
 
@@ -138,42 +134,87 @@ impl SedonaScalarKernel for RsSummaryStats {
     }
 }
 
-/// Collect the values of the 1-based band `band_num` into `values` in
-/// row-major order, leaving out nodata pixels when `exclude_nodata` is set.
-fn band_values(
+const FUNC: &str = "RS_SummaryStats";
+
+/// `stat_type` over the 1-based band `band_num`, leaving out nodata pixels
+/// when `exclude_nodata` is set.
+fn summary_stat(
     raster: &dyn RasterRef,
     band_num: usize,
     exclude_nodata: bool,
-    values: &mut Vec<f64>,
-) -> Result<()> {
-    const FUNC: &str = "RS_SummaryStats";
-    values.clear();
+    stat_type: StatType,
+) -> Result<f64> {
     let band = resolve_band(FUNC, raster, band_num)?;
-    let buffer = spatial_2d_buffer(FUNC, band.as_ref())?;
-    let nodata = if exclude_nodata {
-        NodataMatcher::for_band(FUNC, band.as_ref())?
-    } else {
-        None
+    let values = BandValues {
+        buffer: spatial_2d_buffer(FUNC, band.as_ref())?,
+        nodata: if exclude_nodata {
+            NodataMatcher::for_band(FUNC, band.as_ref())?
+        } else {
+            None
+        },
     };
-    let mut decode_err = None;
-    scan_pixels(FUNC, &buffer, |_, _, pixel| {
-        if nodata.as_ref().is_some_and(|nodata| nodata.matches(pixel)) {
-            return ControlFlow::Continue(());
-        }
-        // Errors, rather than rounding, on a 64-bit integer pixel beyond 2^53,
-        // which an f64 statistic cannot represent exactly.
-        match nodata_bytes_to_f64_lossless(pixel, &buffer.data_type).context(FUNC) {
-            Ok(value) => {
-                values.push(value);
-                ControlFlow::Continue(())
+    stat_type.compute(&values)
+}
+
+/// The values of one band, in row-major order.
+///
+/// A statistic reads them by re-scanning the band's pixels once per pass rather
+/// than collecting them: the band bytes are already in memory, and a copy would
+/// be 8 bytes per pixel (8x a UInt8 band) outside the query's memory accounting.
+struct BandValues<'a> {
+    buffer: NdBuffer<'a>,
+    /// Pixels this matches are left out; `None` keeps every pixel.
+    nodata: Option<NodataMatcher<'a>>,
+}
+
+impl BandValues<'_> {
+    fn is_nodata(&self, pixel: &[u8]) -> bool {
+        self.nodata
+            .as_ref()
+            .is_some_and(|nodata| nodata.matches(pixel))
+    }
+
+    /// The number of values, counted without decoding any of them.
+    fn count(&self) -> Result<usize> {
+        let mut count = 0;
+        scan_pixels(FUNC, &self.buffer, |_, _, pixel| {
+            if !self.is_nodata(pixel) {
+                count += 1;
             }
-            Err(e) => {
-                decode_err = Some(e.into());
-                ControlFlow::Break(())
+            ControlFlow::Continue(())
+        })?;
+        Ok(count)
+    }
+
+    /// Visit each value in order.
+    fn for_each(&self, mut visit: impl FnMut(f64)) -> Result<()> {
+        let data_type = self.buffer.data_type;
+        let mut inexact = None;
+        scan_pixels(FUNC, &self.buffer, |col, row, pixel| {
+            if self.is_nodata(pixel) {
+                return ControlFlow::Continue(());
             }
+            // Decoding fails only for a 64-bit integer beyond 2^53, which an f64
+            // statistic cannot represent exactly; error rather than round it.
+            match nodata_bytes_to_f64_lossless(pixel, &data_type) {
+                Ok(value) => {
+                    visit(value);
+                    ControlFlow::Continue(())
+                }
+                Err(_) => {
+                    inexact = Some((col, row));
+                    ControlFlow::Break(())
+                }
+            }
+        })?;
+        match inexact {
+            Some((col, row)) => exec_err!(
+                "{FUNC}: the {data_type:?} pixel at column {col}, row {row} exceeds 2^53 in \
+                 magnitude, so a Float64 statistic cannot represent it exactly"
+            ),
+            None => Ok(()),
         }
-    })?;
-    decode_err.map_or(Ok(()), Err)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -196,8 +237,8 @@ impl StatType {
             "min" => Ok(Self::Min),
             "max" => Ok(Self::Max),
             _ => exec_err!(
-                "RS_SummaryStats: invalid statType '{name}'; expected one of 'count', 'sum', \
-                 'mean', 'stddev', 'min', 'max'"
+                "{FUNC}: invalid statType '{name}'; expected one of 'count', 'sum', 'mean', \
+                 'stddev', 'min', 'max'"
             ),
         }
     }
@@ -209,12 +250,12 @@ impl StatType {
     /// `StandardDeviation` — so the two engines agree to the last bit rather
     /// than merely to within rounding: summation order, the mean's correction
     /// pass, and the variance's `accum2` term all change the low bits.
-    fn compute(self, values: &[f64]) -> f64 {
+    fn compute(self, values: &BandValues) -> Result<f64> {
         match self {
-            Self::Count => values.len() as f64,
+            Self::Count => Ok(values.count()? as f64),
             Self::Sum => sum(values),
-            Self::Mean => mean(values),
-            Self::StdDev => population_stddev(values, mean(values)),
+            Self::Mean => Ok(mean(values)?.0),
+            Self::StdDev => population_stddev(values),
             Self::Min => extreme(values, |kept, v| kept < v),
             Self::Max => extreme(values, |kept, v| kept > v),
         }
@@ -222,54 +263,66 @@ impl StatType {
 }
 
 /// Commons Math `Sum`: a left-to-right sum, 0 over no values.
-fn sum(values: &[f64]) -> f64 {
-    values.iter().fold(0.0, |acc, v| acc + v)
+fn sum(values: &BandValues) -> Result<f64> {
+    let mut sum = 0.0;
+    values.for_each(|v| sum += v)?;
+    Ok(sum)
 }
 
 /// Commons Math `Mean`: the definitional mean plus a second-pass correction
-/// for the rounding error of the first; NaN over no values.
-fn mean(values: &[f64]) -> f64 {
-    if values.is_empty() {
-        return f64::NAN;
+/// for the rounding error of the first; NaN over no values. Also returns the
+/// number of values.
+fn mean(values: &BandValues) -> Result<(f64, usize)> {
+    let (mut count, mut sum) = (0usize, 0.0);
+    values.for_each(|v| {
+        count += 1;
+        sum += v;
+    })?;
+    if count == 0 {
+        return Ok((f64::NAN, 0));
     }
-    let n = values.len() as f64;
-    let xbar = sum(values) / n;
-    let correction = values.iter().fold(0.0, |acc, v| acc + (v - xbar));
-    xbar + correction / n
+    let n = count as f64;
+    let xbar = sum / n;
+    let mut correction = 0.0;
+    values.for_each(|v| correction += v - xbar)?;
+    Ok((xbar + correction / n, count))
 }
 
 /// Commons Math `StandardDeviation` without bias correction: the square root
-/// of the corrected two-pass population variance around `mean`; 0 over one
-/// value and NaN over none.
-fn population_stddev(values: &[f64], mean: f64) -> f64 {
-    let variance = match values.len() {
+/// of the corrected two-pass population variance around the Commons mean; 0
+/// over one value and NaN over none.
+fn population_stddev(values: &BandValues) -> Result<f64> {
+    let (mean, count) = mean(values)?;
+    let variance = match count {
         0 => f64::NAN,
         1 => 0.0,
         len => {
-            let (accum, accum2) = values.iter().fold((0.0, 0.0), |(accum, accum2), v| {
+            let (mut accum, mut accum2) = (0.0, 0.0);
+            values.for_each(|v| {
                 let dev = v - mean;
-                (accum + dev * dev, accum2 + dev)
-            });
+                accum += dev * dev;
+                accum2 += dev;
+            })?;
             let len = len as f64;
             (accum - (accum2 * accum2 / len)) / len
         }
     };
-    variance.sqrt()
+    Ok(variance.sqrt())
 }
 
 /// Commons Math `Min`/`Max`: starts from the first value and keeps it over
 /// each later non-NaN value unless `keep(kept, value)` fails, so NaN values are
 /// skipped (unless every value is NaN); NaN over no values.
-fn extreme(values: &[f64], keep: impl Fn(f64, f64) -> bool) -> f64 {
-    let Some(&first) = values.first() else {
-        return f64::NAN;
-    };
-    values.iter().fold(
-        first,
-        |kept, &v| {
-            if v.is_nan() || keep(kept, v) { kept } else { v }
-        },
-    )
+fn extreme(values: &BandValues, keep: impl Fn(f64, f64) -> bool) -> Result<f64> {
+    let mut kept: Option<f64> = None;
+    values.for_each(|v| {
+        kept = Some(match kept {
+            None => v,
+            Some(k) if v.is_nan() || keep(k, v) => k,
+            Some(_) => v,
+        })
+    })?;
+    Ok(kept.unwrap_or(f64::NAN))
 }
 
 #[cfg(test)]
@@ -285,15 +338,29 @@ mod tests {
     fn stat(spec: RasterSpec, stat_type: &str, band: usize, exclude: bool) -> Result<f64> {
         let array = spec.build();
         let rasters = RasterStructArray::try_new(&array).unwrap();
-        let mut values = Vec::new();
-        band_values(&rasters.get(0).unwrap(), band, exclude, &mut values)?;
-        Ok(StatType::parse(stat_type)?.compute(&values))
+        summary_stat(
+            &rasters.get(0).unwrap(),
+            band,
+            exclude,
+            StatType::parse(stat_type)?,
+        )
     }
 
-    /// A 3x2 float band whose statistics exercise every rounding step: a large
-    /// magnitude beside small fractions, so the naive formulas lose low bits.
+    /// Six values near 1e8 with fractional parts, row-major. Commons Math's
+    /// arithmetic and each shortcut a port might take round differently here,
+    /// so the anchors below pin every step (see
+    /// `fixture_separates_the_shortcuts`).
+    const CANCELLATION: [f64; 6] = [
+        100000001.3,
+        100000000.2,
+        100000002.5,
+        100000001.1,
+        100000001.1,
+        100000000.7,
+    ];
+
     fn float_band() -> RasterSpec {
-        RasterSpec::d2(3, 2).band_values(&[0.1f64, 0.2, 0.3, 1e10, -3.5, 7.25])
+        RasterSpec::d2(3, 2).band_values(&CANCELLATION)
     }
 
     #[test]
@@ -316,11 +383,11 @@ mod tests {
         // with the operation order replicated above.
         let cases = [
             ("count", 6.0),
-            ("sum", 1.000000000435e10),
-            ("mean", 1666666667.3916667),
-            ("stddev", 3726779962.17542),
-            ("min", -3.5),
-            ("max", 1e10),
+            ("sum", 600000006.9000001),
+            ("mean", 100000001.15),
+            ("stddev", 0.7017834414254126),
+            ("min", 100000000.2),
+            ("max", 100000002.5),
         ];
         for (stat_type, expected) in cases {
             assert_eq!(
@@ -331,12 +398,47 @@ mod tests {
         }
     }
 
+    /// Guards the fixture: every shortcut from Commons Math's arithmetic lands
+    /// on a different value than the anchors above, so the anchors fail if the
+    /// kernel ever takes one.
+    #[test]
+    fn fixture_separates_the_shortcuts() {
+        let v = CANCELLATION;
+        let n = v.len() as f64;
+        let rev_sum = v.iter().rev().fold(0.0, |acc, x| acc + x);
+        let col_major_sum = [0, 3, 1, 4, 2, 5].iter().fold(0.0, |acc, &i| acc + v[i]);
+        assert_ne!(rev_sum, 600000006.9000001, "summation order");
+        assert_ne!(col_major_sum, 600000006.9000001, "summation order");
+
+        let naive_mean = v.iter().sum::<f64>() / n;
+        assert_ne!(naive_mean, 100000001.15, "mean correction pass");
+
+        let variance = |mean: f64, with_accum2: bool| {
+            let accum: f64 = v.iter().map(|x| (x - mean) * (x - mean)).sum();
+            let accum2: f64 = v.iter().map(|x| x - mean).sum();
+            if with_accum2 {
+                (accum - accum2 * accum2 / n) / n
+            } else {
+                accum / n
+            }
+        };
+        let anchor = 0.7017834414254126;
+        assert_ne!(variance(100000001.15, false).sqrt(), anchor, "accum2 term");
+        assert_ne!(
+            variance(naive_mean, true).sqrt(),
+            anchor,
+            "variance around naive mean"
+        );
+        assert_ne!(
+            variance(naive_mean, false).sqrt(),
+            anchor,
+            "naive two-pass stddev"
+        );
+    }
+
     #[test]
     fn stat_type_is_case_insensitive() {
-        assert_eq!(
-            stat(float_band(), "MeAn", 1, true).unwrap(),
-            1666666667.3916667
-        );
+        assert_eq!(stat(float_band(), "MeAn", 1, true).unwrap(), 100000001.15);
     }
 
     #[test]
@@ -405,9 +507,21 @@ mod tests {
 
     #[test]
     fn inexact_64_bit_pixel_errors() {
-        let spec = RasterSpec::d2(1, 1).band_values(&[u64::MAX]);
+        let spec = RasterSpec::d2(2, 1).band_values(&[0u64, u64::MAX]);
         let err = stat(spec, "sum", 1, true).unwrap_err().to_string();
+        assert!(err.contains("pixel at column 1, row 0"), "{err}");
         assert!(err.contains("2^53"), "{err}");
+    }
+
+    #[test]
+    fn count_needs_no_values() {
+        // Counting decodes nothing, so a 64-bit sentinel fill (kept here) that
+        // no f64 statistic could represent still counts.
+        let spec = RasterSpec::d2(2, 1)
+            .band_values(&[1u64, u64::MAX])
+            .nodata(u64::MAX);
+        assert_eq!(stat(spec.clone(), "count", 1, true).unwrap(), 1.0);
+        assert_eq!(stat(spec, "count", 1, false).unwrap(), 2.0);
     }
 
     #[test]
@@ -435,13 +549,17 @@ mod tests {
             &Float64Array::from(vec![Some(4.0), None, None])
         );
 
-        // Band 2 leaves out its nodata pixel.
+        // Band 2 leaves out its nodata pixel; a NULL band is NULL.
         let tester = ScalarUdfTester::new(udf.clone(), vec![RASTER, utf8.clone(), int32.clone()]);
         let result = tester
             .invoke_arrays(vec![
-                Arc::new(rasters.clone()),
+                Arc::new(raster_array([
+                    Some(two_bands()),
+                    Some(two_bands()),
+                    Some(two_bands()),
+                ])),
                 stats.clone(),
-                Arc::new(Int32Array::from(vec![2, 2, 2])),
+                Arc::new(Int32Array::from(vec![Some(2), Some(2), None])),
             ])
             .unwrap();
         assert_eq!(

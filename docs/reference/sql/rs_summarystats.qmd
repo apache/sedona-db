@@ -60,10 +60,14 @@ kernels:
 ## Description
 
 Over no pixels (for example, a band that is entirely nodata), `count` and
-`sum` are 0 and the other statistics are NaN. A NaN pixel is left out as
-nodata when the band's nodata value is NaN; otherwise it is data and makes
-`sum`, `mean` and `stddev` NaN, while `min` and `max` skip it. Only
-2-D rasters are supported.
+`sum` are 0 and the other statistics are NaN; over one pixel, `stddev` is 0.
+A NaN pixel is left out as nodata when the band's nodata value is NaN.
+Otherwise it is data: it makes `sum` and `mean` NaN, and `stddev` too unless
+it is the only pixel, while `min` and `max` skip it unless every pixel is NaN.
+
+An unknown `stat_type`, a band the raster does not have, or a 64-bit integer
+pixel beyond 2^53 in magnitude (which a double cannot hold exactly) is an
+error. Only 2-D rasters are supported.
 
 ## Examples
 

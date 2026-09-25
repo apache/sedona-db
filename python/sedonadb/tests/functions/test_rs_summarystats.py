@@ -20,7 +20,7 @@
 Each fixture is written to a GeoTIFF and read back through RS_FromPath. The
 pixel values are chosen so that every statistic is exact in binary on both
 sides (integer sums, means that are exact quotients, and deviations that are
-multiples of 1/4), which lets the numpy reference compare with `==` even though
+multiples of 1/8), which lets the numpy reference compare with `==` even though
 numpy sums pairwise and SedonaDB left to right. Bit-for-bit agreement with
 Sedona Spark on inexact inputs is covered by the Rust unit tests and the
 spark-parity suite.
