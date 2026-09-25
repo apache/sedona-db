@@ -22,9 +22,8 @@
 //! RS_SetValue(raster, band, colX, rowY, newValue)  -> Raster
 //! ```
 //!
-//! `colX` and `rowY` are 1-based, Sedona Spark's convention for this function
-//! (unlike the 0-based grid form of `RS_Value`); a pixel outside the grid is an
-//! error. The pixel is overwritten whether or not it holds the band's nodata
+//! `colX` and `rowY` are 1-based, as in PostGIS and Sedona Spark; a pixel
+//! outside the grid is an error. The pixel is overwritten whether or not it holds the band's nodata
 //! value, and the band's nodata value itself is unchanged.
 //!
 //! `newValue` is stored the way Sedona Spark stores it: truncated toward zero in
