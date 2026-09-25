@@ -57,6 +57,33 @@ def test_rs_value_nodata_pixel_is_null(tmp_path):
     compare(sql, sedona, spark, expected=[(None,)])
 
 
+@pytest.mark.parametrize(
+    "dtype,nodata,pixel",
+    [
+        pytest.param("uint8", -9999.0, 0, id="below-range"),
+        pytest.param("uint8", 256.0, 255, id="above-range"),
+        pytest.param("int16", float("nan"), 0, id="nan"),
+        pytest.param("int32", 0.5, 0, id="fraction"),
+    ],
+)
+def test_rs_value_unrepresentable_nodata_matches_no_pixel(
+    dtype, nodata, pixel, tmp_path
+):
+    """A file nodata the band dtype cannot hold exactly matches no pixel on
+    both engines, so the pixel a saturating cast would turn it into (-9999 on
+    uint8 into 0) reads back verbatim rather than NULL."""
+    sedona, spark = _engines(
+        "val_unrep_src",
+        tmp_path,
+        dtype=dtype,
+        bands=1,
+        nodata=nodata,
+        plants={(1, 1): pixel},
+    )
+    sql = "SELECT RS_Value(rast, ST_GeomFromWKT('POINT(103 495.5)'), 1) FROM val_unrep_src"
+    compare(sql, sedona, spark, expected=float(pixel))
+
+
 def test_rs_value_outside_extent_is_null(tmp_path):
     """A point outside the raster's extent reads back NULL from both engines."""
     sedona, spark = _engines("val_out_src", tmp_path)
