@@ -359,7 +359,7 @@ def test_rs_setbandnodatavalue(expr, expected):
 def test_rs_setbandnodatavalue_replace(replace, expected):
     base = "RS_SetBandNoDataValue(RS_Example(), 1, 1)"
     SedonaDB().assert_query_result(
-        f"SELECT RS_Value(RS_SetBandNoDataValue({base}, 1, 200, {replace}), 1, 1, 1)",
+        f"SELECT RS_Value(RS_SetBandNoDataValue({base}, 1, 200, {replace}), 2, 2, 1)",
         expected,
     )
 
