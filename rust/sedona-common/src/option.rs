@@ -51,6 +51,9 @@ config_namespace! {
 
         /// Options for raster execution
         pub raster: RasterOptions, default = RasterOptions::default()
+
+        /// Options for exchanging tables and execution plans across FFI
+        pub ffi: FfiOptions, default = FfiOptions::default()
     }
 }
 
@@ -93,6 +96,15 @@ config_namespace! {
         /// A `SET sedona.raster.max_batch_bytes = …` after connecting overrides
         /// whichever default was derived.
         pub max_batch_bytes: usize, default = DEFAULT_RASTER_MAX_BATCH_BYTES
+    }
+}
+
+config_namespace! {
+    /// Configuration options for Sedona's FFI interfaces.
+    pub struct FfiOptions {
+        /// Use the experimental Arrow async-device stream interface when
+        /// importing a table provider or execution plan across FFI.
+        pub use_async: bool, default = false
     }
 }
 
@@ -757,5 +769,14 @@ mod tests {
             err_msg.contains("Can't set sedona.runtime from SQL"),
             "Unexpected error message: {err_msg}"
         );
+    }
+
+    #[test]
+    fn test_ffi_use_async_option() {
+        let mut options = SedonaOptions::default();
+        assert!(!options.ffi.use_async);
+
+        <SedonaOptions as ConfigField>::set(&mut options, "ffi.use_async", "true").unwrap();
+        assert!(options.ffi.use_async);
     }
 }

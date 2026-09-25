@@ -6435,6 +6435,7 @@ dependencies = [
  "pyo3",
  "sedona",
  "sedona-adbc",
+ "sedona-common",
  "sedona-datasource",
  "sedona-expr",
  "sedona-extension",

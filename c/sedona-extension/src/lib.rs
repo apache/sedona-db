@@ -17,8 +17,10 @@
 
 pub mod catalog;
 pub mod execution_plan;
+pub mod export_sendable_record_batch_stream;
 pub mod expr;
 pub mod extension;
+pub mod import_sendable_record_batch_stream;
 pub mod metrics;
 pub mod runtime;
 pub mod scalar_kernel;

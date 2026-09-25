@@ -113,6 +113,66 @@ struct ArrowArrayStream {
 #endif  // ARROW_C_STREAM_INTERFACE
 #endif  // ARROW_FLAG_DICTIONARY_ORDERED
 
+#ifndef ARROW_C_DEVICE_DATA_INTERFACE
+#define ARROW_C_DEVICE_DATA_INTERFACE
+
+typedef int32_t ArrowDeviceType;
+#define ARROW_DEVICE_CPU 1
+#define ARROW_DEVICE_CUDA 2
+#define ARROW_DEVICE_CUDA_HOST 3
+#define ARROW_DEVICE_OPENCL 4
+#define ARROW_DEVICE_VULKAN 7
+#define ARROW_DEVICE_METAL 8
+#define ARROW_DEVICE_VPI 9
+#define ARROW_DEVICE_ROCM 10
+#define ARROW_DEVICE_ROCM_HOST 11
+#define ARROW_DEVICE_EXT_DEV 12
+#define ARROW_DEVICE_CUDA_MANAGED 13
+#define ARROW_DEVICE_ONEAPI 14
+#define ARROW_DEVICE_WEBGPU 15
+#define ARROW_DEVICE_HEXAGON 16
+
+struct ArrowDeviceArray {
+  struct ArrowArray array;
+  int64_t device_id;
+  ArrowDeviceType device_type;
+  void* sync_event;
+  int64_t reserved[3];
+};
+
+#endif  // ARROW_C_DEVICE_DATA_INTERFACE
+
+#ifndef ARROW_C_ASYNC_STREAM_INTERFACE
+#define ARROW_C_ASYNC_STREAM_INTERFACE
+
+/// Experimental Arrow C async-device stream interface.
+struct ArrowAsyncTask {
+  int (*extract_data)(struct ArrowAsyncTask* self, struct ArrowDeviceArray* out);
+  void* private_data;
+};
+
+struct ArrowAsyncProducer {
+  ArrowDeviceType device_type;
+  void (*request)(struct ArrowAsyncProducer* self, int64_t n);
+  void (*cancel)(struct ArrowAsyncProducer* self);
+  const char* additional_metadata;
+  void* private_data;
+};
+
+struct ArrowAsyncDeviceStreamHandler {
+  int (*on_schema)(struct ArrowAsyncDeviceStreamHandler* self,
+                   struct ArrowSchema* stream_schema);
+  int (*on_next_task)(struct ArrowAsyncDeviceStreamHandler* self,
+                      struct ArrowAsyncTask* task, const char* metadata);
+  void (*on_error)(struct ArrowAsyncDeviceStreamHandler* self, int code,
+                   const char* message, const char* metadata);
+  void (*release)(struct ArrowAsyncDeviceStreamHandler* self);
+  struct ArrowAsyncProducer* producer;
+  void* private_data;
+};
+
+#endif  // ARROW_C_ASYNC_STREAM_INTERFACE
+
 /// \brief Simple ABI-stable scalar function implementation
 ///
 /// This object is not thread safe: callers must take care to serialize
@@ -341,9 +401,9 @@ struct SedonaCExecutionPlan {
 
   /// \brief Resolve an asynchronous stream for one partition from this plan
   ///
-  /// This is not currently implemented and must be NULL. In the future,
-  /// out must point to a caller-supplied struct ArrowAsyncDeviceStreamHandler
-  /// as specified in the Arrow C Device Async Stream specification.
+  /// `out` must point to a caller-supplied ArrowAsyncDeviceStreamHandler.
+  /// Implementations may leave this callback NULL when async execution is not
+  /// supported; callers must check it before use.
   int (*execute_async)(const struct SedonaCExecutionPlan* self,
                        struct SedonaCExecutionPlanArgs* args, void* out,
                        struct SedonaCError* err);
