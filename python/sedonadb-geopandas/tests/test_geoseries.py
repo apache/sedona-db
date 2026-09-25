@@ -313,3 +313,132 @@ def test_buffer_on_geography_keeps_working():
     assert buffered[0].geom_type == "Polygon"
     with pytest.raises(NotImplementedError, match="geography"):
         gdf.geometry.buffer(1000.0, join_style="mitre")
+
+
+LEFT = [
+    "POINT (1 1)",
+    "POINT (2 0)",
+    "LINESTRING (0 0, 2 2)",
+    "POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))",
+    "POLYGON ((1 1, 3 1, 3 3, 1 3, 1 1))",
+    "POLYGON ((5 5, 6 5, 6 6, 5 6, 5 5))",
+    "MULTIPOINT ((0 0), (3 3))",
+    "POINT EMPTY",
+    None,
+    "POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))",
+]
+RIGHT = [
+    "POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))",
+    "POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))",
+    "LINESTRING (0 2, 2 0)",
+    "POLYGON ((1 1, 3 1, 3 3, 1 3, 1 1))",
+    "POINT (2 2)",
+    "POINT (0 0)",
+    "LINESTRING (0 0, 1 1)",
+    "POINT (0 0)",
+    "POINT (0 0)",
+    None,
+]
+PREDICATES = [
+    "intersects",
+    "contains",
+    "within",
+    "touches",
+    "crosses",
+    "overlaps",
+    "covers",
+    "covered_by",
+    "disjoint",
+    "geom_equals",
+]
+SET_OPERATIONS = ["intersection", "union", "difference", "symmetric_difference"]
+
+
+def _binary_case():
+    left = gpd.GeoSeries.from_wkt(LEFT, crs="EPSG:3857")
+    right = gpd.GeoSeries.from_wkt(RIGHT, crs="EPSG:3857")
+    frame = gpd.GeoDataFrame({"b": right}, geometry=left)
+    gdf = sgpd.from_geopandas(frame)
+    return left, right, gdf.geometry, gdf["b"]
+
+
+@pytest.mark.parametrize("name", PREDICATES + ["distance"] + SET_OPERATIONS)
+@pytest.mark.parametrize("operand", ["column", "scalar"])
+def test_binary_operations_match_geopandas(name, operand):
+    # Against a column of the same frame (row by row) and against a single
+    # Shapely geometry, including empty and missing operands: GeoPandas
+    # answers False for a predicate and NaN for a distance there.
+    left, right, g, b = _binary_case()
+    scalar = shapely.from_wkt("POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))")
+    other, reference_other = (b, right) if operand == "column" else (scalar, scalar)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        got = getattr(g, name)(other).to_pandas().tolist()
+        expected = getattr(left, name)(reference_other).tolist()
+    for value, reference in zip(got, expected):
+        assert _same(value, reference), (name, value, reference)
+
+
+@pytest.mark.parametrize("operand", ["column", "scalar"])
+def test_dwithin_matches_geopandas(operand):
+    left, right, g, b = _binary_case()
+    scalar = shapely.from_wkt("POINT (3 3)")
+    other, reference_other = (b, right) if operand == "column" else (scalar, scalar)
+    for distance in (0.0, 1.0, 5.0):
+        got = g.dwithin(other, distance).to_pandas().tolist()
+        assert got == left.dwithin(reference_other, distance).tolist()
+
+
+def test_empty_operands_have_no_distance():
+    # The engine measures an empty geometry as at distance 0 from anything,
+    # so dwithin said True; GeoPandas (and PostGIS) treat it as undefined.
+    gs = gpd.GeoSeries.from_wkt(["POINT EMPTY", "POINT (0 0)"], crs="EPSG:3857")
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    distances = g.distance(shapely.Point(0, 0)).to_pandas().tolist()
+    assert math.isnan(distances[0]) and distances[1] == 0.0
+    assert g.dwithin(shapely.Point(0, 0), 1.0).to_pandas().tolist() == [False, True]
+    assert g.distance(shapely.Point()).to_pandas().isna().all()
+
+
+def test_scalar_geometry_takes_the_column_crs():
+    # A Shapely geometry carries no CRS; comparing it with a column that has
+    # one made the engine refuse the mismatched CRS.
+    gs = gpd.GeoSeries.from_wkt(["POINT (1 1)"], crs="EPSG:3857")
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    square = shapely.from_wkt("POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))")
+    assert g.within(square).to_pandas().tolist() == [True]
+    assert g.intersection(square).to_geopandas().crs == "EPSG:3857"
+
+
+def test_binary_operations_reject_other_frames_and_alignment():
+    gs = gpd.GeoSeries.from_wkt(["POINT (1 1)"], crs="EPSG:3857")
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    other = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    with pytest.raises(ValueError, match="different DataFrames"):
+        g.intersects(other)
+    with pytest.raises(ValueError, match="align"):
+        g.intersects(shapely.Point(1, 1), align=True)
+    with pytest.raises(TypeError):
+        g.intersects([shapely.Point(1, 1)])
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="engine misclassifies boundary-only configurations (apache/sedona-db#1165)",
+)
+@pytest.mark.parametrize(
+    "name,left,right",
+    [
+        # A line through a polygon corner touches it.
+        ("touches", "LINESTRING (1 3, 3 1)", "POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))"),
+        # A multipoint with one point inside and one on the boundary is within.
+        ("within", "MULTIPOINT ((0 0), (1 1))", "POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))"),
+    ],
+    ids=["touches-corner", "within-boundary-point"],
+)
+def test_known_boundary_predicate_issues(name, left, right):
+    gs = gpd.GeoSeries.from_wkt([left], crs="EPSG:3857")
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    expected = getattr(gs, name)(shapely.from_wkt(right)).tolist()
+    assert expected == [True]
+    assert getattr(g, name)(shapely.from_wkt(right)).to_pandas().tolist() == expected

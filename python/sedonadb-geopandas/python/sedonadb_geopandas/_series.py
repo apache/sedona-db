@@ -491,6 +491,21 @@ def _normalize_crs(crs):
         raise ValueError(f"Invalid CRS {crs!r}: {err}") from err
 
 
+def _check_align(align):
+    """GeoPandas' `align` argument.
+
+    There is no index to align on: operands are always columns of the same
+    frame, matched row by row, which is what GeoPandas does with
+    `align=False`. Asking for index alignment is an error rather than being
+    silently ignored.
+    """
+    if align:
+        raise ValueError(
+            "align=True is not supported: there is no index; columns of the "
+            "same frame are always matched row by row"
+        )
+
+
 class GeoSeries(Series):
     """A geometry column, in the shape of a `geopandas.GeoSeries`.
 
@@ -733,6 +748,148 @@ class GeoSeries(Series):
     def representative_point(self):
         """A point guaranteed to lie on each geometry (`ST_PointOnSurface`)."""
         return self._geo(self._expr.geo.point_on_surface())
+
+    # -- binary operations -----------------------------------------------
+
+    def _other(self, other):
+        """The right-hand side of a binary geometry operation, as an expression.
+
+        A `GeoSeries` must come from this same frame (there is no row
+        alignment), as for arithmetic. A bare Shapely geometry carries no CRS
+        of its own, so it takes this column's, as it would in GeoPandas and
+        as an assigned geometry does; without that the engine refuses to
+        compare geometries with mismatched CRS. A `Literal` passes through
+        unchanged, keeping whatever CRS it was given.
+        """
+        from shapely.geometry.base import BaseGeometry
+
+        value = _operand(self._df, other)
+        if not isinstance(value, BaseGeometry):
+            return value
+        ctx = self._df._ctx
+        expr = ctx.lit(value)
+        crs = self.crs
+        if crs is not None:
+            expr = expr.funcs.st_setcrs(ctx.lit(crs.to_json()))
+        return expr
+
+    def _predicate(self, name, other, align=None):
+        """A GeoPandas binary predicate: False where either side is missing."""
+        from sedonadb.expr import lit
+
+        _check_align(align)
+        expr = getattr(self._expr.geo, name)(self._other(other))
+        return Series(self._df, expr.funcs.coalesce(lit(False)), name)
+
+    def _without_empty(self, expr, other_expr):
+        """`expr` with rows where either operand is empty made missing.
+
+        The engine treats an empty geometry as at distance 0 from anything
+        (apache/sedona-db#1356), where GeoPandas (and PostGIS) treat the
+        distance as undefined.
+        """
+        from sedonadb.expr import lit
+
+        empty = self._expr.geo.is_empty() | other_expr.geo.is_empty()
+        gate = empty.funcs.nullif(lit(True)).cast(pa.float64())
+        return expr + gate
+
+    def intersects(self, other, align=None):
+        """Whether each geometry intersects `other` (`ST_Intersects`)."""
+        return self._predicate("intersects", other, align)
+
+    def contains(self, other, align=None):
+        """Whether each geometry contains `other` (`ST_Contains`)."""
+        return self._predicate("contains", other, align)
+
+    def within(self, other, align=None):
+        """Whether each geometry is within `other` (`ST_Within`).
+
+        Known engine issue: some boundary-only configurations are misclassified
+        (apache/sedona-db#1165).
+        """
+        return self._predicate("within", other, align)
+
+    def touches(self, other, align=None):
+        """Whether each geometry touches `other` (`ST_Touches`).
+
+        Known engine issue: a line touching a polygon only at a vertex it does
+        not share is not detected (apache/sedona-db#1165).
+        """
+        return self._predicate("touches", other, align)
+
+    def crosses(self, other, align=None):
+        """Whether each geometry crosses `other` (`ST_Crosses`)."""
+        return self._predicate("crosses", other, align)
+
+    def overlaps(self, other, align=None):
+        """Whether each geometry overlaps `other` (`ST_Overlaps`)."""
+        return self._predicate("overlaps", other, align)
+
+    def covers(self, other, align=None):
+        """Whether each geometry covers `other` (`ST_Covers`)."""
+        return self._predicate("covers", other, align)
+
+    def covered_by(self, other, align=None):
+        """Whether each geometry is covered by `other` (`ST_CoveredBy`)."""
+        return self._predicate("covered_by", other, align)
+
+    def disjoint(self, other, align=None):
+        """Whether each geometry is disjoint from `other` (`ST_Disjoint`)."""
+        return self._predicate("disjoint", other, align)
+
+    def geom_equals(self, other, align=None):
+        """Whether each geometry equals `other` topologically (`ST_Equals`)."""
+        from sedonadb.expr import lit
+
+        _check_align(align)
+        expr = self._expr.geo.equals(self._other(other))
+        return Series(self._df, expr.funcs.coalesce(lit(False)), "geom_equals")
+
+    def dwithin(self, other, distance, align=None):
+        """Whether each geometry is within `distance` of `other` (`ST_DWithin`).
+
+        False where either side is missing or empty.
+        """
+        from sedonadb.expr import lit
+
+        _check_align(align)
+        other_expr = self._other(other)
+        # Measured through ST_Distance so an empty operand gives a missing
+        # distance (and so False), which ST_DWithin treats as distance 0.
+        dist = self._without_empty(self._expr.geo.distance(other_expr), other_expr)
+        expr = (dist <= lit(float(distance))).funcs.coalesce(lit(False))
+        return Series(self._df, expr, "dwithin")
+
+    def distance(self, other, align=None):
+        """The distance from each geometry to `other` (`ST_Distance`).
+
+        Missing where either side is missing or empty, as in GeoPandas.
+        """
+        _check_align(align)
+        other_expr = self._other(other)
+        expr = self._without_empty(self._expr.geo.distance(other_expr), other_expr)
+        return Series(self._df, expr, "distance")
+
+    def intersection(self, other, align=None):
+        """The intersection of each geometry with `other` (`ST_Intersection`)."""
+        _check_align(align)
+        return self._geo(self._expr.geo.intersection(self._other(other)))
+
+    def union(self, other, align=None):
+        """The union of each geometry with `other` (`ST_Union`)."""
+        _check_align(align)
+        return self._geo(self._expr.geo.union(self._other(other)))
+
+    def difference(self, other, align=None):
+        """Each geometry minus `other` (`ST_Difference`)."""
+        _check_align(align)
+        return self._geo(self._expr.geo.difference(self._other(other)))
+
+    def symmetric_difference(self, other, align=None):
+        """The symmetric difference of each geometry and `other` (`ST_SymDifference`)."""
+        _check_align(align)
+        return self._geo(self._expr.geo.sym_difference(self._other(other)))
 
     # -- serialization and CRS --------------------------------------------
 
