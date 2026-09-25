@@ -56,7 +56,10 @@ def _same(got, expected):
             return False
         if expected.is_empty or got.is_empty:
             return expected.is_empty and got.is_empty
-        return expected.equals(got)
+        # Topological equality, with a tolerance for the last-digit floating
+        # point differences between the engine's GEOS build and Shapely's
+        # (curved output such as buffer arcs shows them).
+        return expected.equals(got) or expected.hausdorff_distance(got) < 1e-9
     if isinstance(expected, float):
         return math.isclose(got, expected, rel_tol=1e-9, abs_tol=1e-12)
     return got == expected
