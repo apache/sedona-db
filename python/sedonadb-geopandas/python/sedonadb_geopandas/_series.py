@@ -459,6 +459,8 @@ def _same_crs(current, crs):
     otherwise conservatively treated as different, so replacing a CRS then
     always needs `allow_override=True`.
     """
+    if crs is None:
+        return False
     try:
         import pyproj
     except ImportError:
@@ -469,6 +471,24 @@ def _same_crs(current, crs):
         ) == pyproj.CRS.from_user_input(crs)
     except Exception:
         return False
+
+
+def _normalize_crs(crs):
+    """`crs` in a form the engine keeps as given: PROJJSON when pyproj is there.
+
+    Stamping a user string directly lets the engine canonicalize it
+    ("EPSG:4326" becomes OGC:CRS84) and rejects forms GeoPandas accepts, such
+    as the integer 4326. Parsing through pyproj (which comes with GeoPandas)
+    accepts every form GeoPandas does and rejects invalid input up front.
+    """
+    try:
+        import pyproj
+    except ImportError:
+        return f"EPSG:{crs}" if isinstance(crs, int) else crs
+    try:
+        return pyproj.CRS.from_user_input(crs).to_json()
+    except pyproj.exceptions.CRSError as err:
+        raise ValueError(f"Invalid CRS {crs!r}: {err}") from err
 
 
 class GeoSeries(Series):
@@ -483,6 +503,12 @@ class GeoSeries(Series):
     def _geo(self, expr):
         """A geometry result, keeping this column's name."""
         return GeoSeries(self._df, expr, self._name)
+
+    def _is_geography(self):
+        """Whether this column holds geography (spherical edges)."""
+        schema = self._df.select(self._expr.alias("x")).schema
+        edge_type = getattr(schema.field("x").type, "edge_type", "")
+        return "SPHERICAL" in str(edge_type).upper()
 
     def _flag(self, expr, name):
         """A boolean property: GeoPandas answers False for a missing geometry."""
@@ -619,18 +645,45 @@ class GeoSeries(Series):
             raise ValueError(
                 f"join_style must be one of {sorted(joins)}, got {join_style!r}"
             )
-        params = (
-            f"quad_segs={int(resolution)} endcap={caps[cap_style]} "
-            f"join={joins[join_style]} mitre_limit={float(mitre_limit)}"
-        )
-        if single_sided:
-            params += " side=left" if distance >= 0 else " side=right"
+        params = f"quad_segs={int(resolution)} endcap={caps[cap_style]}"
+        if self._is_geography():
+            # Spherical buffering accepts only these two parameters.
+            if join_style != "round" or mitre_limit != 5.0 or single_sided:
+                raise NotImplementedError(
+                    "buffer() on geography supports resolution and cap_style "
+                    "only; join_style, mitre_limit and single_sided need "
+                    "planar geometry"
+                )
+        else:
+            params += f" join={joins[join_style]} mitre_limit={float(mitre_limit)}"
+            if single_sided:
+                params += " side=left" if distance >= 0 else " side=right"
         return self._geo(self._expr.geo.buffer(distance, lit(params)))
 
     @property
     def envelope(self):
-        """The bounding rectangle of each geometry (`ST_Envelope`)."""
-        return self._geo(self._expr.geo.envelope())
+        """The bounding rectangle of each geometry (`ST_Envelope`).
+
+        The envelope of an empty geometry is `POINT EMPTY`, as in GeoPandas,
+        whatever the empty geometry's type (the engine keeps the type).
+        """
+        import shapely
+
+        envelope = self._expr.geo.envelope()
+        if self._is_geography():
+            return self._geo(envelope)
+        ctx = self._df._ctx
+        # Per row: POINT EMPTY's WKB where the input is empty, the envelope's
+        # otherwise. nvl2 picks its second argument where the first is
+        # non-null, and all three must share a type, hence the binary flag.
+        empty = self._expr.geo.is_empty().funcs.nullif(ctx.lit(False))
+        flag = empty.cast(pa.string()).cast(pa.binary())
+        wkb = flag.funcs.nvl2(ctx.lit(shapely.Point().wkb), envelope.geo.as_binary())
+        expr = wkb.funcs.st_geomfromwkb()
+        crs = self.crs
+        if crs is not None:
+            expr = expr.funcs.st_setcrs(ctx.lit(crs.to_json()))
+        return self._geo(expr)
 
     @property
     def convex_hull(self):
@@ -708,9 +761,9 @@ class GeoSeries(Series):
         As in GeoPandas, replacing a different existing CRS requires
         `allow_override=True`; use `GeoDataFrame.to_crs` to reproject.
         """
-        from sedonadb.expr import lit
-
         current = self.crs
+        if crs is not None:
+            crs = _normalize_crs(crs)
         if current is not None and not allow_override and not _same_crs(current, crs):
             raise ValueError(
                 "The GeoSeries already has a CRS which is not equal to the passed "
@@ -718,7 +771,14 @@ class GeoSeries(Series):
                 "CRS without doing any transformation. If you actually want to "
                 "transform the geometries, use 'to_crs' instead."
             )
-        return self._geo(self._expr.geo.set_crs(lit(crs)))
+        ctx = self._df._ctx
+        if crs is None:
+            # SRID 0 means "no CRS" and keeps the values; ST_SetCRS(NULL)
+            # propagates the null and would erase every geometry.
+            if current is None:
+                return self._geo(self._expr)
+            return self._geo(self._expr.geo.set_srid(ctx.lit(0)))
+        return self._geo(self._expr.geo.set_crs(ctx.lit(crs)))
 
     @property
     def crs(self):
