@@ -54,6 +54,7 @@ use sedona_geometry::{
     interval::IntervalTrait,
     types::Edges,
 };
+use sedona_raster::band_builder::MAX_BAND_DATA_LEN;
 use sedona_raster::builder::RasterBuilder;
 use sedona_schema::{
     crs::CachedSRIDToCrs, datatypes::SedonaType, matchers::ArgMatcher, raster::BandDataType,
@@ -479,14 +480,13 @@ fn validate_grid(num_bands: i64, width: i64, height: i64) -> Result<usize> {
 
 /// Byte length of one band's pixel buffer, rejecting bands too large to address.
 fn band_byte_len(width: i64, height: i64, band_type: BandDataType) -> Result<usize> {
-    // Band data is a BinaryView value. The Arrow spec stores a view's length as a
-    // signed 32-bit integer, and Arrow C++ (so pyarrow) reads it as int32_t, so the
-    // addressable limit is i32::MAX even though arrow-rs happens to hold it in a u32:
-    // a longer band would be built here and then read back as a negative length.
+    // The builder enforces the same cap when the band is finished (a BinaryView
+    // length is a signed 32-bit integer); checking it here fails before the
+    // zeroed buffer is allocated, with a message that names the grid.
     let band_len = (width as u64)
         .checked_mul(height as u64)
         .and_then(|pixels| pixels.checked_mul(band_type.byte_size() as u64))
-        .filter(|&bytes| bytes <= i32::MAX as u64)
+        .filter(|&bytes| bytes <= MAX_BAND_DATA_LEN as u64)
         .ok_or_else(|| {
             exec_datafusion_err!(
                 "RS_MakeEmptyRaster: a {width} x {height} band of {} pixels exceeds the \
