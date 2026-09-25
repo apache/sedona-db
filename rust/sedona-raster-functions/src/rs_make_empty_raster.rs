@@ -184,7 +184,7 @@ impl RsMakeEmptyRaster {
                 accessor: executor.make_geom_wkb_crs_accessor(g)?,
                 // A geography's envelope follows spherical edges, so it needs the
                 // bounder registered for them rather than a planar coordinate scan.
-                bounder: match edges_of(&arg_types[g]) {
+                bounder: match edges_of(&arg_types[g])? {
                     Edges::Spherical => Some(spherical_bounder(config_options)?),
                     _ => None,
                 },
@@ -388,7 +388,17 @@ fn extent_bounds(
             if x.is_empty() || y.is_empty() {
                 return exec_err!("RS_MakeEmptyRaster: extent geometry is empty");
             }
-            ((x.lo(), x.hi()), (y.lo(), y.hi()))
+            // An extent crossing the antimeridian has a wraparound longitude
+            // interval (lo > hi, covering lo..180 and -180..hi). Unroll it east
+            // past 180 into one continuous span, e.g. [170, -170] -> [170, 190],
+            // so the grid covers the 20 degrees between rather than the 340
+            // degrees outside.
+            let x = if x.is_wraparound() {
+                (x.lo(), x.hi() + 360.0)
+            } else {
+                (x.lo(), x.hi())
+            };
+            (x, (y.lo(), y.hi()))
         }
         None => {
             let bbox = wkb_bounds_xy(wkb).map_err(|e| {
@@ -403,6 +413,14 @@ fn extent_bounds(
             )
         }
     };
+    // A full interval (e.g. a geography around a pole spans every longitude)
+    // has infinite bounds, which no pixel size can cover.
+    if ![xmin, ymin, xmax, ymax].iter().all(|v| v.is_finite()) {
+        return exec_err!(
+            "RS_MakeEmptyRaster: extent must have a finite envelope, got \
+             [{xmin}, {ymin}, {xmax}, {ymax}]"
+        );
+    }
     if !(xmax > xmin && ymax > ymin) {
         return exec_err!(
             "RS_MakeEmptyRaster: extent must span a positive width and height, \
@@ -412,12 +430,15 @@ fn extent_bounds(
     Ok((xmin, ymin, xmax, ymax))
 }
 
-/// Edge interpretation of a geometry/geography argument type.
-fn edges_of(arg_type: &SedonaType) -> Edges {
-    match arg_type {
-        SedonaType::Wkb(edges, _) | SedonaType::WkbView(edges, _) => *edges,
+/// Edge interpretation of a geometry/geography argument type, looking through
+/// an item-level CRS struct (e.g. from `ST_SetCRS` with a CRS column) to the
+/// geography inside it.
+fn edges_of(arg_type: &SedonaType) -> Result<Edges> {
+    let (item_type, _) = parse_item_crs_arg_type(arg_type)?;
+    Ok(match item_type {
+        SedonaType::Wkb(edges, _) | SedonaType::WkbView(edges, _) => edges,
         _ => Edges::Planar,
-    }
+    })
 }
 
 /// The spherical bounder registered in the session.
@@ -800,8 +821,20 @@ mod tests {
 
     /// Reports a fixed envelope, standing in for a real spherical bounder so the
     /// geography path can be exercised without depending on s2geography.
-    #[derive(Debug, Default)]
-    struct StubSphericalBounder;
+    #[derive(Debug, Clone, Copy)]
+    struct StubSphericalBounder {
+        x: (f64, f64),
+        y: (f64, f64),
+    }
+
+    impl Default for StubSphericalBounder {
+        fn default() -> Self {
+            Self {
+                x: (100.0, 140.0),
+                y: (10.0, 30.0),
+            }
+        }
+    }
 
     impl sedona_geometry::bounds::WkbBounder2D for StubSphericalBounder {
         fn clear(&mut self) {}
@@ -832,23 +865,27 @@ mod tests {
             sedona_geometry::interval::Interval,
         ) {
             (
-                sedona_geometry::interval::WraparoundInterval::new(100.0, 140.0),
-                sedona_geometry::interval::Interval::new(10.0, 30.0),
+                sedona_geometry::interval::WraparoundInterval::new(self.x.0, self.x.1),
+                sedona_geometry::interval::Interval::new(self.y.0, self.y.1),
             )
         }
         fn mem_used(&self) -> usize {
             0
         }
         fn create_instance(&self) -> Box<dyn sedona_geometry::bounds::WkbBounder2D> {
-            Box::new(StubSphericalBounder)
+            Box::new(*self)
         }
     }
 
     fn config_with_spherical_bounder() -> ConfigOptions {
+        config_with(StubSphericalBounder::default())
+    }
+
+    fn config_with(bounder: StubSphericalBounder) -> ConfigOptions {
         let mut sedona_options = SedonaOptions::default();
         sedona_options.runtime = sedona_options
             .runtime
-            .with_bounder(Edges::Spherical, Arc::new(StubSphericalBounder))
+            .with_bounder(Edges::Spherical, Arc::new(bounder))
             .unwrap();
         let mut config = ConfigOptions::default();
         config.extensions.insert(sedona_options);
@@ -880,6 +917,85 @@ mod tests {
             .crs(None)
             .band_values(&[0f64; 8]);
         assert_raster_scalar_equals(&scalar, &expected);
+    }
+
+    #[test]
+    fn item_crs_geography_extent_uses_the_spherical_bounder() {
+        // A geography whose CRS rides per item (e.g. ST_SetCRS with a CRS
+        // column) is still a geography: its envelope comes from the spherical
+        // bounder, not a planar scan.
+        let kernel = RsMakeEmptyRaster::new(Grid::Extent, false);
+        let item_crs_type = SedonaType::new_item_crs(&WKB_GEOGRAPHY).unwrap();
+        let arg_types = extent_types(false, item_crs_type);
+        let args = vec![
+            int(1),
+            int(4),
+            int(2),
+            ColumnarValue::Scalar(create_scalar_item_crs(
+                Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"),
+                Some("EPSG:32610"),
+                &WKB_GEOGRAPHY,
+            )),
+        ];
+
+        let result = kernel
+            .invoke(&arg_types, &args, Some(&config_with_spherical_bounder()))
+            .unwrap();
+        let ColumnarValue::Scalar(scalar) = result else {
+            panic!("expected a scalar result");
+        };
+        let expected = RasterSpec::d2(4, 2)
+            .transform([100.0, 10.0, 0.0, 30.0, 0.0, -10.0])
+            .crs(Some("EPSG:32610"))
+            .band_values(&[0f64; 8]);
+        assert_raster_scalar_equals(&scalar, &expected);
+    }
+
+    #[test]
+    fn antimeridian_extent_unrolls_past_180() {
+        // The bounder reports a wraparound longitude interval [170, -170] for
+        // an extent crossing the antimeridian: 20 degrees, unrolled to
+        // [170, 190] rather than read as a negative width.
+        let kernel = RsMakeEmptyRaster::new(Grid::Extent, false);
+        let arg_types = extent_types(false, WKB_GEOGRAPHY);
+        let args = vec![
+            int(0),
+            int(4),
+            int(2),
+            create_scalar_value(Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"), &WKB_GEOGRAPHY),
+        ];
+        let config = config_with(StubSphericalBounder {
+            x: (170.0, -170.0),
+            y: (10.0, 20.0),
+        });
+
+        let result = kernel.invoke(&arg_types, &args, Some(&config)).unwrap();
+        let ColumnarValue::Scalar(scalar) = result else {
+            panic!("expected a scalar result");
+        };
+        let expected = RasterSpec::d2(4, 2)
+            .transform([170.0, 5.0, 0.0, 20.0, 0.0, -5.0])
+            .crs(None);
+        assert_raster_scalar_equals(&scalar, &expected);
+    }
+
+    #[test]
+    fn infinite_extent_is_an_error() {
+        // A geography spanning every longitude has an unbounded x interval.
+        let kernel = RsMakeEmptyRaster::new(Grid::Extent, false);
+        let arg_types = extent_types(false, WKB_GEOGRAPHY);
+        let args = vec![
+            int(0),
+            int(4),
+            int(2),
+            create_scalar_value(Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"), &WKB_GEOGRAPHY),
+        ];
+        let config = config_with(StubSphericalBounder {
+            x: (f64::NEG_INFINITY, f64::INFINITY),
+            y: (80.0, 90.0),
+        });
+        let err = kernel.invoke(&arg_types, &args, Some(&config)).unwrap_err();
+        assert!(err.to_string().contains("finite envelope"), "{err}");
     }
 
     #[test]

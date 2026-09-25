@@ -211,6 +211,55 @@ def test_geography_extent(con):
     assert uly + 2 * scale_y <= 0.0
 
 
+def test_geography_extent_with_item_crs(con):
+    """A geography whose CRS comes from a column (an item-level CRS) still
+    takes its envelope from spherical edges: the geodesic upper edge of this
+    polygon bows north of its 60-degree vertices, and every row agrees with the
+    plain geography."""
+    if "s2geography" not in sedonadb.__features__:
+        pytest.skip("Geography bounds require a build with feature s2geography")
+
+    geog = "ST_GeogFromText('POLYGON ((0 0, 90 0, 90 60, 0 60, 0 0))')"
+    plain = (
+        con.sql(f"SELECT RS_UpperLeftY(RS_MakeEmptyRaster(0, 4, 2, {geog}))")
+        .to_arrow_table()
+        .column(0)[0]
+        .as_py()
+    )
+    assert plain > 60.0
+
+    got = (
+        con.sql(
+            f"""
+        SELECT RS_UpperLeftY(RS_MakeEmptyRaster(0, 4, 2, ST_SetCRS({geog}, crs)))
+        FROM (VALUES ('EPSG:4326'), ('OGC:CRS84')) AS t(crs)
+        """
+        )
+        .to_arrow_table()
+        .column(0)
+        .to_pylist()
+    )
+    assert got == [plain, plain]
+
+
+def test_geography_extent_across_the_antimeridian(con):
+    """An extent crossing the antimeridian spans the 20 degrees between 170 and
+    -170, unrolled to 170..190, not the 340 degrees outside or a negative
+    width."""
+    if "s2geography" not in sedonadb.__features__:
+        pytest.skip("Geography bounds require a build with feature s2geography")
+
+    wkt = "POLYGON ((170 10, -170 10, -170 20, 170 20, 170 10))"
+    raster = _raster(con, f"RS_MakeEmptyRaster(0, 4, 2, ST_GeogFromText('{wkt}'))")
+    ulx, scale_x, _, _, _, _ = raster.transform
+
+    # As in test_geography_extent, assert containment rather than pinning S2's
+    # exact bounds.
+    assert ulx <= 170.0
+    assert ulx + 4 * scale_x >= 190.0
+    assert 4 * scale_x < 30.0
+
+
 def test_zero_bands_ignores_the_per_band_size_limit(con):
     """A bandless template is only grid metadata, so it allocates no pixel
     buffer and a grid too large for one band is still valid."""

@@ -39,7 +39,9 @@ kernels:
       description: >
         The grid covers this geometry's envelope with north-up pixels, in the
         geometry's CRS. A geography is accepted too, in which case the envelope
-        follows spherical edges and comes from the session's geography bounder.
+        follows spherical edges and comes from the session's geography bounder;
+        a geography crossing the antimeridian gives a grid whose x range runs
+        past 180 (for example, 170 to 190).
   - returns: raster
     args:
     - name: num_bands
