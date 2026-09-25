@@ -15,25 +15,31 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! `RS_SummaryStats` — one summary statistic of a band's pixel values.
+//! `RS_SummaryStats` and `RS_SummaryStatsAll` — summary statistics of a
+//! band's pixel values.
 //!
 //! ```text
 //! RS_SummaryStats(raster, statType)                              -> Double  -- band 1
 //! RS_SummaryStats(raster, statType, band)                        -> Double
 //! RS_SummaryStats(raster, statType, band, excludeNoDataValue)    -> Double
+//! RS_SummaryStatsAll(raster)                                     -> Struct  -- band 1
+//! RS_SummaryStatsAll(raster, band)                               -> Struct
+//! RS_SummaryStatsAll(raster, band, excludeNoDataValue)           -> Struct
 //! ```
 //!
 //! `statType` is one of `count`, `sum`, `mean`, `stddev`, `min` or `max`
 //! (case-insensitive); `stddev` is the population standard deviation.
+//! `RS_SummaryStatsAll` returns all six as the fields of one struct.
 //! `excludeNoDataValue` defaults to true, leaving nodata pixels out of the
-//! statistic. Over no pixels `count` and `sum` are 0 and the others are NaN.
+//! statistics. Over no pixels `count` and `sum` are 0 and the others are NaN.
 
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
 use arrow_array::builder::Float64Builder;
-use arrow_array::{Array, ArrayRef};
-use arrow_schema::DataType;
+use arrow_array::{Array, ArrayRef, StructArray};
+use arrow_buffer::NullBufferBuilder;
+use arrow_schema::{DataType, Field, Fields};
 use datafusion_common::cast::{as_boolean_array, as_int32_array, as_string_array};
 use datafusion_common::{Result, exec_err};
 use datafusion_expr::{ColumnarValue, Volatility};
@@ -65,6 +71,127 @@ pub fn rs_summarystats_udf() -> SedonaScalarUDF {
 #[derive(Debug)]
 struct RsSummaryStats {
     num_args: usize,
+}
+
+/// `RS_SummaryStatsAll()` scalar UDF — every summary statistic of a band.
+pub fn rs_summarystatsall_udf() -> SedonaScalarUDF {
+    SedonaScalarUDF::new(
+        "rs_summarystatsall",
+        vec![
+            Arc::new(RsSummaryStatsAll { num_args: 1 }), // (raster)
+            Arc::new(RsSummaryStatsAll { num_args: 2 }), // (raster, band)
+            Arc::new(RsSummaryStatsAll { num_args: 3 }), // (raster, band, excludeNoDataValue)
+        ],
+        Volatility::Immutable,
+    )
+    // The kernel reads pixel bytes, so the raster argument must be materialised
+    // InDb first; the planner injects RS_EnsureLoaded based on this flag.
+    .with_metadata(NEEDS_PIXELS_METADATA_KEY, "true")
+}
+
+/// `RS_SummaryStatsAll`'s struct: Sedona Spark's field names and order, each
+/// a non-nullable double (a NULL input nulls the whole struct instead).
+fn summary_fields() -> Fields {
+    ["count", "sum", "mean", "stddev", "min", "max"]
+        .into_iter()
+        .map(|name| Field::new(name, DataType::Float64, false))
+        .collect()
+}
+
+#[derive(Debug)]
+struct RsSummaryStatsAll {
+    num_args: usize,
+}
+
+impl SedonaScalarKernel for RsSummaryStatsAll {
+    fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
+        let matchers = [
+            ArgMatcher::is_raster(),
+            ArgMatcher::is_integer(),
+            ArgMatcher::is_boolean(),
+        ];
+        let matcher = ArgMatcher::new(
+            matchers[..self.num_args].to_vec(),
+            SedonaType::Arrow(DataType::Struct(summary_fields())),
+        );
+        matcher.match_args(args)
+    }
+
+    fn invoke_batch(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+    ) -> Result<ColumnarValue> {
+        let executor = RasterExecutor::new(arg_types, args);
+        let num_iterations = executor.num_iterations();
+        let mut builders: Vec<Float64Builder> = (0..6)
+            .map(|_| Float64Builder::with_capacity(num_iterations))
+            .collect();
+        let mut validity = NullBufferBuilder::new(num_iterations);
+
+        let band_arr = args
+            .get(1)
+            .map(|arg| int32_array_arg(arg, num_iterations))
+            .transpose()?;
+        let exclude_arr = args
+            .get(2)
+            .map(|arg| {
+                arg.cast_to(&DataType::Boolean, None)?
+                    .into_array(num_iterations)
+            })
+            .transpose()?;
+        let band = band_arr.as_ref().map(|a| as_int32_array(a)).transpose()?;
+        let exclude = exclude_arr
+            .as_ref()
+            .map(|a| as_boolean_array(a))
+            .transpose()?;
+
+        executor.execute_raster_void(|i, raster_opt| {
+            let stats = match raster_opt {
+                Some(raster)
+                    if !band.is_some_and(|b| b.is_null(i))
+                        && !exclude.is_some_and(|e| e.is_null(i)) =>
+                {
+                    // Clamp a negative band to 0 so resolve_band rejects it as
+                    // not 1-based rather than wrapping it into a huge usize.
+                    let band_num = band.map_or(1, |b| b.value(i).max(0) as usize);
+                    let exclude_nodata = exclude.is_none_or(|e| e.value(i));
+                    Some(with_band_values(
+                        "RS_SummaryStatsAll",
+                        raster,
+                        band_num,
+                        exclude_nodata,
+                        summarize,
+                    )?)
+                }
+                _ => None,
+            };
+            match stats {
+                Some(stats) => {
+                    validity.append_non_null();
+                    for (builder, stat) in builders.iter_mut().zip(stats) {
+                        builder.append_value(stat);
+                    }
+                }
+                None => {
+                    validity.append_null();
+                    // The fields are non-nullable, so a null row carries a
+                    // placeholder in every child under a null struct slot.
+                    for builder in builders.iter_mut() {
+                        builder.append_value(0.0);
+                    }
+                }
+            }
+            Ok(())
+        })?;
+
+        let arrays: Vec<ArrayRef> = builders
+            .iter_mut()
+            .map(|builder| Arc::new(builder.finish()) as ArrayRef)
+            .collect();
+        let struct_array = StructArray::try_new(summary_fields(), arrays, validity.finish())?;
+        executor.finish(Arc::new(struct_array))
+    }
 }
 
 impl SedonaScalarKernel for RsSummaryStats {
@@ -144,16 +271,32 @@ fn summary_stat(
     exclude_nodata: bool,
     stat_type: StatType,
 ) -> Result<f64> {
-    let band = resolve_band(FUNC, raster, band_num)?;
+    with_band_values(FUNC, raster, band_num, exclude_nodata, |values| {
+        stat_type.compute(values)
+    })
+}
+
+/// Run `f` over the values of the 1-based band `band_num`, leaving out nodata
+/// pixels when `exclude_nodata` is set. `func` names the calling UDF for the
+/// error messages.
+fn with_band_values<T>(
+    func: &'static str,
+    raster: &dyn RasterRef,
+    band_num: usize,
+    exclude_nodata: bool,
+    f: impl FnOnce(&BandValues) -> Result<T>,
+) -> Result<T> {
+    let band = resolve_band(func, raster, band_num)?;
     let values = BandValues {
-        buffer: spatial_2d_buffer(FUNC, band.as_ref())?,
+        func,
+        buffer: spatial_2d_buffer(func, band.as_ref())?,
         nodata: if exclude_nodata {
-            NodataMatcher::for_band(FUNC, band.as_ref())?
+            NodataMatcher::for_band(func, band.as_ref())?
         } else {
             None
         },
     };
-    stat_type.compute(&values)
+    f(&values)
 }
 
 /// The values of one band, in row-major order.
@@ -162,6 +305,7 @@ fn summary_stat(
 /// than collecting them: the band bytes are already in memory, and a copy would
 /// be 8 bytes per pixel (8x a UInt8 band) outside the query's memory accounting.
 struct BandValues<'a> {
+    func: &'static str,
     buffer: NdBuffer<'a>,
     /// Pixels this matches are left out; `None` keeps every pixel.
     nodata: Option<NodataMatcher<'a>>,
@@ -177,7 +321,7 @@ impl BandValues<'_> {
     /// The number of values, counted without decoding any of them.
     fn count(&self) -> Result<usize> {
         let mut count = 0;
-        scan_pixels(FUNC, &self.buffer, |_, _, pixel| {
+        scan_pixels(self.func, &self.buffer, |_, _, pixel| {
             if !self.is_nodata(pixel) {
                 count += 1;
             }
@@ -190,7 +334,7 @@ impl BandValues<'_> {
     fn for_each(&self, mut visit: impl FnMut(f64)) -> Result<()> {
         let data_type = self.buffer.data_type;
         let mut inexact = None;
-        scan_pixels(FUNC, &self.buffer, |col, row, pixel| {
+        scan_pixels(self.func, &self.buffer, |col, row, pixel| {
             if self.is_nodata(pixel) {
                 return ControlFlow::Continue(());
             }
@@ -209,8 +353,9 @@ impl BandValues<'_> {
         })?;
         match inexact {
             Some((col, row)) => exec_err!(
-                "{FUNC}: the {data_type:?} pixel at column {col}, row {row} exceeds 2^53 in \
-                 magnitude, so a Float64 statistic cannot represent it exactly"
+                "{}: the {data_type:?} pixel at column {col}, row {row} exceeds 2^53 in \
+                 magnitude, so a Float64 statistic cannot represent it exactly",
+                self.func
             ),
             None => Ok(()),
         }
@@ -253,46 +398,87 @@ impl StatType {
     fn compute(self, values: &BandValues) -> Result<f64> {
         match self {
             Self::Count => Ok(values.count()? as f64),
-            Self::Sum => sum(values),
-            Self::Mean => Ok(mean(values)?.0),
-            Self::StdDev => population_stddev(values),
-            Self::Min => extreme(values, |kept, v| kept < v),
-            Self::Max => extreme(values, |kept, v| kept > v),
+            Self::Sum => Ok(first_pass(values)?.sum),
+            Self::Mean => mean(values, &first_pass(values)?),
+            Self::StdDev => Ok(summarize(values)?[3]),
+            Self::Min => Ok(first_pass(values)?.min),
+            Self::Max => Ok(first_pass(values)?.max),
         }
     }
 }
 
-/// Commons Math `Sum`: a left-to-right sum, 0 over no values.
-fn sum(values: &BandValues) -> Result<f64> {
-    let mut sum = 0.0;
-    values.for_each(|v| sum += v)?;
-    Ok(sum)
+/// All six statistics, in Sedona Spark's order: count, sum, mean, stddev, min
+/// and max. Three passes over the band: the first pass, the mean's correction
+/// pass, and the variance pass.
+fn summarize(values: &BandValues) -> Result<[f64; 6]> {
+    let first = first_pass(values)?;
+    let mean = mean(values, &first)?;
+    let stddev = population_stddev(values, first.count, mean)?;
+    Ok([
+        first.count as f64,
+        first.sum,
+        mean,
+        stddev,
+        first.min,
+        first.max,
+    ])
 }
 
-/// Commons Math `Mean`: the definitional mean plus a second-pass correction
-/// for the rounding error of the first; NaN over no values. Also returns the
-/// number of values.
-fn mean(values: &BandValues) -> Result<(f64, usize)> {
+/// What one scan of the values yields: their number, Commons Math `Sum` (a
+/// left-to-right sum, 0 over no values), and Commons Math `Min` and `Max`
+/// (NaN over no values).
+struct FirstPass {
+    count: usize,
+    sum: f64,
+    min: f64,
+    max: f64,
+}
+
+fn first_pass(values: &BandValues) -> Result<FirstPass> {
     let (mut count, mut sum) = (0usize, 0.0);
+    let (mut min, mut max) = (None, None);
     values.for_each(|v| {
         count += 1;
         sum += v;
+        min = Some(keep_extreme(min, v, |kept, v| kept < v));
+        max = Some(keep_extreme(max, v, |kept, v| kept > v));
     })?;
-    if count == 0 {
-        return Ok((f64::NAN, 0));
+    Ok(FirstPass {
+        count,
+        sum,
+        min: min.unwrap_or(f64::NAN),
+        max: max.unwrap_or(f64::NAN),
+    })
+}
+
+/// One step of Commons Math `Min`/`Max`: start from the first value and keep
+/// it over each later non-NaN value unless `keep(kept, value)` fails, so NaN
+/// values are skipped (unless every value is NaN).
+fn keep_extreme(kept: Option<f64>, v: f64, keep: impl Fn(f64, f64) -> bool) -> f64 {
+    match kept {
+        None => v,
+        Some(k) if v.is_nan() || keep(k, v) => k,
+        Some(_) => v,
     }
-    let n = count as f64;
-    let xbar = sum / n;
+}
+
+/// Commons Math `Mean`: the definitional mean plus a second-pass correction
+/// for the rounding error of the first; NaN over no values.
+fn mean(values: &BandValues, first: &FirstPass) -> Result<f64> {
+    if first.count == 0 {
+        return Ok(f64::NAN);
+    }
+    let n = first.count as f64;
+    let xbar = first.sum / n;
     let mut correction = 0.0;
     values.for_each(|v| correction += v - xbar)?;
-    Ok((xbar + correction / n, count))
+    Ok(xbar + correction / n)
 }
 
 /// Commons Math `StandardDeviation` without bias correction: the square root
-/// of the corrected two-pass population variance around the Commons mean; 0
-/// over one value and NaN over none.
-fn population_stddev(values: &BandValues) -> Result<f64> {
-    let (mean, count) = mean(values)?;
+/// of the corrected two-pass population variance around the Commons `mean`
+/// of `count` values; 0 over one value and NaN over none.
+fn population_stddev(values: &BandValues, count: usize, mean: f64) -> Result<f64> {
     let variance = match count {
         0 => f64::NAN,
         1 => 0.0,
@@ -308,21 +494,6 @@ fn population_stddev(values: &BandValues) -> Result<f64> {
         }
     };
     Ok(variance.sqrt())
-}
-
-/// Commons Math `Min`/`Max`: starts from the first value and keeps it over
-/// each later non-NaN value unless `keep(kept, value)` fails, so NaN values are
-/// skipped (unless every value is NaN); NaN over no values.
-fn extreme(values: &BandValues, keep: impl Fn(f64, f64) -> bool) -> Result<f64> {
-    let mut kept: Option<f64> = None;
-    values.for_each(|v| {
-        kept = Some(match kept {
-            None => v,
-            Some(k) if v.is_nan() || keep(k, v) => k,
-            Some(_) => v,
-        })
-    })?;
-    Ok(kept.unwrap_or(f64::NAN))
 }
 
 #[cfg(test)]
@@ -592,5 +763,125 @@ mod tests {
                 .unwrap(),
             Some(SedonaType::Arrow(DataType::Float64))
         );
+    }
+
+    /// `RS_SummaryStatsAll` over the first row of `spec`.
+    fn all(spec: RasterSpec, band: usize, exclude: bool) -> Result<[f64; 6]> {
+        let array = spec.build();
+        let rasters = RasterStructArray::try_new(&array).unwrap();
+        with_band_values(
+            "RS_SummaryStatsAll",
+            &rasters.get(0).unwrap(),
+            band,
+            exclude,
+            summarize,
+        )
+    }
+
+    #[test]
+    fn all_matches_sedona_spark_bit_for_bit() {
+        // The same Sedona Spark 1.9.1 anchors as the single statistics, in
+        // RS_SummaryStatsAll's field order.
+        assert_eq!(
+            all(float_band(), 1, true).unwrap(),
+            [
+                6.0,
+                600000006.9000001,
+                100000001.15,
+                0.7017834414254126,
+                100000000.2,
+                100000002.5,
+            ]
+        );
+    }
+
+    #[test]
+    fn all_agrees_with_each_single_statistic() {
+        // One struct and six separate calls go through the same arithmetic.
+        let spec = RasterSpec::d2(3, 2)
+            .band_values(&[f64::NAN, 2.5, -1.0, 7.0, 250.0, 0.125])
+            .nodata(250f64);
+        for exclude in [true, false] {
+            let got = all(spec.clone(), 1, exclude).unwrap();
+            for (i, stat_type) in ["count", "sum", "mean", "stddev", "min", "max"]
+                .into_iter()
+                .enumerate()
+            {
+                let single = stat(spec.clone(), stat_type, 1, exclude).unwrap();
+                assert_eq!(
+                    got[i].to_bits(),
+                    single.to_bits(),
+                    "{stat_type}, exclude={exclude}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn all_over_no_values() {
+        let spec = RasterSpec::d2(2, 1).band_values(&[7u8, 7]).nodata(7u8);
+        let [count, sum, rest @ ..] = all(spec, 1, true).unwrap();
+        assert_eq!((count, sum), (0.0, 0.0));
+        assert!(rest.iter().all(|v| v.is_nan()), "{rest:?}");
+    }
+
+    #[test]
+    fn all_errors_name_the_function() {
+        let err = all(float_band(), 2, true).unwrap_err().to_string();
+        assert!(err.contains("RS_SummaryStatsAll"), "{err}");
+    }
+
+    #[test]
+    fn all_udf_every_arity() {
+        let two_bands = || {
+            RasterSpec::d2(2, 1)
+                .band_values(&[1u8, 3])
+                .band_values(&[10u8, 250])
+                .nodata(250u8)
+        };
+        let int32 = SedonaType::Arrow(DataType::Int32);
+        let boolean = SedonaType::Arrow(DataType::Boolean);
+        let udf: ScalarUDF = rs_summarystatsall_udf().into();
+        let sums = |result: &ArrayRef| {
+            let result = result.as_any().downcast_ref::<StructArray>().unwrap();
+            let sum = result
+                .column_by_name("sum")
+                .unwrap()
+                .as_any()
+                .downcast_ref::<Float64Array>()
+                .unwrap();
+            (0..result.len())
+                .map(|i| (!result.is_null(i)).then(|| sum.value(i)))
+                .collect::<Vec<_>>()
+        };
+
+        // Band 1 by default; a NULL raster is a NULL struct.
+        let tester = ScalarUdfTester::new(udf.clone(), vec![RASTER]);
+        tester.assert_return_type(DataType::Struct(summary_fields()));
+        let result = tester
+            .invoke_array(Arc::new(raster_array([Some(two_bands()), None])))
+            .unwrap();
+        assert_eq!(sums(&result), vec![Some(4.0), None]);
+
+        // Band 2 leaves out its nodata pixel; a NULL band is a NULL struct.
+        let tester = ScalarUdfTester::new(udf.clone(), vec![RASTER, int32.clone()]);
+        let result = tester
+            .invoke_arrays(vec![
+                Arc::new(raster_array([Some(two_bands()), Some(two_bands())])),
+                Arc::new(Int32Array::from(vec![Some(2), None])),
+            ])
+            .unwrap();
+        assert_eq!(sums(&result), vec![Some(10.0), None]);
+
+        // ...unless told to keep it; a NULL flag is a NULL struct.
+        let tester = ScalarUdfTester::new(udf, vec![RASTER, int32, boolean]);
+        let result = tester
+            .invoke_arrays(vec![
+                Arc::new(raster_array([Some(two_bands()), Some(two_bands())])),
+                Arc::new(Int32Array::from(vec![2, 2])),
+                Arc::new(BooleanArray::from(vec![Some(false), None])),
+            ])
+            .unwrap();
+        assert_eq!(sums(&result), vec![Some(260.0), None]);
     }
 }
