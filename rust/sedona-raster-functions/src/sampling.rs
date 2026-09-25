@@ -52,8 +52,9 @@ pub(crate) fn int32_array_arg(arg: &ColumnarValue, num_iterations: usize) -> Res
 
 /// Resolve the **1-based** `band_num` to a [`BandRef`], mapping it onto the
 /// raster's 0-based [`RasterRef::band`] accessor. Band 0 is rejected as not
-/// 1-based (callers clamp negative inputs to 0 for exactly this signal); an
-/// out-of-range band surfaces the accessor's own error. `func` names the
+/// 1-based (callers clamp negative inputs to 0 for exactly this signal). An
+/// out-of-range band is checked here rather than left to the accessor, whose
+/// error names the 0-based index the caller never wrote. `func` names the
 /// calling UDF for the error message.
 pub(crate) fn resolve_band<'a>(
     func: &str,
@@ -63,6 +64,12 @@ pub(crate) fn resolve_band<'a>(
     let index = band_num.checked_sub(1).ok_or_else(|| {
         exec_datafusion_err!("{func}: Invalid band number {band_num}: band numbers must be 1-based")
     })?;
+    let num_bands = raster.num_bands();
+    if index >= num_bands {
+        return exec_err!(
+            "{func}: Band {band_num} is out of range: this raster has {num_bands} bands"
+        );
+    }
     raster
         .band(index)
         .map_err(|e| exec_datafusion_err!("{func}: {e}"))
