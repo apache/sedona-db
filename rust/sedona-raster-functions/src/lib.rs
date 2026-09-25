@@ -22,6 +22,7 @@ pub mod footprint;
 mod pixel_scan;
 pub mod register;
 pub mod rs_band_accessors;
+pub mod rs_bandisnodata;
 pub mod rs_bandpath;
 pub mod rs_convexhull;
 pub mod rs_dim_band;
