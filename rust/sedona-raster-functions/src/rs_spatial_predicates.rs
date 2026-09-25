@@ -383,7 +383,7 @@ fn evaluate_predicate<Op: tg::BinaryPredicate>(wkb_a: &[u8], wkb_b: &[u8]) -> Re
     let geom_b =
         tg::Geom::parse_wkb(wkb_b, tg::IndexType::Default).context("Failed to parse WKB B")?;
 
-    Ok(Op::evaluate(&geom_a, &geom_b))
+    Ok(Op::evaluate(&geom_a, &geom_b)?)
 }
 
 /// Exact WKB byte size for a 2D polygon with 1 ring of 5 points (the raster convex hull).

@@ -315,7 +315,7 @@ impl<Op: BinaryPredicate + Send + Sync> TgPredicateEvaluatorImpl<Op> {
 
 impl<Op: BinaryPredicate + Send + Sync> TgPredicateEvaluator for TgPredicateEvaluatorImpl<Op> {
     fn evaluate(&self, build: &tg::Geom, probe: &tg::Geom, _distance: Option<f64>) -> Result<bool> {
-        Ok(Op::evaluate(build, probe))
+        Ok(Op::evaluate(build, probe)?)
     }
 }
 

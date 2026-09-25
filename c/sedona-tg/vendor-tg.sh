@@ -17,10 +17,11 @@
 # specific language governing permissions and limitations
 # under the License.
 
-TG_REF=e136401cd6870008eb7d12a2a165fdc27d18d5ef
+# Using paleolimbot/tg for now until all PRs fixing issues are merged
+TG_REF=2a5bca8177bc907f041448eb93f76025b41b963d
 
-curl -L https://github.com/tidwall/tg/raw/${TG_REF}/tg.c \
+curl -L https://github.com/paleolimbot/tg/raw/${TG_REF}/tg.c \
     -o src/tg/tg.c
 
-curl -L https://github.com/tidwall/tg/raw/${TG_REF}/tg.h \
+curl -L https://github.com/paleolimbot/tg/raw/${TG_REF}/tg.h \
     -o src/tg/tg.h

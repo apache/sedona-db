@@ -4,9 +4,6 @@
 // Use of this source code is governed by an MIT-style
 // license that can be found in the LICENSE file.
 
-// See https://github.com/tidwall/tg/issues/15 for upstream resolution
-#define _USE_MATH_DEFINES
-
 #include <math.h>
 #include <float.h>
 #include <stdarg.h>
@@ -19,17 +16,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
-
-// See https://github.com/tidwall/tg/issues/15 for upstream resolution
-#if defined(_MSC_VER)
-#undef __BYTE_ORDER__
-#undef __ORDER_LITTLE_ENDIAN__
-#undef __ORDER_BIG_ENDIAN__
-
-#define __BYTE_ORDER__ 1
-#define __ORDER_LITTLE_ENDIAN__ 1
-#define __ORDER_BIG_ENDIAN__ 0
-#endif
 
 /******************************************************************************
 
@@ -44,6 +30,7 @@ Developer notes:
 - Do not edit a dependency directly in this file. Instead edit the file in
 the deps directory and then run deps/embed.sh to replace out its code in
 this file.
+- Limit line lengths to 80 columns. Use `grep -n '.\{81\}' tg.c` to help.
 
 *******************************************************************************/
 
@@ -149,6 +136,8 @@ TG_EXTERN void tg_geom_search(const struct tg_geom *geom, struct tg_rect rect,
     void *udata);
 TG_EXTERN int tg_geom_fullrect(const struct tg_geom *geom, double min[4],
     double max[4]);
+TG_EXTERN bool tg_geom_containment_predicates_supported(const struct tg_geom *a,
+    const struct tg_geom *b);
 TG_EXTERN bool tg_geom_equals(const struct tg_geom *a, const struct tg_geom *b);
 TG_EXTERN bool tg_geom_intersects(const struct tg_geom *a,
     const struct tg_geom *b);
@@ -553,66 +542,64 @@ enum flags {
     IS_UNLOCATED   = 1<<7,  // GeoJSON. 'Feature' with 'geometry'=null
 };
 
+#if defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L)
+#ifndef __STDC_NO_ATOMICS__
+#define HAS_ATOMICS
+#endif
+#endif
+
+#ifndef HAS_ATOMICS
+#error <stdatomic.h> is not available. \
+Explicitly provide TG_NOATOMIC if you intend to use TG without atomics.
+#endif
+
 // Optionally use non-atomic reference counting when TG_NOATOMICS is defined.
-#ifdef TG_NOATOMICS
+#if defined(TG_NOATOMICS)
 
 typedef int rc_t;
 static void rc_init(rc_t *rc) {
     *rc = 0;
 }
 static void rc_retain(rc_t *rc) {
-    *rc++;
+    (*rc)++;
 }
 static bool rc_release(rc_t *rc) {
-    *rc--;
-    return *rc == 1;
+    return (*rc)-- == 1;
 }
 
 #else
 
 #include <stdatomic.h>
 
-/*
-The relaxed/release/acquire pattern is based on:
-http://boost.org/doc/libs/1_87_0/libs/atomic/doc/html/atomic/usage_examples.html
-See https://github.com/tidwall/tg/issues/15 for upstream resolution of
-atomics on Windows/MSVC.
-*/
+#ifdef _MSC_VER
+/* MSVC atomics memory ordering may not be complete. Use default (seq_cst) */
+#ifndef atomic_fetch_add_explicit
+#define atomic_fetch_add_explicit(a,b,c) atomic_fetch_add(a,b)
+#endif
+#ifndef atomic_fetch_sub_explicit
+#define atomic_fetch_sub_explicit(a,b,c) atomic_fetch_sub(a,b)
+#endif
+#endif
 
 typedef atomic_int rc_t;
 static void rc_init(rc_t *rc) {
     atomic_init(rc, 0);
 }
 static void rc_retain(rc_t *rc) {
-    #if defined(_MSC_VER)
-        (void)atomic_fetch_add(rc, 1);
-    #else
-        atomic_fetch_add_explicit(rc, 1, __ATOMIC_RELAXED);
-    #endif
+    (void)atomic_fetch_add_explicit(rc, 1, memory_order_relaxed);
 }
 static bool rc_release(rc_t *rc) {
-    #if defined(_MSC_VER)
-        if (atomic_fetch_sub(rc, 1) == 1) {
-            atomic_thread_fence(memory_order_acquire);
-            return true;
-        }
-    #else
-        if (atomic_fetch_sub_explicit(rc, 1, __ATOMIC_RELEASE) == 1) {
-            atomic_thread_fence(__ATOMIC_ACQUIRE);
-            return true;
-        }
-    #endif
-    return false;
+    return atomic_fetch_sub_explicit(rc, 1, memory_order_acq_rel) == 1;
 }
 
 #endif
 
 struct head {
-    rc_t rc;
-    bool noheap;
-    enum base base:4;
-    enum tg_geom_type type:4;
-    enum flags flags:8;
+    rc_t rc;        // 4-byte atomic reference counter
+    uint8_t noheap; // bool
+    uint8_t base;   // enum base
+    uint8_t type;   // enum tg_geom_type
+    uint8_t flags;  // enum flags
 };
 
 /// A ring is series of tg_segment which creates a shape that does not
@@ -640,10 +627,11 @@ struct head {
 /// @see PolyFuncs
 struct tg_ring {
     struct head head;
+    size_t allocsize;
+    double area;
     bool closed;
     bool clockwise;
     bool convex;
-    double area;
     int npoints;
     int nsegs;
     struct tg_rect rect;
@@ -713,7 +701,7 @@ struct multi {
 /// LineString, Polygon, MultiPoint, MultiLineString, MultiPolygon, or
 /// GeometryCollection.
 ///
-/// For geometries that are derived from GeoJSON, they may have addtional
+/// For geometries that are derived from GeoJSON, they may have additional
 /// attributes such as being a Feature or a FeatureCollection; or include
 /// extra json fields.
 ///
@@ -759,7 +747,7 @@ struct tg_geom {
             double m;
         };
         struct {  // !TG_POINT
-            double *coords; // extra dimensinal coordinates
+            double *coords; // extra dimensional coordinates
             int ncoords;
         };
     };
@@ -978,11 +966,25 @@ void tg_env_set_allocator(
 }
 
 void *tg_malloc(size_t nbytes) {
-    return (_malloc?_malloc:malloc)(nbytes);
+    void *ptr = (_malloc?_malloc:malloc)(nbytes);
+#ifdef TG_ABORTNOMEM
+    if (!ptr) {
+        fprintf(stderr, "Out of memory\n");
+        abort();
+    }
+#endif
+    return ptr;
 }
 
 void *tg_realloc(void *ptr, size_t nbytes) {
-    return (_realloc?_realloc:realloc)(ptr, nbytes);
+    ptr = (_realloc?_realloc:realloc)(ptr, nbytes);
+#ifdef TG_ABORTNOMEM
+    if (!ptr) {
+        fprintf(stderr, "Out of memory\n");
+        abort();
+    }
+#endif
+    return ptr;
 }
 
 void tg_free(void *ptr) {
@@ -1449,15 +1451,6 @@ bool tg_segment_covers_rect(struct tg_segment seg, struct tg_rect rect) {
            tg_segment_covers_point(seg, rect.max);
 }
 
-//////////////////
-// ystripes
-//////////////////
-
-struct ystripe {
-    int count;
-    int *indexes;
-};
-
 struct tg_buf {
     uint8_t *data;
     size_t len, cap;
@@ -1690,6 +1683,15 @@ static size_t calc_index_size(int ixspread, int nsegs, int *nlevelsout) {
     return size;
 }
 
+//////////////////
+// ystripes
+//////////////////
+
+struct ystripe {
+    int count;
+    int *indexes;
+};
+
 struct ystripes {
     size_t memsz;
     int nstripes;
@@ -1733,6 +1735,8 @@ static bool process_ystripes(struct tg_ring *ring) {
     tsize += nstripes*sizeof(struct ystripe);
     size_t mark = tsize;
     tsize += nmap*sizeof(int);
+    tsize = aligned_size(tsize);
+
     struct ystripes *ystripes = tg_malloc(tsize);
     if (!ystripes) {
         tg_free(ycounts);
@@ -1847,17 +1851,6 @@ static void rect_to_ring(struct tg_rect rect, struct tg_ring *ring) {
     for (int i = 0; i < 5; i++) {
         ring->points[i] = tg_rect_point_at(rect, i);
     }
-}
-
-static void segment_to_ring(struct tg_segment seg, struct tg_ring *ring) {
-    memset(ring, 0, sizeof(struct tg_ring));
-    ring->rect = tg_segment_rect(seg);
-    ring->closed = false;
-    ring->convex = true;
-    ring->npoints = 2;
-    ring->nsegs = 1;
-    ring->points[0] = seg.a;
-    ring->points[1] = seg.b;
 }
 
 void tg_rect_search(const struct tg_rect rect, struct tg_rect target,
@@ -2027,7 +2020,7 @@ static struct tg_rect process_points(const struct tg_point *points,
     // - Wrapped is the remaining loop steps, up to three.
     //
     // Finally, there is a Convex and Concave section.
-    // - Convex is the initial state. Each step will do some calcuations until
+    // - Convex is the initial state. Each step will do some calculations until
     //   it is determined if the ring is concave. Once it's known to be concave
     //   the code jumps to the Concave section.
     // - Concave section is just like the Convex section, but there is no
@@ -2212,6 +2205,7 @@ static struct tg_ring *series_new(const struct tg_point *points, int npoints,
     memset(ring, 0, sizeof(struct tg_ring));
     rc_init(&ring->head.rc);
     rc_retain(&ring->head.rc);
+    ring->allocsize = size+ixsize;
     ring->closed = closed;
     ring->npoints = npoints;
     ring->nsegs = nsegs;
@@ -2303,7 +2297,9 @@ struct tg_ring *tg_ring_new_ix(const struct tg_point *points, int npoints,
 /// @param ring Input ring
 /// @see RingFuncs
 void tg_ring_free(struct tg_ring *ring) {
-    if (!ring || ring->head.noheap || !rc_release(&ring->head.rc)) return;
+    if (!ring || ring->head.noheap || !rc_release(&ring->head.rc)) {
+        return;
+    }
     if (ring->ystripes) tg_free(ring->ystripes);
     tg_free(ring);
 }
@@ -2340,7 +2336,7 @@ struct tg_ring *tg_ring_clone(const struct tg_ring *ring) {
 /// @see RingFuncs
 size_t tg_ring_memsize(const struct tg_ring *ring) {
     if (!ring) return 0;
-    size_t size = ring_alloc_size(ring);
+    size_t size = ring->allocsize ? ring->allocsize : ring_alloc_size(ring);
     if (ring->ystripes) {
         size += ring->ystripes->memsz;
     }
@@ -2359,7 +2355,7 @@ int tg_ring_num_points(const struct tg_ring *ring) {
 
 /// Returns the minimum bounding rectangle of a rect.
 /// @param ring Input ring
-/// @returns Minimum bounding retangle
+/// @returns Minimum bounding rectangle
 /// @see RingFuncs
 struct tg_rect tg_ring_rect(const struct tg_ring *ring) {
     if (!ring) return (struct tg_rect){ 0 };
@@ -2591,7 +2587,7 @@ static bool ring_ring_ix(const struct tg_ring *a, int alvl, int aidx,
 }
 
 /// Iterates over all segments in ring A that intersect with segments in ring B.
-/// @note This efficently uses the indexes of each geometry, if available.
+/// @note This efficiently uses the indexes of each geometry, if available.
 /// @see RingFuncs
 void tg_ring_ring_search(const struct tg_ring *a, const struct tg_ring *b,
     bool (*iter)(struct tg_segment aseg, int aidx, struct tg_segment bseg,
@@ -2644,7 +2640,7 @@ void tg_ring_ring_search(const struct tg_ring *a, const struct tg_ring *b,
 }
 
 /// Iterates over all segments in line A that intersect with segments in line B.
-/// @note This efficently uses the indexes of each geometry, if available.
+/// @note This efficiently uses the indexes of each geometry, if available.
 /// @see LineFuncs
 void tg_line_line_search(const struct tg_line *a, const struct tg_line *b,
     bool (*iter)(struct tg_segment aseg, int aidx, struct tg_segment bseg,
@@ -2655,7 +2651,7 @@ void tg_line_line_search(const struct tg_line *a, const struct tg_line *b,
 }
 
 /// Iterates over all segments in ring A that intersect with segments in line B.
-/// @note This efficently uses the indexes of each geometry, if available.
+/// @note This efficiently uses the indexes of each geometry, if available.
 /// @see RingFuncs
 void tg_ring_line_search(const struct tg_ring *a, const struct tg_line *b,
     bool (*iter)(struct tg_segment aseg, int aidx, struct tg_segment bseg,
@@ -3035,16 +3031,45 @@ bool tg_ring_contains_segment(const struct tg_ring *ring,
 }
 
 struct intersegiterctx {
+    const struct tg_ring *ring;
     struct tg_segment seg;
     int count;
     bool allow_on_edge;
     bool seg_a_on;
     bool seg_b_on;
+    bool has_intersection;
+    double intersection_t;
     // bool yes;
 };
 
+static bool ring_vertex_is_convex_tangent(const struct tg_ring *ring,
+    int index, struct tg_segment seg)
+{
+    // A line through a convex vertex is tangent when both incident ring
+    // edges stay on the same side of the line. A reflex vertex or incident
+    // edges on opposite sides expose polygon interior to the line.
+    int nsegs = ring->nsegs;
+    struct tg_point prev = ring->points[(index+nsegs-1)%nsegs];
+    struct tg_point vertex = ring->points[index];
+    struct tg_point next = ring->points[(index+1)%nsegs];
+    double in_x = vertex.x-prev.x;
+    double in_y = vertex.y-prev.y;
+    double out_x = next.x-vertex.x;
+    double out_y = next.y-vertex.y;
+    double turn = in_x*out_y-in_y*out_x;
+    bool convex = ring->clockwise ? turn < 0 : turn > 0;
+    if (!convex) {
+        return false;
+    }
+    double seg_x = seg.b.x-seg.a.x;
+    double seg_y = seg.b.y-seg.a.y;
+    double prev_side = seg_x*(prev.y-vertex.y)-seg_y*(prev.x-vertex.x);
+    double next_side = seg_x*(next.y-vertex.y)-seg_y*(next.x-vertex.x);
+    return (prev_side < 0 && next_side < 0) ||
+           (prev_side > 0 && next_side > 0);
+}
+
 static bool intersegiter(struct tg_segment seg, int index, void *udata) {
-    (void)index;
     struct intersegiterctx *ctx = udata;
 
     if (!tg_segment_intersects_segment(ctx->seg, seg)) {
@@ -3068,6 +3093,7 @@ static bool intersegiter(struct tg_segment seg, int index, void *udata) {
     if (ccol && dcol) {
         // lines are parallel.
         ctx->count = 0;
+        ctx->has_intersection = false;
     } else if (!ccol || !dcol) {
         if (!ctx->seg_a_on) {
             if (pteq(a, c) || pteq(a, d)) {
@@ -3081,6 +3107,22 @@ static bool intersegiter(struct tg_segment seg, int index, void *udata) {
                 return true;
             }
         }
+        if (ccol || dcol) {
+            int vertex = ccol ? index : (index+1)%ctx->ring->nsegs;
+            if (ring_vertex_is_convex_tangent(ctx->ring, vertex, ctx->seg)) {
+                return true;
+            }
+        }
+        double rx = b.x-a.x;
+        double ry = b.y-a.y;
+        double sx = d.x-c.x;
+        double sy = d.y-c.y;
+        double t = ((c.x-a.x)*sy-(c.y-a.y)*sx) / (rx*sy-ry*sx);
+        if (ctx->has_intersection && t == ctx->intersection_t) {
+            return true;
+        }
+        ctx->has_intersection = true;
+        ctx->intersection_t = t;
         ctx->count++;
     }
     return ctx->count < 2;
@@ -3103,6 +3145,7 @@ bool tg_ring_intersects_segment(const struct tg_ring *ring,
     // are on the outside and are passing over segments. If the segment passes
     // over at least two ring segments then it's intersecting.
     struct intersegiterctx ctx = {
+        .ring = ring,
         .seg = seg,
         .allow_on_edge = allow_on_edge,
     };
@@ -3623,10 +3666,8 @@ bool tg_line_covers_poly(const struct tg_line *line,
     struct tg_rect rect = tg_poly_rect(poly);
     if (rect.min.x != rect.max.x && rect.min.y != rect.max.y) return false;
 
-    // polygon can fit in a straight (vertial or horizontal) line
-    struct tg_segment seg = { rect.min, rect.max };
+    // polygon can fit in a straight (vertical or horizontal) line
     struct tg_ring *other = stack_ring();
-    segment_to_ring(seg, other);
     rect_to_ring(rect, other);
     return tg_line_covers_line(line, (struct tg_line*)(other));
 }
@@ -4004,7 +4045,12 @@ bool tg_poly_contains_line(const struct tg_poly *a, const struct tg_line *b) {
     }
     int nholes = tg_poly_num_holes(a);
     for (int i = 0; i < nholes; i++) {
-        if (tg_ring_intersects_line(tg_poly_hole_at(a, i), b, false)) {
+        const struct tg_ring *hole = tg_poly_hole_at(a, i);
+        // A line wholly on a hole boundary is covered, but has no interior
+        // inside the polygon and therefore is not contained.
+        if (tg_ring_intersects_line(hole, b, false) ||
+            tg_ring_contains_line(hole, b, true, false))
+        {
             return false;
         }
     }
@@ -4067,11 +4113,12 @@ bool tg_poly_covers_poly(const struct tg_poly *a, const struct tg_poly *b) {
     if (!tg_ring_contains_ring(a_exterior, b_exterior, true)) {
         return false;
     }
-    // 2) ring cannot intersect or be contained by poly holes
+    // 2) The other exterior cannot enter a hole or lie entirely on its
+    // boundary. The latter does not count as an interior ring intersection.
     bool covers = true;
     for (int i = 0; i < a_nholes; i++) {
-        if (tg_ring_contains_ring(a_holes[i], b_exterior, true) ||
-            tg_ring_intersects_ring(a_holes[i], b_exterior, false))
+        if (tg_ring_intersects_ring(a_holes[i], b_exterior, false) ||
+            tg_ring_contains_ring(a_holes[i], b_exterior, true))
         {
             covers = false;
             // 3) unless the poly hole is contain inside of a other hole
@@ -4135,40 +4182,45 @@ bool tg_poly_intersects_poly(const struct tg_poly *poly,
     return true;
 }
 
+static bool ring_line_boundary_intersects_iter(struct tg_segment aseg,
+    int aidx, struct tg_segment bseg, int bidx, void *udata)
+{
+    (void)aseg;
+    (void)aidx;
+    (void)bseg;
+    (void)bidx;
+    *(bool *)udata = true;
+    return false;
+}
+
+static bool ring_line_boundary_intersects(const struct tg_ring *ring,
+    const struct tg_line *line)
+{
+    bool intersects = false;
+    tg_ring_line_search(ring, line, ring_line_boundary_intersects_iter,
+        &intersects);
+    return intersects;
+}
+
 bool tg_poly_touches_line(const struct tg_poly *a, const struct tg_line *b) {
     if (!tg_rect_intersects_rect(tg_poly_rect(a), tg_line_rect(b))) {
         return false;
     }
 
     // Check if the line is inside any of the polygon holes
-    int npoints = tg_line_num_points(b);
     int nholes = tg_poly_num_holes(a);
     for (int i = 0; i < nholes; i++) {
         const struct tg_ring *hole = tg_poly_hole_at(a, i);
         if (tg_ring_contains_line(hole, b, true, false)) {
-            // Yes, now check if any of the points touch the hole boundary.
-            for (int j = 0; j < npoints; j++) {
-                struct tg_point point = tg_line_point_at(b, j);
-                if (tg_line_covers_point((struct tg_line*)hole, point)) {
-                    return true;
-                }
-            }
-            return false;
+            // Yes, now check if the line touches the hole boundary.
+            return ring_line_boundary_intersects(hole, b);
         }
     }
 
-    // Check if at least one line point touches the polygon exterior.
+    // Check if the line touches the polygon exterior. The intersection may
+    // fall in the interior of a line segment rather than on a line point.
     const struct tg_ring *ring = tg_poly_exterior(a);
-    bool touches = false;
-    for (int i = 0; i < npoints; i++) {
-        struct tg_point point = tg_line_point_at(b, i);
-        // Cast the exterior ring to a polygon to avoid holes.
-        if (tg_poly_touches_point((struct tg_poly*)ring, point)) {
-            touches = true;
-            break;
-        }
-    }
-    if (!touches) {
+    if (!ring_line_boundary_intersects(ring, b)) {
         return false;
     }
     int nsegs = tg_line_num_segments(b);
@@ -4298,7 +4350,7 @@ size_t tg_poly_memsize(const struct tg_poly *poly) {
     if (poly->exterior) {
         size += tg_ring_memsize(poly->exterior);
     }
-    size += poly->nholes*sizeof(struct tg_ring);
+    size += poly->nholes*sizeof(struct tg_ring*);
     for (int i = 0; i < poly->nholes; i++) {
         size += tg_ring_memsize(poly->holes[i]);
     }
@@ -4323,7 +4375,7 @@ static struct tg_geom *geom_new(enum tg_geom_type type) {
 static struct tg_geom *geom_new_empty(enum tg_geom_type type) {
     struct tg_geom *geom = geom_new(type);
     if (!geom) return NULL;
-    geom->head.flags = IS_EMPTY;
+    geom->head.flags |= IS_EMPTY;
     return geom;
 }
 
@@ -4346,7 +4398,9 @@ struct tg_geom *tg_geom_new_point(struct tg_point point) {
 }
 
 static void boxed_point_free(struct boxed_point *point) {
-    if (point->head.noheap || !rc_release(&point->head.rc)) return;
+    if (point->head.noheap || !rc_release(&point->head.rc)) {
+        return;
+    }
     tg_free(point);
 }
 
@@ -4359,7 +4413,7 @@ static void boxed_point_free(struct boxed_point *point) {
 struct tg_geom *tg_geom_new_point_z(struct tg_point point, double z) {
     struct tg_geom *geom = geom_new(TG_POINT);
     if (!geom) return NULL;
-    geom->head.flags = HAS_Z;
+    geom->head.flags |= HAS_Z;
     geom->point = point;
     geom->z = z;
     return geom;
@@ -4374,7 +4428,7 @@ struct tg_geom *tg_geom_new_point_z(struct tg_point point, double z) {
 struct tg_geom *tg_geom_new_point_m(struct tg_point point, double m) {
     struct tg_geom *geom = geom_new(TG_POINT);
     if (!geom) return NULL;
-    geom->head.flags = HAS_M;
+    geom->head.flags |= HAS_M;
     geom->point = point;
     geom->m = m;
     return geom;
@@ -4391,7 +4445,7 @@ struct tg_geom *tg_geom_new_point_zm(struct tg_point point, double z, double m)
 {
     struct tg_geom *geom = geom_new(TG_POINT);
     if (!geom) return NULL;
-    geom->head.flags = HAS_Z | HAS_M;
+    geom->head.flags |= HAS_Z | HAS_M;
     geom->point = point;
     geom->z = z;
     geom->m = m;
@@ -4797,7 +4851,7 @@ static struct tg_geom *fill_extra_coords(struct tg_geom *geom,
 {
     ncoords = ncoords < 0 ? 0 : ncoords;
     // if (!geom) return NULL; // already checked
-    geom->head.flags = flags;
+    geom->head.flags |= flags;
     geom->ncoords = ncoords;
     if (ncoords == 0) {
         geom->coords = NULL;
@@ -5105,7 +5159,9 @@ struct tg_geom *tg_geom_clone(const struct tg_geom *geom) {
 }
 
 static void geom_free(struct tg_geom *geom) {
-    if (geom->head.noheap || !rc_release(&geom->head.rc)) return;
+    if (geom->head.noheap || !rc_release(&geom->head.rc)) {
+        return;
+    }
     switch (geom->head.type) {
     case TG_POINT:
         break;
@@ -5222,7 +5278,7 @@ static struct tg_rect geom_rect(const struct tg_geom *geom) {
 
 /// Returns the minimum bounding rectangle of a geometry.
 /// @param geom Input geometry
-/// @return Minumum bounding rectangle
+/// @return Minimum bounding rectangle
 /// @see tg_rect
 /// @see GeometryAccessors
 struct tg_rect tg_geom_rect(const struct tg_geom *geom) {
@@ -5533,6 +5589,85 @@ void tg_geom_foreach(const struct tg_geom *geom,
     void *udata)
 {
     geom_foreach(geom, iter, udata);
+}
+
+struct predicates_supported_pair_ctx {
+    const struct tg_geom *target;
+    const struct tg_geom *first;
+    bool intersects;
+};
+
+static bool predicates_supported_pair_iter(const struct tg_geom *second,
+    void *udata)
+{
+    struct predicates_supported_pair_ctx *ctx = udata;
+    if (second != ctx->first &&
+        tg_geom_intersects(ctx->first, second) &&
+        tg_geom_intersects(second, ctx->target))
+    {
+        ctx->intersects = true;
+        return false;
+    }
+    return true;
+}
+
+struct predicates_supported_collection_ctx {
+    const struct tg_geom *collection;
+    const struct tg_geom *target;
+    bool supported;
+};
+
+static bool predicates_supported_collection_iter(const struct tg_geom *first,
+    void *udata)
+{
+    struct predicates_supported_collection_ctx *ctx = udata;
+    if (!tg_geom_intersects(first, ctx->target)) {
+        return true;
+    }
+    struct predicates_supported_pair_ctx pair = {
+        .target = ctx->target,
+        .first = first,
+    };
+    tg_geom_foreach(ctx->collection, predicates_supported_pair_iter, &pair);
+    if (pair.intersects) {
+        ctx->supported = false;
+        return false;
+    }
+    return true;
+}
+
+static bool geom_predicates_supported_one(const struct tg_geom *collection,
+    const struct tg_geom *target)
+{
+    struct predicates_supported_collection_ctx ctx = {
+        .collection = collection,
+        .target = target,
+        .supported = true,
+    };
+    tg_geom_foreach(collection, predicates_supported_collection_iter, &ctx);
+    return ctx.supported;
+}
+
+/// Tests whether contains and covered-by predicates are supported for the two
+/// geometries. They are unsupported when a non-point target intersects two
+/// collection components that also intersect one another.
+bool tg_geom_containment_predicates_supported(const struct tg_geom *a,
+    const struct tg_geom *b)
+{
+    if (!a || !b || tg_geom_error(a) || tg_geom_error(b)) {
+        return false;
+    }
+    bool a_is_collection = a->head.type >= TG_MULTIPOINT;
+    bool b_is_collection = b->head.type >= TG_MULTIPOINT;
+    if (a_is_collection && tg_geom_de9im_dims(b) > 0 &&
+        !geom_predicates_supported_one(a, b)) {
+        return false;
+    }
+    if (b_is_collection && tg_geom_de9im_dims(a) > 0 &&
+        !geom_predicates_supported_one(b, a)) {
+        return false;
+    }
+    return true;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -6195,294 +6330,75 @@ static bool point_contains_base_geom(struct tg_point point,
     return false;
 }
 
-struct geom_contains_point_ctx {
-    struct tg_point point;
-    bool point_hit;
-    bool line_interior_hit;
-    int line_boundary_hits;
-    bool poly_interior_hit;
-    bool poly_boundary_hit;
-};
-
-static bool geom_as_point(const struct tg_geom *geom, struct tg_point *point) {
-    if (!geom) {
-        return false;
-    }
-    switch (geom->head.base) {
-    case BASE_GEOM:
-        if (geom->head.type == TG_POINT) {
-            *point = geom->point;
-            return true;
-        }
-        return false;
-    case BASE_POINT:
-        *point = ((struct boxed_point*)geom)->point;
-        return true;
-    default:
-        return false;
-    }
-}
-
-static bool geom_contains_point_iter(const struct tg_geom *geom, void *udata) {
-    struct geom_contains_point_ctx *ctx = udata;
-    if (tg_geom_is_empty(geom)) {
-        return true;
-    }
-
-    switch (geom->head.base) {
-    case BASE_GEOM:
-        switch (geom->head.type) {
-        case TG_POINT:
-            if (tg_point_contains_point(geom->point, ctx->point)) {
-                ctx->point_hit = true;
-            }
-            break;
-        case TG_LINESTRING:
-            if (tg_line_contains_point(geom->line, ctx->point)) {
-                ctx->line_interior_hit = true;
-            } else if (tg_line_touches_point(geom->line, ctx->point)) {
-                ctx->line_boundary_hits++;
-            }
-            break;
-        case TG_POLYGON:
-            if (tg_poly_contains_point(geom->poly, ctx->point)) {
-                ctx->poly_interior_hit = true;
-            } else if (tg_poly_touches_point(geom->poly, ctx->point)) {
-                ctx->poly_boundary_hit = true;
-            }
-            break;
-        case TG_MULTIPOINT:
-        case TG_MULTILINESTRING:
-        case TG_MULTIPOLYGON:
-        case TG_GEOMETRYCOLLECTION:
-            tg_geom_foreach(geom, geom_contains_point_iter, ctx);
-            break;
-        }
-        break;
-    case BASE_POINT:
-        if (tg_point_contains_point(((struct boxed_point*)geom)->point,
-            ctx->point))
-        {
-            ctx->point_hit = true;
-        }
-        break;
-    case BASE_LINE:
-        if (tg_line_contains_point((struct tg_line*)geom, ctx->point)) {
-            ctx->line_interior_hit = true;
-        } else if (tg_line_touches_point((struct tg_line*)geom, ctx->point)) {
-            ctx->line_boundary_hits++;
-        }
-        break;
-    case BASE_RING:
-    case BASE_POLY:
-        if (tg_poly_contains_point((struct tg_poly*)geom, ctx->point)) {
-            ctx->poly_interior_hit = true;
-        } else if (tg_poly_touches_point((struct tg_poly*)geom, ctx->point)) {
-            ctx->poly_boundary_hit = true;
-        }
-        break;
-    }
-    return true;
-}
-
-static bool geom_collection_contains_point(const struct tg_geom *geom,
-    struct tg_point point)
-{
-    struct geom_contains_point_ctx ctx = { .point = point };
-    tg_geom_foreach(geom, geom_contains_point_iter, &ctx);
-
-    if (ctx.poly_interior_hit) {
-        return true;
-    }
-    if (ctx.poly_boundary_hit) {
-        return false;
-    }
-    if (ctx.line_boundary_hits % 2 == 1) {
-        return false;
-    }
-    if (ctx.line_interior_hit || ctx.line_boundary_hits > 0) {
-        return true;
-    }
-    return ctx.point_hit;
-}
-
-struct geom_contains_line_ctx {
-    const struct tg_line *line;
-    bool poly_interior_hit;
-    bool poly_boundary_cover;
-    bool line_interior_hit;
-};
-
-static void geom_contains_line_check_poly(struct geom_contains_line_ctx *ctx,
-    const struct tg_poly *poly)
-{
-    if (tg_poly_intersects_line(poly, ctx->line)) {
-        if (!tg_poly_touches_line(poly, ctx->line)) {
-            ctx->poly_interior_hit = true;
-        } else if (tg_poly_covers_line(poly, ctx->line)) {
-            ctx->poly_boundary_cover = true;
-        }
-    }
-}
-
-static bool geom_contains_line_iter(const struct tg_geom *geom, void *udata) {
-    struct geom_contains_line_ctx *ctx = udata;
-    if (tg_geom_is_empty(geom)) {
-        return true;
-    }
-
-    switch (geom->head.base) {
-    case BASE_GEOM:
-        switch (geom->head.type) {
-        case TG_LINESTRING:
-            if (tg_line_contains_line(geom->line, ctx->line)) {
-                ctx->line_interior_hit = true;
-            }
-            break;
-        case TG_POLYGON:
-            geom_contains_line_check_poly(ctx, geom->poly);
-            break;
-        case TG_POINT:
-        case TG_MULTIPOINT:
-        case TG_MULTILINESTRING:
-        case TG_MULTIPOLYGON:
-        case TG_GEOMETRYCOLLECTION:
-            break;
-        }
-        break;
-    case BASE_LINE:
-        if (tg_line_contains_line((struct tg_line*)geom, ctx->line)) {
-            ctx->line_interior_hit = true;
-        }
-        break;
-    case BASE_RING:
-    case BASE_POLY:
-        geom_contains_line_check_poly(ctx, (struct tg_poly*)geom);
-        break;
-    case BASE_POINT:
-        break;
-    }
-
-    return !ctx->poly_interior_hit;
-}
-
-static bool geom_collection_contains_line(const struct tg_geom *geom,
-    const struct tg_line *line)
-{
-    struct geom_contains_line_ctx ctx = { .line = line };
-    tg_geom_foreach(geom, geom_contains_line_iter, &ctx);
-    return ctx.poly_interior_hit ||
-        (!ctx.poly_boundary_cover && ctx.line_interior_hit);
-}
-
-struct geom_contains_poly_ctx {
-    const struct tg_poly *poly;
-    bool poly_interior_hit;
-};
-
-static bool geom_contains_poly_iter(const struct tg_geom *geom, void *udata) {
-    struct geom_contains_poly_ctx *ctx = udata;
-    if (tg_geom_is_empty(geom)) {
-        return true;
-    }
-
-    switch (geom->head.base) {
-    case BASE_GEOM:
-        if (geom->head.type == TG_POLYGON &&
-            tg_poly_intersects_poly(geom->poly, ctx->poly) &&
-            !tg_poly_touches_poly(geom->poly, ctx->poly))
-        {
-            ctx->poly_interior_hit = true;
-            return false;
-        }
-        break;
-    case BASE_RING:
-    case BASE_POLY:
-        if (tg_poly_intersects_poly((struct tg_poly*)geom, ctx->poly) &&
-            !tg_poly_touches_poly((struct tg_poly*)geom, ctx->poly))
-        {
-            ctx->poly_interior_hit = true;
-            return false;
-        }
-        break;
-    case BASE_POINT:
-    case BASE_LINE:
-        break;
-    }
-
-    return true;
-}
-
-static bool geom_collection_contains_poly(const struct tg_geom *geom,
-    const struct tg_poly *poly)
-{
-    struct geom_contains_poly_ctx ctx = { .poly = poly };
-    tg_geom_foreach(geom, geom_contains_poly_iter, &ctx);
-    return ctx.poly_interior_hit;
-}
-
-static bool geom_collection_component_interior_intersects(
-    const struct tg_geom *geom, const struct tg_geom *other)
-{
-    struct tg_point point;
-    if (geom_as_point(other, &point)) {
-        return geom_collection_contains_point(geom, point);
-    }
-
-    switch (other->head.base) {
-    case BASE_GEOM:
-        switch (other->head.type) {
-        case TG_LINESTRING:
-            return geom_collection_contains_line(geom, other->line);
-        case TG_POLYGON:
-            return geom_collection_contains_poly(geom, other->poly);
-        case TG_POINT:
-        case TG_MULTIPOINT:
-        case TG_MULTILINESTRING:
-        case TG_MULTIPOLYGON:
-        case TG_GEOMETRYCOLLECTION:
-            return false;
-        }
-        break;
-    case BASE_LINE:
-        return geom_collection_contains_line(geom, (struct tg_line*)other);
-    case BASE_RING:
-    case BASE_POLY:
-        return geom_collection_contains_poly(geom, (struct tg_poly*)other);
-    case BASE_POINT:
-        break;
-    }
-
-    return false;
-}
-
-struct geom_contains_interior_ctx {
+struct geom_contains_iter_ctx {
     const struct tg_geom *geom;
+    int min_dim;
+    int max_cover_dim;
+    int max_contains_dim;
     bool result;
 };
 
-static bool geom_contains_interior_iter(const struct tg_geom *geom,
-    void *udata)
-{
-    struct geom_contains_interior_ctx *ctx = udata;
-    if (!tg_geom_is_empty(geom) &&
-        geom_collection_component_interior_intersects(ctx->geom, geom))
-    {
-        ctx->result = true;
-        return false;
+
+static bool geom_contains_iter0(const struct tg_geom *geom, void *udata) {
+    struct geom_contains_iter_ctx *ctx = udata;
+    if (!tg_geom_is_empty(geom)) {
+        int dim = tg_geom_de9im_dims(geom);
+        if (tg_geom_contains(geom, ctx->geom)) {
+            if (dim > ctx->max_contains_dim) {
+                ctx->max_contains_dim = dim;
+            }
+            if (dim > ctx->max_cover_dim) {
+                ctx->max_cover_dim = dim;
+            }
+        } else if (tg_geom_covers(geom, ctx->geom) &&
+            dim > ctx->max_cover_dim)
+        {
+            ctx->max_cover_dim = dim;
+        }
     }
     return true;
 }
 
-static bool geom_collection_contains_geom(const struct tg_geom *geom,
+static bool geom_contains_iter(const struct tg_geom *geom, void *udata) {
+    struct geom_contains_iter_ctx *ctx = udata;
+    // skip empty geometries
+    if (!tg_geom_is_empty(geom) &&
+        tg_geom_de9im_dims(geom) >= ctx->min_dim)
+    {
+        struct geom_contains_iter_ctx ctx0 = {
+            .geom = geom,
+            .max_cover_dim = -1,
+            .max_contains_dim = -1,
+        };
+        tg_geom_foreach(ctx->geom, geom_contains_iter0, &ctx0);
+        if (ctx0.max_contains_dim >= 0 &&
+            ctx0.max_contains_dim == ctx0.max_cover_dim)
+        {
+            // At least one highest-dimension child of 'other' intersects the
+            // interior of 'geom'. Coverage is checked before this iteration.
+            ctx->result = true;
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool multilinestring_contains_point(const struct tg_geom *geom,
+    struct tg_point point);
+
+static bool multi_contains_geom(const struct tg_geom *geom,
     const struct tg_geom *other)
 {
+    // All children of 'other' must be covered by 'geom', but only a
+    // highest-dimension child must intersect the interior of 'geom'.
     if (!tg_geom_covers(geom, other)) {
         return false;
     }
-
-    struct geom_contains_interior_ctx ctx = { .geom = geom };
-    tg_geom_foreach(other, geom_contains_interior_iter, &ctx);
+    struct geom_contains_iter_ctx ctx = {
+        .geom = geom,
+        .min_dim = tg_geom_de9im_dims(other),
+    };
+    tg_geom_foreach(other, geom_contains_iter, &ctx);
     return ctx.result;
 }
 
@@ -6497,11 +6413,27 @@ static bool base_geom_contains_geom(const struct tg_geom *geom,
             return line_contains_geom(geom->line, other);
         case TG_POLYGON:
             return poly_contains_geom(geom->poly, other);
-        case TG_MULTIPOINT:
         case TG_MULTILINESTRING:
+            if (other) {
+                switch (other->head.base) {
+                case BASE_POINT:
+                    return multilinestring_contains_point(geom,
+                        ((struct boxed_point*)other)->point);
+                case BASE_GEOM:
+                    if (other->head.type == TG_POINT) {
+                        return (other->head.flags&IS_EMPTY) != IS_EMPTY &&
+                            multilinestring_contains_point(geom, other->point);
+                    }
+                    break;
+                default:
+                    break;
+                }
+            }
+            return multi_contains_geom(geom, other);
+        case TG_MULTIPOINT:
         case TG_MULTIPOLYGON:
         case TG_GEOMETRYCOLLECTION:
-            return geom_collection_contains_geom(geom, other);
+            return multi_contains_geom(geom, other);
         }
     }
     return false;
@@ -6526,6 +6458,16 @@ static bool point_contains_geom(struct tg_point point,
         }
     }
     return false;
+}
+
+static bool multiline_boundary_point(const struct tg_geom *geom,
+    struct tg_point point);
+
+static bool multilinestring_contains_point(const struct tg_geom *geom,
+    struct tg_point point)
+{
+    return tg_geom_covers_point(geom, point) &&
+        !multiline_boundary_point(geom, point);
 }
 
 /// Tests whether 'a' contains 'b', and 'b' is not touching the boundary of 'a'.
@@ -6572,6 +6514,15 @@ bool tg_point_contains_geom(struct tg_point a, const struct tg_geom *b) {
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 
+static bool multilinestring_touches_point(const struct tg_geom *geom,
+    struct tg_point point);
+
+static bool multilinestring_touches_line(const struct tg_geom *geom,
+    struct tg_line *line);
+
+static bool multilinestring_touches_multilinestring(const struct tg_geom *geom,
+    const struct tg_geom *other);
+
 static bool point_touches_geom(struct tg_point point,
     const struct tg_geom *geom);
 
@@ -6586,8 +6537,9 @@ static bool point_touches_base_geom(struct tg_point point,
             return tg_point_touches_line(point, geom->line);
         case TG_POLYGON:
             return tg_point_touches_poly(point, geom->poly);
-        case TG_MULTIPOINT:
         case TG_MULTILINESTRING:
+            return multilinestring_touches_point(geom, point);
+        case TG_MULTIPOINT:
         case TG_MULTIPOLYGON:
         case TG_GEOMETRYCOLLECTION:
             if (geom->multi) {
@@ -6638,19 +6590,24 @@ static bool line_touches_base_geom(struct tg_line *line,
             return tg_line_touches_line(line, geom->line);
         case TG_POLYGON:
             return tg_line_touches_poly(line, geom->poly);
-        case TG_MULTIPOINT:
         case TG_MULTILINESTRING:
+            return multilinestring_touches_line(geom, line);
+        case TG_MULTIPOINT:
         case TG_MULTIPOLYGON:
-        case TG_GEOMETRYCOLLECTION:
+        case TG_GEOMETRYCOLLECTION: {
+            bool touches = false;
             if (geom->multi) {
                 for (int i = 0; i < geom->multi->ngeoms; i++) {
-                    if (line_touches_geom(line, geom->multi->geoms[i])) {
-                        return true;
+                    const struct tg_geom *child = geom->multi->geoms[i];
+                    if (line_touches_geom(line, child)) {
+                        touches = true;
+                    } else if (line_intersects_geom(line, child)) {
+                        return false;
                     }
                 }
             }
-            return false;
-        }
+            return touches;
+        }}
     }
     return false;
 }
@@ -6732,9 +6689,34 @@ static bool poly_touches_geom(struct tg_poly *poly,
     return false;
 }
 
+static bool multi_touches_geom(const struct tg_geom *geom,
+    const struct tg_geom *other)
+{
+    bool touches = false;
+    if (geom->multi) {
+        for (int i = 0; i < geom->multi->ngeoms; i++) {
+            const struct tg_geom *child = geom->multi->geoms[i];
+            if (tg_geom_touches(child, other)) {
+                touches = true;
+            } else if (tg_geom_intersects(child, other)) {
+                return false;
+            }
+        }
+    }
+    return touches;
+}
+
+static bool geometrycollection_touches_geom(const struct tg_geom *geom,
+    const struct tg_geom *other);
+
 static bool base_geom_touches_geom(const struct tg_geom *geom,
     const struct tg_geom *other)
 {
+    if (other && other->head.base == BASE_GEOM &&
+        other->head.type == TG_GEOMETRYCOLLECTION)
+    {
+        return geometrycollection_touches_geom(other, geom);
+    }
     if ((geom->head.flags&IS_EMPTY) != IS_EMPTY) {
         switch (geom->head.type) {
         case TG_POINT:
@@ -6743,25 +6725,261 @@ static bool base_geom_touches_geom(const struct tg_geom *geom,
             return line_touches_geom(geom->line, other);
         case TG_POLYGON:
             return poly_touches_geom(geom->poly, other);
-        case TG_MULTIPOINT:
         case TG_MULTILINESTRING:
-        case TG_MULTIPOLYGON:
-        case TG_GEOMETRYCOLLECTION: {
-            bool touches = false;
-            if (geom->multi) {
-                for (int i = 0; i < geom->multi->ngeoms; i++) {
-                    const struct tg_geom *child = geom->multi->geoms[i];
-                    if (tg_geom_touches(child, other)) {
-                        touches = true;
-                    } else if (tg_geom_intersects(child, other)) {
-                        return false;
+            if (other) {
+                switch (other->head.base) {
+                case BASE_POINT:
+                    return multilinestring_touches_point(geom,
+                        ((struct boxed_point*)other)->point);
+                case BASE_LINE:
+                    return multilinestring_touches_line(geom,
+                        (struct tg_line*)other);
+                case BASE_GEOM:
+                    if ((other->head.flags&IS_EMPTY) == IS_EMPTY) {
+                        break;
                     }
+                    switch (other->head.type) {
+                    case TG_POINT:
+                        return multilinestring_touches_point(geom,
+                            other->point);
+                    case TG_LINESTRING:
+                        return multilinestring_touches_line(geom,
+                            other->line);
+                    case TG_MULTILINESTRING:
+                        return multilinestring_touches_multilinestring(geom,
+                            other);
+                    default:
+                        break;
+                    }
+                    break;
+                default:
+                    break;
                 }
             }
-            return touches;
-         }}
+            return multi_touches_geom(geom, other);
+        case TG_MULTIPOINT:
+        case TG_MULTIPOLYGON:
+            return multi_touches_geom(geom, other);
+        case TG_GEOMETRYCOLLECTION:
+            return geometrycollection_touches_geom(geom, other);
+        }
     }
     return false;
+}
+
+static bool line_boundary_intersection(const struct tg_line *line,
+    struct tg_segment a, struct tg_segment b)
+{
+    int npoints = tg_line_num_points(line);
+    if (npoints < 2) {
+        return false;
+    }
+    struct tg_point endpoints[] = {
+        tg_line_point_at(line, 0),
+        tg_line_point_at(line, npoints-1),
+    };
+    bool boundary = false;
+    for (int i = 0; i < 2; i++) {
+        if (tg_segment_covers_point(a, endpoints[i]) &&
+            tg_segment_covers_point(b, endpoints[i]))
+        {
+            boundary = !boundary;
+        }
+    }
+    return boundary;
+}
+
+// For a single-point segment intersection, count the endpoints of the whole
+// geometry at that intersection. This avoids calculating a new coordinate and
+// also finds boundary points belonging to components outside the segment pair.
+static bool multiline_boundary_intersection(const struct tg_geom *geom,
+    struct tg_segment a, struct tg_segment b)
+{
+    if (geom) {
+        switch (geom->head.base) {
+        case BASE_LINE:
+            return line_boundary_intersection((const struct tg_line*)geom,
+                a, b);
+        case BASE_GEOM:
+            switch (geom->head.type) {
+            case TG_LINESTRING:
+                return line_boundary_intersection(geom->line, a, b);
+            case TG_MULTILINESTRING: {
+                bool boundary = false;
+                if (geom->multi) {
+                    for (int i = 0; i < geom->multi->ngeoms; i++) {
+                        const struct tg_line *line =
+                            tg_geom_line(geom->multi->geoms[i]);
+                        if (line_boundary_intersection(line, a, b)) {
+                            boundary = !boundary;
+                        }
+                    }
+                }
+                return boundary;
+            }
+            default:
+                break;
+            }
+            break;
+        default:
+            break;
+        }
+    }
+    return false;
+}
+
+static bool multiline_boundary_point(const struct tg_geom *geom,
+    struct tg_point point)
+{
+    struct tg_segment singleton = { point, point };
+    return multiline_boundary_intersection(geom, singleton, singleton);
+}
+
+struct multiline_touches_iter_ctx {
+    const struct tg_geom *a;
+    const struct tg_geom *b;
+    bool intersects;
+    bool interior;
+};
+
+static bool multiline_touches_iter(struct tg_segment a, int aidx,
+    struct tg_segment b, int bidx, void *udata)
+{
+    (void)aidx;
+    (void)bidx;
+    struct multiline_touches_iter_ctx *ctx = udata;
+    ctx->intersects = true;
+
+    // Two distinct shared endpoints imply a positive-length overlap. A finite
+    // set of boundary points cannot remove its interior/interior intersection.
+    struct tg_point endpoints[] = { a.a, a.b, b.a, b.b };
+    struct tg_point shared = { 0 };
+    bool found = false;
+    for (int i = 0; i < 4; i++) {
+        if (tg_segment_covers_point(a, endpoints[i]) &&
+            tg_segment_covers_point(b, endpoints[i]))
+        {
+            if (found && !pteq(shared, endpoints[i])) {
+                ctx->interior = true;
+                return false;
+            }
+            shared = endpoints[i];
+            found = true;
+        }
+    }
+    // The intersection is a single point, possibly in both segment interiors.
+    // It must belong to the boundary of at least one whole operand.
+    if (!multiline_boundary_intersection(ctx->a, a, b) &&
+        !multiline_boundary_intersection(ctx->b, a, b))
+    {
+        ctx->interior = true;
+        return false;
+    }
+    return true;
+}
+
+static bool multilinestring_touches_point(const struct tg_geom *geom,
+    struct tg_point point)
+{
+    return multiline_boundary_point(geom, point);
+}
+
+static bool multilinestring_touches_line(const struct tg_geom *geom,
+    struct tg_line *line)
+{
+    struct multiline_touches_iter_ctx ctx = {
+        .a = geom, .b = (const struct tg_geom*)line,
+    };
+    if (geom->multi) {
+        for (int i = 0; i < geom->multi->ngeoms; i++) {
+            const struct tg_line *child = tg_geom_line(geom->multi->geoms[i]);
+            tg_line_line_search(child, line, multiline_touches_iter, &ctx);
+            if (ctx.interior) {
+                return false;
+            }
+        }
+    }
+    return ctx.intersects;
+}
+
+static bool multilinestring_touches_multilinestring(const struct tg_geom *geom,
+    const struct tg_geom *other)
+{
+    struct multiline_touches_iter_ctx ctx = { .a = geom, .b = other };
+    if (geom->multi && other->multi) {
+        for (int i = 0; i < geom->multi->ngeoms; i++) {
+            const struct tg_line *line = tg_geom_line(geom->multi->geoms[i]);
+            for (int j = 0; j < other->multi->ngeoms; j++) {
+                const struct tg_line *other_line =
+                    tg_geom_line(other->multi->geoms[j]);
+                tg_line_line_search(line, other_line, multiline_touches_iter,
+                    &ctx);
+                if (ctx.interior) {
+                    return false;
+                }
+            }
+        }
+    }
+    return ctx.intersects;
+}
+
+struct geometrycollection_touches_ctx {
+    const struct tg_geom *other;
+    int collection_dim;
+    int other_dim;
+    bool touches;
+    bool interior_intersects;
+};
+
+struct geometrycollection_touches_child_ctx {
+    struct geometrycollection_touches_ctx *ctx;
+    const struct tg_geom *child;
+};
+
+static bool geometrycollection_touches_other_iter(const struct tg_geom *geom,
+    void *udata)
+{
+    struct geometrycollection_touches_child_ctx *child_ctx = udata;
+    struct geometrycollection_touches_ctx *ctx = child_ctx->ctx;
+    if (!tg_geom_is_empty(geom) && tg_geom_de9im_dims(geom) >= ctx->other_dim) {
+        if (tg_geom_touches(child_ctx->child, geom)) {
+            ctx->touches = true;
+        } else if (tg_geom_intersects(child_ctx->child, geom)) {
+            ctx->interior_intersects = true;
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool geometrycollection_touches_iter(const struct tg_geom *geom,
+    void *udata)
+{
+    struct geometrycollection_touches_ctx *ctx = udata;
+    if (!tg_geom_is_empty(geom) &&
+        tg_geom_de9im_dims(geom) >= ctx->collection_dim)
+    {
+        struct geometrycollection_touches_child_ctx child_ctx = {
+            .ctx = ctx,
+            .child = geom,
+        };
+        tg_geom_foreach(ctx->other, geometrycollection_touches_other_iter,
+            &child_ctx);
+        return !ctx->interior_intersects;
+    }
+    return true;
+}
+
+static bool geometrycollection_touches_geom(const struct tg_geom *geom,
+    const struct tg_geom *other)
+{
+    struct geometrycollection_touches_ctx ctx = {
+        .other = other,
+        .collection_dim = tg_geom_de9im_dims(geom),
+        .other_dim = tg_geom_de9im_dims(other),
+    };
+    tg_geom_foreach(geom, geometrycollection_touches_iter, &ctx);
+    return ctx.touches && !ctx.interior_intersects;
 }
 
 /// Tests whether a geometry 'a' touches 'b'.
@@ -6770,6 +6988,14 @@ static bool base_geom_touches_geom(const struct tg_geom *geom,
 /// @see GeometryPredicates
 bool tg_geom_touches(const struct tg_geom *geom, const struct tg_geom *other) {
     if (geom) {
+        bool other_is_geometrycollection = other &&
+            other->head.base == BASE_GEOM &&
+            other->head.type == TG_GEOMETRYCOLLECTION;
+        bool geom_is_geometrycollection = geom->head.base == BASE_GEOM &&
+            geom->head.type == TG_GEOMETRYCOLLECTION;
+        if (other_is_geometrycollection && !geom_is_geometrycollection) {
+            return tg_geom_touches(other, geom);
+        }
         switch (geom->head.base) {
         case BASE_GEOM:
             return base_geom_touches_geom(geom, other);
@@ -6803,9 +7029,10 @@ bool tg_point_touches_geom(struct tg_point a, const struct tg_geom *b) {
 /// @see GeometryPredicates
 bool tg_geom_covers_point(const struct tg_geom *a, struct tg_point b) {
     struct boxed_point bpoint = {
-        .head = { .base = BASE_POINT, .type = TG_POINT },
         .point = b,
     };
+    bpoint.head.base = BASE_POINT;
+    bpoint.head.type = TG_POINT;
     return tg_geom_covers(a, (struct tg_geom*)&bpoint);
 }
 
@@ -6819,9 +7046,10 @@ bool tg_geom_covers_xy(const struct tg_geom *a, double x, double y) {
 /// @see GeometryPredicates
 bool tg_geom_intersects_point(const struct tg_geom *a, struct tg_point b) {
     struct boxed_point bpoint = {
-        .head = { .base = BASE_POINT, .type = TG_POINT },
         .point = b,
     };
+    bpoint.head.base = BASE_POINT;
+    bpoint.head.type = TG_POINT;
     return tg_geom_intersects(a, (struct tg_geom*)&bpoint);
 }
 
@@ -6835,7 +7063,7 @@ bool tg_geom_intersects_xy(const struct tg_geom *a, double x, double y) {
 /// @param geom Input geometry
 /// @return Array of coordinates
 /// @return NULL if there are no extra coordinates
-/// @note These are the raw coodinates provided by a constructor like
+/// @note These are the raw coordinates provided by a constructor like
 /// tg_geom_new_polygon_z() or from a parsed source like WKT "POLYGON Z ...".
 /// @see tg_geom_num_extra_coords()
 const double *tg_geom_extra_coords(const struct tg_geom *geom) {
@@ -6886,7 +7114,7 @@ bool tg_geom_has_m(const struct tg_geom *geom) {
 
 /// Get the Z coordinate of a Point geometry.
 /// @param geom Input geometry
-/// @return For a TG_POINT geometry, returns the Z coodinate.
+/// @return For a TG_POINT geometry, returns the Z coordinate.
 /// @return For everything else returns zero.
 double tg_geom_z(const struct tg_geom *geom) {
     if (!geom || geom->head.base != BASE_GEOM || geom->head.type != TG_POINT) {
@@ -6897,7 +7125,7 @@ double tg_geom_z(const struct tg_geom *geom) {
 
 /// Get the M coordinate of a Point geometry.
 /// @param geom Input geometry
-/// @return For a TG_POINT geometry, returns the M coodinate.
+/// @return For a TG_POINT geometry, returns the M coordinate.
 /// @return For everything else returns zero.
 double tg_geom_m(const struct tg_geom *geom) {
     if (!geom || geom->head.base != BASE_GEOM || geom->head.type != TG_POINT) {
@@ -8125,9 +8353,11 @@ static bool buf_append_json_pair(struct tg_buf *buf, struct json key,
 {
     size_t len = buf->len;
     if (!tg_buf_append_byte(buf, buf->len == 0 ? '{' : ',') ||
-        !tg_buf_append_bytes(buf, (uint8_t*)json_raw(key), json_raw_length(key)) ||
+        !tg_buf_append_bytes(buf, (uint8_t*)json_raw(key),
+            json_raw_length(key)) ||
         !tg_buf_append_byte(buf, ':') ||
-        !tg_buf_append_bytes(buf, (uint8_t*)json_raw(val), json_raw_length(val)))
+        !tg_buf_append_bytes(buf, (uint8_t*)json_raw(val),
+            json_raw_length(val)))
     {
         buf->len = len;
         return false;
@@ -8303,7 +8533,7 @@ def_vec(struct gvec, struct tg_geom*, gvec_append, 1)
     goto done; \
 done: \
     if (!geom) goto fail; \
-    geom->head.flags |= flags; \
+    geom->head.flags |=  flags; \
     if (extra) geom->xjson = extra; \
     cleanup; \
     return geom; \
@@ -8923,7 +9153,7 @@ struct tg_geom *tg_parse_geojsonn(const char *geojson, size_t len) {
 ///
 /// Supports [GeoJSON](https://datatracker.ietf.org/doc/html/rfc7946) standard,
 /// including Features, FeaturesCollection, ZM coordinates, properties, and
-/// arbritary JSON members.
+/// arbitrary JSON members.
 /// @param geojson A geojson string. Must be UTF8 and null-terminated.
 /// @returns A geometry or an error. Use tg_geom_error() after parsing to check
 /// for errors.
@@ -11526,7 +11756,7 @@ static size_t fp_utoa(union fpoint fpoint, int bits, char fmt,
 ///
 /// Returns the number of characters, not including the null-terminator, needed
 /// to store the double into the C string buffer.
-/// If the returned length is greater than nbytes-1, then only a parital copy
+/// If the returned length is greater than nbytes-1, then only a partial copy
 /// occurred.
 ///
 /// The format is one of
@@ -11546,7 +11776,7 @@ FP_EXTERN size_t fp_dtoa(double d, char fmt, char dst[], size_t n) {
 ///
 /// Returns the number of characters, not including the null-terminator, needed
 /// to store the float into the C string buffer.
-/// If the returned length is greater than nbytes-1, then only a parital copy
+/// If the returned length is greater than nbytes-1, then only a partial copy
 /// occurred.
 ///
 /// The format is one of
@@ -12159,7 +12389,7 @@ static void write_geom_geojson(const struct tg_geom *geom, struct writer *wr) {
 /// @param n Maximum number of bytes to be used in the buffer.
 /// @return  The number of characters, not including the null-terminator,
 /// needed to store the content into the C string buffer.
-/// If the returned length is greater than n-1, then only a parital copy
+/// If the returned length is greater than n-1, then only a partial copy
 /// occurred, for example:
 ///
 /// ```
@@ -12446,7 +12676,7 @@ static int parse_wkt_posns(enum base base, int dims, int depth, const char *wkt,
             }
             i = wkt_trim_ws(wkt, len, i+1);
         }
-        // read each number, delimted by whitespace
+        // read each number, delimited by whitespace
         while (i < len) {
             double num;
             if (isnum(wkt[i])) {
@@ -13534,7 +13764,7 @@ static void write_geom_wkt(const struct tg_geom *geom, struct writer *wr) {
 /// @param n Maximum number of bytes to be used in the buffer.
 /// @return  The number of characters, not including the null-terminator,
 /// needed to store the content into the C string buffer.
-/// If the returned length is greater than n-1, then only a parital copy
+/// If the returned length is greater than n-1, then only a partial copy
 /// occurred, for example:
 ///
 /// ```
@@ -13563,20 +13793,10 @@ static const char *wkb_invalid_child_type(void) {
     return "invalid child type";
 }
 
-// See https://github.com/tidwall/tg/issues/15 for upstream resolution
 #if defined(_MSC_VER)
-static inline uint32_t bswap_32(uint32_t x) {
-  return (((x & 0xFF) << 24) | ((x & 0xFF00) << 8) | ((x & 0xFF0000) >> 8) |
-          ((x & 0xFF000000) >> 24));
-}
-static inline uint64_t bswap_64(uint64_t x) {
-  return (((x & 0xFFULL) << 56) | ((x & 0xFF00ULL) << 40) | ((x & 0xFF0000ULL) << 24) |
-          ((x & 0xFF000000ULL) << 8) | ((x & 0xFF00000000ULL) >> 8) |
-          ((x & 0xFF0000000000ULL) >> 24) | ((x & 0xFF000000000000ULL) >> 40) |
-          ((x & 0xFF00000000000000ULL) >> 56));
-}
-#define bswap32 bswap_32
-#define bswap64 bswap_64
+#include <stdlib.h>
+#define bswap32 _byteswap_ulong
+#define bswap64 _byteswap_uint64
 #else
 #define bswap32 __builtin_bswap32
 #define bswap64 __builtin_bswap64
@@ -13597,8 +13817,8 @@ static uint64_t read_uint64(const uint8_t *data, bool swap) {
 #undef bswap32
 #undef bswap64
 
-static double read_double(const uint8_t *data, bool le) {
-    return ((union raw_double){.u=read_uint64(data, le)}).d;
+static double read_double(const uint8_t *data, bool swap) {
+    return ((union raw_double){.u=read_uint64(data, swap)}).d;
 }
 
 #define read_uint32(name) { \
@@ -14171,6 +14391,10 @@ invalid:
     goto fail;
 }
 
+#if !defined(_MSC_VER) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#define IS_BIG_ENDIAN
+#endif
+
 static size_t parse_wkb(const uint8_t *wkb, size_t len, size_t i, int depth,
     enum tg_index ix, struct tg_geom **g)
 {
@@ -14182,12 +14406,10 @@ static size_t parse_wkb(const uint8_t *wkb, size_t len, size_t i, int depth,
 
     // Set the 'swap' bool which indicates that the wkb numbers need swapping
     // to match the host endianness.
-#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#ifdef IS_BIG_ENDIAN
     bool swap = wkb[i] == 1;
-#elif __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-    bool swap = wkb[i] == 0;
 #else
-    #error "cannot determine byte order"
+    bool swap = wkb[i] == 0;
 #endif
     i++;
 
@@ -14195,7 +14417,13 @@ static size_t parse_wkb(const uint8_t *wkb, size_t len, size_t i, int depth,
     read_uint32(type);
 
     bool has_srid = !!(type & 0x20000000);
-    type &= 0xFFFF;
+    // PostGIS EWKB flag bits, in addition to the ISO type offsets below.
+    bool z = !!(type & 0x80000000);
+    bool m = !!(type & 0x40000000);
+    uint32_t t = type & 0xFFFF;
+    if (t >= 1000 && t <= 1999) { z = true; t -= 1000; }
+    else if (t >= 2000 && t <= 2999) { m = true; t -= 2000; }
+    else if (t >= 3000 && t <= 3999) { z = true; m = true; t -= 3000; }
     int srid = 0;
     if (has_srid) {
         // Read the SRID from the extended wkb format.
@@ -14206,33 +14434,14 @@ static size_t parse_wkb(const uint8_t *wkb, size_t len, size_t i, int depth,
     (void)srid; // Now throw it away.
 
     bool s = swap;
-    switch (type) {
-    case    1: return parse_wkb_point(wkb, len, i, s, 0, 0, d, ix, g);
-    case 1001: return parse_wkb_point(wkb, len, i, s, 1, 0, d, ix, g);
-    case 2001: return parse_wkb_point(wkb, len, i, s, 0, 1, d, ix, g);
-    case 3001: return parse_wkb_point(wkb, len, i, s, 1, 1, d, ix, g);
-    case    2: return parse_wkb_linestring(wkb, len, i, s, 0, 0, d, ix, g);
-    case 1002: return parse_wkb_linestring(wkb, len, i, s, 1, 0, d, ix, g);
-    case 2002: return parse_wkb_linestring(wkb, len, i, s, 0, 1, d, ix, g);
-    case 3002: return parse_wkb_linestring(wkb, len, i, s, 1, 1, d, ix, g);
-    case    3: return parse_wkb_polygon(wkb, len, i, s, 0, 0, d, ix, g);
-    case 1003: return parse_wkb_polygon(wkb, len, i, s, 1, 0, d, ix, g);
-    case 2003: return parse_wkb_polygon(wkb, len, i, s, 0, 1, d, ix, g);
-    case 3003: return parse_wkb_polygon(wkb, len, i, s, 1, 1, d, ix, g);
-    case    4: return parse_wkb_multipoint(wkb, len, i, s, 0, 0, d, ix, g);
-    case 1004: return parse_wkb_multipoint(wkb, len, i, s, 1, 0, d, ix, g);
-    case 2004: return parse_wkb_multipoint(wkb, len, i, s, 0, 1, d, ix, g);
-    case 3004: return parse_wkb_multipoint(wkb, len, i, s, 1, 1, d, ix, g);
-    case    5: return parse_wkb_multilinestring(wkb, len, i, s, 0, 0, d, ix, g);
-    case 1005: return parse_wkb_multilinestring(wkb, len, i, s, 1, 0, d, ix, g);
-    case 2005: return parse_wkb_multilinestring(wkb, len, i, s, 0, 1, d, ix, g);
-    case 3005: return parse_wkb_multilinestring(wkb, len, i, s, 1, 1, d, ix, g);
-    case    6: return parse_wkb_multipolygon(wkb, len, i, s, 0, 0, d, ix, g);
-    case 1006: return parse_wkb_multipolygon(wkb, len, i, s, 1, 0, d, ix, g);
-    case 2006: return parse_wkb_multipolygon(wkb, len, i, s, 0, 1, d, ix, g);
-    case 3006: return parse_wkb_multipolygon(wkb, len, i, s, 1, 1, d, ix, g);
-    case    7: case 1007: case 2007: case 3007:
-        return parse_wkb_geometrycollection(wkb, len, i, s, 0, 0, d, ix, g);
+    switch (t) {
+    case 1: return parse_wkb_point(wkb, len, i, s, z, m, d, ix, g);
+    case 2: return parse_wkb_linestring(wkb, len, i, s, z, m, d, ix, g);
+    case 3: return parse_wkb_polygon(wkb, len, i, s, z, m, d, ix, g);
+    case 4: return parse_wkb_multipoint(wkb, len, i, s, z, m, d, ix, g);
+    case 5: return parse_wkb_multilinestring(wkb, len, i, s, z, m, d, ix, g);
+    case 6: return parse_wkb_multipolygon(wkb, len, i, s, z, m, d, ix, g);
+    case 7: return parse_wkb_geometrycollection(wkb, len, i, s, z, m, d, ix, g);
     default:
         *g = make_parse_error("invalid type");
         return PARSE_FAIL;
@@ -14243,6 +14452,11 @@ invalid:
 }
 
 /// Parse Well-known binary (WKB).
+///
+/// Both the ISO dimension offsets (type +1000/+2000/+3000) and the PostGIS
+/// EWKB type-word flags (0x80000000 = Z, 0x40000000 = M, 0x20000000 = SRID)
+/// are accepted for 3D/4D input.
+///
 /// @param wkb WKB data
 /// @param len Length of data
 /// @returns A geometry or an error. Use tg_geom_error() after parsing to check
@@ -14292,7 +14506,7 @@ static void write_wkb_type(struct writer *wr, const struct head *head) {
 }
 
 static void write_posn_wkb(struct writer *wr, struct tg_point posn) {
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+#ifndef IS_BIG_ENDIAN
     if (wr->count+16 < wr->n) {
         memcpy(wr->dst+wr->count, &posn, 16);
         wr->count += 16;
@@ -14305,7 +14519,7 @@ static void write_posn_wkb(struct writer *wr, struct tg_point posn) {
 
 static void write_posn_wkb_3(struct writer *wr, struct tg_point posn, double z)
 {
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+#ifndef IS_BIG_ENDIAN
     if (wr->count+24 < wr->n) {
         memcpy(wr->dst+wr->count, ((double[3]){posn.x, posn.y, z}), 24);
         wr->count += 24;
@@ -14320,7 +14534,7 @@ static void write_posn_wkb_3(struct writer *wr, struct tg_point posn, double z)
 static void write_posn_wkb_4(struct writer *wr, struct tg_point posn,
     double z, double m)
 {
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+#ifndef IS_BIG_ENDIAN
     if (wr->count+32 < wr->n) {
         memcpy(wr->dst+wr->count, ((double[4]){posn.x, posn.y, z, m}), 32);
         wr->count += 32;
@@ -14337,7 +14551,7 @@ static int write_ring_points_wkb(struct writer *wr, const struct tg_ring *ring)
 {
     write_uint32le(wr, ring->npoints);
     size_t needed = ring->npoints*16;
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+#ifndef IS_BIG_ENDIAN
     if (wr->count+needed <= wr->n) {
         memcpy(wr->dst+wr->count, ring->points, needed);
         wr->count += needed;
@@ -14556,10 +14770,9 @@ static void write_geom_multipoint_wkb(const struct tg_geom *geom,
     int ncoords = geom->ncoords;
     int j = 0;
     write_uint32le(wr, geom->multi->ngeoms);
-    struct head head = {
-        .type = TG_POINT,
-        .flags = (geom->head.flags&(HAS_Z|HAS_M)),
-    };
+    struct head head = { 0 };
+    head.type = TG_POINT;
+    head.flags |= geom->head.flags&(HAS_Z|HAS_M);
     for (int i = 0; i < geom->multi->ngeoms; i++) {
         struct tg_point point = tg_geom_point(geom->multi->geoms[i]);
         write_wkb_type(wr, &head);
@@ -14590,10 +14803,9 @@ static void write_geom_multilinestring_wkb(const struct tg_geom *geom,
     }
     int dims = tg_geom_dims(geom);
     write_uint32le(wr, geom->multi->ngeoms);
-    struct head head = {
-        .type = TG_LINESTRING,
-        .flags = (geom->head.flags&(HAS_Z|HAS_M)),
-    };
+    struct head head = { 0 };
+    head.type = TG_LINESTRING;
+    head.flags |= geom->head.flags&(HAS_Z|HAS_M);
     const double *pcoords = geom->coords;
     int ncoords = geom->ncoords;
     int n;
@@ -14631,10 +14843,9 @@ static void write_geom_multipolygon_wkb(const struct tg_geom *geom,
     }
     int dims = tg_geom_dims(geom);
     write_uint32le(wr, geom->multi->ngeoms);
-    struct head head = {
-        .type = TG_POLYGON,
-        .flags = (geom->head.flags&(HAS_Z|HAS_M)),
-    };
+    struct head head = { 0 };
+    head.type = TG_POLYGON;
+    head.flags |= geom->head.flags&(HAS_Z|HAS_M);
     const double *pcoords = geom->coords;
     int ncoords = geom->ncoords;
     int n;
@@ -14732,7 +14943,7 @@ static void write_geom_wkb(const struct tg_geom *geom, struct writer *wr) {
 /// @param n Maximum number of bytes to be used in the buffer.
 /// @return  The number of characters needed to store the content into the
 /// buffer.
-/// If the returned length is greater than n, then only a parital copy
+/// If the returned length is greater than n, then only a partial copy
 /// occurred, for example:
 ///
 /// ```
@@ -14765,7 +14976,7 @@ size_t tg_geom_wkb(const struct tg_geom *geom, uint8_t *dst, size_t n) {
 /// @param n Maximum number of bytes to be used in the buffer.
 /// @return  The number of characters, not including the null-terminator,
 /// needed to store the content into the C string buffer.
-/// If the returned length is greater than n-1, then only a parital copy
+/// If the returned length is greater than n-1, then only a partial copy
 /// occurred, for example:
 ///
 /// ```
@@ -14812,13 +15023,14 @@ static size_t parse_geobin(const uint8_t *geobin, size_t len, size_t i,
 
 static struct tg_geom *parse_hex(const char *hex, size_t len, enum tg_index ix)
 {
-#define _ 0
+    #define _ 0
     static const uint8_t hextoks[256] = {
         _,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,
         _,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,01,2,3,4,5,6,7,8,9,10,_,_,_,_,_,
         _,_,11,12,13,14,15,16,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,
         _,_,_,_,_,11,12,13,14,15,16,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,
     };
+    #undef _
     uint8_t *dst = NULL;
     bool must_free = false;
     if (len == 0 || (len&1) == 1) goto invalid;
@@ -14834,7 +15046,7 @@ static struct tg_geom *parse_hex(const char *hex, size_t len, enum tg_index ix)
     for (size_t i = 0; i < len; i += 2) {
         uint8_t b0 = hextoks[(uint8_t)hex[i+0]];
         uint8_t b1 = hextoks[(uint8_t)hex[i+1]];
-        if (b0 == _ || b1 == _) goto invalid;
+        if (!b0 || !b1) goto invalid;
         dst[j] = ((b0-1)<<4)|(b1-1);
         j++;
     }
@@ -14852,7 +15064,6 @@ static struct tg_geom *parse_hex(const char *hex, size_t len, enum tg_index ix)
 invalid:
     if (must_free) tg_free(dst);
     return make_parse_error(wkb_invalid_err());
-#undef _
 }
 
 /// Parse hex encoded Well-known binary (WKB) or GeoBIN using provided indexing
@@ -14923,6 +15134,10 @@ double tg_ring_area(const struct tg_ring *ring) {
     // The ring area has already been calculated by process_points.
     return ring->area;
 }
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846264338327950288
+#endif
 
 /// Calculate the perimeter length of a ring.
 double tg_ring_perimeter(const struct tg_ring *ring) {
@@ -15297,6 +15512,10 @@ bool tg_line_nearest_segment(const struct tg_line *line,
 /// Tests whether two geometries are topologically equal.
 /// @see GeometryPredicates
 bool tg_geom_equals(const struct tg_geom *a, const struct tg_geom *b) {
+    if (!a || !b) return false;
+    bool a_empty = tg_geom_is_empty(a);
+    bool b_empty = tg_geom_is_empty(b);
+    if (a_empty || b_empty) return a_empty && b_empty;
     return tg_geom_within(a, b) && tg_geom_contains(a, b);
 }
 
@@ -15370,6 +15589,47 @@ int tg_geom_de9im_dims(const struct tg_geom *geom) {
     return dims;
 }
 
+static void fixup_ystripes_pointers(struct ystripes *dst,
+    const struct ystripes *src)
+{
+    for (int i = 0; i < dst->nstripes; i++) {
+        size_t off = (uintptr_t)(src->stripes[i].indexes)-(uintptr_t)(src);
+        dst->stripes[i].indexes = (void*)((uintptr_t)(dst)+off);
+    }
+}
+
+static void fixup_index_pointers(struct index *dst, const struct index *src) {
+    for (int i = 0; i < dst->nlevels; i++) {
+        size_t off = (uintptr_t)(src->levels[i].rects)-(uintptr_t)(src);
+        dst->levels[i].rects = (void*)((uintptr_t)(dst)+off);
+    }
+}
+
+// Copy a ring from src to dst. It's expected that dst is an allocation that
+// is exactly the same size as src. Also if dst has ystripes then that must
+// be a defined pointer that is set to dst->ystripes before calling this
+// function, and that pointer is to an allocation that is exactly the same
+// size as src->ystripes.
+static void ring_copy(struct tg_ring *dst, const struct tg_ring *src,
+    size_t size)
+{
+    struct ystripes *dst_ystripes = dst->ystripes;
+    memcpy(dst, src, size);
+    rc_init(&dst->head.rc);
+    rc_retain(&dst->head.rc);
+    dst->head.noheap = 0;
+    if (src->ystripes && dst_ystripes) {
+        memcpy(dst_ystripes, src->ystripes, src->ystripes->memsz);
+        fixup_ystripes_pointers(dst_ystripes, src->ystripes);
+        dst->ystripes = dst_ystripes;
+    }
+    if (src->index) {
+        size_t off = (uintptr_t)(src->index)-(uintptr_t)(src);
+        dst->index = (void*)((uintptr_t)(dst)+off);
+        fixup_index_pointers(dst->index, src->index);
+    }
+}
+
 /// Copies a ring
 /// @param ring Input ring, caller retains ownership.
 /// @return A duplicate of the provided ring.
@@ -15386,18 +15646,14 @@ struct tg_ring *tg_ring_copy(const struct tg_ring *ring) {
     if (!ring2) {
         return NULL;
     }
-    memcpy(ring2, ring, size);
-    rc_init(&ring2->head.rc);
-    rc_retain(&ring2->head.rc);
-    ring2->head.noheap = 0;
     if (ring->ystripes) {
         ring2->ystripes = tg_malloc(ring->ystripes->memsz);
         if (!ring2->ystripes) {
             tg_free(ring2);
             return NULL;
         }
-        memcpy(ring2->ystripes, ring->ystripes, ring->ystripes->memsz);
     }
+    ring_copy(ring2, ring, size);
     return ring2;
 }
 
@@ -16042,7 +16298,7 @@ static void write_geom_geobin(const struct tg_geom *geom, struct writer *wr) {
 /// @param n Maximum number of bytes to be used in the buffer.
 /// @return  The number of characters needed to store the content into the
 /// buffer.
-/// If the returned length is greater than n, then only a parital copy
+/// If the returned length is greater than n, then only a partial copy
 /// occurred, for example:
 ///
 /// ```

@@ -146,6 +146,12 @@ impl Geom {
     pub fn memsize(&self) -> usize {
         unsafe { tg_geom_memsize(self.inner) }
     }
+
+    /// Check whether containment predicates can be evaluated correctly for
+    /// this geometry and `other` without combining collection components.
+    pub fn containment_predicates_supported(&self, other: &Self) -> bool {
+        unsafe { tg_geom_containment_predicates_supported(self.inner, other.inner) }
+    }
 }
 
 impl Display for Geom {
@@ -156,15 +162,23 @@ impl Display for Geom {
 
 /// Trait to make operations generic over binary predicates
 pub trait BinaryPredicate: std::fmt::Debug + Default {
-    fn evaluate(lhs: &Geom, rhs: &Geom) -> bool;
+    fn evaluate(lhs: &Geom, rhs: &Geom) -> Result<bool, TgError>;
+}
+
+fn containment_predicate_result(lhs: &Geom, rhs: &Geom, result: bool) -> Result<bool, TgError> {
+    if result || lhs.containment_predicates_supported(rhs) {
+        Ok(result)
+    } else {
+        Err(TgError::UnsupportedContainmentPredicate)
+    }
 }
 
 /// Check for topologicall equal geometries
 #[derive(Debug, Default)]
 pub struct Equals {}
 impl BinaryPredicate for Equals {
-    fn evaluate(lhs: &Geom, rhs: &Geom) -> bool {
-        unsafe { tg_geom_equals(lhs.inner, rhs.inner) }
+    fn evaluate(lhs: &Geom, rhs: &Geom) -> Result<bool, TgError> {
+        Ok(unsafe { tg_geom_equals(lhs.inner, rhs.inner) })
     }
 }
 
@@ -172,8 +186,8 @@ impl BinaryPredicate for Equals {
 #[derive(Debug, Default)]
 pub struct Intersects {}
 impl BinaryPredicate for Intersects {
-    fn evaluate(lhs: &Geom, rhs: &Geom) -> bool {
-        unsafe { tg_geom_intersects(lhs.inner, rhs.inner) }
+    fn evaluate(lhs: &Geom, rhs: &Geom) -> Result<bool, TgError> {
+        Ok(unsafe { tg_geom_intersects(lhs.inner, rhs.inner) })
     }
 }
 
@@ -181,8 +195,8 @@ impl BinaryPredicate for Intersects {
 #[derive(Debug, Default)]
 pub struct Disjoint {}
 impl BinaryPredicate for Disjoint {
-    fn evaluate(lhs: &Geom, rhs: &Geom) -> bool {
-        unsafe { tg_geom_disjoint(lhs.inner, rhs.inner) }
+    fn evaluate(lhs: &Geom, rhs: &Geom) -> Result<bool, TgError> {
+        Ok(unsafe { tg_geom_disjoint(lhs.inner, rhs.inner) })
     }
 }
 
@@ -190,8 +204,9 @@ impl BinaryPredicate for Disjoint {
 #[derive(Debug, Default)]
 pub struct Contains {}
 impl BinaryPredicate for Contains {
-    fn evaluate(lhs: &Geom, rhs: &Geom) -> bool {
-        unsafe { tg_geom_contains(lhs.inner, rhs.inner) }
+    fn evaluate(lhs: &Geom, rhs: &Geom) -> Result<bool, TgError> {
+        let result = unsafe { tg_geom_contains(lhs.inner, rhs.inner) };
+        containment_predicate_result(lhs, rhs, result)
     }
 }
 
@@ -199,8 +214,9 @@ impl BinaryPredicate for Contains {
 #[derive(Debug, Default)]
 pub struct Within {}
 impl BinaryPredicate for Within {
-    fn evaluate(lhs: &Geom, rhs: &Geom) -> bool {
-        unsafe { tg_geom_within(lhs.inner, rhs.inner) }
+    fn evaluate(lhs: &Geom, rhs: &Geom) -> Result<bool, TgError> {
+        let result = unsafe { tg_geom_within(lhs.inner, rhs.inner) };
+        containment_predicate_result(lhs, rhs, result)
     }
 }
 
@@ -208,8 +224,9 @@ impl BinaryPredicate for Within {
 #[derive(Debug, Default)]
 pub struct Covers {}
 impl BinaryPredicate for Covers {
-    fn evaluate(lhs: &Geom, rhs: &Geom) -> bool {
-        unsafe { tg_geom_covers(lhs.inner, rhs.inner) }
+    fn evaluate(lhs: &Geom, rhs: &Geom) -> Result<bool, TgError> {
+        let result = unsafe { tg_geom_covers(lhs.inner, rhs.inner) };
+        containment_predicate_result(lhs, rhs, result)
     }
 }
 
@@ -217,8 +234,9 @@ impl BinaryPredicate for Covers {
 #[derive(Debug, Default)]
 pub struct CoveredBy {}
 impl BinaryPredicate for CoveredBy {
-    fn evaluate(lhs: &Geom, rhs: &Geom) -> bool {
-        unsafe { tg_geom_coveredby(lhs.inner, rhs.inner) }
+    fn evaluate(lhs: &Geom, rhs: &Geom) -> Result<bool, TgError> {
+        let result = unsafe { tg_geom_coveredby(lhs.inner, rhs.inner) };
+        containment_predicate_result(lhs, rhs, result)
     }
 }
 
@@ -226,8 +244,8 @@ impl BinaryPredicate for CoveredBy {
 #[derive(Debug, Default)]
 pub struct Touches {}
 impl BinaryPredicate for Touches {
-    fn evaluate(lhs: &Geom, rhs: &Geom) -> bool {
-        unsafe { tg_geom_touches(lhs.inner, rhs.inner) }
+    fn evaluate(lhs: &Geom, rhs: &Geom) -> Result<bool, TgError> {
+        Ok(unsafe { tg_geom_touches(lhs.inner, rhs.inner) })
     }
 }
 
@@ -285,7 +303,7 @@ mod test {
     fn test_predicate<Op: BinaryPredicate>(lhs: &str, rhs: &str, expected: bool) {
         let lhs_geom = Geom::parse_wkt(lhs, Default::default()).unwrap();
         let rhs_geom = Geom::parse_wkt(rhs, Default::default()).unwrap();
-        if Op::evaluate(&lhs_geom, &rhs_geom) != expected {
+        if Op::evaluate(&lhs_geom, &rhs_geom).unwrap() != expected {
             panic!(
                 "Expected {lhs_geom} {:?} {rhs_geom} == {expected}",
                 Op::default()
@@ -407,12 +425,12 @@ mod test {
         let wkt2 = "POINT(-118.2934684 34.0267859)";
         let geom1 = Geom::parse_wkt(wkt1, IndexType::Default).unwrap();
         let geom2 = Geom::parse_wkt(wkt2, IndexType::Default).unwrap();
-        let intersects = Intersects::evaluate(&geom1, &geom2);
+        let intersects = Intersects::evaluate(&geom1, &geom2).unwrap();
         assert!(intersects);
 
         let geom1 = Geom::parse_wkt(wkt1, IndexType::YStripes).unwrap();
         let geom2 = Geom::parse_wkt(wkt2, IndexType::Default).unwrap();
-        let intersects = Intersects::evaluate(&geom1, &geom2);
+        let intersects = Intersects::evaluate(&geom1, &geom2).unwrap();
         assert!(intersects);
     }
 
@@ -434,13 +452,42 @@ mod test {
 
         let geom = Geom::parse_wkt(&wkt, IndexType::Default).unwrap();
         let geom2 = Geom::parse_wkt("POINT (0.5 1)", IndexType::Default).unwrap();
-        let intersects = Intersects::evaluate(&geom, &geom2);
+        let intersects = Intersects::evaluate(&geom, &geom2).unwrap();
         assert!(intersects);
 
         // This used to be problematic: https://github.com/tidwall/tg/issues/16
         let geom = Geom::parse_wkt(&wkt, IndexType::YStripes).unwrap();
         let geom2 = Geom::parse_wkt("POINT (0.5 1)", IndexType::Default).unwrap();
-        let intersects = Intersects::evaluate(&geom, &geom2);
+        let intersects = Intersects::evaluate(&geom, &geom2).unwrap();
         assert!(intersects);
+    }
+
+    #[test]
+    fn unsupported_containment_predicates() {
+        let collection = Geom::parse_wkt(
+            "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)), \
+             ((1 0, 2 0, 2 1, 1 1, 1 0)))",
+            IndexType::Default,
+        )
+        .unwrap();
+        let line = Geom::parse_wkt("LINESTRING (0.5 0.5, 1.5 0.5)", IndexType::Default).unwrap();
+
+        assert!(!collection.containment_predicates_supported(&line));
+        assert!(matches!(
+            Contains::evaluate(&collection, &line),
+            Err(TgError::UnsupportedContainmentPredicate)
+        ));
+        assert!(matches!(
+            Covers::evaluate(&collection, &line),
+            Err(TgError::UnsupportedContainmentPredicate)
+        ));
+        assert!(matches!(
+            Within::evaluate(&line, &collection),
+            Err(TgError::UnsupportedContainmentPredicate)
+        ));
+        assert!(matches!(
+            CoveredBy::evaluate(&line, &collection),
+            Err(TgError::UnsupportedContainmentPredicate)
+        ));
     }
 }

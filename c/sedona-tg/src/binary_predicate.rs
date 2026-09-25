@@ -93,7 +93,7 @@ impl<Op: tg::BinaryPredicate + Send + Sync> SedonaScalarKernel for TgPredicate<O
         executor.execute_wkb_wkb_void(|lhs, rhs| {
             match (lhs, rhs) {
                 (Some(lhs), Some(rhs)) => {
-                    builder.append_value(Op::evaluate(lhs, rhs));
+                    builder.append_value(Op::evaluate(lhs, rhs)?);
                 }
                 _ => builder.append_null(),
             };
@@ -238,6 +238,56 @@ mod tests {
                 .invoke_array_array(point_array, polygon_array)
                 .unwrap(),
             &expected
+        );
+    }
+
+    const COLLECTION: &str =
+        "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)), ((1 0, 2 0, 2 1, 1 1, 1 0)))";
+    const LINE: &str = "LINESTRING (0.5 0.5, 1.5 0.5)";
+
+    fn assert_unsupported_containment_predicate(
+        name: &str,
+        implementation: Vec<ScalarKernelRef>,
+        lhs: &str,
+        rhs: &str,
+    ) {
+        let udf = SedonaScalarUDF::from_impl(name, implementation);
+        let tester =
+            ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY.clone(), WKB_GEOMETRY.clone()]);
+
+        let error = tester.invoke_scalar_scalar(lhs, rhs).unwrap_err();
+        assert!(error.to_string().contains(
+            "Containment predicates are not supported for geometries with interacting collection components"
+        ));
+    }
+
+    #[test]
+    fn unsupported_contains_returns_error() {
+        assert_unsupported_containment_predicate(
+            "st_contains",
+            st_contains_impl(),
+            COLLECTION,
+            LINE,
+        );
+    }
+
+    #[test]
+    fn unsupported_covers_returns_error() {
+        assert_unsupported_containment_predicate("st_covers", st_covers_impl(), COLLECTION, LINE);
+    }
+
+    #[test]
+    fn unsupported_within_returns_error() {
+        assert_unsupported_containment_predicate("st_within", st_within_impl(), LINE, COLLECTION);
+    }
+
+    #[test]
+    fn unsupported_covered_by_returns_error() {
+        assert_unsupported_containment_predicate(
+            "st_coveredby",
+            st_covered_by_impl(),
+            LINE,
+            COLLECTION,
         );
     }
 }
