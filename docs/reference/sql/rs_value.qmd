@@ -41,6 +41,18 @@ kernels:
         Band index (1-based). When omitted, defaults to band 1, but only for a
         single-band raster; sampling an unspecified band of a multiband raster
         is ambiguous and raises an error.
+  - returns: float64
+    args:
+    - raster
+    - name: colX
+      type: int
+      description: Pixel column (1-based).
+    - name: rowY
+      type: int
+      description: Pixel row (1-based).
+    - name: band
+      type: int
+      description: Band index (1-based).
 ---
 
 ::: callout-warning
@@ -54,6 +66,10 @@ geometry — the value of the pixel that contains the point is returned, with no
 interpolation. The band defaults to 1 when omitted, but only for a single-band
 raster; on a multiband raster the band must be given explicitly.
 
+The pixel can instead be addressed by its grid coordinate. Grid coordinates
+are 1-based, as in PostGIS `ST_Value`: `(1, 1)` is the upper-left pixel, and a
+column or row of `0` is outside the raster.
+
 The result is `NULL` when the point falls outside the raster, or when the
 sampled pixel equals the band's nodata value. Only 2-D rasters are supported.
 
@@ -61,4 +77,10 @@ sampled pixel equals the band's nodata value. Only 2-D rasters are supported.
 
 ```sql
 SELECT RS_Value(RS_Example(), ST_Point(74.58, 110.57, 'OGC:CRS84'), 1);
+```
+
+The upper-left pixel of band 1, by grid coordinate:
+
+```sql
+SELECT RS_Value(RS_Example(), 1, 1, 1);
 ```

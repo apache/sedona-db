@@ -36,7 +36,7 @@ kernels:
 Returns the Nth interior `LINESTRING` ring of a `POLYGON`. Returns `NULL` if
 the geometry is not a polygon or `n` is out of range.
 
-`n` is 1-based in SedonaDB.
+`n` is 1-based, as in PostGIS: `1` returns the first interior ring.
 
 ## Examples
 

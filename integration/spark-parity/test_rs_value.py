@@ -145,24 +145,36 @@ def test_rs_value_two_arg_multiband(tmp_path):
     compare(sql, sedona, spark)
 
 
+# The grid form reads a 1-based coordinate in SedonaDB (as in PostGIS
+# ST_Value) and a 0-based one in the pinned Sedona Spark 1.9.1, so every
+# in-grid case diverges until apache/sedona#3403 ships in Sedona 2.0. Past
+# the far edge both engines answer NULL.
+SPARK_0_BASED_GRID = pytest.mark.xfail(
+    reason="SedonaDB reads the grid coordinate 1-based, as PostGIS ST_Value "
+    "does; the pinned Sedona Spark 1.9.1 reads it 0-based until "
+    "apache/sedona#3403 ships in Sedona 2.0"
+)
+
+
 @pytest.mark.parametrize(
     "col,row,band",
     [
-        pytest.param(0, 0, 1, id="origin-0based"),
-        pytest.param(2, 3, 1, id="interior"),
-        pytest.param(6, 5, 1, id="last-pixel"),
-        pytest.param(1, 1, 2, id="band-2"),
-        pytest.param(7, 6, 1, id="out-of-grid"),
+        pytest.param(1, 1, 1, id="origin", marks=SPARK_0_BASED_GRID),
+        pytest.param(3, 4, 1, id="interior", marks=SPARK_0_BASED_GRID),
+        pytest.param(7, 6, 1, id="last-pixel", marks=SPARK_0_BASED_GRID),
+        pytest.param(2, 2, 2, id="band-2", marks=SPARK_0_BASED_GRID),
+        pytest.param(0, 1, 1, id="column-0", marks=SPARK_0_BASED_GRID),
+        pytest.param(8, 7, 1, id="out-of-grid"),
     ],
 )
 def test_rs_value_grid_coordinate_overload(col, row, band, tmp_path):
-    """RS_Value(raster, colX, rowY, band) reads the pixel at a 0-based grid
-    coordinate — Spark's convention for this overload, and now SedonaDB's —
-    with a 1-based band; out of the grid it samples NULL."""
+    """RS_Value(raster, colX, rowY, band) reads the pixel at a 1-based grid
+    coordinate, as PostGIS ST_Value does, with a 1-based band; out of the
+    grid (including column or row 0) it samples NULL."""
     sedona, spark = _engines("val_g_src", tmp_path)
     data = random_raster_data("uint8", bands=2, height=6, width=7)
-    in_grid = 0 <= row < 6 and 0 <= col < 7
-    expected = float(data[band - 1][row][col]) if in_grid else None
+    in_grid = 1 <= row <= 6 and 1 <= col <= 7
+    expected = float(data[band - 1][row - 1][col - 1]) if in_grid else None
     sql = f"SELECT RS_Value(rast, {col}, {row}, {band}) FROM val_g_src"
     compare(sql, sedona, spark, expected=expected)
 
