@@ -58,6 +58,9 @@ pub(crate) fn scan_pixels(
     ) else {
         return exec_err!("{func}: expected a 2-D band buffer");
     };
+    if height < 0 || width < 0 {
+        return exec_err!("{func}: band buffer has a negative shape [{height}, {width}]");
+    }
     if height == 0 || width == 0 {
         return Ok(());
     }
@@ -137,7 +140,16 @@ impl<'a> NodataMatcher<'a> {
                 f64::from_le_bytes(pixel.try_into().unwrap()),
                 f64::from_le_bytes(self.nodata.try_into().unwrap()),
             ),
-            _ => pixel == self.nodata,
+            // Listed rather than matched with `_`, so a new float type has to
+            // choose a comparison instead of silently comparing bytes.
+            BandDataType::UInt8
+            | BandDataType::Int8
+            | BandDataType::UInt16
+            | BandDataType::Int16
+            | BandDataType::UInt32
+            | BandDataType::Int32
+            | BandDataType::UInt64
+            | BandDataType::Int64 => pixel == self.nodata,
         }
     }
 }
@@ -195,8 +207,22 @@ mod tests {
     }
 
     #[test]
+    fn scans_broadcast_views_in_place() {
+        // Zero strides broadcast one byte across a 2x3 view.
+        let seen = scan(&buffer_of(&[7], [2, 3], [0, 0], 0)).unwrap();
+        assert_eq!(seen.len(), 6);
+        assert!(seen.iter().all(|&(_, _, value)| value == 7));
+    }
+
+    #[test]
     fn empty_band_visits_nothing() {
         assert!(scan(&buffer_of(&[], [0, 3], [3, 1], 0)).unwrap().is_empty());
+    }
+
+    #[test]
+    fn negative_shape_errors() {
+        let err = scan(&buffer_of(&[1], [-1, 1], [1, 1], 0)).unwrap_err();
+        assert!(err.to_string().contains("negative shape"), "{err}");
     }
 
     #[test]

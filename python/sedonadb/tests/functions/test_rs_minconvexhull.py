@@ -35,9 +35,11 @@ from sedonadb.raster_testing import write_geotiff
 rasterio = pytest.importorskip("rasterio")
 shapely = pytest.importorskip("shapely")
 
-TRANSFORMS = {
-    "north-up": (100.0, 2.0, 0.0, 500.0, 0.0, -3.0),
-    "skewed": (100.0, 2.0, 0.5, 500.0, 0.25, -3.0),
+# Each grid places the 7x6 fixture: north-up by bbox, skewed by a raw GDAL
+# transform (a bbox cannot express skew).
+GRIDS = {
+    "north-up": {"bbox": (100.0, 482.0, 114.0, 500.0)},
+    "skewed": {"gdal_transform": (100.0, 2.0, 0.5, 500.0, 0.25, -3.0)},
 }
 
 
@@ -71,7 +73,7 @@ def _sedonadb_min_convex_hull(con, path, band=None):
     return list(shapely.from_wkt(wkt).exterior.coords)
 
 
-@pytest.fixture(params=list(TRANSFORMS), ids=list(TRANSFORMS))
+@pytest.fixture(params=list(GRIDS), ids=list(GRIDS))
 def tiff(request, tmp_path):
     """A 7x6 two-band raster of nodata (0) with data in band 1 at rows 1-2,
     columns 2-3, and in band 2 at row 4, column 5."""
@@ -80,7 +82,7 @@ def tiff(request, tmp_path):
     data[0, 2, 2] = 20
     data[1, 4, 5] = 30
     path = tmp_path / f"minconvexhull_{request.param}.tif"
-    write_geotiff(path, data, gdal_transform=TRANSFORMS[request.param], nodata=0)
+    write_geotiff(path, data, **GRIDS[request.param], nodata=0)
     return path
 
 
@@ -101,7 +103,7 @@ def test_rs_minconvexhull_all_nodata_is_null(con, tmp_path):
     write_geotiff(
         path,
         np.zeros((1, 6, 7), dtype="uint8"),
-        gdal_transform=TRANSFORMS["north-up"],
+        **GRIDS["north-up"],
         nodata=0,
     )
     assert _rasterio_min_convex_hull(path, [1]) is None

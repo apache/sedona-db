@@ -34,13 +34,13 @@ use std::sync::Arc;
 use arrow_array::Array;
 use arrow_array::builder::{BinaryBuilder, StringViewBuilder};
 use datafusion_common::cast::as_int32_array;
-use datafusion_common::{Result, ScalarValue};
+use datafusion_common::{Result, ScalarValue, exec_datafusion_err};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::item_crs::make_item_crs;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::types::Edges;
 use sedona_raster::affine_transformation::to_world_coordinate;
-use sedona_raster::traits::RasterRef;
+use sedona_raster::traits::{NdBuffer, RasterRef};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 use crate::executor::RasterExecutor;
@@ -185,6 +185,8 @@ impl PixelBounds {
     }
 }
 
+const FUNC: &str = "RS_MinConvexHull";
+
 /// The cells holding data in any of the 1-based bands `band_nums`, or `None`
 /// when no pixel of those bands holds data.
 fn data_bounds(
@@ -193,28 +195,104 @@ fn data_bounds(
 ) -> Result<Option<PixelBounds>> {
     let mut bounds: Option<PixelBounds> = None;
     for band_num in band_nums {
-        let band = resolve_band("RS_MinConvexHull", raster, band_num)?;
-        let buffer = spatial_2d_buffer("RS_MinConvexHull", band.as_ref())?;
-        let Some(nodata) = NodataMatcher::for_band("RS_MinConvexHull", band.as_ref())? else {
-            // Without a nodata value every pixel is data, so the band covers
-            // the whole grid and there is nothing to scan.
-            let (height, width) = (buffer.shape[0], buffer.shape[1]);
-            if height > 0 && width > 0 {
-                let grid =
-                    PixelBounds::single(0, 0).union(PixelBounds::single(width - 1, height - 1));
-                bounds = Some(bounds.map_or(grid, |b| b.union(grid)));
-            }
+        // Resolve every band, even once the grid is covered, so a bad band
+        // errors regardless of what the earlier bands hold.
+        let band = resolve_band(FUNC, raster, band_num)?;
+        let buffer = spatial_2d_buffer(FUNC, band.as_ref())?;
+        let nodata = NodataMatcher::for_band(FUNC, band.as_ref())?;
+        let (height, width) = (buffer.shape[0], buffer.shape[1]);
+        if height <= 0 || width <= 0 {
             continue;
+        }
+        let grid = PixelBounds::single(0, 0).union(PixelBounds::single(width - 1, height - 1));
+        if bounds == Some(grid) {
+            // The grid is already covered, so no band can widen it.
+            continue;
+        }
+        let band_bounds = match nodata {
+            // Without a nodata value every pixel is data.
+            None => Some(grid),
+            Some(nodata) => band_data_bounds(&buffer, &nodata)?,
         };
-        scan_pixels("RS_MinConvexHull", &buffer, |col, row, pixel| {
-            if !nodata.matches(pixel) {
-                let cell = PixelBounds::single(col, row);
-                bounds = Some(bounds.map_or(cell, |b| b.union(cell)));
-            }
-            ControlFlow::Continue(())
-        })?;
+        if let Some(band_bounds) = band_bounds {
+            bounds = Some(bounds.map_or(band_bounds, |b| b.union(band_bounds)));
+        }
     }
     Ok(bounds)
+}
+
+/// The cells of one band holding data, or `None` when every pixel is nodata.
+///
+/// Scans inward from each edge and stops at the first data pixel: rows down
+/// from the top, rows up from the bottom, then columns in from the left and
+/// right over the rows in between. A band that is mostly data costs a handful
+/// of pixels rather than a full scan; a band that is mostly nodata costs at
+/// most about two full scans. The bottom, left and right scans read the band
+/// through reversed and transposed views of the same buffer.
+fn band_data_bounds(buffer: &NdBuffer, nodata: &NodataMatcher) -> Result<Option<PixelBounds>> {
+    // The first data pixel of `view` in row-major order, as its view-space
+    // (column, row).
+    let first_data = |view: &NdBuffer| -> Result<Option<(i64, i64)>> {
+        let mut hit = None;
+        scan_pixels(FUNC, view, |col, row, pixel| {
+            if nodata.matches(pixel) {
+                ControlFlow::Continue(())
+            } else {
+                hit = Some((col, row));
+                ControlFlow::Break(())
+            }
+        })?;
+        Ok(hit)
+    };
+
+    // The top scan runs over the band's own view, so it also bounds-checks
+    // every byte the derived views below can reach.
+    let Some((_, min_row)) = first_data(buffer)? else {
+        return Ok(None);
+    };
+    let (height, width) = (buffer.shape[0], buffer.shape[1]);
+    let (row_stride, col_stride) = (buffer.strides[0], buffer.strides[1]);
+    let offset = buffer.offset as i64;
+    let view = |offset: i64, shape: [i64; 2], strides: [i64; 2]| NdBuffer {
+        buffer: buffer.buffer,
+        shape: shape.to_vec(),
+        strides: strides.to_vec(),
+        offset: offset as u64,
+        data_type: buffer.data_type,
+    };
+    // A data pixel exists in row `min_row`, so every scan below hits one.
+    let found = || exec_datafusion_err!("{FUNC}: data pixel vanished between scans");
+
+    // Rows from the bottom, up to `min_row`.
+    let bottom_up = view(
+        offset + (height - 1) * row_stride,
+        [height - min_row, width],
+        [-row_stride, col_stride],
+    );
+    let (_, rows_from_bottom) = first_data(&bottom_up)?.ok_or_else(found)?;
+    let max_row = height - 1 - rows_from_bottom;
+
+    // Columns (as view rows) over rows `min_row..=max_row`, from each side.
+    let rows = max_row - min_row + 1;
+    let left_in = view(
+        offset + min_row * row_stride,
+        [width, rows],
+        [col_stride, row_stride],
+    );
+    let (_, min_col) = first_data(&left_in)?.ok_or_else(found)?;
+    let right_in = view(
+        offset + min_row * row_stride + (width - 1) * col_stride,
+        [width - min_col, rows],
+        [-col_stride, row_stride],
+    );
+    let (_, cols_from_right) = first_data(&right_in)?.ok_or_else(found)?;
+
+    Ok(Some(PixelBounds {
+        min_col,
+        min_row,
+        max_col: width - 1 - cols_from_right,
+        max_row,
+    }))
 }
 
 #[cfg(test)]
@@ -303,6 +381,32 @@ mod tests {
         assert_eq!(bounds(spec, &[1, 2]).unwrap(), cells(1, 0, 3, 2));
     }
 
+    /// The edge-inward scan against a full scan over every data mask of a few
+    /// small grids (all 2^12 masks of a 4x3 grid, plus strips).
+    #[test]
+    fn edge_scan_matches_a_full_scan() {
+        for (width, height) in [(4usize, 3usize), (1, 5), (6, 1), (2, 2)] {
+            let cells = width * height;
+            for mask in 0u32..(1 << cells) {
+                let pixels: Vec<u8> = (0..cells).map(|i| ((mask >> i) & 1) as u8).collect();
+                let spec = RasterSpec::d2(width as i64, height as i64)
+                    .band_values(&pixels)
+                    .nodata(0u8);
+                let expected = pixels
+                    .iter()
+                    .enumerate()
+                    .filter(|&(_, &p)| p != 0)
+                    .map(|(i, _)| PixelBounds::single((i % width) as i64, (i / width) as i64))
+                    .reduce(PixelBounds::union);
+                assert_eq!(
+                    bounds(spec, &[1]).unwrap(),
+                    expected,
+                    "{width}x{height} mask {mask:b}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn band_out_of_range_errors() {
         let err = bounds(sparse_band(), &[2]).unwrap_err().to_string();
@@ -315,7 +419,7 @@ mod tests {
     fn udf_invoke_places_cells_in_world_coordinates() {
         // Two-unit pixels from origin (10, 20), north-up: cells (1..=2, 0..=1)
         // span x 12..16 and y 20..16.
-        let raster = sparse_band().transform([10.0, 2.0, 0.0, 20.0, 0.0, -2.0]);
+        let raster = sparse_band().bbox(10.0, 14.0, 18.0, 20.0);
         // Rotated grid: the corners follow the skewed axes, not the world axes.
         let skewed = sparse_band().transform([10.0, 2.0, 1.0, 20.0, 1.0, -2.0]);
         let all_nodata = RasterSpec::d2(1, 1).band_values(&[0u8]).nodata(0u8);
@@ -335,6 +439,20 @@ mod tests {
             &WKB_GEOMETRY,
         );
         assert_array_equal(&result, &expected);
+    }
+
+    #[test]
+    fn udf_invoke_negative_band_errors() {
+        let udf: ScalarUDF = rs_minconvexhull_udf().into();
+        let tester = ScalarUdfTester::new(udf, vec![RASTER, SedonaType::Arrow(DataType::Int32)]);
+        let err = tester
+            .invoke_arrays(vec![
+                Arc::new(raster_array([Some(sparse_band())])),
+                Arc::new(Int32Array::from(vec![-1])),
+            ])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("1-based"), "{err}");
     }
 
     #[test]
