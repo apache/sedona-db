@@ -28,6 +28,7 @@ use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::types::Edges;
 use sedona_geometry::wkb_header::read_point_xy;
 use sedona_raster::affine_transformation::to_raster_coordinate;
+use sedona_raster::traits::RasterRef;
 use sedona_schema::{
     datatypes::SedonaType,
     matchers::{ArgMatcher, TypeMatcher},
@@ -196,6 +197,9 @@ impl SedonaScalarKernel for RsCoordinatePoint {
 /// kernels differ only in what they build from the result. `visit` receives
 /// `None` for a row with no coordinate to map: a null raster, a null or empty
 /// point, or a null ordinate.
+///
+/// The `(col, row)` handed to `visit` is 1-based, as in PostGIS
+/// `ST_WorldToRasterCoord`: the upper-left pixel is `(1, 1)`.
 fn visit_raster_coordinates(
     executor: &RasterExecutor,
     args: &[ColumnarValue],
@@ -205,7 +209,9 @@ fn visit_raster_coordinates(
     if from_point {
         executor.execute_raster_wkb_crs_void(|raster_opt, wkb_opt, _crs| {
             match (raster_opt, point_xy(wkb_opt)?) {
-                (Some(raster), Some((x, y))) => visit(Some(to_raster_coordinate(raster, x, y)?)),
+                (Some(raster), Some((x, y))) => {
+                    visit(Some(one_based_raster_coordinate(raster, x, y)?))
+                }
                 _ => visit(None),
             }
         })
@@ -222,12 +228,19 @@ fn visit_raster_coordinates(
                 world_y_iter.next().unwrap(),
             ) {
                 (Some(raster), Some(x), Some(y)) => {
-                    visit(Some(to_raster_coordinate(raster, x, y)?))
+                    visit(Some(one_based_raster_coordinate(raster, x, y)?))
                 }
                 (_, _, _) => visit(None),
             }
         })
     }
+}
+
+/// `to_raster_coordinate` answers in 0-based grid space; SQL callers count
+/// pixels from 1.
+fn one_based_raster_coordinate(raster: &dyn RasterRef, x: f64, y: f64) -> Result<(i64, i64)> {
+    let (col, row) = to_raster_coordinate(raster, x, y)?;
+    Ok((col.saturating_add(1), row.saturating_add(1)))
 }
 
 /// Input matchers for a world→raster coordinate function: the numeric
@@ -316,10 +329,10 @@ mod tests {
         let rasters = generate_test_rasters(2, Some(0)).unwrap();
         // Nulling out raster 0 since it has a non-invertible geotransform
         // since it has zeros in skews and scales.
-        // (2.0,3.0) is upper left corner for raster 1, which has raster coords (0,0)
+        // (2.0,3.0) is upper left corner for raster 1, which has raster coords (1,1)
         let expected_values = match coord {
-            Coord::X => vec![None, Some(0_i64)],
-            Coord::Y => vec![None, Some(0_i64)],
+            Coord::X => vec![None, Some(1_i64)],
+            Coord::Y => vec![None, Some(1_i64)],
         };
         let expected: Arc<dyn arrow_array::Array> =
             Arc::new(arrow_array::Int64Array::from(expected_values));
@@ -347,7 +360,7 @@ mod tests {
     fn udf_invoke_xy_from_point(#[values(Coord::Y, Coord::X)] coord: Coord) {
         // The (raster, point) overload reads the world coordinate from a point
         // geometry and answers exactly like the numeric form: world (2, 3) is
-        // raster 1's origin -> raster coordinate (0, 0). Raster 0 is nulled.
+        // raster 1's origin -> raster coordinate (1, 1). Raster 0 is nulled.
         let udf = match coord {
             Coord::X => rs_worldtorastercoordx_udf(),
             Coord::Y => rs_worldtorastercoordy_udf(),
@@ -356,7 +369,7 @@ mod tests {
         let rasters = generate_test_rasters(2, Some(0)).unwrap();
         let points = create_array(&[Some("POINT (2 3)"), Some("POINT (2 3)")], &WKB_GEOMETRY);
         let expected: Arc<dyn arrow_array::Array> =
-            Arc::new(arrow_array::Int64Array::from(vec![None, Some(0_i64)]));
+            Arc::new(arrow_array::Int64Array::from(vec![None, Some(1_i64)]));
         let result = tester
             .invoke_array_array(Arc::new(rasters), points)
             .unwrap();
@@ -366,14 +379,14 @@ mod tests {
     #[rstest]
     fn udf_invoke_pt_from_point() {
         // The combined (raster, point) overload returns the raster-coordinate
-        // point, matching the numeric form: world (2, 3) -> POINT (0 0).
+        // point, matching the numeric form: world (2, 3) -> POINT (1 1).
         let tester = ScalarUdfTester::new(
             rs_worldtorastercoord_udf().into(),
             vec![RASTER, WKB_GEOMETRY],
         );
         let rasters = generate_test_rasters(2, Some(0)).unwrap();
         let points = create_array(&[Some("POINT (2 3)"), Some("POINT (2 3)")], &WKB_GEOMETRY);
-        let expected = &create_array(&[None, Some("POINT (0 0)")], &WKB_GEOMETRY);
+        let expected = &create_array(&[None, Some("POINT (1 1)")], &WKB_GEOMETRY);
         let result = tester
             .invoke_array_array(Arc::new(rasters), points)
             .unwrap();
@@ -393,7 +406,7 @@ mod tests {
         );
 
         let rasters = generate_test_rasters(2, Some(0)).unwrap();
-        let expected = &create_array(&[None, Some("POINT (0 0)")], &WKB_GEOMETRY);
+        let expected = &create_array(&[None, Some("POINT (1 1)")], &WKB_GEOMETRY);
 
         let result = tester
             .invoke_array_scalar_scalar(Arc::new(rasters), 2.0_f64, 3.0_f64)
@@ -431,15 +444,15 @@ mod tests {
 
         // Use only raster 1 (invertible) with different world coordinates
         // Raster 1: upper_left=(2,3), scale_x=0.1, scale_y=-0.2, skew_x=0.03, skew_y=0.04
-        // For world coords (2,3) -> raster (0,0) (the upper left corner)
+        // For world coords (2,3) -> raster (1,1) (the upper left corner)
         // For world coords (2.1, 2.8) -> need to solve the inverse
         let rasters = generate_test_rasters(2, Some(0)).unwrap();
         let world_x = Arc::new(arrow_array::Float64Array::from(vec![2.0, 2.0]));
         let world_y = Arc::new(arrow_array::Float64Array::from(vec![3.0, 3.0]));
 
         let expected_values = match coord {
-            Coord::X => vec![None, Some(0_i64)],
-            Coord::Y => vec![None, Some(0_i64)],
+            Coord::X => vec![None, Some(1_i64)],
+            Coord::Y => vec![None, Some(1_i64)],
         };
         let expected: Arc<dyn arrow_array::Array> =
             Arc::new(arrow_array::Int64Array::from(expected_values));
@@ -472,8 +485,8 @@ mod tests {
         let world_y = Arc::new(arrow_array::Float64Array::from(vec![3.0, 2.5, 1.75]));
 
         let expected_coords = match coord {
-            Coord::X => vec![Some(0_i64), Some(4_i64), Some(10_i64)],
-            Coord::Y => vec![Some(0_i64), Some(3_i64), Some(8_i64)],
+            Coord::X => vec![Some(1_i64), Some(5_i64), Some(11_i64)],
+            Coord::Y => vec![Some(1_i64), Some(4_i64), Some(9_i64)],
         };
 
         let result = tester
@@ -527,9 +540,9 @@ mod tests {
 
         let expected = create_array(
             &[
-                Some("POINT (0 0)"),
-                Some("POINT (4 3)"),
-                Some("POINT (10 8)"),
+                Some("POINT (1 1)"),
+                Some("POINT (5 4)"),
+                Some("POINT (11 9)"),
             ],
             &WKB_GEOMETRY,
         );

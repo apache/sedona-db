@@ -25,6 +25,7 @@ use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::types::Edges;
 use sedona_raster::affine_transformation::to_world_coordinate;
+use sedona_raster::traits::RasterRef;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 /// RS_RasterToWorldCoordY() scalar UDF implementation
@@ -58,6 +59,13 @@ pub fn rs_rastertoworldcoord_udf() -> SedonaScalarUDF {
         vec![Arc::new(RsCoordinatePoint {})],
         Volatility::Immutable,
     )
+}
+
+/// World coordinate of the upper-left corner of pixel `(x, y)`, counted from
+/// 1 as in PostGIS `ST_RasterToWorldCoord`; `to_world_coordinate` works in
+/// 0-based grid space. Coordinates outside the grid extrapolate.
+fn one_based_world_coordinate(raster: &dyn RasterRef, x: i64, y: i64) -> (f64, f64) {
+    to_world_coordinate(raster, x.saturating_sub(1), y.saturating_sub(1))
 }
 
 #[derive(Debug, Clone)]
@@ -109,7 +117,7 @@ impl SedonaScalarKernel for RsCoordinateMapper {
 
             match (raster_opt, x_opt, y_opt) {
                 (Some(raster), Some(x), Some(y)) => {
-                    let (world_x, world_y) = to_world_coordinate(raster, x, y);
+                    let (world_x, world_y) = one_based_world_coordinate(raster, x, y);
                     match self.coord {
                         Coord::X => builder.append_value(world_x),
                         Coord::Y => builder.append_value(world_y),
@@ -170,7 +178,7 @@ impl SedonaScalarKernel for RsCoordinatePoint {
 
             match (raster_opt, x_opt, y_opt) {
                 (Some(raster), Some(x), Some(y)) => {
-                    let (world_x, world_y) = to_world_coordinate(raster, x, y);
+                    let (world_x, world_y) = one_based_world_coordinate(raster, x, y);
                     item[5..13].copy_from_slice(&world_x.to_le_bytes());
                     item[13..21].copy_from_slice(&world_y.to_le_bytes());
                     builder.append_value(item);
@@ -225,7 +233,7 @@ mod tests {
         );
 
         let rasters = generate_test_rasters(3, Some(1)).unwrap();
-        // At 0,0 expect the upper left corner of the test values
+        // Pixel (1, 1) is the upper left corner of the test values
         let expected_values = match coord {
             Coord::X => vec![Some(1.0), None, Some(3.0)],
             Coord::Y => vec![Some(2.0), None, Some(4.0)],
@@ -234,7 +242,7 @@ mod tests {
             Arc::new(arrow_array::Float64Array::from(expected_values));
 
         let result = tester
-            .invoke_array_scalar_scalar(Arc::new(rasters), 0_i32, 0_i32)
+            .invoke_array_scalar_scalar(Arc::new(rasters), 1_i32, 1_i32)
             .unwrap();
         assert_array_equal(&result, &expected);
     }
@@ -252,14 +260,14 @@ mod tests {
         );
 
         let rasters = generate_test_rasters(3, Some(1)).unwrap();
-        // At 0,0 expect the upper left corner of the test values
+        // Pixel (1, 1) is the upper left corner of the test values
         let expected = &create_array(
             &[Some("POINT (1 2)"), None, Some("POINT (3 4)")],
             &WKB_GEOMETRY,
         );
 
         let result = tester
-            .invoke_array_scalar_scalar(Arc::new(rasters), 0_i32, 0_i32)
+            .invoke_array_scalar_scalar(Arc::new(rasters), 1_i32, 1_i32)
             .unwrap();
         assert_array_equal(&result, expected);
     }
@@ -284,9 +292,9 @@ mod tests {
         // Raster 0: upper_left=(1,2), scales=(0,0), so any pixel gives (1,2)
         // Raster 1: null
         // Raster 2: upper_left=(3,4), scale_x=0.2, scale_y=-0.4, skew_x=0.06, skew_y=0.08
-        //           At pixel (1,2): x = 3 + 0.2*1 + 0.06*2 = 3.32, y = 4 + 0.08*1 + (-0.4)*2 = 3.28
-        let x_coords = Arc::new(arrow_array::Int32Array::from(vec![0, 0, 1]));
-        let y_coords = Arc::new(arrow_array::Int32Array::from(vec![0, 0, 2]));
+        //           At pixel (2,3), grid offset (1,2): x = 3 + 0.2*1 + 0.06*2 = 3.32, y = 4 + 0.08*1 + (-0.4)*2 = 3.28
+        let x_coords = Arc::new(arrow_array::Int32Array::from(vec![1, 1, 2]));
+        let y_coords = Arc::new(arrow_array::Int32Array::from(vec![1, 1, 3]));
 
         let result = tester
             .invoke_arrays(vec![Arc::new(rasters), x_coords, y_coords])
@@ -330,8 +338,8 @@ mod tests {
         let rasters = generate_test_rasters(2, None).unwrap();
         let scalar_raster = ScalarValue::try_from_array(&rasters, 1).unwrap();
 
-        let x_vals = vec![0_i32, 1_i32];
-        let y_vals = vec![0_i32, 1_i32];
+        let x_vals = vec![1_i32, 2_i32];
+        let y_vals = vec![1_i32, 2_i32];
         let x_coords: Arc<dyn Array> = Arc::new(arrow_array::Int32Array::from(x_vals.clone()));
         let y_coords: Arc<dyn Array> = Arc::new(arrow_array::Int32Array::from(y_vals.clone()));
 
@@ -372,8 +380,8 @@ mod tests {
         let rasters = generate_test_rasters(2, None).unwrap();
         let scalar_raster = ScalarValue::try_from_array(&rasters, 1).unwrap();
 
-        let x_vals = vec![0_i32, 1_i32];
-        let y_vals = vec![0_i32, 1_i32];
+        let x_vals = vec![1_i32, 2_i32];
+        let y_vals = vec![1_i32, 2_i32];
         let x_coords: Arc<dyn Array> = Arc::new(arrow_array::Int32Array::from(x_vals.clone()));
         let y_coords: Arc<dyn Array> = Arc::new(arrow_array::Int32Array::from(y_vals.clone()));
 

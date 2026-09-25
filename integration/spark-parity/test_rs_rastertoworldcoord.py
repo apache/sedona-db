@@ -18,11 +18,8 @@
 
 The combined form returns the world coordinate of a pixel's upper-left
 corner as a POINT geometry; results travel through the harness's
-geometry path. Every case is the input side of the same cataloged
-divergence (apache/sedona-db#1235): SedonaDB reads the pixel coordinate
-0-based, so (0, 0) names the origin pixel, where Sedona Spark reads it
-1-based, so (1, 1) does — shifting every answer by one pixel of scale.
-The X/Y variants catalog the same divergence scalar by scalar.
+geometry path. Both engines read the pixel coordinate 1-based, as PostGIS
+does, so (1, 1) names the origin pixel (apache/sedona-db#1235).
 """
 
 import pytest
@@ -33,12 +30,6 @@ from sedonadb.testing_spark import SedonaSpark
 
 @pytest.mark.parametrize(
     "col,row", [pytest.param(1, 1, id="1-1"), pytest.param(2, 2, id="2-2")]
-)
-@pytest.mark.xfail(
-    reason="the input pixel coordinate is 0-based in SedonaDB and 1-based in "
-    "Sedona Spark (apache/sedona-db#1235): (1, 1) answers POINT (102 497) "
-    "from SedonaDB and POINT (100 500) — the origin corner — from Sedona "
-    "Spark"
 )
 def test_rs_rastertoworldcoord(col, row, tmp_path):
     """A pixel coordinate names the same world POINT on both engines."""

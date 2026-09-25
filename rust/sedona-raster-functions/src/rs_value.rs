@@ -20,7 +20,7 @@
 //! ```text
 //! RS_Value(raster, point)             -> Double  -- band defaults to 1
 //! RS_Value(raster, point, band)       -> Double
-//! RS_Value(raster, colX, rowY, band)  -> Double  -- grid coordinate (0-based)
+//! RS_Value(raster, colX, rowY, band)  -> Double  -- grid coordinate (1-based)
 //! ```
 //!
 //! Returns the value of the pixel that contains the point (no resampling). The
@@ -385,11 +385,11 @@ fn resolve_point_xy(
 /// the band is not 2-D.
 /// Kernel for `RS_Value(raster, colX, rowY, band)` — sample by grid coordinate.
 ///
-/// Mirrors Sedona Spark's grid overload, which reads the pixel coordinate
-/// **0-based** (column 0 / row 0 is the origin pixel) — unlike its 1-based
-/// `RS_PixelAs*` functions — with a 1-based band. No CRS or affine transform is
-/// involved: the coordinates index the band grid directly. A coordinate outside
-/// the grid, or a pixel equal to the band's nodata, samples NULL.
+/// Reads the pixel coordinate **1-based**, as PostGIS `ST_Value` does and like
+/// `RS_PixelAs*`: `(1, 1)` is the origin pixel. The band is 1-based too. No CRS
+/// or affine transform is involved: the coordinates index the band grid
+/// directly. A coordinate outside the grid (including column or row 0), or a
+/// pixel equal to the band's nodata, samples NULL.
 #[derive(Debug)]
 struct RsValueGrid;
 
@@ -439,7 +439,9 @@ impl SedonaScalarKernel for RsValueGrid {
             // Clamp a negative band to 0 so resolve_band rejects it as not
             // 1-based rather than wrapping it into a huge usize.
             let band_num = band.value(i).max(0) as usize;
-            match sample_pixel(raster, col.value(i) as i64, row.value(i) as i64, band_num)? {
+            // `sample_pixel` works in 0-based grid space.
+            let (col0, row0) = (col.value(i) as i64 - 1, row.value(i) as i64 - 1);
+            match sample_pixel(raster, col0, row0, band_num)? {
                 Some(value) => builder.append_value(value),
                 None => builder.append_null(),
             }
@@ -541,9 +543,9 @@ mod tests {
     }
 
     #[test]
-    fn grid_coordinate_overload_is_zero_based() {
+    fn grid_coordinate_overload_is_one_based() {
         // The (raster, int, int, int) matcher dispatches to the grid kernel,
-        // which reads 0-based pixel coordinates (Spark's convention) with a
+        // which reads 1-based pixel coordinates (PostGIS's convention) with a
         // 1-based band. sample_pixel's own 0-based / out-of-bounds behaviour is
         // covered directly above; this exercises the end-to-end dispatch.
         // 3x2 raster, row-major: row0 = [10, 20, 30], row1 = [40, 50, 60].
@@ -556,12 +558,12 @@ mod tests {
                 .build()
         };
 
-        // (0, 0) is the origin pixel (0-based) -> top-left value 10.
+        // (1, 1) is the origin pixel (1-based) -> top-left value 10.
         let result = tester
             .invoke_arrays(vec![
                 Arc::new(raster()),
-                Arc::new(Int32Array::from(vec![0])),
-                Arc::new(Int32Array::from(vec![0])),
+                Arc::new(Int32Array::from(vec![1])),
+                Arc::new(Int32Array::from(vec![1])),
                 Arc::new(Int32Array::from(vec![1])),
             ])
             .unwrap();
@@ -574,22 +576,44 @@ mod tests {
             10.0
         );
 
-        // A column at width (3) is out of the grid -> NULL, not an error.
+        // (3, 2) is the last pixel -> bottom-right value 60.
         let result = tester
             .invoke_arrays(vec![
                 Arc::new(raster()),
                 Arc::new(Int32Array::from(vec![3])),
-                Arc::new(Int32Array::from(vec![0])),
+                Arc::new(Int32Array::from(vec![2])),
                 Arc::new(Int32Array::from(vec![1])),
             ])
             .unwrap();
-        assert!(
+        assert_eq!(
             result
                 .as_any()
                 .downcast_ref::<Float64Array>()
                 .unwrap()
-                .is_null(0)
+                .value(0),
+            60.0
         );
+
+        // Column past the width (4) and column/row 0 are out of the grid -> NULL,
+        // not an error.
+        for (col, row) in [(4, 1), (0, 1), (1, 0)] {
+            let result = tester
+                .invoke_arrays(vec![
+                    Arc::new(raster()),
+                    Arc::new(Int32Array::from(vec![col])),
+                    Arc::new(Int32Array::from(vec![row])),
+                    Arc::new(Int32Array::from(vec![1])),
+                ])
+                .unwrap();
+            assert!(
+                result
+                    .as_any()
+                    .downcast_ref::<Float64Array>()
+                    .unwrap()
+                    .is_null(0),
+                "({col}, {row}) should be outside the grid"
+            );
+        }
     }
 
     #[test]

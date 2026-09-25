@@ -28,6 +28,13 @@ kernels:
       type: integer
 ---
 
+## Description
+
+Pixel coordinates are 1-based, as in PostGIS `ST_RasterToWorldCoord`: `(1, 1)`
+is the upper-left pixel, and the result is the world coordinate of that pixel's
+upper-left corner. Coordinates outside the grid, including `0`, extrapolate
+along the geotransform.
+
 ## Examples
 
 ```sql
