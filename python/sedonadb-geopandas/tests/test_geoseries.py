@@ -54,6 +54,15 @@ def _same(got, expected):
     if isinstance(expected, shapely.Geometry):
         if not isinstance(got, shapely.Geometry):
             return False
+        # The geometry type must match exactly, empties included: a POLYGON
+        # EMPTY is not a POINT EMPTY, and a line is not its multipoint boundary.
+        # The one allowance is a ring: WKB has no ring type, so a LinearRing
+        # comes back from the engine as a LineString.
+        rings = {"LinearRing": "LineString"}
+        if rings.get(got.geom_type, got.geom_type) != rings.get(
+            expected.geom_type, expected.geom_type
+        ):
+            return False
         if expected.is_empty or got.is_empty:
             return expected.is_empty and got.is_empty
         # Topological equality, with a tolerance for the last-digit floating
@@ -268,3 +277,39 @@ def test_buffer_rejects_unknown_styles():
         g.buffer(1.0, cap_style="butt")
     with pytest.raises(ValueError, match="join_style"):
         g.buffer(1.0, join_style="miter")
+
+
+def test_set_crs_none_clears_the_crs_and_keeps_the_values():
+    # Clearing the CRS through ST_SetCRS(NULL) propagated the null and erased
+    # every geometry; GeoPandas keeps the coordinates.
+    gs = gpd.GeoSeries.from_wkt(["POINT (1 2)", None], crs="EPSG:3857")
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    cleared = g.set_crs(None, allow_override=True)
+    assert cleared.crs is None
+    assert cleared.to_pandas().tolist() == [shapely.Point(1, 2), None]
+
+
+def test_set_crs_accepts_what_geopandas_accepts_and_keeps_it():
+    # A user string was stamped as given, so the engine canonicalized
+    # "EPSG:4326" to OGC:CRS84, and the integer form was refused outright.
+    gs = gpd.GeoSeries.from_wkt(["POINT (1 2)"], crs="EPSG:4326")
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    assert g.set_crs("EPSG:4326").to_geopandas().crs == "EPSG:4326"
+    bare = gpd.GeoSeries.from_wkt(["POINT (1 2)"])
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=bare)).geometry
+    assert g.set_crs(4326).to_geopandas().crs == "EPSG:4326"
+    with pytest.raises(ValueError, match="Invalid CRS"):
+        g.set_crs("EPSG:not-a-code")
+
+
+def test_buffer_on_geography_keeps_working():
+    # Spherical buffering accepts only quad_segs and endcap, so passing the
+    # planar join parameters by default broke geography buffers.
+    gdf = sgpd.GeoDataFrame(
+        sgpd.default_context().sql("SELECT ST_GeogFromWKT('POINT (0 0)') AS g"),
+        geometry="g",
+    )
+    buffered = gdf.geometry.buffer(1000.0).to_pandas().tolist()
+    assert buffered[0].geom_type == "Polygon"
+    with pytest.raises(NotImplementedError, match="geography"):
+        gdf.geometry.buffer(1000.0, join_style="mitre")
