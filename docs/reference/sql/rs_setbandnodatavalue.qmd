@@ -20,8 +20,9 @@ title: RS_SetBandNoDataValue
 description: >
   Sets the nodata value of the specified band, packing the value into the band's
   native data type. A null raster or band yields a null raster; a null nodata
-  value instead clears the addressed band's nodata. This is metadata-only:
-  raster cell values are not modified.
+  value instead clears the addressed band's nodata. Metadata-only unless the
+  four-argument form asks otherwise: with `replace` true, pixels holding the
+  band's old nodata are rewritten to the new one so they keep reading as nodata.
 kernels:
   - returns: raster
     args:
@@ -41,6 +42,24 @@ kernels:
     - name: nodata
       type: float64
       description: Nodata value to set on the band, or null to clear it.
+  - returns: raster
+    args:
+    - raster
+    - name: band
+      type: int
+      description: Band index (1-based).
+    - name: nodata
+      type: float64
+      description: Nodata value to set on the band, or null to clear it.
+    - name: replace
+      type: boolean
+      description: >
+        When true, every pixel in the band currently equal to its existing
+        nodata is rewritten to the new value, so those pixels still read as
+        nodata afterwards. The band must already have a nodata value; replacing
+        against none is an error. Other bands are left alone. Ignored when
+        `nodata` is null, which clears the band and leaves no sentinel to
+        rewrite pixels to.
 ---
 
 ## Examples
@@ -57,4 +76,14 @@ A null nodata value clears the band's existing nodata, so the getter reads back 
 
 ```sql
 SELECT RS_BandNoDataValue(RS_SetBandNoDataValue(RS_Example(), 1, CAST(NULL AS DOUBLE)), 1);
+```
+
+With `replace`, the pixels that held the old nodata are rewritten to the new one,
+so the count of nodata pixels survives the change:
+
+```sql
+SELECT RS_BandNoDataValue(
+  RS_SetBandNoDataValue(RS_SetBandNoDataValue(RS_Example(), 1, 0), 1, 255, true),
+  1
+);
 ```

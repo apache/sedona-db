@@ -374,6 +374,37 @@ def test_rs_setbandnodatavalue(expr, expected):
     SedonaDB().assert_query_result(f"SELECT {expr}", expected)
 
 
+@pytest.mark.parametrize(
+    ("replace", "expected"),
+    [
+        # Pointing band 1's sentinel at 1 makes the sampled pixel — which holds
+        # 1 — read as nodata, so RS_Value masks it to NULL. Moving the sentinel
+        # to 200 with replace=true rewrites that pixel to 200 as well, so it is
+        # still nodata and still masks; with replace=false the pixel keeps its 1
+        # while the sentinel moves away, so it becomes an ordinary value again.
+        ("true", None),
+        ("false", 1.0),
+    ],
+)
+def test_rs_setbandnodatavalue_replace(replace, expected):
+    base = "RS_SetBandNoDataValue(RS_Example(), 1, 1)"
+    SedonaDB().assert_query_result(
+        f"SELECT RS_Value(RS_SetBandNoDataValue({base}, 1, 200, {replace}), 2, 2, 1)",
+        expected,
+    )
+
+
+def test_rs_setbandnodatavalue_replace_needs_existing_nodata():
+    # With the band's nodata cleared there is no sentinel to match, so there is
+    # nothing to carry forward and the call errors rather than silently doing
+    # the plain set.
+    cleared = "RS_SetBandNoDataValue(RS_Example(), 1, CAST(NULL AS DOUBLE))"
+    with pytest.raises(Exception, match="already have a nodata value"):
+        SedonaDB().assert_query_result(
+            f"SELECT RS_SetBandNoDataValue({cleared}, 1, 200, true)", None
+        )
+
+
 @pytest.mark.parametrize("value", ["0", "CAST(NULL AS DOUBLE)"])
 def test_rs_setbandnodatavalue_two_arg_requires_single_band(value):
     # The 2-arg form is ambiguous on a multiband raster (RS_Example has multiple
