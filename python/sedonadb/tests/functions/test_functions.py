@@ -2657,77 +2657,80 @@ def test_st_geomfromwkbunchecked_invalid_wkb(eng):
     ("geom", "index", "expected"),
     [
         # 1. POINT
-        ("POINT(1 1)", 1, "POINT (1 1)"),  # n=1 (Valid)
-        ("POINT(1 1)", 2, None),  # n=2 (OOB)
+        ("POINT(1 1)", 0, "POINT (1 1)"),  # n=0 (Valid)
+        ("POINT(1 1)", 1, None),  # n=1 (OOB)
         ("POINT(1 1)", 99, None),  # n=99 (Large OOB)
         # 2. LINESTRING
-        ("LINESTRING(2 2, 3 3, 4 4)", 1, "LINESTRING (2 2, 3 3, 4 4)"),  # n=1 (Valid)
-        (None, 2, None),  # Null input (n=2)
-        ("LINESTRING(2 2, 3 3, 4 4)", 0, None),  # n=0 (OOB)
+        ("LINESTRING(2 2, 3 3, 4 4)", 0, "LINESTRING (2 2, 3 3, 4 4)"),  # n=0 (Valid)
+        (None, 1, None),  # Null input (n=1)
+        ("LINESTRING(2 2, 3 3, 4 4)", -1, None),  # n=-1 (OOB)
         # 3. POLYGON
         (
             "POLYGON((0 0, 1 0, 1 1, 0 0))",
-            1,
+            0,
             "POLYGON ((0 0, 1 0, 1 1, 0 0))",
-        ),  # n=1 (Valid)
-        ("POLYGON((0 0, 1 0, 1 1, 0 0))", 3, None),  # n=3 (OOB)
+        ),  # n=0 (Valid)
+        ("POLYGON((0 0, 1 0, 1 1, 0 0))", 2, None),  # n=2 (OOB)
         # 4. MULTIPOINT
-        ("MULTIPOINT((1 1), (2 2), (3 3))", 2, "POINT (2 2)"),  # n=2 (Valid)
-        ("MULTIPOINT((1 1), (2 2), (3 3))", 3, "POINT (3 3)"),  # n=3 (Valid)
-        (None, 0, None),  # Null Input (n=0)
-        ("MULTIPOINT((1 1), (2 2), (3 3))", 1, "POINT (1 1)"),  # n=1 (Valid)
-        ("MULTIPOINT((1 1), (2 2), (3 3))", 0, None),  # n=0 (OOB)
+        ("MULTIPOINT((1 1), (2 2), (3 3))", 1, "POINT (2 2)"),  # n=1 (Valid)
+        ("MULTIPOINT((1 1), (2 2), (3 3))", 2, "POINT (3 3)"),  # n=2 (Valid)
+        (None, -1, None),  # Null Input (n=-1)
+        ("MULTIPOINT((1 1), (2 2), (3 3))", 0, "POINT (1 1)"),  # n=0 (Valid)
+        ("MULTIPOINT((1 1), (2 2), (3 3))", -1, None),  # n=-1 (OOB)
         # 5. MULTILINESTRING
         (
             "MULTILINESTRING((1 1, 2 2), (3 3, 4 4))",
-            1,
+            0,
             "LINESTRING (1 1, 2 2)",
-        ),  # n=1 (Valid)
-        ("MULTILINESTRING((1 1, 2 2), (3 3, 4 4))", 3, None),  # n=3 (OOB)
+        ),  # n=0 (Valid)
+        ("MULTILINESTRING((1 1, 2 2), (3 3, 4 4))", 2, None),  # n=2 (OOB)
         (
             "MULTILINESTRING((1 1, 2 2), (3 3, 4 4))",
-            2,
+            1,
             "LINESTRING (3 3, 4 4)",
-        ),  # n=2 (Valid)
+        ),  # n=1 (Valid)
         # 6. MULTIPOLYGON
         (
             "MULTIPOLYGON(((0 0, 1 1, 0 1, 0 0)), ((5 5, 6 6, 5 6, 5 5)))",
-            2,
+            1,
             "POLYGON ((5 5, 6 6, 5 6, 5 5))",
-        ),  # n=2 (Valid)
-        ("MULTIPOLYGON(((0 0, 1 1, 0 1, 0 0)))", 2, None),  # n=2 (OOB)
+        ),  # n=1 (Valid)
+        ("MULTIPOLYGON(((0 0, 1 1, 0 1, 0 0)))", 1, None),  # n=1 (OOB)
         (
             "MULTIPOLYGON(((0 0, 1 1, 0 1, 0 0)), ((5 5, 6 6, 5 6, 5 5)))",
-            1,
+            0,
             "POLYGON ((0 0, 1 1, 0 1, 0 0))",
-        ),  # n=1 (Valid)
-        ("MULTIPOLYGON EMPTY", 1, None),  # Empty Multi (n=1)
+        ),  # n=0 (Valid)
+        ("MULTIPOLYGON EMPTY", 0, None),  # Empty Multi (n=0)
         # 7. GEOMETRYCOLLECTION
         (
             "GEOMETRYCOLLECTION(POINT(10 10), LINESTRING(20 20, 30 30), POLYGON((1 1, 2 2, 1 2, 1 1)))",
-            1,
+            0,
             "POINT (10 10)",
-        ),  # n=1 (Point)
+        ),  # n=0 (Point)
         (
             "GEOMETRYCOLLECTION(POINT(10 10), LINESTRING(20 20, 30 30), POLYGON((1 1, 2 2, 1 2, 1 1)))",
-            2,
+            1,
             "LINESTRING (20 20, 30 30)",
-        ),  # n=2 (LineString)
-        ("GEOMETRYCOLLECTION(POINT(10 10))", 2, None),  # n=2 (OOB)
+        ),  # n=1 (LineString)
+        ("GEOMETRYCOLLECTION(POINT(10 10))", 1, None),  # n=1 (OOB)
+        (
+            "GEOMETRYCOLLECTION(POINT(1 1), GEOMETRYCOLLECTION(LINESTRING(2 2, 3 3)))",
+            0,
+            "POINT (1 1)",
+        ),  # n=0 (Nested: Point)
         (
             "GEOMETRYCOLLECTION(POINT(1 1), GEOMETRYCOLLECTION(LINESTRING(2 2, 3 3)))",
             1,
-            "POINT (1 1)",
-        ),  # n=1 (Nested: Point)
-        (
-            "GEOMETRYCOLLECTION(POINT(1 1), GEOMETRYCOLLECTION(LINESTRING(2 2, 3 3)))",
-            2,
             "GEOMETRYCOLLECTION (LINESTRING (2 2, 3 3))",
-        ),  # n=2 (Nested: GC)
-        ("GEOMETRYCOLLECTION(POINT(1 1))", 0, None),  # n=0 (OOB)
+        ),  # n=1 (Nested: GC)
+        ("GEOMETRYCOLLECTION(POINT(1 1))", -1, None),  # n=-1 (OOB)
     ],
 )
 def test_st_geometryn(eng, geom, index, expected):
+    # SedonaDB follows Sedona Spark's 0-based index; PostGIS counts from 1
+    if eng is PostGIS:
+        index = index + 1
     eng = eng.create_or_skip()
     eng.assert_query_result(
         f"SELECT ST_GeometryN({geom_or_null(geom)}, {val_or_null(index)})", expected
@@ -2772,36 +2775,36 @@ def test_st_hasz(eng, geom, expected):
     [
         # I. Null/Empty/Non-Polygon Inputs
         # NULL input
-        (None, 1, None),
+        (None, 0, None),
         # POINT
-        ("POINT (0 0)", 1, None),
+        ("POINT (0 0)", 0, None),
         # POINT EMPTY
-        ("POINT EMPTY", 1, None),
+        ("POINT EMPTY", 0, None),
         # LINESTRING
-        ("LINESTRING (0 0, 0 1, 1 2)", 1, None),
+        ("LINESTRING (0 0, 0 1, 1 2)", 0, None),
         # LINESTRING EMPTY
-        ("LINESTRING EMPTY", 1, None),
+        ("LINESTRING EMPTY", 0, None),
         # MULTIPOINT
-        ("MULTIPOINT ((0 0), (1 1))", 1, None),
+        ("MULTIPOINT ((0 0), (1 1))", 0, None),
         # MULTIPOLYGON (Interior rings are within constituent Polygons, not the MultiPolygon itself)
-        ("MULTIPOLYGON (((1 1, 1 3, 3 3, 3 1, 1 1)))", 1, None),
+        ("MULTIPOLYGON (((1 1, 1 3, 3 3, 3 1, 1 1)))", 0, None),
         # GEOMETRYCOLLECTION
-        ("GEOMETRYCOLLECTION (POINT(1 1))", 1, None),
+        ("GEOMETRYCOLLECTION (POINT(1 1))", 0, None),
         # II. Polygon Edge Cases
         # POLYGON EMPTY
-        ("POLYGON EMPTY", 1, None),
-        # Polygon with NO interior rings, index=1
-        ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", 1, None),
-        # Invalid index n=0 (Assuming 1-based indexing means n=0 is invalid/out of range)
+        ("POLYGON EMPTY", 0, None),
+        # Polygon with NO interior rings, index=0
         ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", 0, None),
-        # Index n too high (index=2, but 0 holes)
-        ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", 2, None),
+        # Invalid index n=-1 (negative indices are out of range)
+        ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", -1, None),
+        # Index n too high (index=1, but 0 holes)
+        ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", 1, None),
         # III. Valid Polygon with Interior Ring(s)
         # Polygon: ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))
-        # Single hole, index=1
+        # Single hole, index=0
         (
             "POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))",
-            1,
+            0,
             "LINESTRING (1 1, 1 2, 2 2, 2 1, 1 1)",
         ),
         # Single hole, negative index=-1
@@ -2810,71 +2813,74 @@ def test_st_hasz(eng, geom, expected):
             -1,
             None,
         ),
-        # Single hole, index=2 (index too high)
-        ("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))", 2, None),
+        # Single hole, index=1 (index too high)
+        ("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))", 1, None),
         # Polygon: ((0 0, 6 0, 6 6, 0 6, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (4 4, 4 5, 5 5, 5 4, 4 4))
-        # Two holes, index=1 (first hole)
+        # Two holes, index=0 (first hole)
+        (
+            "POLYGON ((0 0, 6 0, 6 6, 0 6, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (4 4, 4 5, 5 5, 5 4, 4 4))",
+            0,
+            "LINESTRING (1 1, 1 2, 2 2, 2 1, 1 1)",
+        ),
+        # Two holes, index=1 (second hole)
         (
             "POLYGON ((0 0, 6 0, 6 6, 0 6, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (4 4, 4 5, 5 5, 5 4, 4 4))",
             1,
-            "LINESTRING (1 1, 1 2, 2 2, 2 1, 1 1)",
+            "LINESTRING (4 4, 4 5, 5 5, 5 4, 4 4)",
         ),
-        # Two holes, index=2 (second hole)
+        # Two holes, index=2 (index too high)
         (
             "POLYGON ((0 0, 6 0, 6 6, 0 6, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (4 4, 4 5, 5 5, 5 4, 4 4))",
             2,
-            "LINESTRING (4 4, 4 5, 5 5, 5 4, 4 4)",
-        ),
-        # Two holes, index=3 (index too high)
-        (
-            "POLYGON ((0 0, 6 0, 6 6, 0 6, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (4 4, 4 5, 5 5, 5 4, 4 4))",
-            3,
             None,
         ),
         # IV. Invalid/Malformed Polygon Input
         #  External hole (WKT is syntactically valid, second ring is usually treated as a hole by parsers regardless of validity)
         (
             "POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (5 5, 5 6, 6 6, 6 5, 5 5))",
-            1,
+            0,
             "LINESTRING (5 5, 5 6, 6 6, 6 5, 5 5)",
         ),
         # Intersecting holes (WKT is syntactically valid)
         (
             "POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 3, 3 3, 3 1, 1 1), (2 2, 2 2.5, 2.5 2.5, 2.5 2, 2 2))",
-            2,
+            1,
             "LINESTRING (2 2, 2 2.5, 2.5 2.5, 2.5 2, 2 2)",
         ),
         # Z Dimensions
-        ("POINT Z (1 1 5)", 1, None),
+        ("POINT Z (1 1 5)", 0, None),
         (
             "POLYGON Z ((0 0 10, 4 0 10, 4 4 10, 0 4 10, 0 0 10), (1 1 5, 1 2 5, 2 2 5, 2 1 5, 1 1 5))",
-            1,
+            0,
             "LINESTRING Z (1 1 5, 1 2 5, 2 2 5, 2 1 5, 1 1 5)",
         ),
-        ("POLYGON Z ((0 0 10, 4 0 10, 4 4 10, 0 4 10, 0 0 10))", 1, None),
+        ("POLYGON Z ((0 0 10, 4 0 10, 4 4 10, 0 4 10, 0 0 10))", 0, None),
         # M Dimensions
-        ("LINESTRING M (0 0 1, 1 1 2)", 1, None),
-        ("POLYGON M ((0 0 1, 4 0 2, 4 4 3, 0 4 4, 0 0 5))", 1, None),
+        ("LINESTRING M (0 0 1, 1 1 2)", 0, None),
+        ("POLYGON M ((0 0 1, 4 0 2, 4 4 3, 0 4 4, 0 0 5))", 0, None),
         (
             "POLYGON M ((0 0 1, 4 0 2, 4 4 3, 0 4 4, 0 0 5), (1 1 6, 1 2 7, 2 2 8, 2 1 9, 1 1 10))",
-            1,
+            0,
             "LINESTRING M (1 1 6, 1 2 7, 2 2 8, 2 1 9, 1 1 10)",
         ),
         # ZM Dimensions
-        ("POLYGON ZM EMPTY", 1, None),
+        ("POLYGON ZM EMPTY", 0, None),
         (
             "POLYGON ZM ((0 0 10 1, 4 0 10 2, 4 4 10 3, 0 4 10 4, 0 0 10 5), (1 1 5 6, 1 2 5 7, 2 2 5 8, 2 1 5 9, 1 1 5 10))",
-            2,
+            1,
             None,
         ),
         (
             "POLYGON ZM ((0 0 10 1, 4 0 10 2, 4 4 10 3, 0 4 10 4, 0 0 10 5), (1 1 5 6, 1 2 5 7, 2 2 5 8, 2 1 5 9, 1 1 5 10))",
-            1,
+            0,
             "LINESTRING ZM (1 1 5 6, 1 2 5 7, 2 2 5 8, 2 1 5 9, 1 1 5 10)",
         ),
     ],
 )
 def test_st_interiorringn(eng, geom, index, expected):
+    # SedonaDB follows Sedona Spark's 0-based index; PostGIS counts from 1
+    if eng is PostGIS:
+        index = index + 1
     eng = eng.create_or_skip()
     eng.assert_query_result(
         f"SELECT ST_InteriorRingN({geom_or_null(geom)}, {val_or_null(index)})", expected

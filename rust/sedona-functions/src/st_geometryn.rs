@@ -88,7 +88,12 @@ impl SedonaScalarKernel for STGeometryN {
         executor.execute_wkb_void(|maybe_wkb| {
             match (maybe_wkb, index_iter.next().unwrap()) {
                 (Some(wkb), Some(index)) => {
-                    if invoke_scalar(wkb, (index - 1) as usize, &mut builder)? {
+                    // 0-based, matching Sedona Spark; a negative index is out of range
+                    let found = match usize::try_from(index) {
+                        Ok(index) => invoke_scalar(wkb, index, &mut builder)?,
+                        Err(_) => false,
+                    };
+                    if found {
                         builder.append_value([]);
                     } else {
                         // Unsupported Geometry Type, Invalid index encountered
@@ -153,42 +158,42 @@ mod tests {
         let input_wkt = create_array(
             &[
                 // 1. POINT
-                Some("POINT(1 1)"), //  n=1 (Valid)
-                Some("POINT(1 1)"), //  n=2 (OOB)
+                Some("POINT(1 1)"), //  n=0 (Valid)
+                Some("POINT(1 1)"), //  n=1 (OOB)
                 Some("POINT(1 1)"), //  n=99 (Large OOB)
                 // 2. LINESTRING
-                Some("LINESTRING(2 2, 3 3, 4 4)"), //  n=1 (Valid)
-                None,                              //  Null input (n=2)
-                Some("LINESTRING(2 2, 3 3, 4 4)"), //  n=0 (OOB)
+                Some("LINESTRING(2 2, 3 3, 4 4)"), //  n=0 (Valid)
+                None,                              //  Null input (n=1)
+                Some("LINESTRING(2 2, 3 3, 4 4)"), //  n=-1 (OOB)
                 // 3. POLYGON
-                Some("POLYGON((0 0, 1 0, 1 1, 0 0))"), //  n=1 (Valid)
-                Some("POLYGON((0 0, 1 0, 1 1, 0 0))"), //  n=3 (OOB)
+                Some("POLYGON((0 0, 1 0, 1 1, 0 0))"), //  n=0 (Valid)
+                Some("POLYGON((0 0, 1 0, 1 1, 0 0))"), //  n=2 (OOB)
                 // 4. MULTIPOINT
+                Some("MULTIPOINT((1 1), (2 2), (3 3))"), //  n=1 (Valid) - Original
                 Some("MULTIPOINT((1 1), (2 2), (3 3))"), //  n=2 (Valid) - Original
-                Some("MULTIPOINT((1 1), (2 2), (3 3))"), //  n=3 (Valid) - Original
-                None,                                    //  Null Input (n=0) - Original
-                Some("MULTIPOINT((1 1), (2 2), (3 3))"), //  n=1 (Valid)
-                Some("MULTIPOINT((1 1), (2 2), (3 3))"), //  n=0 (OOB)
+                None,                                    //  Null Input (n=-1) - Original
+                Some("MULTIPOINT((1 1), (2 2), (3 3))"), //  n=0 (Valid)
+                Some("MULTIPOINT((1 1), (2 2), (3 3))"), //  n=-1 (OOB)
                 // 5. MULTILINESTRING
-                Some("MULTILINESTRING((1 1, 2 2), (3 3, 4 4))"), //  n=1 (Valid) - Original
-                Some("MULTILINESTRING((1 1, 2 2), (3 3, 4 4))"), //  n=3 (OOB) - Original
-                Some("MULTILINESTRING((1 1, 2 2), (3 3, 4 4))"), //  n=2 (Valid)
+                Some("MULTILINESTRING((1 1, 2 2), (3 3, 4 4))"), //  n=0 (Valid) - Original
+                Some("MULTILINESTRING((1 1, 2 2), (3 3, 4 4))"), //  n=2 (OOB) - Original
+                Some("MULTILINESTRING((1 1, 2 2), (3 3, 4 4))"), //  n=1 (Valid)
                 // 6. MULTIPOLYGON
-                Some("MULTIPOLYGON(((0 0, 1 1, 0 1, 0 0)), ((5 5, 6 6, 5 6, 5 5)))"), //   n=2 (Valid) - Original
-                Some("MULTIPOLYGON(((0 0, 1 1, 0 1, 0 0)))"), //  n=2 (OOB) - Original
-                Some("MULTIPOLYGON(((0 0, 1 1, 0 1, 0 0)), ((5 5, 6 6, 5 6, 5 5)))"), //  n=1 (Valid)
-                Some("MULTIPOLYGON EMPTY"), //  Empty Multi (n=1)
+                Some("MULTIPOLYGON(((0 0, 1 1, 0 1, 0 0)), ((5 5, 6 6, 5 6, 5 5)))"), //   n=1 (Valid) - Original
+                Some("MULTIPOLYGON(((0 0, 1 1, 0 1, 0 0)))"), //  n=1 (OOB) - Original
+                Some("MULTIPOLYGON(((0 0, 1 1, 0 1, 0 0)), ((5 5, 6 6, 5 6, 5 5)))"), //  n=0 (Valid)
+                Some("MULTIPOLYGON EMPTY"), //  Empty Multi (n=0)
                 // 7. GEOMETRYCOLLECTION (7 cases)
                 Some(
                     "GEOMETRYCOLLECTION(POINT(10 10), LINESTRING(20 20, 30 30), POLYGON((1 1, 2 2, 1 2, 1 1)))",
-                ), //  n=1 (Point) - Original
+                ), //  n=0 (Point) - Original
                 Some(
                     "GEOMETRYCOLLECTION(POINT(10 10), LINESTRING(20 20, 30 30), POLYGON((1 1, 2 2, 1 2, 1 1)))",
-                ), //  n=2 (LineString) - Original
-                Some("GEOMETRYCOLLECTION(POINT(10 10))"), //  n=2 (OOB) - Original
-                Some("GEOMETRYCOLLECTION(POINT(1 1), GEOMETRYCOLLECTION(LINESTRING(2 2, 3 3)))"), //  n=1 (Nested: Point)
-                Some("GEOMETRYCOLLECTION(POINT(1 1), GEOMETRYCOLLECTION(LINESTRING(2 2, 3 3)))"), //  n=2 (Nested: GC)
-                Some("GEOMETRYCOLLECTION(POINT(1 1))"), //  n=0 (OOB)
+                ), //  n=1 (LineString) - Original
+                Some("GEOMETRYCOLLECTION(POINT(10 10))"), //  n=1 (OOB) - Original
+                Some("GEOMETRYCOLLECTION(POINT(1 1), GEOMETRYCOLLECTION(LINESTRING(2 2, 3 3)))"), //  n=0 (Nested: Point)
+                Some("GEOMETRYCOLLECTION(POINT(1 1), GEOMETRYCOLLECTION(LINESTRING(2 2, 3 3)))"), //  n=1 (Nested: GC)
+                Some("GEOMETRYCOLLECTION(POINT(1 1))"), //  n=-1 (OOB)
             ],
             &sedona_type,
         );
@@ -197,38 +202,38 @@ mod tests {
             Int64,
             [
                 // 1. POINT
-                Some(1),  // n=1
-                Some(2),  // n=2 (OOB)
+                Some(0),  // n=0
+                Some(1),  // n=1 (OOB)
                 Some(99), //  n=99 (OOB)
                 // 2. LINESTRING
-                Some(1), //  n=1
-                Some(2), //  Null input
-                Some(0), //  n=0 (OOB)
+                Some(0),  //  n=0
+                Some(1),  //  Null input
+                Some(-1), //  n=-1 (OOB)
                 // 3. POLYGON
-                Some(1), //  n=1
-                Some(3), //  n=3 (OOB)
+                Some(0), //  n=0
+                Some(2), //  n=2 (OOB)
                 // 4. MULTIPOINT
-                Some(2), //  n=2
-                Some(3), //  n=3
-                Some(0), //  n=0 (Null input)
-                Some(1), //  n=1
-                Some(0), //  n=0 (OOB)
+                Some(1),  //  n=1
+                Some(2),  //  n=2
+                Some(-1), //  n=-1 (Null input)
+                Some(0),  //  n=0
+                Some(-1), //  n=-1 (OOB)
                 // 5. MULTILINESTRING
+                Some(0), //  n=0
+                Some(2), //  n=2 (OOB)
                 Some(1), //  n=1
-                Some(3), //  n=3 (OOB)
-                Some(2), //  n=2
                 // 6. MULTIPOLYGON
-                Some(2), //  n=2
-                Some(2), //  n=2 (OOB)
                 Some(1), //  n=1
-                Some(1), //  n=1 (Empty)
+                Some(1), //  n=1 (OOB)
+                Some(0), //  n=0
+                Some(0), //  n=0 (Empty)
                 // 7. GEOMETRYCOLLECTION
-                Some(1), //  n=1 (Point)
-                Some(2), //  n=2 (LineString)
-                Some(2), //  n=2 (OOB)
-                Some(1), //  n=1 (Nested: Point)
-                Some(2), //  n=2 (Nested: GC)
-                Some(0)  //  n=0 (OOB)
+                Some(0),  //  n=0 (Point)
+                Some(1),  //  n=1 (LineString)
+                Some(1),  //  n=1 (OOB)
+                Some(0),  //  n=0 (Nested: Point)
+                Some(1),  //  n=1 (Nested: GC)
+                Some(-1)  //  n=-1 (OOB)
             ]
         );
 
@@ -294,7 +299,7 @@ mod tests {
         let result = tester
             .invoke_scalar_scalar(
                 "MULTIPOINT((1 1), (2 2), (3 3))",
-                ScalarValue::Int64(Some(2)),
+                ScalarValue::Int64(Some(1)),
             )
             .unwrap();
         tester.assert_scalar_result_equals(result, "POINT (2 2)");

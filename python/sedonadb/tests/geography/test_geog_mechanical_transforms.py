@@ -184,41 +184,41 @@ def test_st_force4d(eng, geog, z, m, expected_without_defaults, expected_with_de
 @pytest.mark.parametrize(
     ("geog", "index", "expected"),
     [
-        pytest.param(None, 1, None, id="null"),
-        pytest.param("POINT EMPTY", 1, "POINT (nan nan)", id="point_empty"),
-        pytest.param("MULTIPOINT EMPTY", 1, None, id="multipoint_empty"),
-        pytest.param("POINT (1 1)", 1, "POINT (1 1)", id="point_n1"),
-        pytest.param("POINT (1 1)", 2, None, id="point_n2_oob"),
+        pytest.param(None, 0, None, id="null"),
+        pytest.param("POINT EMPTY", 0, "POINT (nan nan)", id="point_empty"),
+        pytest.param("MULTIPOINT EMPTY", 0, None, id="multipoint_empty"),
+        pytest.param("POINT (1 1)", 0, "POINT (1 1)", id="point_n0"),
+        pytest.param("POINT (1 1)", 1, None, id="point_n1_oob"),
         pytest.param(
-            "MULTIPOINT ((1 1), (2 2), (3 3))", 2, "POINT (2 2)", id="multipoint_n2"
+            "MULTIPOINT ((1 1), (2 2), (3 3))", 1, "POINT (2 2)", id="multipoint_n1"
         ),
         pytest.param(
             "MULTILINESTRING ((1 1, 2 2), (3 3, 4 4))",
-            1,
+            0,
             "LINESTRING (1 1, 2 2)",
-            id="multilinestring_n1",
+            id="multilinestring_n0",
         ),
         pytest.param(
             "GEOMETRYCOLLECTION (POINT (1 2), LINESTRING (3 4, 5 6))",
-            2,
+            1,
             "LINESTRING (3 4, 5 6)",
-            id="gc_n2",
+            id="gc_n1",
         ),
         pytest.param(
             "MULTIPOINT Z ((1 1 5), (2 2 6))",
-            1,
+            0,
             "POINT Z (1 1 5)",
             id="multipoint_z",
         ),
         pytest.param(
             "MULTIPOINT M ((1 1 5), (2 2 6))",
-            1,
+            0,
             "POINT M (1 1 5)",
             id="multipoint_m",
         ),
         pytest.param(
             "MULTIPOINT ZM ((1 1 5 7), (2 2 6 8))",
-            1,
+            0,
             "POINT ZM (1 1 5 7)",
             id="multipoint_zm",
         ),
@@ -235,40 +235,40 @@ def test_st_geometryn(eng, geog, index, expected):
 @pytest.mark.parametrize(
     ("geog", "index", "expected"),
     [
-        pytest.param(None, 1, None, id="null"),
-        pytest.param("POINT (0 0)", 1, None, id="point"),
-        pytest.param("LINESTRING (0 0, 1 1)", 1, None, id="linestring"),
-        pytest.param("POLYGON EMPTY", 1, None, id="polygon_empty"),
+        pytest.param(None, 0, None, id="null"),
+        pytest.param("POINT (0 0)", 0, None, id="point"),
+        pytest.param("LINESTRING (0 0, 1 1)", 0, None, id="linestring"),
+        pytest.param("POLYGON EMPTY", 0, None, id="polygon_empty"),
         pytest.param(
-            "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", 1, None, id="polygon_no_holes"
+            "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", 0, None, id="polygon_no_holes"
         ),
         pytest.param(
             "POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))",
-            1,
+            0,
             "LINESTRING (1 1, 1 2, 2 2, 2 1, 1 1)",
             id="polygon_with_hole",
         ),
         pytest.param(
             "POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))",
-            2,
+            1,
             None,
             id="polygon_oob",
         ),
         pytest.param(
             "POLYGON Z ((0 0 10, 4 0 10, 4 4 10, 0 4 10, 0 0 10), (1 1 5, 1 2 5, 2 2 5, 2 1 5, 1 1 5))",
-            1,
+            0,
             "LINESTRING Z (1 1 5, 1 2 5, 2 2 5, 2 1 5, 1 1 5)",
             id="polygon_z",
         ),
         pytest.param(
             "POLYGON M ((0 0 1, 4 0 2, 4 4 3, 0 4 4, 0 0 5), (1 1 6, 1 2 7, 2 2 8, 2 1 9, 1 1 10))",
-            1,
+            0,
             "LINESTRING M (1 1 6, 1 2 7, 2 2 8, 2 1 9, 1 1 10)",
             id="polygon_m",
         ),
         pytest.param(
             "POLYGON ZM ((0 0 10 1, 4 0 10 2, 4 4 10 3, 0 4 10 4, 0 0 10 5), (1 1 5 6, 1 2 5 7, 2 2 5 8, 2 1 5 9, 1 1 5 10))",
-            1,
+            0,
             "LINESTRING ZM (1 1 5 6, 1 2 5 7, 2 2 5 8, 2 1 5 9, 1 1 5 10)",
             id="polygon_zm",
         ),

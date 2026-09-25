@@ -89,7 +89,12 @@ impl SedonaScalarKernel for STInteriorRingN {
         executor.execute_wkb_void(|maybe_wkb| {
             match (maybe_wkb, index_iter.next().unwrap()) {
                 (Some(wkb), Some(index)) => {
-                    if invoke_scalar(wkb, (index - 1) as usize, &mut builder)? {
+                    // 0-based, matching Sedona Spark; a negative index is out of range
+                    let found = match usize::try_from(index) {
+                        Ok(index) => invoke_scalar(wkb, index, &mut builder)?,
+                        Err(_) => false,
+                    };
+                    if found {
                         builder.append_value([]);
                     } else {
                         // Unsupported Geometry Type, Invalid index encountered
@@ -170,14 +175,14 @@ mod tests {
         let integers = arrow_array::create_array!(
             Int64,
             [
-                Some(1),
-                Some(1),
-                Some(1),
-                Some(1),
-                Some(1),
-                Some(1),
-                Some(1),
-                Some(1)
+                Some(0),
+                Some(0),
+                Some(0),
+                Some(0),
+                Some(0),
+                Some(0),
+                Some(0),
+                Some(0)
             ]
         );
         let expected = create_array(
@@ -201,18 +206,18 @@ mod tests {
         let input_wkt = create_array(
             &[
                 Some("POLYGON EMPTY"),                       // POLYGON EMPTY
-                Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"), // Polygon with NO interior rings (n=1)
-                Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"), // Invalid index n=0
-                Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"), // Index n too high (n=2)
+                Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"), // Polygon with NO interior rings (n=0)
+                Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"), // Invalid index n=-1
+                Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"), // Index n too high (n=1)
             ],
             &sedona_type,
         );
-        let integers = arrow_array::create_array!(Int64, [Some(1), Some(1), Some(0), Some(2)]);
+        let integers = arrow_array::create_array!(Int64, [Some(0), Some(0), Some(-1), Some(1)]);
         let expected = create_array(
             &[
                 None, // POLYGON EMPTY
                 None, // Polygon with NO interior rings
-                None, // Invalid index n=0 (Assuming NULL/None on invalid index)
+                None, // Invalid index n=-1 (Assuming NULL/None on invalid index)
                 None, // Index n too high
             ],
             &sedona_type,
@@ -233,24 +238,24 @@ mod tests {
 
         let input_wkt = create_array(
             &[
-                Some("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))"), // Single hole, n=1
-                Some("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))"), // Single hole, n=1
-                Some("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))"), // Single hole, n=2 (too high)
+                Some("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))"), // Single hole, n=0
+                Some("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))"), // Single hole, n=-1 (negative)
+                Some("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))"), // Single hole, n=1 (too high)
+                Some(
+                    "POLYGON ((0 0, 6 0, 6 6, 0 6, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (4 4, 4 5, 5 5, 5 4, 4 4))",
+                ), // Two holes, n=0
                 Some(
                     "POLYGON ((0 0, 6 0, 6 6, 0 6, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (4 4, 4 5, 5 5, 5 4, 4 4))",
                 ), // Two holes, n=1
                 Some(
                     "POLYGON ((0 0, 6 0, 6 6, 0 6, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (4 4, 4 5, 5 5, 5 4, 4 4))",
-                ), // Two holes, n=2
-                Some(
-                    "POLYGON ((0 0, 6 0, 6 6, 0 6, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1), (4 4, 4 5, 5 5, 5 4, 4 4))",
-                ), // Two holes, n=3 (too high)
+                ), // Two holes, n=2 (too high)
             ],
             &sedona_type,
         );
         let integers = arrow_array::create_array!(
             Int64,
-            [Some(1), Some(-1), Some(2), Some(1), Some(2), Some(3)]
+            [Some(0), Some(-1), Some(1), Some(0), Some(1), Some(2)]
         );
         let expected = create_array(
             &[
@@ -287,7 +292,7 @@ mod tests {
             ],
             &sedona_type,
         );
-        let integers = arrow_array::create_array!(Int64, [Some(1), Some(1), Some(2)]);
+        let integers = arrow_array::create_array!(Int64, [Some(0), Some(0), Some(1)]);
         let expected = create_array(
             &[
                 None, // parsing/validation returns None/NULL for invalid geometry (Unclosed)
@@ -322,7 +327,7 @@ mod tests {
             ],
             &sedona_type,
         );
-        let integers = arrow_array::create_array!(Int64, [Some(1), Some(1), Some(1)]);
+        let integers = arrow_array::create_array!(Int64, [Some(0), Some(0), Some(0)]);
         let expected = create_array(
             &[
                 Some("LINESTRING Z (1 1 5, 1 2 5, 2 2 5, 2 1 5, 1 1 5)"),
@@ -357,7 +362,7 @@ mod tests {
             ],
             &sedona_type,
         );
-        let integers = arrow_array::create_array!(Int64, [Some(1), Some(1), Some(1)]);
+        let integers = arrow_array::create_array!(Int64, [Some(0), Some(0), Some(0)]);
         let expected = create_array(
             &[
                 Some("LINESTRING M (1 1 6, 1 2 7, 2 2 8, 2 1 9, 1 1 10)"),
@@ -381,11 +386,11 @@ mod tests {
 
         let input_wkt = create_array(
             &[
-                // Valid Polygon ZM extraction (n=1)
+                // Valid Polygon ZM extraction (n=0)
                 Some(
                     "POLYGON ZM ((0 0 10 1, 4 0 10 2, 4 4 10 3, 0 4 10 4, 0 0 10 5), (1 1 5 6, 1 2 5 7, 2 2 5 8, 2 1 5 9, 1 1 5 10))",
                 ),
-                // Index too high (n=2)
+                // Index too high (n=1)
                 Some(
                     "POLYGON ZM ((0 0 10 1, 4 0 10 2, 4 4 10 3, 0 4 10 4, 0 0 10 5), (1 1 5 6, 1 2 5 7, 2 2 5 8, 2 1 5 9, 1 1 5 10))",
                 ),
@@ -394,7 +399,7 @@ mod tests {
             ],
             &sedona_type,
         );
-        let integers = arrow_array::create_array!(Int64, [Some(1), Some(2), Some(1)]);
+        let integers = arrow_array::create_array!(Int64, [Some(0), Some(1), Some(0)]);
         let expected = create_array(
             &[
                 Some("LINESTRING ZM (1 1 5 6, 1 2 5 7, 2 2 5 8, 2 1 5 9, 1 1 5 10)"),
@@ -427,7 +432,7 @@ mod tests {
         let result = tester
             .invoke_scalar_scalar(
                 "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0), (1 1, 1 5, 5 5, 5 1, 1 1))",
-                ScalarValue::Int64(Some(1)),
+                ScalarValue::Int64(Some(0)),
             )
             .unwrap();
         tester.assert_scalar_result_equals(result, "LINESTRING (1 1, 1 5, 5 5, 5 1, 1 1)");
