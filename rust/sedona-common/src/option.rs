@@ -37,6 +37,10 @@ pub const DEFAULT_SPECULATIVE_THRESHOLD: usize = 1000;
 /// Default minimum number of points per geometry to use prepared geometries for the build side.
 pub const DEFAULT_MIN_POINTS_FOR_BUILD_PREPARATION: usize = 50;
 
+/// Default `sedona.raster.cache_max_bytes` when no memory limit is
+/// configured: 512 MiB.
+pub const DEFAULT_RASTER_CACHE_MAX_BYTES: usize = 512 * 1024 * 1024;
+
 config_namespace! {
     /// Configuration options for Sedona.
     pub struct SedonaOptions {
@@ -96,6 +100,20 @@ config_namespace! {
         /// A `SET sedona.raster.max_batch_bytes = …` after connecting overrides
         /// whichever default was derived.
         pub max_batch_bytes: usize, default = DEFAULT_RASTER_MAX_BATCH_BYTES
+
+        /// Budget, in bytes, for the session's cache of loaded OutDb band
+        /// bytes (`RS_EnsureLoaded` results, one entry per `outdb_uri` and
+        /// data type). The budget counts only entries no in-flight batch
+        /// still references; bytes shared with a running query are the
+        /// query's cost, not the cache's, and are given back once the query
+        /// drops them. When a memory limit is configured the session lowers
+        /// the default to `min(512 MiB, limit / 8)`. Set to 0 to disable
+        /// the cache. Takes effect on the next `RS_EnsureLoaded` call.
+        ///
+        /// The cache assumes the bytes behind a URI do not change for the
+        /// life of the session. After rewriting a store that a query already
+        /// read, set this to 0 and back to drop the stale entries.
+        pub cache_max_bytes: usize, default = DEFAULT_RASTER_CACHE_MAX_BYTES
     }
 }
 

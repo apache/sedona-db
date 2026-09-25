@@ -320,6 +320,9 @@ def test_zarr_extension_reports_handle_reuse_across_calls(zarr_group):
     sd.register(ext)
     assert isinstance(ext.loader, sedonadb_zarr.ZarrRasterLoader)
 
+    # This test counts loader calls, so the host's chunk cache must not
+    # serve the second query: with it on, the loader is never called again.
+    sd.sql("SET sedona.raster.cache_max_bytes = 0").execute()
     t = sd.read(f"file://{zarr_group}", format="zarr")
 
     def load_all():
