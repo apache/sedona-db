@@ -40,6 +40,7 @@ pub mod rs_rastercoordinate;
 pub mod rs_set_band_nodata;
 pub mod rs_set_georeference;
 pub mod rs_setsrid;
+pub mod rs_setvalue;
 pub mod rs_size;
 pub mod rs_slice;
 pub mod rs_spatial_predicates;
