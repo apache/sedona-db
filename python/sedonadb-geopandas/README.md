@@ -85,6 +85,13 @@ in form: `to_wkt()` writes equivalent but differently spaced WKT
 them undefined, and `x`/`y`/`z` on a non-point raise when the result is
 computed rather than when the property is read.
 
+Binary geometry operations (`intersects`, `within`, `distance`,
+`intersection`, ...) take either a single Shapely geometry, which takes the
+column's CRS, or a `GeoSeries` from the same frame, matched row by row as with
+GeoPandas' `align=False`; there is no index to align on. `touches` and
+`within` inherit an engine issue with some boundary-only configurations
+(apache/sedona-db#1165).
+
 `dissolve()` aggregates non-geometry columns with `"first"`, which is an
 unordered aggregate: it returns *some* value from the group rather than the one
 from the first row, and unlike GeoPandas it does not skip missing values, so a
