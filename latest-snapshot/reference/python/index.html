@@ -7554,7 +7554,8 @@ CRS differently still agree.</p>
 <p>List columns (e.g. the <code>List&lt;Double&gt;</code> returned by <code>RS_Values</code>) can't be
 cast to string, so they pass through as Python lists and are compared
 by value — assert them with an expected cell that is itself a list,
-e.g. <code>[([1.0, None],)]</code>.</p>
+e.g. <code>[([1.0, None],)]</code>. Struct columns (e.g. the one returned by
+<code>RS_GeoTransform</code>) likewise pass through, as field-name-to-value dicts.</p>
 
 
     </div>
