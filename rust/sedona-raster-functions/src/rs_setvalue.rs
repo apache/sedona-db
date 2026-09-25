@@ -53,6 +53,7 @@ use sedona_schema::raster::BandDataType;
 use crate::executor::RasterExecutor;
 use crate::pixel_scan::{scan_pixels, spatial_2d_buffer};
 use crate::rs_ensure_loaded::NEEDS_PIXELS_METADATA_KEY;
+use crate::sampling::{default_band, resolve_band};
 
 const FUNC: &str = "RS_SetValue";
 
@@ -127,8 +128,10 @@ impl SedonaScalarKernel for RsSetValue {
                 return Ok(builder.append_null()?);
             }
             let band_num = match band {
-                Some(band) => band.value(i),
-                None => elided_band(raster.num_bands())?,
+                // Clamp a negative band to 0 so resolve_band rejects it as not
+                // 1-based rather than wrapping it into a huge usize.
+                Some(band) => band.value(i).max(0) as usize,
+                None => default_band(FUNC, "4-argument", raster.num_bands())?,
             };
             set_value(
                 &mut builder,
@@ -144,41 +147,23 @@ impl SedonaScalarKernel for RsSetValue {
     }
 }
 
-/// The band an elided band argument means: band 1 of a single-band raster.
-/// On a multiband raster it is an error, so a caller can't silently write to
-/// band 1 without naming it.
-fn elided_band(num_bands: usize) -> Result<i64> {
-    if num_bands == 1 {
-        Ok(1)
-    } else {
-        exec_err!(
-            "{FUNC}: raster has {num_bands} bands; specify which band to set (the \
-             4-argument form is only allowed for a single-band raster)"
-        )
-    }
-}
-
 /// Copy `raster` into `builder` with the 1-based pixel (`col`, `row`) of the
 /// 1-based band `band_num` set to `value`.
 fn set_value(
     builder: &mut RasterBuilder,
     raster: &dyn RasterRef,
-    band_num: i64,
+    band_num: usize,
     col: i64,
     row: i64,
     value: f64,
 ) -> Result<()> {
-    let num_bands = raster.num_bands();
-    if band_num < 1 || band_num as usize > num_bands {
-        return exec_err!("{FUNC}: band {band_num} out of range (raster has {num_bands} band(s))");
-    }
-    let target = raster.band(band_num as usize - 1)?;
+    let target = resolve_band(FUNC, raster, band_num)?;
     let data = set_pixel(target.as_ref(), col, row, value)?;
 
     builder.start_raster_from(raster, RasterOverrides::default())?;
-    for band_idx in 0..num_bands {
+    for band_idx in 0..raster.num_bands() {
         let band = raster.band(band_idx)?;
-        let overrides = if band_idx + 1 == band_num as usize {
+        let overrides = if band_idx + 1 == band_num {
             // The new bytes are the band's visible pixels, packed row-major, so
             // they carry an identity view over the visible shape.
             BandOverrides {
@@ -426,11 +411,11 @@ mod tests {
 
     #[test]
     fn band_out_of_range_errors() {
-        for band in [0, 3] {
+        for (band, expected) in [(0, "1-based"), (-1, "1-based"), (3, "out of range")] {
             let err = set(vec![Some(two_band())], band, 1, 1, 1.0)
                 .unwrap_err()
                 .to_string();
-            assert!(err.contains("out of range"), "{band}: {err}");
+            assert!(err.contains(expected), "{band}: {err}");
         }
     }
 
