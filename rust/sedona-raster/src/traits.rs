@@ -19,6 +19,7 @@ use arrow_buffer::Buffer;
 use sedona_schema::raster::BandDataType;
 
 use crate::band_builder::BandWriter;
+use crate::band_builder::MAX_BAND_DATA_LEN;
 use crate::builder::StartBandArgs;
 use crate::error::RasterError;
 use crate::view_entries::ViewEntries;
@@ -579,12 +580,16 @@ pub trait BandRef {
                 Ok(())
             }
             Override::Set(buffer) => {
-                let len = u32::try_from(buffer.len()).map_err(|_| {
-                    RasterError::Invalid(format!(
-                        "band data of {} bytes exceeds the BinaryView length limit",
-                        buffer.len()
-                    ))
-                })?;
+                let len = u32::try_from(buffer.len())
+                    .ok()
+                    .filter(|_| buffer.len() <= MAX_BAND_DATA_LEN)
+                    .ok_or_else(|| {
+                        RasterError::Invalid(format!(
+                            "band data of {} bytes exceeds the {MAX_BAND_DATA_LEN}-byte \
+                             BinaryView length limit",
+                            buffer.len()
+                        ))
+                    })?;
                 builder.append_band_data_buffer(buffer, 0, len)
             }
         }
