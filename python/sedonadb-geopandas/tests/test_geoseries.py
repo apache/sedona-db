@@ -49,12 +49,35 @@ CORPUS = [
 ]
 
 
+def _without_empty_parts(geometry):
+    """A multi-part geometry with its empty parts removed.
+
+    GEOS 3.12 keeps an empty operand as an empty part of a union or
+    symmetric difference (MULTIPOINT (EMPTY, (0 0))) where GEOS 3.13 drops
+    it (POINT (0 0)); the engine's GEOS version depends on the build. A
+    single remaining part stands on its own, as GEOS 3.13 returns it.
+    """
+    parts = shapely.get_parts(geometry)
+    if len(parts) <= 1 and geometry.geom_type in ("Point", "LineString", "Polygon"):
+        return geometry
+    non_empty = [part for part in parts if not part.is_empty]
+    if len(non_empty) == len(parts):
+        return geometry
+    if len(non_empty) == 1:
+        return non_empty[0]
+    if not non_empty:
+        return geometry
+    return type(geometry)(non_empty)
+
+
 def _same(got, expected):
     if expected is None or (isinstance(expected, float) and math.isnan(expected)):
         return got is None or (isinstance(got, float) and math.isnan(got))
     if isinstance(expected, shapely.Geometry):
         if not isinstance(got, shapely.Geometry):
             return False
+        got = _without_empty_parts(got)
+        expected = _without_empty_parts(expected)
         # The geometry type must match exactly, empties included: a POLYGON
         # EMPTY is not a POINT EMPTY, and a line is not its multipoint boundary.
         # The one allowance is a ring: WKB has no ring type, so a LinearRing
