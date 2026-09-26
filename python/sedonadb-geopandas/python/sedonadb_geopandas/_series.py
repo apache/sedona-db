@@ -16,6 +16,9 @@
 # under the License.
 """pandas/GeoPandas-style Series backed by a SedonaDB expression."""
 
+import math
+import numbers
+
 import pyarrow as pa
 
 from sedonadb_geopandas._temporal import (
@@ -452,6 +455,60 @@ class Series:
         return f"<{type(self).__name__} {self._expr!r} (lazy; call .to_pandas())>"
 
 
+def _same_crs(current, crs):
+    """Whether an existing CRS and a requested one denote the same CRS.
+
+    Compared through pyproj when it is available (it comes with GeoPandas);
+    otherwise conservatively treated as different, so replacing a CRS then
+    always needs `allow_override=True`.
+    """
+    if crs is None:
+        return False
+    try:
+        import pyproj
+    except ImportError:
+        return False
+    try:
+        return pyproj.CRS.from_user_input(
+            current.to_json()
+        ) == pyproj.CRS.from_user_input(crs)
+    except Exception:
+        return False
+
+
+def _normalize_crs(crs):
+    """`crs` in a form the engine keeps as given: PROJJSON when pyproj is there.
+
+    Stamping a user string directly lets the engine canonicalize it
+    ("EPSG:4326" becomes OGC:CRS84) and rejects forms GeoPandas accepts, such
+    as the integer 4326. Parsing through pyproj (which comes with GeoPandas)
+    accepts every form GeoPandas does and rejects invalid input up front.
+    """
+    try:
+        import pyproj
+    except ImportError:
+        return f"EPSG:{crs}" if isinstance(crs, int) else crs
+    try:
+        return pyproj.CRS.from_user_input(crs).to_json()
+    except pyproj.exceptions.CRSError as err:
+        raise ValueError(f"Invalid CRS {crs!r}: {err}") from err
+
+
+def _check_align(align):
+    """GeoPandas' `align` argument.
+
+    There is no index to align on: operands are always columns of the same
+    frame, matched row by row, which is what GeoPandas does with
+    `align=False`. Asking for index alignment is an error rather than being
+    silently ignored.
+    """
+    if align:
+        raise ValueError(
+            "align=True is not supported: there is no index; columns of the "
+            "same frame are always matched row by row"
+        )
+
+
 class GeoSeries(Series):
     """A geometry column, in the shape of a `geopandas.GeoSeries`.
 
@@ -461,14 +518,487 @@ class GeoSeries(Series):
     `.geo` accessor.
     """
 
-    def buffer(self, distance):
-        """Buffer each geometry by `distance` (`ST_Buffer`)."""
-        return GeoSeries(self._df, self._expr.geo.buffer(distance), self._name)
+    def _geo(self, expr):
+        """A geometry result, keeping this column's name."""
+        return GeoSeries(self._df, expr, self._name)
+
+    def _is_geography(self):
+        """Whether this column holds geography (spherical edges)."""
+        schema = self._df.select(self._expr.alias("x")).schema
+        edge_type = getattr(schema.field("x").type, "edge_type", "")
+        return "SPHERICAL" in str(edge_type).upper()
+
+    def _flag(self, expr, name):
+        """A boolean property: GeoPandas answers False for a missing geometry."""
+        from sedonadb.expr import lit
+
+        return Series(self._df, expr.funcs.coalesce(lit(False)), name)
+
+    # -- properties --------------------------------------------------------
+
+    @property
+    def geom_type(self):
+        """The geometry type of each element (`"Point"`, `"Polygon"`, ...).
+
+        `ST_GeometryType` without its `ST_` prefix, so the names match
+        GeoPandas. A missing geometry gives a missing type. A `LinearRing`
+        reads as `"LineString"`, as it does in GeoPandas after a WKB round
+        trip, since WKB has no ring type.
+        """
+        from sedonadb.expr import lit
+
+        expr = self._expr.geo.geometry_type().funcs.replace(lit("ST_"), lit(""))
+        return Series(self._df, expr, "geom_type")
+
+    @property
+    def is_valid(self):
+        """Whether each geometry is valid (`ST_IsValid`); False if missing."""
+        return self._flag(self._expr.geo.is_valid(), "is_valid")
+
+    @property
+    def is_empty(self):
+        """Whether each geometry is empty (`ST_IsEmpty`); False if missing."""
+        return self._flag(self._expr.geo.is_empty(), "is_empty")
+
+    @property
+    def is_simple(self):
+        """Whether each geometry is simple (`ST_IsSimple`); False if missing.
+
+        Unlike GeoPandas, a geometry collection whose parts are simple is
+        simple here; GEOS leaves simplicity undefined for collections and
+        GeoPandas reports False.
+        """
+        return self._flag(self._expr.geo.is_simple(), "is_simple")
+
+    @property
+    def has_z(self):
+        """Whether each geometry has Z coordinates (`ST_HasZ`); False if missing."""
+        return self._flag(self._expr.geo.has_z(), "has_z")
+
+    @property
+    def x(self):
+        """The X coordinate of each point (`ST_X`); NaN for empty or missing.
+
+        As in GeoPandas this is defined for points only, but the frame is
+        lazy, so a non-point raises when the result is computed rather than
+        when the property is read.
+        """
+        return Series(self._df, self._expr.geo.x(), "x")
+
+    @property
+    def y(self):
+        """The Y coordinate of each point (`ST_Y`); see `x`."""
+        return Series(self._df, self._expr.geo.y(), "y")
+
+    @property
+    def z(self):
+        """The Z coordinate of each point (`ST_Z`); see `x`."""
+        return Series(self._df, self._expr.geo.z(), "z")
+
+    @property
+    def bounds(self):
+        """The bounds of each geometry, as a frame of minx, miny, maxx, maxy.
+
+        Lazy like everything else here (a `GeoDataFrame` without a geometry
+        column); empty or missing geometries give missing bounds.
+        """
+        from sedonadb_geopandas._frame import GeoDataFrame
+
+        expr = self._expr.geo
+        frame = self._df.select(
+            expr.x_min().alias("minx"),
+            expr.y_min().alias("miny"),
+            expr.x_max().alias("maxx"),
+            expr.y_max().alias("maxy"),
+        )
+        return GeoDataFrame(frame, geometry=None)
+
+    @property
+    def total_bounds(self):
+        """The bounds of all geometries together, as `[minx, miny, maxx, maxy]`.
+
+        Computes the result (an aggregate), unlike the lazy properties.
+        Empty and missing geometries are ignored; all NaN if nothing is left.
+        """
+        import numpy as np
+
+        bounds = self.bounds._df
+        row = bounds.agg(
+            bounds["minx"].funcs.min().alias("minx"),
+            bounds["miny"].funcs.min().alias("miny"),
+            bounds["maxx"].funcs.max().alias("maxx"),
+            bounds["maxy"].funcs.max().alias("maxy"),
+        ).to_pandas()
+        return np.array(
+            [row[c].iloc[0] for c in ("minx", "miny", "maxx", "maxy")], dtype=float
+        )
+
+    # -- constructive methods ---------------------------------------------
+
+    def buffer(
+        self,
+        distance,
+        resolution=16,
+        cap_style="round",
+        join_style="round",
+        mitre_limit=5.0,
+        single_sided=False,
+    ):
+        """Buffer each geometry by `distance` (`ST_Buffer`), as in GeoPandas.
+
+        The style arguments and their defaults are GeoPandas', passed to the
+        engine as GEOS buffer parameters. The resolution matters even at its
+        default: without it the engine approximates a quarter circle with 8
+        segments rather than GeoPandas' 16.
+        """
+        from sedonadb.expr import lit
+
+        caps = {"round": "round", "flat": "flat", "square": "square"}
+        joins = {"round": "round", "mitre": "mitre", "bevel": "bevel"}
+        if cap_style not in caps:
+            raise ValueError(
+                f"cap_style must be one of {sorted(caps)}, got {cap_style!r}"
+            )
+        if join_style not in joins:
+            raise ValueError(
+                f"join_style must be one of {sorted(joins)}, got {join_style!r}"
+            )
+        params = f"quad_segs={int(resolution)} endcap={caps[cap_style]}"
+        if self._is_geography():
+            # Spherical buffering accepts only these two parameters.
+            if join_style != "round" or mitre_limit != 5.0 or single_sided:
+                raise NotImplementedError(
+                    "buffer() on geography supports resolution and cap_style "
+                    "only; join_style, mitre_limit and single_sided need "
+                    "planar geometry"
+                )
+        else:
+            params += f" join={joins[join_style]} mitre_limit={float(mitre_limit)}"
+            if single_sided:
+                params += " side=left" if distance >= 0 else " side=right"
+        return self._geo(self._expr.geo.buffer(distance, lit(params)))
+
+    @property
+    def envelope(self):
+        """The bounding rectangle of each geometry (`ST_Envelope`).
+
+        The envelope of an empty geometry is `POINT EMPTY`, as in GeoPandas,
+        whatever the empty geometry's type (the engine keeps the type).
+        """
+        import shapely
+
+        envelope = self._expr.geo.envelope()
+        if self._is_geography():
+            return self._geo(envelope)
+        ctx = self._df._ctx
+        # Per row: POINT EMPTY's WKB where the input is empty, the envelope's
+        # otherwise. nvl2 picks its second argument where the first is
+        # non-null, and all three must share a type, hence the binary flag.
+        empty = self._expr.geo.is_empty().funcs.nullif(ctx.lit(False))
+        flag = empty.cast(pa.string()).cast(pa.binary())
+        wkb = flag.funcs.nvl2(ctx.lit(shapely.Point().wkb), envelope.geo.as_binary())
+        expr = wkb.funcs.st_geomfromwkb()
+        crs = self.crs
+        if crs is not None:
+            expr = expr.funcs.st_setcrs(ctx.lit(crs.to_json()))
+        return self._geo(expr)
+
+    @property
+    def convex_hull(self):
+        """The convex hull of each geometry (`ST_ConvexHull`)."""
+        return self._geo(self._expr.geo.convex_hull())
+
+    @property
+    def boundary(self):
+        """The boundary of each geometry (`ST_Boundary`).
+
+        Unlike GeoPandas, which gives None for a geometry collection (GEOS
+        does not define its boundary), this returns the collection of its
+        parts' boundaries.
+        """
+        return self._geo(self._expr.geo.boundary())
+
+    @property
+    def exterior(self):
+        """The exterior ring of each polygon (`ST_ExteriorRing`); None otherwise."""
+        return self._geo(self._expr.geo.exterior_ring())
+
+    def simplify(self, tolerance, preserve_topology=True):
+        """Simplify each geometry within `tolerance`.
+
+        `ST_SimplifyPreserveTopology` by default, as in GeoPandas, or
+        `ST_Simplify` (Douglas-Peucker) with `preserve_topology=False`.
+        """
+        if preserve_topology:
+            return self._geo(self._expr.geo.simplify_preserve_topology(tolerance))
+        return self._geo(self._expr.geo.simplify(tolerance))
+
+    def normalize(self):
+        """Each geometry in normalized form (`ST_Normalize`)."""
+        return self._geo(self._expr.geo.normalize())
+
+    def make_valid(self, method="linework"):
+        """Repair each invalid geometry (`ST_MakeValid`).
+
+        Only GeoPandas' default `method="linework"` is supported.
+        """
+        if method != "linework":
+            raise NotImplementedError(
+                f"make_valid() supports method='linework' only, got {method!r}"
+            )
+        return self._geo(self._expr.geo.make_valid())
+
+    def representative_point(self):
+        """A point guaranteed to lie on each geometry (`ST_PointOnSurface`)."""
+        return self._geo(self._expr.geo.point_on_surface())
+
+    # -- binary operations -----------------------------------------------
+
+    def _other(self, other):
+        """The right-hand side of a binary geometry operation, as an expression.
+
+        A `GeoSeries` must come from this same frame (there is no row
+        alignment), as for arithmetic. A bare Shapely geometry carries no CRS
+        of its own, so it takes this column's, as it would in GeoPandas and
+        as an assigned geometry does; without that the engine refuses to
+        compare geometries with mismatched CRS. A `Literal` passes through
+        unchanged, keeping whatever CRS it was given.
+        """
+        from sedonadb.expr import Literal
+        from shapely.geometry.base import BaseGeometry
+
+        ctx = self._df._ctx
+        value = _operand(self._df, other)
+        if isinstance(value, Literal):
+            # Rebound to this frame's context, so functions can be applied to
+            # it (a bare lit() has none). A geometry literal without a CRS of
+            # its own takes this column's, like a bare Shapely geometry; one
+            # that carries a CRS keeps it.
+            expr = ctx.lit(value)
+            crs = self.crs
+            if crs is not None:
+                projected = self._df.select(expr.alias("x")).schema
+                if (
+                    projected.geometry_column_indices
+                    and projected.field("x").type.crs is None
+                ):
+                    expr = expr.funcs.st_setcrs(ctx.lit(crs.to_json()))
+            return expr
+        if not isinstance(value, BaseGeometry):
+            return value
+        crs = self.crs
+        if self._is_geography():
+            # Built with this column's spatial kind: the engine has no kernel
+            # pairing geography with geometry. The geography constructor
+            # synthesizes CRS84, so the column's CRS (or its absence) is
+            # applied explicitly.
+            expr = ctx.lit(value.wkb).funcs.st_geogfromwkb()
+            if crs is None:
+                return expr.funcs.st_setsrid(ctx.lit(0))
+        else:
+            expr = ctx.lit(value)
+        if crs is not None:
+            expr = expr.funcs.st_setcrs(ctx.lit(crs.to_json()))
+        return expr
+
+    def _predicate(self, name, other, align=None):
+        """A GeoPandas binary predicate: False where either side is missing."""
+        from sedonadb.expr import lit
+
+        _check_align(align)
+        expr = getattr(self._expr.geo, name)(self._other(other))
+        return Series(self._df, expr.funcs.coalesce(lit(False)), name)
+
+    def _without_empty(self, expr, other_expr):
+        """`expr` with rows where either operand is empty made missing.
+
+        The engine treats an empty geometry as at distance 0 from anything
+        (apache/sedona-db#1356), where GeoPandas (and PostGIS) treat the
+        distance as undefined.
+        """
+        from sedonadb.expr import lit
+
+        empty = self._expr.geo.is_empty() | other_expr.geo.is_empty()
+        gate = empty.funcs.nullif(lit(True)).cast(pa.float64())
+        return expr + gate
+
+    def intersects(self, other, align=None):
+        """Whether each geometry intersects `other` (`ST_Intersects`)."""
+        return self._predicate("intersects", other, align)
+
+    def contains(self, other, align=None):
+        """Whether each geometry contains `other` (`ST_Contains`)."""
+        return self._predicate("contains", other, align)
+
+    def within(self, other, align=None):
+        """Whether each geometry is within `other` (`ST_Within`).
+
+        Known engine issue: some boundary-only configurations are misclassified
+        (apache/sedona-db#1165).
+        """
+        return self._predicate("within", other, align)
+
+    def touches(self, other, align=None):
+        """Whether each geometry touches `other` (`ST_Touches`).
+
+        Known engine issue: a line touching a polygon only at a vertex it does
+        not share is not detected (apache/sedona-db#1165).
+        """
+        return self._predicate("touches", other, align)
+
+    def crosses(self, other, align=None):
+        """Whether each geometry crosses `other` (`ST_Crosses`)."""
+        return self._predicate("crosses", other, align)
+
+    def overlaps(self, other, align=None):
+        """Whether each geometry overlaps `other` (`ST_Overlaps`)."""
+        return self._predicate("overlaps", other, align)
+
+    def covers(self, other, align=None):
+        """Whether each geometry covers `other` (`ST_Covers`)."""
+        return self._predicate("covers", other, align)
+
+    def covered_by(self, other, align=None):
+        """Whether each geometry is covered by `other` (`ST_CoveredBy`)."""
+        return self._predicate("covered_by", other, align)
+
+    def disjoint(self, other, align=None):
+        """Whether each geometry is disjoint from `other` (`ST_Disjoint`)."""
+        return self._predicate("disjoint", other, align)
+
+    def geom_equals(self, other, align=None):
+        """Whether each geometry equals `other` topologically (`ST_Equals`)."""
+        from sedonadb.expr import lit
+
+        _check_align(align)
+        other_expr = self._other(other)
+        # Two empty geometries are equal, whatever their types, as in
+        # GeoPandas; the engine says they are not.
+        both_empty = self._expr.geo.is_empty() & other_expr.geo.is_empty()
+        expr = self._expr.geo.equals(other_expr) | both_empty
+        return Series(self._df, expr.funcs.coalesce(lit(False)), "geom_equals")
+
+    def dwithin(self, other, distance, align=None):
+        """Whether each geometry is within `distance` of `other` (`ST_DWithin`).
+
+        False where either side is missing or empty.
+        """
+        from sedonadb.expr import lit
+
+        _check_align(align)
+        other_expr = self._other(other)
+        # `distance` may be one number or a numeric Series of this frame,
+        # applied row by row as in GeoPandas.
+        threshold = _operand(self._df, distance)
+        row_wise = isinstance(distance, Series)
+        if row_wise:
+            threshold = threshold.cast(pa.float64())
+        elif isinstance(threshold, numbers.Real) and not isinstance(threshold, bool):
+            if math.isnan(threshold):
+                # Nothing is within NaN; the engine orders NaN above every
+                # number, so the comparison alone would say True.
+                return Series(self._df, lit(False), "dwithin")
+            threshold = lit(float(threshold))
+        else:
+            raise TypeError(
+                f"dwithin() distance must be a number or a numeric Series of this "
+                f"frame, got {type(distance).__name__}"
+            )
+        # Measured through ST_Distance so an empty operand gives a missing
+        # distance (and so False), which ST_DWithin treats as distance 0.
+        dist = self._without_empty(self._expr.geo.distance(other_expr), other_expr)
+        within = dist <= threshold
+        if row_wise:
+            # The same NaN rule, per row.
+            within = within & ~threshold.funcs.isnan()
+        return Series(self._df, within.funcs.coalesce(lit(False)), "dwithin")
+
+    def distance(self, other, align=None):
+        """The distance from each geometry to `other` (`ST_Distance`).
+
+        Missing where either side is missing or empty, as in GeoPandas.
+        """
+        _check_align(align)
+        other_expr = self._other(other)
+        expr = self._without_empty(self._expr.geo.distance(other_expr), other_expr)
+        return Series(self._df, expr, "distance")
+
+    def intersection(self, other, align=None):
+        """The intersection of each geometry with `other` (`ST_Intersection`)."""
+        _check_align(align)
+        return self._geo(self._expr.geo.intersection(self._other(other)))
+
+    def union(self, other, align=None):
+        """The union of each geometry with `other` (`ST_Union`)."""
+        _check_align(align)
+        return self._geo(self._expr.geo.union(self._other(other)))
+
+    def difference(self, other, align=None):
+        """Each geometry minus `other` (`ST_Difference`)."""
+        _check_align(align)
+        return self._geo(self._expr.geo.difference(self._other(other)))
+
+    def symmetric_difference(self, other, align=None):
+        """The symmetric difference of each geometry and `other` (`ST_SymDifference`)."""
+        _check_align(align)
+        return self._geo(self._expr.geo.sym_difference(self._other(other)))
+
+    # -- serialization and CRS --------------------------------------------
+
+    def to_wkt(self):
+        """Each geometry as WKT text (`ST_AsText`).
+
+        The text is equivalent to GeoPandas' but not character-identical:
+        SedonaDB writes `POINT(1 2)` where Shapely writes `POINT (1 2)`.
+        """
+        return Series(self._df, self._expr.geo.as_text(), self._name)
+
+    def to_wkb(self, hex=False):
+        """Each geometry as ISO WKB bytes (`ST_AsBinary`).
+
+        Equivalent to GeoPandas' `to_wkb(flavor="iso")`; GeoPandas' default
+        extended flavor encodes Z/M dimensions differently. `hex=True` is not
+        supported.
+        """
+        if hex:
+            raise NotImplementedError("to_wkb(hex=True) is not supported")
+        return Series(self._df, self._expr.geo.as_binary(), self._name)
+
+    def set_crs(self, crs, allow_override=False):
+        """Label each geometry with `crs` without transforming coordinates.
+
+        As in GeoPandas, replacing a different existing CRS requires
+        `allow_override=True`; use `GeoDataFrame.to_crs` to reproject.
+        """
+        current = self.crs
+        if crs is not None:
+            crs = _normalize_crs(crs)
+        if current is not None and not allow_override and not _same_crs(current, crs):
+            raise ValueError(
+                "The GeoSeries already has a CRS which is not equal to the passed "
+                "CRS. Specify 'allow_override=True' to allow replacing the existing "
+                "CRS without doing any transformation. If you actually want to "
+                "transform the geometries, use 'to_crs' instead."
+            )
+        ctx = self._df._ctx
+        if crs is None:
+            # SRID 0 means "no CRS" and keeps the values; ST_SetCRS(NULL)
+            # propagates the null and would erase every geometry.
+            if current is None:
+                return self._geo(self._expr)
+            return self._geo(self._expr.geo.set_srid(ctx.lit(0)))
+        return self._geo(self._expr.geo.set_crs(ctx.lit(crs)))
+
+    @property
+    def crs(self):
+        """The CRS of this column, from the frame's schema."""
+        schema = self._df.select(self._expr.alias("x")).schema
+        return schema.field("x").type.crs
 
     @property
     def centroid(self):
         """The centroid of each geometry (`ST_Centroid`)."""
-        return GeoSeries(self._df, self._expr.geo.centroid(), self._name)
+        return self._geo(self._expr.geo.centroid())
 
     @property
     def area(self):

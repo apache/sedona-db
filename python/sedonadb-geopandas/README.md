@@ -78,6 +78,20 @@ immediately, as in every pandas version. Mixed-unit duration
 operands are rebuilt in the column's own unit when exactly representable,
 rather than widening to the engine's interval type.
 
+`GeoSeries` properties and methods follow GeoPandas, with a few differences
+in form: `to_wkt()` writes equivalent but differently spaced WKT
+(`POINT(1 2)`), `to_wkb()` writes ISO WKB (GeoPandas' `flavor="iso"`),
+`is_simple` and `boundary` answer for geometry collections where GEOS leaves
+them undefined, and `x`/`y`/`z` on a non-point raise when the result is
+computed rather than when the property is read.
+
+Binary geometry operations (`intersects`, `within`, `distance`,
+`intersection`, ...) take either a single Shapely geometry, which takes the
+column's CRS, or a `GeoSeries` from the same frame, matched row by row as with
+GeoPandas' `align=False`; there is no index to align on. `touches` and
+`within` inherit an engine issue with some boundary-only configurations
+(apache/sedona-db#1165).
+
 `dissolve()` aggregates non-geometry columns with `"first"`, which is an
 unordered aggregate: it returns *some* value from the group rather than the one
 from the first row, and unlike GeoPandas it does not skip missing values, so a
