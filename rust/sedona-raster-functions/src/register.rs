@@ -73,6 +73,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::rs_set_georeference::rs_set_georeference_udf,
         crate::rs_setsrid::rs_set_crs_udf,
         crate::rs_setsrid::rs_set_srid_udf,
+        crate::rs_setvalue::rs_setvalue_udf,
         crate::rs_size::rs_height_udf,
         crate::rs_size::rs_width_udf,
         crate::rs_slice::rs_slice_udf,
