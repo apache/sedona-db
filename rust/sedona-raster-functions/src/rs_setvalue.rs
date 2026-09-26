@@ -44,6 +44,7 @@ use arrow_schema::DataType;
 use datafusion_common::{Result, exec_datafusion_err, exec_err};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
+use sedona_raster::band_builder::check_band_data_len;
 use sedona_raster::builder::{RasterBuilder, RasterOverrides};
 use sedona_raster::traits::{BandOverrides, BandRef, Override, RasterRef, pixel_f64_to_bytes};
 use sedona_schema::datatypes::SedonaType;
@@ -52,7 +53,7 @@ use sedona_schema::raster::BandDataType;
 
 use crate::executor::RasterExecutor;
 use crate::pixel_scan::{scan_pixels, spatial_2d_buffer};
-use crate::rs_ensure_loaded::NEEDS_PIXELS_METADATA_KEY;
+use crate::rs_ensure_loaded::{NEEDS_PIXELS_METADATA_KEY, RETURNS_BYTES_METADATA_KEY};
 use crate::sampling::{default_band, resolve_band};
 
 const FUNC: &str = "RS_SetValue";
@@ -70,6 +71,10 @@ pub fn rs_setvalue_udf() -> SedonaScalarUDF {
     // The kernel reads and rewrites pixel bytes, so the raster argument must be
     // materialised InDb first; the planner injects RS_EnsureLoaded on this flag.
     .with_metadata(NEEDS_PIXELS_METADATA_KEY, "true")
+    // The output is InDb too (the edited band is fresh bytes, the others are
+    // copied from the loaded input), so a consumer of RS_SetValue — including a
+    // nested RS_SetValue — must not wrap it in another RS_EnsureLoaded.
+    .with_metadata(RETURNS_BYTES_METADATA_KEY, "true")
 }
 
 #[derive(Debug)]
@@ -195,7 +200,18 @@ fn set_pixel(band: &dyn BandRef, col: i64, row: i64, value: f64) -> Result<Buffe
     }
     let pixel = pixel_bytes(value, &buffer.data_type)?;
 
-    let mut data = Vec::with_capacity((width * height) as usize * pixel.len());
+    // A broadcast view can describe far more pixels than its source holds, so
+    // size the packed output with checked arithmetic and reject it before
+    // allocating rather than after.
+    let len = usize::try_from(width)
+        .ok()
+        .and_then(|w| w.checked_mul(usize::try_from(height).ok()?))
+        .and_then(|n| n.checked_mul(pixel.len()))
+        .ok_or_else(|| {
+            exec_datafusion_err!("{FUNC}: a {width} x {height} band is too large to materialise")
+        })?;
+    check_band_data_len(len).map_err(|e| exec_datafusion_err!("{FUNC}: {e}"))?;
+    let mut data = Vec::with_capacity(len);
     match buffer.as_contiguous() {
         Ok(bytes) => data.extend_from_slice(bytes),
         // A strided, reversed or broadcast view: gather its visible pixels.
@@ -372,6 +388,63 @@ mod tests {
         );
         let err = set(vec![spec()], 1, 1, 1, 1e18).unwrap_err().to_string();
         assert!(err.contains("does not fit a Int64 pixel"), "{err}");
+    }
+
+    #[test]
+    fn oversized_broadcast_band_errors_before_allocating() {
+        // A 1x1 UInt16 source broadcast to 2^62 columns describes far more
+        // bytes than one band can hold; it must error, not panic in the
+        // allocator.
+        use sedona_raster::builder::StartBandArgs;
+        use sedona_raster::view_entries::{ViewEntries, ViewEntry};
+
+        let width = 1i64 << 62;
+        let view = ViewEntries::try_new(
+            vec![
+                ViewEntry {
+                    source_axis: 0,
+                    start: 0,
+                    step: 0,
+                    steps: 1,
+                },
+                ViewEntry {
+                    source_axis: 1,
+                    start: 0,
+                    step: 0,
+                    steps: width,
+                },
+            ],
+            &[1, 1],
+        )
+        .unwrap();
+        let mut builder = RasterBuilder::new(1);
+        builder
+            .start_raster_2d(width, 1, 0., 0., 1., -1., 0., 0., None)
+            .unwrap();
+        builder
+            .start_band(StartBandArgs {
+                view: Some(&view),
+                ..StartBandArgs::new(&["y", "x"], &[1, 1], BandDataType::UInt16)
+            })
+            .unwrap();
+        builder.band_data_writer().append_value(7u16.to_le_bytes());
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+
+        let tester = ScalarUdfTester::new(
+            rs_setvalue_udf().into(),
+            vec![RASTER, i64_t(), i64_t(), f64_t()],
+        );
+        let err = tester
+            .invoke_arrays(vec![
+                Arc::new(builder.finish().unwrap()),
+                Arc::new(Int64Array::from(vec![1])),
+                Arc::new(Int64Array::from(vec![1])),
+                Arc::new(Float64Array::from(vec![9.0])),
+            ])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("RS_SetValue"), "{err}");
     }
 
     #[test]

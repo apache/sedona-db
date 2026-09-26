@@ -111,3 +111,18 @@ def test_rs_setvalue_rejected(con, tiff, args, match):
     path, _ = tiff
     with pytest.raises(Exception, match=match):
         _set_value(con, path, *args)
+
+
+def test_rs_setvalue_output_feeds_other_raster_functions(con):
+    """RS_SetValue's output is already loaded, so the planner must not wrap it
+    in another RS_EnsureLoaded when it feeds RS_Value or a second RS_SetValue.
+    Reading from a table keeps the raster out of constant folding."""
+    rasters = con.sql("SELECT RS_Example() AS r").to_arrow_table()
+    con.create_data_frame(rasters).to_view("setvalue_nested", overwrite=True)
+    # Pixels (2, 2) and (3, 3) both hold 7, so RS_Value's grid form reads 7
+    # however it counts.
+    sql = """
+        SELECT RS_Value(RS_SetValue(RS_SetValue(r, 1, 2, 2, 7), 1, 3, 3, 7), 2, 2, 1)
+        FROM setvalue_nested
+    """
+    assert con.sql(sql).to_arrow_table().column(0).to_pylist() == [7.0]
