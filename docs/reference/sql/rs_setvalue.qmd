@@ -42,13 +42,10 @@ kernels:
         on a multiband raster the band has to be given.
     - name: col_x
       type: integer
-      description: Column of the pixel (1-based).
     - name: row_y
       type: integer
-      description: Row of the pixel (1-based).
     - name: new_value
       type: double
-      description: The value to store.
 ---
 
 ## Description
