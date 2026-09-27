@@ -52,7 +52,11 @@ def _same_z(got, expected):
     """Whether two 3D geometries have the same Z values, vertex for vertex."""
     a = shapely.get_coordinates(shapely.normalize(got), include_z=True)
     b = shapely.get_coordinates(shapely.normalize(expected), include_z=True)
-    return a.shape == b.shape and np.allclose(a[:, 2], b[:, 2], equal_nan=True)
+    # An absolute tolerance only: NumPy's default relative one treats Z values
+    # of 1,000,000 and 1,000,001 as equal.
+    return a.shape == b.shape and np.allclose(
+        a[:, 2], b[:, 2], rtol=0, atol=1e-9, equal_nan=True
+    )
 
 
 def _same(got, expected):
@@ -70,12 +74,13 @@ def _same(got, expected):
             expected.geom_type, expected.geom_type
         ):
             return False
-        if expected.is_empty or got.is_empty:
-            return expected.is_empty and got.is_empty
-        # Topological equality ignores Z, so dimensions and Z values are
-        # compared separately.
+        # Topological equality ignores Z, so dimensions are compared first,
+        # before the empty case (POINT EMPTY is not POINT Z EMPTY), and Z
+        # values separately below.
         if got.has_z != expected.has_z:
             return False
+        if expected.is_empty or got.is_empty:
+            return expected.is_empty and got.is_empty
         if expected.has_z and not _same_z(got, expected):
             return False
         if expected.equals(got):
@@ -152,7 +157,18 @@ def test_constructive_methods_match_geopandas(call):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         values = got.to_pandas().tolist()
-    for value, reference in zip(values, expected.tolist()):
+    for source, value, reference in zip(gs.tolist(), values, expected.tolist()):
+        if (
+            call == ("simplify", (0.5, False))
+            and reference is not None
+            and reference.is_empty
+            and reference.has_z
+            and not source.has_z
+        ):
+            # GEOS' Douglas-Peucker simplifier turns a 2D empty point or line
+            # into a 3D empty (POINT Z EMPTY); the engine keeps the input's
+            # dimension, which is what the topology-preserving mode does too.
+            reference = shapely.force_2d(reference)
         assert _same(value, reference), (value, reference)
 
 
@@ -348,6 +364,11 @@ def test_geometry_comparison_catches_path_and_z_changes():
     assert not _same(
         shapely.from_wkt("POINT Z (1 2 3)"), shapely.from_wkt("POINT Z (1 2 4)")
     )
+    assert not _same(
+        shapely.from_wkt("POINT Z (0 0 1000000)"),
+        shapely.from_wkt("POINT Z (0 0 1000001)"),
+    )
+    assert not _same(shapely.from_wkt("POINT EMPTY"), shapely.from_wkt("POINT Z EMPTY"))
     # Still accepted: a different starting vertex, and last-digit noise.
     assert _same(
         shapely.from_wkt("POLYGON ((1 0, 1 1, 0 1, 0 0, 1 0))"),
@@ -373,3 +394,24 @@ def test_envelope_keeps_a_string_crs_from_sql():
     assert "3857" in str(envelope.crs)
     values = sorted(envelope.to_pandas().tolist(), key=lambda g: g.is_empty)
     assert values == [shapely.Point(1, 2), shapely.from_wkt("POINT EMPTY")]
+
+
+def test_geography_envelope_of_an_empty_geometry_is_point_empty():
+    # The geography branch returned the engine's envelope as is, so an empty
+    # polygon kept its type; GeoPandas (and the planar branch) give POINT
+    # EMPTY. Non-empty envelopes and the geography kind are unchanged.
+    gdf = sgpd.GeoDataFrame(
+        sgpd.default_context().sql(
+            "SELECT 0 AS i, ST_GeogFromWKT('POLYGON EMPTY') AS g "
+            "UNION ALL SELECT 1, ST_GeogFromWKT('POINT EMPTY') "
+            "UNION ALL SELECT 2, ST_GeogFromWKT('LINESTRING (0 0, 1 1)')"
+        ),
+        geometry="g",
+    )
+    envelope = gdf.geometry.envelope
+    frame = gdf._df.select(gdf._df["i"], envelope._expr.alias("e"))
+    assert "geography" in str(frame.schema.field("e").type)
+    values = frame.to_pandas().sort_values("i")["e"].tolist()
+    assert values[0].geom_type == "Point" and values[0].is_empty
+    assert values[1].geom_type == "Point" and values[1].is_empty
+    assert values[2].geom_type == "Polygon" and not values[2].is_empty

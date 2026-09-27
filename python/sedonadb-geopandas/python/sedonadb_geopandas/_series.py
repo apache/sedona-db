@@ -661,8 +661,6 @@ class GeoSeries(Series):
         import shapely
 
         envelope = self._expr.geo.envelope()
-        if self._is_geography():
-            return self._geo(envelope)
         ctx = self._df._ctx
         # Per row: POINT EMPTY's WKB where the input is empty, the envelope's
         # otherwise. nvl2 picks its second argument where the first is
@@ -670,10 +668,19 @@ class GeoSeries(Series):
         empty = self._expr.geo.is_empty().funcs.nullif(ctx.lit(False))
         flag = empty.cast(pa.string()).cast(pa.binary())
         wkb = flag.funcs.nvl2(ctx.lit(shapely.Point().wkb), envelope.geo.as_binary())
-        expr = wkb.funcs.st_geomfromwkb()
+        # Rebuilt with this column's spatial kind and CRS: WKB carries neither.
+        geography = self._is_geography()
+        if geography:
+            expr = wkb.funcs.st_geogfromwkb()
+        else:
+            expr = wkb.funcs.st_geomfromwkb()
         crs = self.crs
         if crs is not None:
             expr = expr.funcs.st_setcrs(ctx.lit(crs.to_json()))
+        elif geography:
+            # The geography constructor synthesizes CRS84; SRID 0 clears it
+            # without touching the value.
+            expr = expr.funcs.st_setsrid(ctx.lit(0))
         return self._geo(expr)
 
     @property
@@ -700,7 +707,9 @@ class GeoSeries(Series):
         """Simplify each geometry within `tolerance`.
 
         `ST_SimplifyPreserveTopology` by default, as in GeoPandas, or
-        `ST_Simplify` (Douglas-Peucker) with `preserve_topology=False`.
+        `ST_Simplify` (Douglas-Peucker) with `preserve_topology=False`. An
+        empty geometry keeps its dimension, where GEOS' Douglas-Peucker turns
+        a 2D empty point or line into a 3D one (`POINT Z EMPTY`).
         """
         if preserve_topology:
             return self._geo(self._expr.geo.simplify_preserve_topology(tolerance))
