@@ -453,38 +453,29 @@ class Series:
 
 
 def _same_crs(current, crs):
-    """Whether an existing CRS and a requested one denote the same CRS.
+    """Whether an existing CRS and a requested one denote the same CRS."""
+    import pyproj
 
-    Compared through pyproj when it is available (it comes with GeoPandas);
-    otherwise conservatively treated as different, so replacing a CRS then
-    always needs `allow_override=True`.
-    """
     if crs is None:
-        return False
-    try:
-        import pyproj
-    except ImportError:
         return False
     try:
         return pyproj.CRS.from_user_input(
             current.to_json()
         ) == pyproj.CRS.from_user_input(crs)
-    except Exception:
+    except pyproj.exceptions.CRSError:
         return False
 
 
 def _normalize_crs(crs):
-    """`crs` in a form the engine keeps as given: PROJJSON when pyproj is there.
+    """`crs` as PROJJSON, a form the engine keeps as given.
 
     Stamping a user string directly lets the engine canonicalize it
     ("EPSG:4326" becomes OGC:CRS84) and rejects forms GeoPandas accepts, such
-    as the integer 4326. Parsing through pyproj (which comes with GeoPandas)
-    accepts every form GeoPandas does and rejects invalid input up front.
+    as the integer 4326. Parsing through pyproj accepts every form GeoPandas
+    does and rejects invalid input up front.
     """
-    try:
-        import pyproj
-    except ImportError:
-        return f"EPSG:{crs}" if isinstance(crs, int) else crs
+    import pyproj
+
     try:
         return pyproj.CRS.from_user_input(crs).to_json()
     except pyproj.exceptions.CRSError as err:

@@ -48,6 +48,13 @@ CORPUS = [
 ]
 
 
+def _same_z(got, expected):
+    """Whether two 3D geometries have the same Z values, vertex for vertex."""
+    a = shapely.get_coordinates(shapely.normalize(got), include_z=True)
+    b = shapely.get_coordinates(shapely.normalize(expected), include_z=True)
+    return a.shape == b.shape and np.allclose(a[:, 2], b[:, 2], equal_nan=True)
+
+
 def _same(got, expected):
     if expected is None or (isinstance(expected, float) and math.isnan(expected)):
         return got is None or (isinstance(got, float) and math.isnan(got))
@@ -65,10 +72,22 @@ def _same(got, expected):
             return False
         if expected.is_empty or got.is_empty:
             return expected.is_empty and got.is_empty
-        # Topological equality, with a tolerance for the last-digit floating
-        # point differences between the engine's GEOS build and Shapely's
-        # (curved output such as buffer arcs shows them).
-        return expected.equals(got) or expected.hausdorff_distance(got) < 1e-9
+        # Topological equality ignores Z, so dimensions and Z values are
+        # compared separately.
+        if got.has_z != expected.has_z:
+            return False
+        if expected.has_z and not _same_z(got, expected):
+            return False
+        if expected.equals(got):
+            return True
+        # A tolerance for the last-digit floating point differences between
+        # the engine's GEOS build and Shapely's (curved output such as buffer
+        # arcs shows them): the same vertices in the same order, once
+        # normalized, each within 1e-9. A vertex-only Hausdorff distance is
+        # not enough, since it accepts the same vertices joined differently.
+        return shapely.equals_exact(
+            shapely.normalize(expected), shapely.normalize(got), tolerance=1e-9
+        )
     if isinstance(expected, float):
         return math.isclose(got, expected, rel_tol=1e-9, abs_tol=1e-12)
     return got == expected
@@ -313,3 +332,44 @@ def test_buffer_on_geography_keeps_working():
     assert buffered[0].geom_type == "Polygon"
     with pytest.raises(NotImplementedError, match="geography"):
         gdf.geometry.buffer(1000.0, join_style="mitre")
+
+
+def test_geometry_comparison_catches_path_and_z_changes():
+    # The comparison helper itself: the same vertices joined differently are
+    # different geometries, and so are a 3D point and its 2D projection or a
+    # different Z value.
+    assert not _same(
+        shapely.from_wkt("LINESTRING (0 0, 1 0, 1 1)"),
+        shapely.from_wkt("LINESTRING (0 0, 1 1, 1 0)"),
+    )
+    assert not _same(
+        shapely.from_wkt("POINT Z (1 2 3)"), shapely.from_wkt("POINT (1 2)")
+    )
+    assert not _same(
+        shapely.from_wkt("POINT Z (1 2 3)"), shapely.from_wkt("POINT Z (1 2 4)")
+    )
+    # Still accepted: a different starting vertex, and last-digit noise.
+    assert _same(
+        shapely.from_wkt("POLYGON ((1 0, 1 1, 0 1, 0 0, 1 0))"),
+        shapely.from_wkt("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"),
+    )
+    assert _same(
+        shapely.from_wkt("LINESTRING (0 0, 1 0.30000000000000004)"),
+        shapely.from_wkt("LINESTRING (0 0, 1 0.3)"),
+    )
+
+
+def test_envelope_keeps_a_string_crs_from_sql():
+    # A CRS the engine reports as a plain string (from SQL) needs pyproj to
+    # serialize; it is a declared dependency, so this path always works.
+    gdf = sgpd.GeoDataFrame(
+        sgpd.default_context().sql(
+            "SELECT ST_SetSRID(ST_GeomFromText('POLYGON EMPTY'), 3857) AS g "
+            "UNION ALL SELECT ST_SetSRID(ST_Point(1.0, 2.0), 3857)"
+        ),
+        geometry="g",
+    )
+    envelope = gdf.geometry.envelope
+    assert "3857" in str(envelope.crs)
+    values = sorted(envelope.to_pandas().tolist(), key=lambda g: g.is_empty)
+    assert values == [shapely.Point(1, 2), shapely.from_wkt("POINT EMPTY")]
