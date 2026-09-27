@@ -706,3 +706,32 @@ def test_dwithin_accepts_a_row_wise_threshold():
     assert got == expected == [True, True, False, False]
     with pytest.raises(TypeError, match="distance"):
         gdf.geometry.dwithin(shapely.Point(0, 0), "far")
+
+
+def test_literal_operand_takes_a_geography_columns_kind():
+    # A bare Shapely operand was already built as geography; one wrapped in
+    # lit() still arrived as planar geometry, which no kernel pairs with
+    # geography.
+    gdf = sgpd.GeoDataFrame(
+        sgpd.default_context().sql("SELECT ST_GeogFromWKT('POINT (0 0)') AS g"),
+        geometry="g",
+    )
+    g = gdf.geometry
+    assert g.intersects(lit(shapely.Point(0, 0))).to_pandas().tolist() == [True]
+    wrapped = g.distance(lit(shapely.Point(0, 1))).to_pandas().tolist()
+    bare = g.distance(shapely.Point(0, 1)).to_pandas().tolist()
+    assert wrapped == bare
+
+
+@pytest.mark.parametrize(
+    "threshold",
+    [np.float64(5.0), np.float32(4.9), np.int64(5), np.float64("nan")],
+    ids=["float64", "float32", "int64", "nan"],
+)
+def test_dwithin_accepts_numpy_thresholds(threshold):
+    # NumPy scalars were normalized into Arrow scalars before the numeric
+    # check and rejected, where GeoPandas accepts them.
+    gs = gpd.GeoSeries.from_wkt(["POINT (0 0)", "POINT (3 4)"], crs="EPSG:3857")
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    got = g.dwithin(shapely.Point(0, 0), threshold).to_pandas().tolist()
+    assert got == gs.dwithin(shapely.Point(0, 0), threshold).tolist()

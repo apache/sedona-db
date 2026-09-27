@@ -779,47 +779,50 @@ class GeoSeries(Series):
         """The right-hand side of a binary geometry operation, as an expression.
 
         A `GeoSeries` must come from this same frame (there is no row
-        alignment), as for arithmetic. A bare Shapely geometry carries no CRS
-        of its own, so it takes this column's, as it would in GeoPandas and
-        as an assigned geometry does; without that the engine refuses to
-        compare geometries with mismatched CRS. A `Literal` passes through
-        unchanged, keeping whatever CRS it was given.
+        alignment), as for arithmetic. A geometry scalar, bare Shapely or
+        wrapped in `lit()`, takes this column's spatial kind, since the engine
+        has no kernel pairing geography with geometry. It takes this column's
+        CRS when it has none of its own, as it would in GeoPandas and as an
+        assigned geometry does (the engine refuses mismatched CRS); a literal
+        that carries its own CRS keeps it.
         """
         from sedonadb.expr import Literal
         from shapely.geometry.base import BaseGeometry
 
         ctx = self._df._ctx
         value = _operand(self._df, other)
-        if isinstance(value, Literal):
-            # Rebound to this frame's context, so functions can be applied to
-            # it (a bare lit() has none). A geometry literal without a CRS of
-            # its own takes this column's, like a bare Shapely geometry; one
-            # that carries a CRS keeps it.
-            expr = ctx.lit(value)
-            crs = self.crs
-            if crs is not None:
-                projected = self._df.select(expr.alias("x")).schema
-                if (
-                    projected.geometry_column_indices
-                    and projected.field("x").type.crs is None
-                ):
-                    expr = expr.funcs.st_setcrs(ctx.lit(crs.to_json()))
-            return expr
-        if not isinstance(value, BaseGeometry):
+        if isinstance(value, BaseGeometry):
+            return self._as_column_kind(ctx.lit(value), own_crs=None)
+        if not isinstance(value, Literal):
             return value
-        crs = self.crs
-        if self._is_geography():
-            # Built with this column's spatial kind: the engine has no kernel
-            # pairing geography with geometry. The geography constructor
-            # synthesizes CRS84, so the column's CRS (or its absence) is
-            # applied explicitly.
-            expr = ctx.lit(value.wkb).funcs.st_geogfromwkb()
-            if crs is None:
-                return expr.funcs.st_setsrid(ctx.lit(0))
-        else:
-            expr = ctx.lit(value)
+        # Rebound to this frame's context, so functions can be applied to it
+        # (a bare lit() has none).
+        expr = ctx.lit(value)
+        projected = self._df.select(expr.alias("x")).schema
+        if not projected.geometry_column_indices:
+            return expr
+        return self._as_column_kind(expr, own_crs=projected.field("x").type.crs)
+
+    def _as_column_kind(self, expr, own_crs):
+        """A geometry scalar with this column's spatial kind and a CRS.
+
+        `own_crs` is the CRS the scalar carries itself, if any; otherwise this
+        column's applies (or none, if the column has none).
+        """
+        ctx = self._df._ctx
+        geography = self._is_geography()
+        scalar = self._df.select(expr.alias("x")).schema.field("x").type
+        scalar_geography = "SPHERICAL" in str(getattr(scalar, "edge_type", "")).upper()
+        if geography and not scalar_geography:
+            # Re-entered through WKB as geography. The geography constructor
+            # synthesizes CRS84, so the CRS is always applied explicitly below.
+            expr = expr.geo.as_binary().funcs.st_geogfromwkb()
+        crs = own_crs if own_crs is not None else self.crs
         if crs is not None:
-            expr = expr.funcs.st_setcrs(ctx.lit(crs.to_json()))
+            return expr.funcs.st_setcrs(ctx.lit(crs.to_json()))
+        if geography:
+            # SRID 0 clears the synthesized CRS without touching the value.
+            return expr.funcs.st_setsrid(ctx.lit(0))
         return expr
 
     def _predicate(self, name, other, align=None):
@@ -910,21 +913,25 @@ class GeoSeries(Series):
         other_expr = self._other(other)
         # `distance` may be one number or a numeric Series of this frame,
         # applied row by row as in GeoPandas.
-        threshold = _operand(self._df, distance)
         row_wise = isinstance(distance, Series)
         if row_wise:
-            threshold = threshold.cast(pa.float64())
-        elif isinstance(threshold, numbers.Real) and not isinstance(threshold, bool):
-            if math.isnan(threshold):
+            threshold = _operand(self._df, distance).cast(pa.float64())
+        else:
+            # Validated like any other operand (arrays are rejected), then
+            # resolved to a plain number through the same path division uses,
+            # so NumPy, Arrow, and lit() scalars are accepted like floats.
+            _operand(self._df, distance)
+            value = _numeric_value(distance)
+            if not isinstance(value, numbers.Real) or isinstance(value, bool):
+                raise TypeError(
+                    f"dwithin() distance must be a number or a numeric Series of "
+                    f"this frame, got {type(distance).__name__}"
+                )
+            if math.isnan(value):
                 # Nothing is within NaN; the engine orders NaN above every
                 # number, so the comparison alone would say True.
                 return Series(self._df, lit(False), "dwithin")
-            threshold = lit(float(threshold))
-        else:
-            raise TypeError(
-                f"dwithin() distance must be a number or a numeric Series of this "
-                f"frame, got {type(distance).__name__}"
-            )
+            threshold = lit(float(value))
         # Measured through ST_Distance so an empty operand gives a missing
         # distance (and so False), which ST_DWithin treats as distance 0.
         dist = self._without_empty(self._expr.geo.distance(other_expr), other_expr)
