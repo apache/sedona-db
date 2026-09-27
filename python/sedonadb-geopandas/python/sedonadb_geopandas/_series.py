@@ -656,7 +656,9 @@ class GeoSeries(Series):
         """The bounding rectangle of each geometry (`ST_Envelope`).
 
         The envelope of an empty geometry is `POINT EMPTY`, as in GeoPandas,
-        whatever the empty geometry's type (the engine keeps the type).
+        whatever the empty geometry's type (the engine keeps the type). For a
+        geography column the engine's envelope is a planar longitude/latitude
+        box (geometry, not geography), and it stays one here.
         """
         import shapely
 
@@ -668,16 +670,19 @@ class GeoSeries(Series):
         empty = self._expr.geo.is_empty().funcs.nullif(ctx.lit(False))
         flag = empty.cast(pa.string()).cast(pa.binary())
         wkb = flag.funcs.nvl2(ctx.lit(shapely.Point().wkb), envelope.geo.as_binary())
-        # Rebuilt with this column's spatial kind and CRS: WKB carries neither.
-        geography = self._is_geography()
-        if geography:
+        # WKB carries neither spatial kind nor CRS, so the result is rebuilt
+        # with the envelope's own: the engine's envelope type, which for a
+        # geography input is planar geometry, not the column's type.
+        result_type = self._df.select(envelope.alias("x")).schema.field("x").type
+        spherical = "SPHERICAL" in str(getattr(result_type, "edge_type", "")).upper()
+        if spherical:
             expr = wkb.funcs.st_geogfromwkb()
         else:
             expr = wkb.funcs.st_geomfromwkb()
-        crs = self.crs
+        crs = result_type.crs
         if crs is not None:
             expr = expr.funcs.st_setcrs(ctx.lit(crs.to_json()))
-        elif geography:
+        elif spherical:
             # The geography constructor synthesizes CRS84; SRID 0 clears it
             # without touching the value.
             expr = expr.funcs.st_setsrid(ctx.lit(0))

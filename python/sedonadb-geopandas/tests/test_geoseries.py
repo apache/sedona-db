@@ -27,6 +27,7 @@ import warnings
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+import pyproj
 import pytest
 import shapely
 
@@ -396,22 +397,35 @@ def test_envelope_keeps_a_string_crs_from_sql():
     assert values == [shapely.Point(1, 2), shapely.from_wkt("POINT EMPTY")]
 
 
-def test_geography_envelope_of_an_empty_geometry_is_point_empty():
-    # The geography branch returned the engine's envelope as is, so an empty
-    # polygon kept its type; GeoPandas (and the planar branch) give POINT
-    # EMPTY. Non-empty envelopes and the geography kind are unchanged.
-    gdf = sgpd.GeoDataFrame(
-        sgpd.default_context().sql(
-            "SELECT 0 AS i, ST_GeogFromWKT('POLYGON EMPTY') AS g "
-            "UNION ALL SELECT 1, ST_GeogFromWKT('POINT EMPTY') "
-            "UNION ALL SELECT 2, ST_GeogFromWKT('LINESTRING (0 0, 1 1)')"
-        ),
-        geometry="g",
+def test_geography_envelope_is_planar_and_empty_is_point_empty():
+    # The engine's envelope of a geography is a planar longitude/latitude box
+    # (geometry, not geography): its area in degrees is about 1 for this line.
+    # Rebuilding it as geography reinterpreted the box as a spherical region
+    # of some 12 billion square meters. An empty input's envelope is POINT
+    # EMPTY, as in GeoPandas.
+    ctx = sgpd.default_context()
+    query = (
+        "SELECT 0 AS i, ST_GeogFromWKT('POLYGON EMPTY') AS g "
+        "UNION ALL SELECT 1, ST_GeogFromWKT('POINT EMPTY') "
+        "UNION ALL SELECT 2, ST_GeogFromWKT('LINESTRING (0 0, 1 1)')"
     )
+    gdf = sgpd.GeoDataFrame(ctx.sql(query), geometry="g")
     envelope = gdf.geometry.envelope
-    frame = gdf._df.select(gdf._df["i"], envelope._expr.alias("e"))
-    assert "geography" in str(frame.schema.field("e").type)
-    values = frame.to_pandas().sort_values("i")["e"].tolist()
+    frame = gdf._df.select(
+        gdf._df["i"], envelope._expr.alias("e"), envelope.area._expr.alias("a")
+    )
+    raw = ctx.sql(query)
+    raw_type = raw.select(raw["g"].geo.envelope().alias("e")).schema.field("e").type
+    got_type = frame.schema.field("e").type
+    # Same spatial kind and CRS as the engine's envelope (the storage may be
+    # a WKB view rather than plain WKB).
+    assert "geography" not in str(got_type) and "geography" not in str(raw_type)
+    assert pyproj.CRS.from_user_input(
+        got_type.crs.to_json()
+    ) == pyproj.CRS.from_user_input(raw_type.crs.to_json())
+    rows = frame.to_pandas().sort_values("i")
+    values, areas = rows["e"].tolist(), rows["a"].tolist()
     assert values[0].geom_type == "Point" and values[0].is_empty
     assert values[1].geom_type == "Point" and values[1].is_empty
-    assert values[2].geom_type == "Polygon" and not values[2].is_empty
+    assert values[2].geom_type == "Polygon"
+    assert math.isclose(areas[2], 1.0, rel_tol=1e-9)
