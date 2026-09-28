@@ -63,6 +63,9 @@ rasters are supported.
 
 ## Examples
 
+Setting pixel (2, 2) of band 1 to 42 raises the band's maximum, which is
+otherwise 1, to 42:
+
 ```sql
-SELECT RS_Value(RS_SetValue(RS_Example(), 1, 2, 2, 42), 2, 2, 1);
+SELECT RS_SummaryStats(RS_SetValue(RS_Example(), 1, 2, 2, 42), 'max', 1);
 ```
