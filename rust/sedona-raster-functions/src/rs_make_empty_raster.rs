@@ -437,7 +437,9 @@ fn extent_bounds(
 fn edges_of(arg_type: &SedonaType) -> Result<Edges> {
     let (item_type, _) = parse_item_crs_arg_type(arg_type)?;
     Ok(match item_type {
-        SedonaType::Wkb(edges, _) | SedonaType::WkbView(edges, _) => edges,
+        SedonaType::Wkb(edges, _)
+        | SedonaType::WkbView(edges, _)
+        | SedonaType::WkbLarge(edges, _) => edges,
         _ => Edges::Planar,
     })
 }
@@ -522,7 +524,9 @@ mod tests {
     use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
     use sedona_schema::crs::{deserialize_crs, lnglat};
-    use sedona_schema::datatypes::{Edges, WKB_GEOGRAPHY, WKB_GEOMETRY};
+    use sedona_schema::datatypes::{
+        Edges, WKB_GEOGRAPHY, WKB_GEOMETRY, WKB_LARGE_GEOGRAPHY, WKB_VIEW_GEOGRAPHY,
+    };
     use sedona_schema::raster::{band_indices, raster_indices};
     use sedona_testing::create::{create_scalar_item_crs, create_scalar_value};
     use sedona_testing::raster_spec::{
@@ -949,6 +953,48 @@ mod tests {
             .crs(Some("EPSG:32610"))
             .band_values(&[0f64; 8]);
         assert_raster_scalar_equals(&scalar, &expected);
+    }
+
+    #[test]
+    fn every_geography_storage_uses_the_spherical_bounder() {
+        // Binary, BinaryView and LargeBinary geographies, each with a type-level
+        // and an item-level CRS: all of them take the bounder's envelope, never
+        // a planar scan of the coordinates.
+        let wkt = Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))");
+        for geography in [WKB_GEOGRAPHY, WKB_VIEW_GEOGRAPHY, WKB_LARGE_GEOGRAPHY] {
+            let item_crs = SedonaType::new_item_crs(&geography).unwrap();
+            let cases = [
+                (
+                    geography.clone(),
+                    create_scalar_value(wkt, &geography),
+                    None,
+                ),
+                (
+                    item_crs,
+                    ColumnarValue::Scalar(create_scalar_item_crs(
+                        wkt,
+                        Some("EPSG:32610"),
+                        &geography,
+                    )),
+                    Some("EPSG:32610"),
+                ),
+            ];
+            for (extent_type, extent, crs) in cases {
+                let kernel = RsMakeEmptyRaster::new(Grid::Extent, false);
+                let arg_types = extent_types(false, extent_type.clone());
+                let args = vec![int(0), int(4), int(2), extent];
+                let result = kernel
+                    .invoke(&arg_types, &args, Some(&config_with_spherical_bounder()))
+                    .unwrap();
+                let ColumnarValue::Scalar(scalar) = result else {
+                    panic!("expected a scalar result");
+                };
+                let expected = RasterSpec::d2(4, 2)
+                    .transform([100.0, 10.0, 0.0, 30.0, 0.0, -10.0])
+                    .crs(crs);
+                assert_raster_scalar_equals(&scalar, &expected);
+            }
+        }
     }
 
     #[test]
