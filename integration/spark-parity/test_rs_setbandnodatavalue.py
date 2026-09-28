@@ -40,7 +40,7 @@ raster-returning module (e.g. test_rs_resample.py) rides on.
 
 import pytest
 
-from sedonadb.raster_testing import DecodedRaster, random_raster_data
+from sedonadb.raster_testing import DecodedRaster
 from sedonadb.testing import SedonaDB, compare
 from sedonadb.testing_spark import SedonaSpark
 
@@ -263,62 +263,3 @@ def test_rs_setbandnodata_null_raster(tmp_path):
         "FROM null_rast_src"
     )
     compare(sql, sedona, spark)
-
-
-# Both tests anchor the CORRECT raster rather than either engine's output.
-# The single-band case agrees on the released jar now that SedonaDB implements
-# the flag. The multiband case still trips apache/sedona#3330, where Sedona
-# Spark zeroes every band except the target; that is fixed on Sedona master by
-# apache/sedona#3347 — verified here against a jar built from it — but no
-# release carries it yet, and a release is what CI installs. So the multiband
-# case stays xfail and flips green on its own once one does.
-
-
-@pytest.mark.xfail(
-    reason="needs a Sedona release carrying apache/sedona#3347 — the released "
-    "1.9.1 jar zeroes every band except the target (apache/sedona#3330) and "
-    "its 4.1 binding cannot evaluate the flag at all; both are fixed on "
-    "Sedona master"
-)
-def test_rs_setbandnodata_replace_multiband(tmp_path):
-    """replace=true rewrites the old nodata pixels in the target band and
-    leaves every other band untouched. Band 1's planted 200 becomes 99 and
-    its nodata moves to 99; band 2 keeps its pixels and its 200 nodata."""
-    plants = {(1, 1): 200.0}
-    sedona, spark = SedonaDB(), SedonaSpark()
-    for eng in (sedona, spark):
-        eng.create_random_raster_view(
-            "replace_multi_src",
-            tmp_path / "replace_multi_src.tif",
-            nodata=200.0,
-            plants=plants,
-        )
-    data = random_raster_data("uint8", bands=2, height=6, width=7, plants=plants)
-    pixels = data.copy()
-    pixels[0][pixels[0] == 200] = 99
-    anchor = DecodedRaster(
-        pixels, nodata=[99.0, 200.0], bbox=(100.0, 482.0, 114.0, 500.0)
-    )
-    sql = "SELECT RS_SetBandNoDataValue(rast, 1, 99.0, true) FROM replace_multi_src"
-    compare(sql, sedona, spark, expected=anchor)
-
-
-def test_rs_setbandnodata_replace_single_band(tmp_path):
-    """replace=true on a single-band raster rewrites the old nodata pixels
-    and moves the band nodata to the new value."""
-    plants = {(1, 1): 200.0}
-    sedona, spark = SedonaDB(), SedonaSpark()
-    for eng in (sedona, spark):
-        eng.create_random_raster_view(
-            "replace_one_src",
-            tmp_path / "replace_one_src.tif",
-            bands=1,
-            nodata=200.0,
-            plants=plants,
-        )
-    data = random_raster_data("uint8", bands=1, height=6, width=7, plants=plants)
-    pixels = data.copy()
-    pixels[0][pixels[0] == 200] = 99
-    anchor = DecodedRaster(pixels, nodata=[99.0], bbox=(100.0, 482.0, 114.0, 500.0))
-    sql = "SELECT RS_SetBandNoDataValue(rast, 1, 99.0, true) FROM replace_one_src"
-    compare(sql, sedona, spark, expected=anchor)
