@@ -33,9 +33,6 @@ kernels:
     - raster
     - name: stat_type
       type: string
-      description: >
-        One of `count`, `sum`, `mean`, `stddev`, `min` or `max`
-        (case-insensitive). `stddev` is the population standard deviation.
     - name: band
       type: integer
       description: Band index (1-based). Defaults to 1 if not specified.
@@ -44,12 +41,8 @@ kernels:
     - raster
     - name: stat_type
       type: string
-      description: >
-        One of `count`, `sum`, `mean`, `stddev`, `min` or `max`
-        (case-insensitive). `stddev` is the population standard deviation.
     - name: band
       type: integer
-      description: Band index (1-based). Defaults to 1 if not specified.
     - name: exclude_nodata
       type: boolean
       description: >
