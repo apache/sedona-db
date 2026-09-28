@@ -274,10 +274,13 @@ impl SedonaScalarKernel for RsGeoTransformComposite {
             match raster_opt {
                 None => {
                     validity.append_null();
-                    // The fields are non-nullable, so null rows carry a
-                    // placeholder in every child under a null struct slot.
+                    // Null the fields too: selecting one (`g['offsetX']`) reads
+                    // the child column as stored, without the struct's
+                    // validity. Arrow allows nulls in a non-nullable field under
+                    // a null struct slot, so the schema keeps Spark's
+                    // non-nullable fields.
                     for builder in builders.iter_mut() {
-                        builder.append_value(0.0);
+                        builder.append_null();
                     }
                 }
                 Some(raster) => {
@@ -437,7 +440,13 @@ mod tests {
         ];
 
         let columns: Vec<ArrayRef> = (0..6)
-            .map(|i| Arc::new(Float64Array::from(vec![north_up[i], 0.0, skewed[i]])) as ArrayRef)
+            .map(|i| {
+                Arc::new(Float64Array::from(vec![
+                    Some(north_up[i]),
+                    None,
+                    Some(skewed[i]),
+                ])) as ArrayRef
+            })
             .collect();
         let expected: Arc<dyn arrow_array::Array> = Arc::new(
             StructArray::try_new(
@@ -452,5 +461,12 @@ mod tests {
             .invoke_array(Arc::new(build_composite_test_rasters()))
             .unwrap();
         assert_array_equal(&result, &expected);
+
+        // The NULL struct nulls every field too, so a selected field is NULL
+        // rather than a placeholder.
+        let result = result.as_any().downcast_ref::<StructArray>().unwrap();
+        for (field, column) in result.fields().iter().zip(result.columns()) {
+            assert!(column.is_null(1), "{} is not NULL", field.name());
+        }
     }
 }

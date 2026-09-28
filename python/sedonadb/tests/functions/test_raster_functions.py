@@ -19,11 +19,13 @@ import math
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 import pytest
 from shapely import wkt
 
 from sedonadb.testing import SedonaDB
 from sedonadb.raster import Raster
+from sedonadb.raster_testing import write_geotiff
 
 
 @pytest.mark.parametrize(
@@ -302,6 +304,30 @@ def test_rs_geotransform():
             )
         ],
     )
+
+
+def test_rs_geotransform_null_row_nulls_its_fields(con, tmp_path):
+    """A NULL raster in a column gives a NULL struct whose fields are NULL too,
+    so selecting one is NULL rather than a placeholder."""
+    path = tmp_path / "r.tif"
+    write_geotiff(path, np.zeros((1, 2, 2), dtype="uint8"), bbox=(0, 0, 2, 2))
+    con.create_data_frame(
+        pa.table({"p": pa.array([str(path), None], pa.utf8())})
+    ).to_view("geotransform_src", overwrite=True)
+    rows = (
+        con.sql(
+            """
+        SELECT g IS NULL AS struct_is_null, g['offsetX'] AS offset_x
+        FROM (SELECT RS_GeoTransform(RS_FromPath(p)) AS g FROM geotransform_src)
+        """
+        )
+        .to_arrow_table()
+        .to_pylist()
+    )
+    assert rows == [
+        {"struct_is_null": False, "offset_x": 0.0},
+        {"struct_is_null": True, "offset_x": None},
+    ]
 
 
 @pytest.mark.parametrize(
