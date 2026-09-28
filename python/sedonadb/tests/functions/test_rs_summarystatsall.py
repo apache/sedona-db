@@ -134,3 +134,26 @@ def test_rs_summarystatsall_band_out_of_range(con, tiff):
     path, _ = tiff
     with pytest.raises(Exception, match="RS_SummaryStatsAll"):
         _sedonadb_stats(con, path, 3)
+
+
+def test_rs_summarystatsall_null_row_nulls_its_fields(con):
+    """A NULL band or flag in a column gives a NULL struct whose fields are NULL
+    too, so selecting one matches RS_SummaryStats rather than exposing a
+    placeholder."""
+    rows = (
+        con.sql(
+            """
+        SELECT s IS NULL AS struct_is_null, s['sum'] AS sum
+        FROM (
+          SELECT RS_SummaryStatsAll(RS_Example(), band, exclude) AS s
+          FROM (VALUES (1, true), (CAST(NULL AS INT), true), (1, CAST(NULL AS BOOLEAN)))
+            AS t(band, exclude)
+        )
+        """
+        )
+        .to_arrow_table()
+        .to_pylist()
+    )
+    assert [row["struct_is_null"] for row in rows] == [False, True, True]
+    assert rows[0]["sum"] is not None
+    assert [row["sum"] for row in rows[1:]] == [None, None]
