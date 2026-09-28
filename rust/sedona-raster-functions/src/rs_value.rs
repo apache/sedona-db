@@ -168,7 +168,7 @@ impl RsValuePoint {
                         }
                     }
                 } else {
-                    default_band("RS_Value", raster.num_bands())?
+                    default_band("RS_Value", "2-argument", raster.num_bands())?
                 };
 
                 // Parse the point and bring it into the raster's CRS. Null/empty
@@ -322,7 +322,7 @@ impl RsValuePoint {
         let const_band = if self.with_band {
             const_band
         } else {
-            Some(default_band("RS_Value", raster.num_bands())?)
+            Some(default_band("RS_Value", "2-argument", raster.num_bands())?)
         };
 
         // Phase 2 — sample. A constant band resolves its buffer/nodata once (now

@@ -31,6 +31,14 @@ def test_read_csv_basic(con):
     pdt.assert_frame_equal(out, pd.DataFrame({"a": [1, 2], "b": ["x", "y"]}))
 
 
+def test_read_csv_without_expected_extension(con):
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "csv_input"
+        p.write_text("a,b\n1,x\n")
+        out = con.read.csv(p).to_pandas()
+    pdt.assert_frame_equal(out, pd.DataFrame({"a": [1], "b": ["x"]}))
+
+
 def test_read_csv_no_header(con):
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / "t.csv"
@@ -65,7 +73,7 @@ def test_read_csv_bad_delimiter_raises(con):
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / "t.csv"
         p.write_text("a,b\n1,x\n")
-        with pytest.raises(SedonaError, match="single byte"):
+        with pytest.raises(SedonaError, match="Error parsing"):
             con.read.csv(p, delimiter=";;")
 
 
@@ -75,6 +83,14 @@ def test_read_json_ndjson(con):
         p.write_text('{"a": 1, "b": "x"}\n{"a": 2, "b": "y"}\n')
         out = con.read.json(p).sort("a").to_pandas()
     pdt.assert_frame_equal(out, pd.DataFrame({"a": [1, 2], "b": ["x", "y"]}))
+
+
+def test_read_json_without_expected_extension(con):
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "json_input"
+        p.write_text('{"a": 1, "b": "x"}\n')
+        out = con.read.json(p).to_pandas()
+    pdt.assert_frame_equal(out, pd.DataFrame({"a": [1], "b": ["x"]}))
 
 
 def test_read_json_multiple_paths(con):
@@ -93,7 +109,9 @@ def test_generic_read_guesses_csv_extension(con):
         p = Path(td) / "t.csv"
         p.write_text("a,b\n1,x\n")
         out = con.read(p).to_pandas()
+        sql_out = con.sql(f"SELECT * FROM '{p}'").to_pandas()
     pdt.assert_frame_equal(out, pd.DataFrame({"a": [1], "b": ["x"]}))
+    pdt.assert_frame_equal(sql_out, out)
 
 
 def test_generic_read_csv_options_thread_through(con):
@@ -102,6 +120,28 @@ def test_generic_read_csv_options_thread_through(con):
         p.write_text("a;b\n1;x\n")
         out = con.read(p, options={"delimiter": ";"}).to_pandas()
     pdt.assert_frame_equal(out, pd.DataFrame({"a": [1], "b": ["x"]}))
+
+
+def test_generic_read_explicit_format_without_matching_extension(con):
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "table.data"
+        p.write_text("a,b\n1,x\n")
+        out = con.read(p, {"delimiter": ","}, "csv").to_pandas()
+    pdt.assert_frame_equal(out, pd.DataFrame({"a": [1], "b": ["x"]}))
+
+
+def test_generic_read_explicit_format_check_extension(con):
+    with tempfile.TemporaryDirectory() as td:
+        directory = Path(td)
+        (directory / "included.csv").write_text("a,b\n1,x\n")
+        (directory / "ignored.txt").write_text("a,b\n2,y\n")
+
+        unchecked = con.read(directory, format="csv", check_extension=False).to_pandas()
+        checked = con.read(directory, format="csv", check_extension=True).to_pandas()
+
+    # Directories are always filtered to protect schema inference and scans.
+    pdt.assert_frame_equal(unchecked, pd.DataFrame({"a": [1], "b": ["x"]}))
+    pdt.assert_frame_equal(checked, pd.DataFrame({"a": [1], "b": ["x"]}))
 
 
 def test_generic_read_guesses_json_extension(con):

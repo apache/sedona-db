@@ -21,6 +21,7 @@ from sedonadb.expr import Expr, Literal, lit
 from shapely.geometry.base import BaseGeometry
 
 from sedonadb_geopandas._series import GeoSeries, Series, is_scalar, normalize_scalar
+from sedonadb_geopandas._temporal import sanitize_temporal
 
 # Rows to collect for the Jupyter rich-text (`_repr_html_`) preview.
 _REPR_HTML_ROWS = 10
@@ -45,8 +46,6 @@ def _is_floating(df, name):
     `dictionary<values=double>` column is floating for NaN purposes, and `isnan()`
     handles it.
     """
-    import pyarrow as pa
-
     dtype = pa.schema(df.schema).field(name).type
     if pa.types.is_dictionary(dtype):
         dtype = dtype.value_type
@@ -195,7 +194,7 @@ class GeoDataFrame:
             # .area and .buffer() immediately, as it does in GeoPandas.
             if key in _geometry_column_names(self._df):
                 return GeoSeries(self._df, expr, key)
-            return Series(self._df, expr, key)
+            return Series(self._df, sanitize_temporal(self._df, expr, key), key)
 
         if isinstance(key, slice):
             raise TypeError(
@@ -539,41 +538,39 @@ class GeoDataFrame:
         if unknown:
             raise KeyError(f"Column(s) {unknown} not found. Columns: {self.columns}")
 
-        import pyarrow as pa
-
-        schema = pa.schema(self._df.schema)
+        source = self._df
+        # Every representation of a missing key must group as one missing key,
+        # the way it does in pandas, in both dropna modes. A float column read
+        # from pandas carries IEEE NaN, which grouping treats as an ordinary
+        # value distinct from SQL null; numpy-backed pandas delivers NaT as an
+        # INT64_MIN tick. Both are normalized to null before grouping. The
+        # float gate is null where the key is NaN and zero elsewhere, and
+        # adding it keeps real values and null keys unchanged.
+        schema = pa.schema(source.schema)
+        normalized = {}
         for key in keys:
             ktype = schema.field(key).type
-            if pa.types.is_duration(ktype) or pa.types.is_timestamp(ktype):
-                # pandas missing values arrive from numpy-backed frames as a
-                # sentinel tick that must group as missing, not as a value;
-                # that needs the dedicated temporal handling that arrives as
-                # its own change.
-                raise NotImplementedError(
-                    "dissolve() by a temporal key is not supported yet; "
-                    "temporal support arrives in a follow-up change"
-                )
-
-        source = self._df
-        # "Missing" has to cover IEEE NaN as well as SQL null: a float column
-        # read from pandas carries NaN, and grouping treats it as an ordinary
-        # value, so a key column holding both would form two missing groups
-        # (and dropna would drop only one of them). NaN is normalized to null
-        # first, in both modes, so the two representations group as one
-        # missing key the way they do in pandas. The gate is null where the
-        # key is NaN and zero elsewhere, and adding it keeps real values and
-        # null keys unchanged.
+        # Every representation of a missing key must group as one missing key,
+        # the way it does in pandas, in both dropna modes. A float column read
+        # from pandas carries IEEE NaN, which grouping treats as an ordinary
+        # value distinct from SQL null; numpy-backed pandas delivers NaT as an
+        # INT64_MIN tick. Both are normalized to null before grouping. The
+        # float gate is null where the key is NaN and zero elsewhere, built in
+        # the key's own float type so a Float32 key is not widened, and adding
+        # it keeps real values and null keys unchanged.
         schema = pa.schema(source.schema)
         normalized = []
         for key in keys:
+            ktype = schema.field(key).type
+            if pa.types.is_dictionary(ktype):
+                ktype = ktype.value_type
             if _is_floating(source, key):
-                # The gate takes the key's own float type, so a Float32 key
-                # stays Float32 rather than being widened by the addition.
-                ktype = schema.field(key).type
-                if pa.types.is_dictionary(ktype):
-                    ktype = ktype.value_type
                 gate = source[key].funcs.isnan().funcs.nullif(lit(True)).cast(ktype)
                 normalized.append((source[key] + gate).alias(key))
+            elif pa.types.is_duration(ktype) or pa.types.is_timestamp(ktype):
+                normalized.append(
+                    sanitize_temporal(source, source[key], key).alias(key)
+                )
         if normalized:
             # Positional aliases rather than keywords: a key named "self"
             # would collide with mutate's own first parameter.

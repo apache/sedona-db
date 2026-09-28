@@ -82,18 +82,19 @@ pub(crate) fn next_band(
     }
 }
 
-/// Resolve the 1-based band to sample when no band argument was given: band 1
-/// for a single-band raster, otherwise an error. Sampling an unspecified band of
-/// a multiband raster is ambiguous, so the caller must name the band rather than
+/// Resolve the 1-based band to use when no band argument was given: band 1
+/// for a single-band raster, otherwise an error. Leaving the band out on a
+/// multiband raster is ambiguous, so the caller must name the band rather than
 /// silently getting band 1 (matches `RS_SetBandNoDataValue`'s 2-argument form).
-/// `func` names the calling UDF for the error message.
-pub(crate) fn default_band(func: &str, num_bands: usize) -> Result<usize> {
+/// `func` names the calling UDF and `elided_form` the argument form that leaves
+/// the band out (e.g. `"2-argument"`), both for the error message.
+pub(crate) fn default_band(func: &str, elided_form: &str, num_bands: usize) -> Result<usize> {
     if num_bands == 1 {
         Ok(1)
     } else {
         exec_err!(
-            "{func}: raster has {num_bands} bands; specify which band to sample (the \
-             2-argument form is only allowed for a single-band raster)"
+            "{func}: raster has {num_bands} bands; specify which band to use (the \
+             {elided_form} form is only allowed for a single-band raster)"
         )
     }
 }

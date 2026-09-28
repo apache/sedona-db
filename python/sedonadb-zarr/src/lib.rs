@@ -269,11 +269,22 @@ pub struct PyZarrRasterLoader {
 
 #[pymethods]
 impl PyZarrRasterLoader {
+    /// `io_concurrency` is the loader's I/O budget: chunk reads in flight
+    /// at once across every concurrent `RS_EnsureLoaded` call in the
+    /// session. `None` keeps the loader's default.
     #[new]
-    fn new() -> Self {
-        Self {
-            loader: ZarrLoader::new(),
+    #[pyo3(signature = (io_concurrency=None))]
+    fn new(io_concurrency: Option<usize>) -> Self {
+        let mut loader = ZarrLoader::new();
+        if let Some(n) = io_concurrency {
+            loader = loader.with_concurrency(n);
         }
+        Self { loader }
+    }
+
+    /// The configured I/O budget (see `io_concurrency` on the constructor).
+    fn io_concurrency(&self) -> usize {
+        self.loader.concurrency()
     }
 
     /// Returns the loader name ("zarr").

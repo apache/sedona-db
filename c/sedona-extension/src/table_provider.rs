@@ -438,6 +438,7 @@ pub struct ImportedTableProvider {
     cancel_checker: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     /// Interval for periodic cancellation checking during stream consumption.
     check_interval: Option<Duration>,
+    use_async_execution: bool,
 }
 
 impl Debug for ImportedTableProvider {
@@ -478,6 +479,7 @@ impl ImportedTableProvider {
             table_reference,
             cancel_checker: None,
             check_interval: None,
+            use_async_execution: false,
         })
     }
 
@@ -506,6 +508,14 @@ impl ImportedTableProvider {
     /// If not set, the checker is called before every batch.
     pub fn with_check_interval(mut self, interval: Duration) -> Self {
         self.check_interval = Some(interval);
+        self
+    }
+
+    /// Select async-device-stream execution for plans returned by this provider.
+    ///
+    /// The synchronous Arrow C stream path remains the default.
+    pub fn with_async_execution(mut self, use_async: bool) -> Self {
+        self.use_async_execution = use_async;
         self
     }
 
@@ -717,6 +727,8 @@ impl TableProvider for ImportedTableProvider {
 
         let mut exec = ImportedSedonaCExec::try_new(ffi_plan)?;
 
+        exec = exec.with_async_execution(self.use_async_execution);
+
         // Pipe through the cancel checker and interval if configured
         if let Some(ref checker) = self.cancel_checker {
             let checker = checker.clone();
@@ -897,6 +909,14 @@ mod tests {
     /// 3. Importing it and registering in a new context
     /// 4. Running the SQL query and asserting results
     fn test_roundtrip_query(sql: &str, expected: &[&str]) -> Result<()> {
+        test_roundtrip_query_with_mode(sql, expected, false)
+    }
+
+    fn test_roundtrip_query_with_mode(
+        sql: &str,
+        expected: &[&str],
+        use_async_execution: bool,
+    ) -> Result<()> {
         let runtime = test_runtime();
         runtime.block_on(async {
             let ctx = create_test_context().await?;
@@ -910,7 +930,8 @@ mod tests {
             let ffi_provider: SedonaCTableProvider = exported.into();
 
             // Import the table provider
-            let imported = ImportedTableProvider::try_new(ffi_provider)?;
+            let imported = ImportedTableProvider::try_new(ffi_provider)?
+                .with_async_execution(use_async_execution);
 
             // Create a new context and register the imported table
             let ctx2 = SessionContext::new();
@@ -938,6 +959,26 @@ mod tests {
                 "| 5  | 500     |",
                 "+----+---------+",
             ],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_roundtrip_simple_select_async() {
+        test_roundtrip_query_with_mode(
+            "SELECT id, value_a FROM imported_data ORDER BY id LIMIT 5",
+            &[
+                "+----+---------+",
+                "| id | value_a |",
+                "+----+---------+",
+                "| 1  | 100     |",
+                "| 2  | 200     |",
+                "| 3  | 300     |",
+                "| 4  | 400     |",
+                "| 5  | 500     |",
+                "+----+---------+",
+            ],
+            true,
         )
         .unwrap();
     }

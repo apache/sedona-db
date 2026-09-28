@@ -25,6 +25,104 @@ use arrow_array::{
     ffi::{FFI_ArrowArray, FFI_ArrowSchema},
     ffi_stream::FFI_ArrowArrayStream,
 };
+use arrow_schema::ArrowError;
+
+/// CPU device identifier from the Arrow C Device Data Interface.
+pub const ARROW_DEVICE_CPU: i32 = 1;
+
+/// Rust representation of `ArrowDeviceArray` used by the experimental Arrow
+/// asynchronous device stream interface.
+#[repr(C)]
+pub struct FFI_ArrowDeviceArray {
+    pub array: FFI_ArrowArray,
+    pub device_id: i64,
+    pub device_type: i32,
+    pub sync_event: *mut c_void,
+    pub reserved: [i64; 3],
+}
+
+impl TryFrom<FFI_ArrowDeviceArray> for FFI_ArrowArray {
+    type Error = ArrowError;
+
+    fn try_from(value: FFI_ArrowDeviceArray) -> Result<Self, Self::Error> {
+        if value.device_type != ARROW_DEVICE_CPU {
+            return Err(ArrowError::CDataInterface(format!(
+                "Unsupported Arrow device type: {}",
+                value.device_type
+            )));
+        }
+        if !value.sync_event.is_null() {
+            return Err(ArrowError::CDataInterface(
+                "CPU ArrowDeviceArray has a non-null sync event".to_string(),
+            ));
+        }
+        Ok(value.array)
+    }
+}
+
+impl From<FFI_ArrowArray> for FFI_ArrowDeviceArray {
+    fn from(array: FFI_ArrowArray) -> Self {
+        Self {
+            array,
+            device_id: -1,
+            device_type: ARROW_DEVICE_CPU,
+            sync_event: null_mut(),
+            reserved: [0; 3],
+        }
+    }
+}
+
+/// Rust representation of `ArrowAsyncProducer`.
+#[repr(C)]
+pub struct FFI_ArrowAsyncProducer {
+    pub device_type: i32,
+    pub request: Option<unsafe extern "C" fn(*mut FFI_ArrowAsyncProducer, i64)>,
+    pub cancel: Option<unsafe extern "C" fn(*mut FFI_ArrowAsyncProducer)>,
+    pub additional_metadata: *const c_char,
+    pub private_data: *mut c_void,
+}
+
+/// Rust representation of `ArrowAsyncDeviceStreamHandler`.
+#[repr(C)]
+pub struct FFI_ArrowAsyncDeviceStreamHandler {
+    pub on_schema: Option<
+        unsafe extern "C" fn(*mut FFI_ArrowAsyncDeviceStreamHandler, *mut FFI_ArrowSchema) -> c_int,
+    >,
+    pub on_next_task: Option<
+        unsafe extern "C" fn(
+            *mut FFI_ArrowAsyncDeviceStreamHandler,
+            *mut FFI_ArrowAsyncTask,
+            *const c_char,
+        ) -> c_int,
+    >,
+    pub on_error: Option<
+        unsafe extern "C" fn(
+            *mut FFI_ArrowAsyncDeviceStreamHandler,
+            c_int,
+            *const c_char,
+            *const c_char,
+        ),
+    >,
+    pub release: Option<unsafe extern "C" fn(*mut FFI_ArrowAsyncDeviceStreamHandler)>,
+    pub producer: *mut FFI_ArrowAsyncProducer,
+    pub private_data: *mut c_void,
+}
+
+impl Drop for FFI_ArrowAsyncDeviceStreamHandler {
+    fn drop(&mut self) {
+        if let Some(release) = self.release.take() {
+            unsafe { release(self) };
+        }
+    }
+}
+
+/// Rust representation of `ArrowAsyncTask`.
+#[repr(C)]
+pub struct FFI_ArrowAsyncTask {
+    pub extract_data:
+        Option<unsafe extern "C" fn(*mut FFI_ArrowAsyncTask, *mut FFI_ArrowDeviceArray) -> c_int>,
+    pub private_data: *mut c_void,
+}
 
 /// Raw FFI representation of the SedonaCScalarKernel
 ///
@@ -368,6 +466,203 @@ unsafe impl Send for SedonaCExecutionPlan {}
 unsafe impl Sync for SedonaCExecutionPlan {}
 
 impl Drop for SedonaCExecutionPlan {
+    fn drop(&mut self) {
+        if let Some(releaser) = self.release {
+            unsafe { releaser(self) }
+            self.release = None;
+            self.private_data = null_mut();
+        }
+    }
+}
+
+/// Raw FFI representation of a [`datafusion_catalog::CatalogProviderList`].
+#[derive(Default)]
+#[repr(C)]
+pub struct SedonaCCatalogProviderList {
+    /// Get the data type of a property.
+    pub get_property_schema: Option<
+        unsafe extern "C" fn(
+            self_: *const SedonaCCatalogProviderList,
+            property: *const c_char,
+            out: *mut FFI_ArrowSchema,
+            err: *mut SedonaCError,
+        ) -> c_int,
+    >,
+    /// Extract a JSON-encoded property from this catalog list.
+    pub get_property: Option<
+        unsafe extern "C" fn(
+            self_: *const SedonaCCatalogProviderList,
+            property: *const c_char,
+            args: *const c_char,
+            out: *mut FFI_ArrowArray,
+            err: *mut SedonaCError,
+        ) -> c_int,
+    >,
+    /// Look up a catalog. A missing catalog is represented by an output whose
+    /// `release` callback is NULL.
+    pub catalog: Option<
+        unsafe extern "C" fn(
+            self_: *const SedonaCCatalogProviderList,
+            name: *const c_char,
+            out: *mut SedonaCCatalogProvider,
+            err: *mut SedonaCError,
+        ) -> c_int,
+    >,
+    /// Create a catalog and return it.
+    pub create_catalog: Option<
+        unsafe extern "C" fn(
+            self_: *const SedonaCCatalogProviderList,
+            name: *const c_char,
+            out: *mut SedonaCCatalogProvider,
+            err: *mut SedonaCError,
+        ) -> c_int,
+    >,
+    pub reserved: *mut c_void,
+    pub release: Option<unsafe extern "C" fn(self_: *mut SedonaCCatalogProviderList)>,
+    pub private_data: *mut c_void,
+}
+
+unsafe impl Send for SedonaCCatalogProviderList {}
+unsafe impl Sync for SedonaCCatalogProviderList {}
+
+impl Drop for SedonaCCatalogProviderList {
+    fn drop(&mut self) {
+        if let Some(releaser) = self.release {
+            unsafe { releaser(self) }
+            self.release = None;
+            self.private_data = null_mut();
+        }
+    }
+}
+
+/// Raw FFI representation of a [`datafusion_catalog::CatalogProvider`].
+#[derive(Default)]
+#[repr(C)]
+pub struct SedonaCCatalogProvider {
+    /// Get the data type of a property.
+    pub get_property_schema: Option<
+        unsafe extern "C" fn(
+            self_: *const SedonaCCatalogProvider,
+            property: *const c_char,
+            out: *mut FFI_ArrowSchema,
+            err: *mut SedonaCError,
+        ) -> c_int,
+    >,
+    /// Extract a JSON-encoded property from this catalog.
+    pub get_property: Option<
+        unsafe extern "C" fn(
+            self_: *const SedonaCCatalogProvider,
+            property: *const c_char,
+            args: *const c_char,
+            out: *mut FFI_ArrowArray,
+            err: *mut SedonaCError,
+        ) -> c_int,
+    >,
+    pub schema: Option<
+        unsafe extern "C" fn(
+            self_: *const SedonaCCatalogProvider,
+            name: *const c_char,
+            out: *mut SedonaCSchemaProvider,
+            err: *mut SedonaCError,
+        ) -> c_int,
+    >,
+    /// Create a schema and return it.
+    pub create_schema: Option<
+        unsafe extern "C" fn(
+            self_: *const SedonaCCatalogProvider,
+            name: *const c_char,
+            out: *mut SedonaCSchemaProvider,
+            err: *mut SedonaCError,
+        ) -> c_int,
+    >,
+    pub deregister_schema: Option<
+        unsafe extern "C" fn(
+            self_: *const SedonaCCatalogProvider,
+            name: *const c_char,
+            cascade: bool,
+            out: *mut SedonaCSchemaProvider,
+            err: *mut SedonaCError,
+        ) -> c_int,
+    >,
+    pub reserved: *mut c_void,
+    pub release: Option<unsafe extern "C" fn(self_: *mut SedonaCCatalogProvider)>,
+    pub private_data: *mut c_void,
+}
+
+unsafe impl Send for SedonaCCatalogProvider {}
+unsafe impl Sync for SedonaCCatalogProvider {}
+
+impl Drop for SedonaCCatalogProvider {
+    fn drop(&mut self) {
+        if let Some(releaser) = self.release {
+            unsafe { releaser(self) }
+            self.release = None;
+            self.private_data = null_mut();
+        }
+    }
+}
+
+/// Raw FFI representation of a [`datafusion_catalog::SchemaProvider`].
+#[derive(Default)]
+#[repr(C)]
+pub struct SedonaCSchemaProvider {
+    /// Get the data type of a property.
+    pub get_property_schema: Option<
+        unsafe extern "C" fn(
+            self_: *const SedonaCSchemaProvider,
+            property: *const c_char,
+            out: *mut FFI_ArrowSchema,
+            err: *mut SedonaCError,
+        ) -> c_int,
+    >,
+    /// Extract a JSON-encoded property from this schema.
+    ///
+    /// `table_exist` accepts `{ "name": "..." }` in `args`.
+    pub get_property: Option<
+        unsafe extern "C" fn(
+            self_: *const SedonaCSchemaProvider,
+            property: *const c_char,
+            args: *const c_char,
+            out: *mut FFI_ArrowArray,
+            err: *mut SedonaCError,
+        ) -> c_int,
+    >,
+    pub table: Option<
+        unsafe extern "C" fn(
+            self_: *const SedonaCSchemaProvider,
+            name: *const c_char,
+            out: *mut SedonaCTableProvider,
+            err: *mut SedonaCError,
+        ) -> c_int,
+    >,
+    /// Create a table from `plan`, transferring ownership of the input plan to the callback.
+    /// Returns an execution plan that performs the create operation.
+    pub create_table: Option<
+        unsafe extern "C" fn(
+            self_: *const SedonaCSchemaProvider,
+            name: *const c_char,
+            plan: *mut SedonaCExecutionPlan,
+            out: *mut SedonaCExecutionPlan,
+            err: *mut SedonaCError,
+        ) -> c_int,
+    >,
+    pub deregister_table: Option<
+        unsafe extern "C" fn(
+            self_: *const SedonaCSchemaProvider,
+            name: *const c_char,
+            out: *mut SedonaCTableProvider,
+            err: *mut SedonaCError,
+        ) -> c_int,
+    >,
+    pub reserved: *mut c_void,
+    pub release: Option<unsafe extern "C" fn(self_: *mut SedonaCSchemaProvider)>,
+    pub private_data: *mut c_void,
+}
+
+unsafe impl Send for SedonaCSchemaProvider {}
+unsafe impl Sync for SedonaCSchemaProvider {}
+
+impl Drop for SedonaCSchemaProvider {
     fn drop(&mut self) {
         if let Some(releaser) = self.release {
             unsafe { releaser(self) }

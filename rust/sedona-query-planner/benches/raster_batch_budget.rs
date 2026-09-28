@@ -159,7 +159,10 @@ fn async_func_plan(schema: &SchemaRef, batch: &RecordBatch) -> Arc<dyn Execution
 
 fn task_context(max_batch_bytes: usize) -> Arc<TaskContext> {
     let config = SessionConfig::new().with_option_extension(SedonaOptions {
-        raster: RasterOptions { max_batch_bytes },
+        raster: RasterOptions {
+            max_batch_bytes,
+            ..Default::default()
+        },
         ..Default::default()
     });
     SessionStateBuilder::new()

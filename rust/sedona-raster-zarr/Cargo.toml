@@ -62,3 +62,7 @@ zarrs_filesystem = { workspace = true }
 [[bench]]
 name = "zarr_loader"
 harness = false
+
+[[bench]]
+name = "zarr_io_concurrency"
+harness = false

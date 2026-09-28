@@ -26,6 +26,7 @@ use datafusion_expr::ScalarUDFImpl;
 use pyo3::prelude::*;
 use sedona::context::SedonaContext;
 use sedona::context_builder::SedonaContextBuilder;
+use sedona_common::SedonaOptions;
 use sedona_datasource::format::ExternalFormatFactory;
 use sedona_extension::runtime::RuntimeHandle;
 
@@ -56,6 +57,8 @@ fn stringify_options(
         .filter_map(|(k, v)| {
             if v.is_none(py) {
                 None
+            } else if let Ok(value) = v.extract::<bool>(py) {
+                Some((k, value.to_string()))
             } else {
                 v.bind(py)
                     .str()
@@ -124,8 +127,17 @@ impl InternalContext {
         obj: &Bound<PyAny>,
         requested_schema: Option<&Bound<PyAny>>,
     ) -> Result<InternalDataFrame, PySedonaError> {
+        let use_async_execution = self
+            .inner
+            .ctx
+            .state()
+            .config_options()
+            .extensions
+            .get::<SedonaOptions>()
+            .map(|options| options.ffi.use_async)
+            .unwrap_or(false);
         let (provider, table_reference) =
-            import_table_provider_from_any(py, obj, requested_schema)?;
+            import_table_provider_from_any(py, obj, requested_schema, use_async_execution)?;
         let df = if let Some(table_reference) = table_reference {
             let plan =
                 LogicalPlanBuilder::scan(table_reference, provider_as_source(provider), None)?
@@ -204,6 +216,48 @@ impl InternalContext {
             ),
         )??;
 
+        Ok(InternalDataFrame::new(df, self.runtime.clone()))
+    }
+
+    pub fn read<'py>(
+        &self,
+        py: Python<'py>,
+        table_paths: Vec<String>,
+        options: HashMap<String, Py<PyAny>>,
+        format: Option<&str>,
+        check_extension: bool,
+        partitioning: Option<Vec<String>>,
+    ) -> Result<InternalDataFrame, PySedonaError> {
+        let rust_options = stringify_options(py, options);
+        let format = format
+            .map(|format| format.trim_start_matches('.').to_lowercase())
+            .map(|format| {
+                self.inner
+                    .ctx
+                    .state()
+                    .get_file_format_factory(&format)
+                    .ok_or_else(|| {
+                        PySedonaError::SedonaPython(format!(
+                            "No format registered for extension '{format}'"
+                        ))
+                    })
+            })
+            .transpose()?;
+        let df = wait_for_future(
+            py,
+            &self.runtime,
+            self.inner.read_with_partitioning(
+                table_paths,
+                &rust_options,
+                format,
+                check_extension,
+                partitioning.map(|cols| {
+                    cols.into_iter()
+                        .map(|name| (name, DataType::Utf8View))
+                        .collect()
+                }),
+            ),
+        )??;
         Ok(InternalDataFrame::new(df, self.runtime.clone()))
     }
 
