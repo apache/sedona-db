@@ -3075,9 +3075,9 @@ dependencies = [
 
 [[package]]
 name = "geos"
-version = "11.1.1"
+version = "11.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d13c464e56cc46077aa9bafef9a02e65610ddafb6347a26a306855e7a7d3133"
+checksum = "acbd75af3e7609d8c30dcefff46016dde2fdb355b38c3caefcf712fd48558372"
 dependencies = [
  "geo-types",
  "geos-sys",
@@ -3087,9 +3087,9 @@ dependencies = [
 
 [[package]]
 name = "geos-sys"
-version = "2.0.9"
+version = "2.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48fc11f837935501a7beb10afd8ecec14e5180274acf87e5a36bf0f770485884"
+checksum = "1bd0fc1bcdc69e16138f10ea038a3ef9f83931eb0d75a903543ca683e8b75d56"
 dependencies = [
  "libc",
  "pkg-config",
@@ -3476,9 +3476,9 @@ dependencies = [
 
 [[package]]
 name = "i_float"
-version = "4.1.0"
+version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c614c2cfc06cfe8809ccc48cd445864502478e673721ca2a05931fc057ec33a0"
+checksum = "9ecaff1ce29bcacd72cdf581ba6fce636ef4c4e0b2da7e7846dd0137d98141e2"
 dependencies = [
  "libm",
 ]
@@ -3513,13 +3513,13 @@ dependencies = [
 
 [[package]]
 name = "i_overlay"
-version = "8.1.0"
+version = "9.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ca5d3f41731d03eafa48213609113563099a479f593cc7c635b7e836fc52a3c8"
+checksum = "a518dce2d7cf7e3758159747e7175c8b86ccdcd8d333dfcb7dbeb3eac2e324fc"
 dependencies = [
- "i_float 4.1.0",
+ "i_float 5.0.0",
  "i_key_sort 0.11.0",
- "i_shape 4.0.0",
+ "i_shape 5.0.0",
  "i_tree 0.19.0",
 ]
 
@@ -3534,11 +3534,11 @@ dependencies = [
 
 [[package]]
 name = "i_shape"
-version = "4.0.0"
+version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67ec1fc3ad980a24e4761b763bf5bfbf58c1d88be1bffb14654d369d7f420258"
+checksum = "fa1878f91ef7921feaf1b2346253ebc5e661878b22d5715195c1d5dcf0f20ae5"
 dependencies = [
- "i_float 4.1.0",
+ "i_float 5.0.0",
 ]
 
 [[package]]
@@ -5870,7 +5870,7 @@ dependencies = [
  "geo",
  "geo-traits",
  "geo-types",
- "i_overlay 8.1.0",
+ "i_overlay 9.0.0",
  "log",
  "num-traits",
  "pretty_env_logger",
