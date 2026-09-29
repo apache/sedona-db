@@ -851,16 +851,15 @@ def test_st_closestpoint(eng, geom1, geom2, expected):
 
 
 # Empties - BigQuery doesn't return POINT EMPTY consistently
-# Currently geoarrow returns POINT (nan, nan) instead of POINT EMPTY
 @pytest.mark.parametrize("eng", [SedonaDB])
 @pytest.mark.parametrize(
     ("geom1", "geom2", "expected"),
     [
         pytest.param(
-            "POINT (0 0)", "POINT EMPTY", "POINT (nan nan)", id="closestpoint_empty"
+            "POINT (0 0)", "POINT EMPTY", "POINT EMPTY", id="closestpoint_empty"
         ),
         pytest.param(
-            "POINT EMPTY", "POINT (0 0)", "POINT (nan nan)", id="empty_closestpoint"
+            "POINT EMPTY", "POINT (0 0)", "POINT EMPTY", id="empty_closestpoint"
         ),
     ],
 )

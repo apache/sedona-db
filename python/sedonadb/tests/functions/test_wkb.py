@@ -104,9 +104,6 @@ def test_st_asewkb(eng, srid, geom):
     )
 
     # Check read of EWKB against read geometry content
-    # Workaround bug in geoarrow-c
-    if geom == "POINT EMPTY":
-        geom = "POINT (nan nan)"
     eng.assert_query_result(
         f"SELECT ST_SetSRID(ST_GeomFromEWKB({eng.val_or_null(expected)}), 0)", geom
     )
