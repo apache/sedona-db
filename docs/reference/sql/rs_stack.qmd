@@ -45,7 +45,8 @@ of different pixel types can be stacked. Every raster must be on the first
 raster's grid (the same width, height, geotransform and CRS); a raster on any
 other grid is an error. A band's spatial dimensions take the first raster's
 names, matched by role, so a `lat`/`lon` raster stacked onto a `y`/`x` raster
-gives `y`/`x` bands. A NULL raster gives a NULL result.
+gives `y`/`x` bands; a band with another dimension already named `y` or `x`
+is an error. A NULL raster gives a NULL result.
 
 No pixel is read: bands are carried over as they are, so stacking rasters that
 are still out-of-database does not load them.

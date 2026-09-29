@@ -29,7 +29,9 @@
 //! be stacked, but they must all be on one grid: the same width, height,
 //! geotransform and CRS. A band's spatial dimensions take the first raster's
 //! names (`lat`/`lon` bands stacked onto a `y`/`x` raster become `y`/`x`),
-//! matched by role rather than position. Any NULL raster gives a NULL result.
+//! matched by role rather than position; a band with a non-spatial dimension
+//! already bearing one of those names is an error. Any NULL raster gives a
+//! NULL result.
 //!
 //! No pixel is read: each band is carried over as it is (zero-copy for InDb
 //! bands, by reference for OutDb bands), so the function needs no loading.
@@ -117,21 +119,29 @@ fn stack(builder: &mut RasterBuilder, rasters: &[&dyn RasterRef]) -> Result<()> 
 
     let (x_dim, y_dim) = (first.x_dim(), first.y_dim());
     builder.start_raster_from(first, RasterOverrides::default())?;
-    for raster in rasters {
+    for (k, raster) in rasters.iter().enumerate() {
         let (from_x, from_y) = (raster.x_dim(), raster.y_dim());
         for band_idx in 0..raster.num_bands() {
             let band = raster.band(band_idx)?;
             // Rename the band's spatial dimensions to the first raster's,
             // matching each by role (x to x, y to y) so no order is assumed.
-            let dim_names: Vec<&str> = band
+            // A non-spatial dimension already holding one of those names
+            // would leave the band with two dimensions of the same name.
+            let dim_names = band
                 .dim_names()
                 .into_iter()
                 .map(|dim| match dim {
-                    d if d == from_x => x_dim,
-                    d if d == from_y => y_dim,
-                    d => d,
+                    d if d == from_x => Ok(x_dim),
+                    d if d == from_y => Ok(y_dim),
+                    d if d == x_dim || d == y_dim => exec_err!(
+                        "RS_Stack: band {} of raster {} has a non-spatial dimension named \
+                         '{d}', the name of one of the first raster's spatial dimensions",
+                        band_idx + 1,
+                        k + 1
+                    ),
+                    d => Ok(d),
                 })
-                .collect();
+                .collect::<Result<Vec<&str>>>()?;
             let renamed = dim_names != band.dim_names();
             band.copy_into(
                 builder,
@@ -283,6 +293,24 @@ mod tests {
             .band_values(&[1u8, 2, 3, 4, 5, 6])
             .band_values(&[7u8, 8, 9, 10, 11, 12]);
         assert_rasters_equal(&result, &[Some(expected)]);
+    }
+
+    #[test]
+    fn non_spatial_dimension_named_like_a_spatial_one_errors() {
+        // Renaming lat/lon to y/x would give this band two dimensions named x.
+        let first = RasterSpec::nd(&["y", "x"], &[2, 3]).band_values(&[1u8, 2, 3, 4, 5, 6]);
+        let second =
+            RasterSpec::nd(&["x", "lat", "lon"], &[1, 2, 3]).band_values(&[7u8, 8, 9, 10, 11, 12]);
+        let err = tester(2)
+            .invoke_arrays(arrays(vec![vec![Some(first)], vec![Some(second)]]))
+            .unwrap_err();
+        assert!(
+            err.to_string().contains(
+                "band 1 of raster 2 has a non-spatial dimension named 'x', \
+                 the name of one of the first raster's spatial dimensions"
+            ),
+            "{err}"
+        );
     }
 
     #[test]
