@@ -15,7 +15,12 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""SedonaDB vs Sedona Spark parity for RS_Union.
+"""SedonaDB vs Sedona Spark parity for RS_Stack.
+
+The SQL spells the function RS_Union, its original Sedona Spark name, which
+both engines accept (SedonaDB as an alias of RS_Stack): the Sedona Spark 1.9.1
+release the suite pins predates RS_Stack. Switch the SQL to RS_Stack once the
+pin moves to a release that has it.
 
 Each case compares the whole output raster, decoded on both engines, and
 anchors it to the inputs' bands stacked in argument order under the first
@@ -66,21 +71,21 @@ def _stacked(*rasters):
     )
 
 
-def test_rs_union(tmp_path):
+def test_rs_stack(tmp_path):
     a, b = _raster(plant=1), _raster(plant=2)
     sedona, spark = _views(tmp_path, [("un_a", a), ("un_b", b)])
     sql = "SELECT RS_Union(un_a.rast, un_b.rast) FROM un_a, un_b"
     compare(sql, sedona, spark, expected=_stacked(a, b))
 
 
-def test_rs_union_three_rasters(tmp_path):
+def test_rs_stack_three_rasters(tmp_path):
     a, b, c = _raster(plant=1), _raster(bands=1, plant=2), _raster(plant=3)
     sedona, spark = _views(tmp_path, [("un_a", a), ("un_b", b), ("un_c", c)])
     sql = "SELECT RS_Union(un_a.rast, un_b.rast, un_c.rast) FROM un_a, un_b, un_c"
     compare(sql, sedona, spark, expected=_stacked(a, b, c))
 
 
-def test_rs_union_takes_the_first_georeference(tmp_path):
+def test_rs_stack_takes_the_first_georeference(tmp_path):
     """The second raster's grid is elsewhere; the result keeps the first's."""
     a, b = _raster(plant=1), _raster(plant=2, bbox=(0, 0, 7, 6))
     sedona, spark = _views(tmp_path, [("un_a", a), ("un_b", b)])
@@ -91,7 +96,7 @@ def test_rs_union_takes_the_first_georeference(tmp_path):
 @pytest.mark.parametrize(
     "width,height", [(5, 4), (5, 6), (7, 4)], ids=["both", "width", "height"]
 )
-def test_rs_union_shape_mismatch(width, height, tmp_path):
+def test_rs_stack_shape_mismatch(width, height, tmp_path):
     """Both engines refuse rasters whose width or height differ. Error types
     differ, so parity here is parity on refusal."""
     a = _raster(plant=1)
@@ -109,7 +114,7 @@ def test_rs_union_shape_mismatch(width, height, tmp_path):
     reason="Sedona Spark 1.9.1 casts every band to the first raster's pixel "
     "type; SedonaDB keeps each band's own"
 )
-def test_rs_union_mixed_pixel_types(tmp_path):
+def test_rs_stack_mixed_pixel_types(tmp_path):
     a, b = _raster(plant=1), _raster("float64", bands=1, plant=2)
     sedona, spark = _views(tmp_path, [("un_a", a), ("un_b", b)])
     sql = "SELECT RS_BandPixelType(RS_Union(un_a.rast, un_b.rast), 3) FROM un_a, un_b"

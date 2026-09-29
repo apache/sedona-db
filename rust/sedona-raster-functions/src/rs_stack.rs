@@ -15,11 +15,15 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! `RS_Union` — the bands of several rasters, in order, as one raster.
+//! `RS_Stack` — the bands of several rasters, in order, as one raster.
 //!
 //! ```text
-//! RS_Union(raster1, raster2[, raster3, ..., raster7])  -> Raster
+//! RS_Stack(raster1, raster2[, raster3, ..., raster7])  -> Raster
 //! ```
+//!
+//! Also registered as `RS_Union`, Sedona Spark's original name for it, kept as
+//! an alias for compatibility: the function stacks bands and is unrelated to a
+//! raster union (merging grids), so `RS_Stack` is the name to use.
 //!
 //! Every band of `raster1`, then every band of `raster2`, and so on, each
 //! keeping its own pixel type, nodata value and name. The rasters must share
@@ -46,23 +50,24 @@ use crate::executor::RasterExecutor;
 /// The most rasters one call can join, as in Sedona Spark.
 const MAX_RASTERS: usize = 7;
 
-/// `RS_Union()` scalar UDF — the bands of several rasters as one raster.
-pub fn rs_union_udf() -> SedonaScalarUDF {
+/// `RS_Stack()` scalar UDF — the bands of several rasters as one raster.
+pub fn rs_stack_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
-        "rs_union",
+        "rs_stack",
         (2..=MAX_RASTERS)
-            .map(|num_rasters| Arc::new(RsUnion { num_rasters }) as _)
+            .map(|num_rasters| Arc::new(RsStack { num_rasters }) as _)
             .collect(),
         Volatility::Immutable,
     )
+    .with_aliases(vec!["rs_union".to_string()])
 }
 
 #[derive(Debug)]
-struct RsUnion {
+struct RsStack {
     num_rasters: usize,
 }
 
-impl SedonaScalarKernel for RsUnion {
+impl SedonaScalarKernel for RsStack {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         let matchers = (0..self.num_rasters)
             .map(|_| ArgMatcher::is_raster())
@@ -102,7 +107,7 @@ impl SedonaScalarKernel for RsUnion {
                 .map(|r| r.get(i))
                 .collect::<std::result::Result<Vec<_>, _>>()?;
             let row: Vec<&dyn RasterRef> = row.iter().map(|r| r as &dyn RasterRef).collect();
-            union(&mut builder, &row)?;
+            stack(&mut builder, &row)?;
         }
 
         RasterExecutor::finish_over(args, Arc::new(builder.finish()?))
@@ -111,14 +116,14 @@ impl SedonaScalarKernel for RsUnion {
 
 /// Append one raster holding every band of `rasters`, in order, under the first
 /// raster's header.
-fn union(builder: &mut RasterBuilder, rasters: &[&dyn RasterRef]) -> Result<()> {
+fn stack(builder: &mut RasterBuilder, rasters: &[&dyn RasterRef]) -> Result<()> {
     let first = rasters[0];
     let (width, height) = (first.width()?, first.height()?);
     for (k, raster) in rasters.iter().enumerate().skip(1) {
         let (w, h) = (raster.width()?, raster.height()?);
         if (w, h) != (width, height) {
             return exec_err!(
-                "RS_Union: raster {} is {w} x {h}, but the first raster is {width} x {height}; \
+                "RS_Stack: raster {} is {w} x {h}, but the first raster is {width} x {height}; \
                  every raster must share its width and height",
                 k + 1
             );
@@ -150,7 +155,7 @@ mod tests {
     use sedona_testing::testers::ScalarUdfTester;
 
     fn tester(num_rasters: usize) -> ScalarUdfTester {
-        ScalarUdfTester::new(rs_union_udf().into(), vec![RASTER; num_rasters])
+        ScalarUdfTester::new(rs_stack_udf().into(), vec![RASTER; num_rasters])
     }
 
     fn arrays(rows: Vec<Vec<Option<RasterSpec>>>) -> Vec<ArrayRef> {
@@ -168,8 +173,9 @@ mod tests {
 
     #[test]
     fn udf_metadata() {
-        let udf: ScalarUDF = rs_union_udf().into();
-        assert_eq!(udf.name(), "rs_union");
+        let udf: ScalarUDF = rs_stack_udf().into();
+        assert_eq!(udf.name(), "rs_stack");
+        assert_eq!(udf.aliases(), ["rs_union"]);
     }
 
     #[test]

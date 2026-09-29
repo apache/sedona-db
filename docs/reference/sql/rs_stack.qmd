@@ -16,7 +16,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-title: RS_Union
+title: RS_Stack
 description: >
   Returns one raster holding the bands of two to seven rasters, in argument
   order.
@@ -37,6 +37,10 @@ kernels:
 
 ## Description
 
+Alias: `RS_Union`, Sedona Spark's original name for this function, kept for
+compatibility. The function stacks bands and does not merge grids the way a
+raster union does, so prefer `RS_Stack`.
+
 The result holds every band of the first raster, then every band of the second,
 and so on. Each band keeps its own pixel type, nodata value and name, so rasters
 of different pixel types can be joined. The rasters must have the same width
@@ -49,5 +53,5 @@ are still out-of-database does not load them.
 ## Examples
 
 ```sql
-SELECT RS_NumBands(RS_Union(RS_Example(), RS_Example()));
+SELECT RS_NumBands(RS_Stack(RS_Example(), RS_Example()));
 ```
