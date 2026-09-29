@@ -20,6 +20,7 @@ import math
 import numbers
 
 import pyarrow as pa
+from sedonadb.expr import lit
 
 from sedonadb_geopandas._temporal import (
     coerce_duration_scalar,
@@ -443,6 +444,102 @@ class Series:
             self._name,
         )
 
+    # -- missing values, membership, and casting ---------------------------
+
+    def _is_floating(self):
+        return pa.types.is_floating(self._dtype())
+
+    def _missing(self):
+        """True where this column holds a missing value.
+
+        pandas treats NaN in a float column as missing too, not only null.
+        """
+        expr = self._expr.is_null()
+        if self._is_floating():
+            expr = expr | self._expr.funcs.isnan()
+        return expr.funcs.coalesce(lit(True))
+
+    def isna(self):
+        """Whether each value is missing (null, or NaN in a float column).
+
+        As in GeoPandas, an empty geometry is not missing.
+        """
+        return Series(self._df, self._missing(), self._name)
+
+    isnull = isna
+
+    def notna(self):
+        """Whether each value is present: the inverse of `isna()`."""
+        return Series(self._df, ~self._missing(), self._name)
+
+    notnull = notna
+
+    def fillna(self, value):
+        """Replace missing values (null, or NaN in a float column) with `value`."""
+        if value is None:
+            raise ValueError("Must specify a fill 'value'")
+        if not is_scalar(value):
+            raise TypeError(
+                f"fillna() takes a single value, got {type(value).__name__}"
+            )
+        fill = _operand(self._df, value)
+        expr = self._expr
+        if self._is_floating():
+            # NaN is missing in pandas; nanvl replaces it, coalesce the nulls.
+            expr = expr.funcs.nanvl(fill)
+        return Series(self._df, expr.funcs.coalesce(fill), self._name)
+
+    def isin(self, values):
+        """Whether each value is one of `values`.
+
+        As in pandas, a missing value is a member only when `values` itself
+        contains a missing marker (None, NaN, or `pandas.NA`).
+        """
+        if isinstance(values, (str, bytes)) or not hasattr(values, "__iter__"):
+            raise TypeError(
+                f"only list-like objects are allowed to be passed to isin(), you "
+                f"passed a {type(values).__name__!r}"
+            )
+        if isinstance(values, Series):
+            raise TypeError(
+                "isin() takes plain values, not a lazy Series; collect it first"
+            )
+        from sedonadb_geopandas._frame import _is_missing
+
+        present, want_missing = [], False
+        for value in values:
+            value = normalize_scalar(value)
+            if _is_missing(value):
+                want_missing = True
+            else:
+                present.append(value)
+        expr = lit(False)
+        if present:
+            expr = self._expr.isin(present).funcs.coalesce(lit(False))
+        if want_missing:
+            expr = expr | self._missing()
+        return Series(self._df, expr, self._name)
+
+    def astype(self, dtype):
+        """Cast to `dtype` (a NumPy/pandas dtype name, Python type, or Arrow type).
+
+        As in pandas, casting a missing value to an integer type raises, and a
+        float's fractional part is truncated. Casting to a string keeps missing
+        values missing (pandas' `"string"` dtype, not `str`, which writes the
+        text "nan"), and a float's text is Arrow's formatting ("1" and "NaN"
+        rather than "1.0" and "nan").
+        """
+        target = _arrow_type(dtype)
+        expr = self._expr.cast(target)
+        if pa.types.is_integer(target) and not pa.types.is_integer(self._dtype()):
+            # The engine casts a null to a null silently (and NaN with its own
+            # message); pandas raises for any missing value.
+            expr = expr + _fail_where(
+                self._missing(),
+                "Cannot convert non-finite values (NA or inf) to integer",
+            ).cast(target)
+        return Series(self._df, expr, self._name)
+
     __hash__ = None
 
     # -- materialization ---------------------------------------------------
@@ -469,6 +566,35 @@ def _buffer_style(style, names, argument):
     elif value in names:
         return value
     raise ValueError(f"{argument} must be one of {list(names)}, got {style!r}")
+
+
+def _arrow_type(dtype):
+    """The Arrow type for a pandas-style `astype` target."""
+    if isinstance(dtype, pa.DataType):
+        return dtype
+    if dtype in (str, "str", "string", "object"):
+        return pa.string()
+    import numpy as np
+
+    try:
+        return pa.from_numpy_dtype(np.dtype(dtype))
+    except (TypeError, pa.ArrowNotImplementedError) as err:
+        raise TypeError(f"astype() does not support dtype {dtype!r}") from err
+
+
+def _fail_where(condition, message):
+    """An int64 expression that is 0 where `condition` is not true and raises
+    `message` where it is.
+
+    A lazy expression has no way to raise for a particular row except by
+    failing to evaluate there, so the failure is a cast: rows that pass cast
+    the string "0", and failing rows cast `message`, which fails with that
+    message in the error. Adding the result leaves passing values unchanged.
+    """
+    passing = (~condition).funcs.coalesce(lit(True))
+    flag = passing.funcs.nullif(lit(True)).cast(pa.string())
+    text = flag.funcs.replace(lit("false"), lit(message))
+    return text.funcs.coalesce(lit("0")).cast(pa.int64())
 
 
 def _same_crs(current, crs):
@@ -1028,6 +1154,29 @@ class GeoSeries(Series):
     def length(self):
         """The length/perimeter of each geometry (`ST_Length`)."""
         return Series(self._df, self._expr.geo.length(), "length")
+
+    def fillna(self, value=None):
+        """Replace missing geometries with `value`, as in GeoPandas.
+
+        `value` is a Shapely geometry, or None for an empty geometry
+        collection (GeoPandas' default). It takes this column's spatial kind
+        and CRS. Empty geometries are not missing and stay as they are.
+        """
+        import shapely
+        from shapely.geometry.base import BaseGeometry
+
+        if value is None:
+            value = shapely.GeometryCollection()
+        if not isinstance(value, BaseGeometry):
+            raise TypeError(
+                f"GeoSeries.fillna() takes a geometry, got {type(value).__name__}"
+            )
+        ctx = self._df._ctx
+        # coalesce() drops the geometry type, so the choice is made on WKB
+        # and the result rebuilt with this column's spatial kind and CRS.
+        wkb = self._expr.geo.as_binary().funcs.coalesce(ctx.lit(value.wkb))
+        rebuilt = self._as_column_kind(wkb.funcs.st_geomfromwkb(), own_crs=None)
+        return self._geo(rebuilt)
 
     def to_geopandas(self):
         """Execute and return this column as a `geopandas.GeoSeries`."""
