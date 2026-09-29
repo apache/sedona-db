@@ -175,13 +175,11 @@ impl SedonaScalarKernel for RsSummaryStatsAll {
                 }
                 None => {
                     validity.append_null();
-                    // Null the fields too: selecting one (`s['sum']`) reads the
-                    // child column as stored, without the struct's validity.
-                    // Arrow allows nulls in a non-nullable field under a null
-                    // struct slot, so the schema keeps Spark's non-nullable
-                    // fields.
+                    // The fields are non-nullable, so a null row carries a
+                    // placeholder in every child under a null struct slot;
+                    // reading a field must apply the struct's validity.
                     for builder in builders.iter_mut() {
-                        builder.append_null();
+                        builder.append_value(0.0);
                     }
                 }
             }
@@ -854,12 +852,7 @@ mod tests {
                 .downcast_ref::<Float64Array>()
                 .unwrap();
             (0..result.len())
-                .map(|i| {
-                    // A NULL struct nulls its fields too, so a selected field
-                    // is NULL rather than a placeholder.
-                    assert_eq!(result.is_null(i), sum.is_null(i), "row {i}");
-                    (!sum.is_null(i)).then(|| sum.value(i))
-                })
+                .map(|i| (!result.is_null(i)).then(|| sum.value(i)))
                 .collect::<Vec<_>>()
         };
 

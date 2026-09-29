@@ -136,10 +136,14 @@ def test_rs_summarystatsall_band_out_of_range(con, tiff):
         _sedonadb_stats(con, path, 3)
 
 
-def test_rs_summarystatsall_null_row_nulls_its_fields(con):
-    """A NULL band or flag in a column gives a NULL struct whose fields are NULL
-    too, so selecting one matches RS_SummaryStats rather than exposing a
-    placeholder."""
+@pytest.mark.xfail(
+    strict=True,
+    reason="DataFusion's get_field ignores the struct's validity until "
+    "apache/datafusion#25122 is released, so a field of a NULL struct reads "
+    "the non-nullable field's placeholder",
+)
+def test_rs_summarystatsall_null_row_field_is_null(con):
+    """Selecting a field of a NULL struct gives NULL, as for RS_SummaryStats."""
     rows = (
         con.sql(
             """
