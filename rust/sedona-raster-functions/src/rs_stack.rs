@@ -21,9 +21,8 @@
 //! RS_Stack(raster1, raster2[, raster3, ..., raster7])  -> Raster
 //! ```
 //!
-//! Also registered as `RS_Union`, Sedona Spark's original name for it, kept as
-//! an alias for compatibility: the function stacks bands and is unrelated to a
-//! raster union (merging grids), so `RS_Stack` is the name to use.
+//! Sedona Spark 1.9 calls this function `RS_Union`; it stacks bands and does
+//! not merge grids the way a raster union does, hence the name.
 //!
 //! Every band of `raster1`, then every band of `raster2`, and so on, each
 //! keeping its own pixel type, nodata value and name. The rasters must share
@@ -59,7 +58,6 @@ pub fn rs_stack_udf() -> SedonaScalarUDF {
             .collect(),
         Volatility::Immutable,
     )
-    .with_aliases(vec!["rs_union".to_string()])
 }
 
 #[derive(Debug)]
@@ -175,7 +173,6 @@ mod tests {
     fn udf_metadata() {
         let udf: ScalarUDF = rs_stack_udf().into();
         assert_eq!(udf.name(), "rs_stack");
-        assert_eq!(udf.aliases(), ["rs_union"]);
     }
 
     #[test]

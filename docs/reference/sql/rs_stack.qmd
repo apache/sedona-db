@@ -37,9 +37,7 @@ kernels:
 
 ## Description
 
-Alias: `RS_Union`, Sedona Spark's original name for this function, kept for
-compatibility. The function stacks bands and does not merge grids the way a
-raster union does, so prefer `RS_Stack`.
+Sedona Spark 1.9 calls this function `RS_Union`.
 
 The result holds every band of the first raster, then every band of the second,
 and so on. Each band keeps its own pixel type, nodata value and name, so rasters

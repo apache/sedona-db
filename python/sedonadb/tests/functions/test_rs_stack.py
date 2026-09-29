@@ -128,25 +128,3 @@ def test_rs_stack_shape_mismatch(con, tmp_path):
     write_geotiff(b, data, bbox=(100.0, 482.0, 110.0, 500.0))
     with pytest.raises(Exception, match="raster 2 is 5 x 6"):
         _stack(con, [a, b])
-
-
-def test_rs_union_alias(con, tmp_path):
-    """RS_Union, Sedona Spark's original name, is an alias of RS_Stack."""
-    a, a_data = _tiff(tmp_path, "a", "uint8", 1)
-    b, b_data = _tiff(tmp_path, "b", "uint8", 1, seed=1)
-    names = ["p0", "p1"]
-    con.create_data_frame(
-        pa.table({name: [str(path)] for name, path in zip(names, [a, b])})
-    ).to_view("union_alias_src", overwrite=True)
-    got = decode_raster(
-        con.sql(
-            "SELECT RS_EnsureLoaded(RS_Union(RS_FromPath(p0), RS_FromPath(p1))) "
-            "FROM union_alias_src"
-        )
-        .to_arrow_table()
-        .column(0)[0]
-    )
-    expected = DecodedRaster(
-        np.concatenate([a_data, b_data]), bbox=BBOX, nodata=[None, None]
-    )
-    assert_decoded_equal(got, expected)

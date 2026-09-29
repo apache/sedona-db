@@ -17,10 +17,11 @@
 
 """SedonaDB vs Sedona Spark parity for RS_Stack.
 
-The SQL spells the function RS_Union, its original Sedona Spark name, which
-both engines accept (SedonaDB as an alias of RS_Stack): the Sedona Spark 1.9.1
-release the suite pins predates RS_Stack. Switch the SQL to RS_Stack once the
-pin moves to a release that has it.
+Every case is an xfail for now: the Sedona Spark 1.9.1 release the suite pins
+calls this function RS_Union, and the rename to RS_Stack (apache/sedona#3427)
+is not released yet. The cases start passing once the pin moves to a release
+that has RS_Stack; drop the module-level xfail then. (The refusal cases already
+xpass, because Sedona Spark refuses the name it does not know.)
 
 Each case compares the whole output raster, decoded on both engines, and
 anchors it to the inputs' bands stacked in argument order under the first
@@ -37,6 +38,11 @@ import pytest
 from sedonadb.raster_testing import DecodedRaster, write_geotiff
 from sedonadb.testing import SedonaDB, compare
 from sedonadb.testing_spark import SedonaSpark
+
+pytestmark = pytest.mark.xfail(
+    reason="Sedona Spark 1.9.1 has no RS_Stack; it calls the function RS_Union "
+    "until the rename in apache/sedona#3427 is released"
+)
 
 BBOX = (100, 482, 114, 500)
 
@@ -74,14 +80,14 @@ def _stacked(*rasters):
 def test_rs_stack(tmp_path):
     a, b = _raster(plant=1), _raster(plant=2)
     sedona, spark = _views(tmp_path, [("un_a", a), ("un_b", b)])
-    sql = "SELECT RS_Union(un_a.rast, un_b.rast) FROM un_a, un_b"
+    sql = "SELECT RS_Stack(un_a.rast, un_b.rast) FROM un_a, un_b"
     compare(sql, sedona, spark, expected=_stacked(a, b))
 
 
 def test_rs_stack_three_rasters(tmp_path):
     a, b, c = _raster(plant=1), _raster(bands=1, plant=2), _raster(plant=3)
     sedona, spark = _views(tmp_path, [("un_a", a), ("un_b", b), ("un_c", c)])
-    sql = "SELECT RS_Union(un_a.rast, un_b.rast, un_c.rast) FROM un_a, un_b, un_c"
+    sql = "SELECT RS_Stack(un_a.rast, un_b.rast, un_c.rast) FROM un_a, un_b, un_c"
     compare(sql, sedona, spark, expected=_stacked(a, b, c))
 
 
@@ -89,7 +95,7 @@ def test_rs_stack_takes_the_first_georeference(tmp_path):
     """The second raster's grid is elsewhere; the result keeps the first's."""
     a, b = _raster(plant=1), _raster(plant=2, bbox=(0, 0, 7, 6))
     sedona, spark = _views(tmp_path, [("un_a", a), ("un_b", b)])
-    sql = "SELECT RS_Union(un_a.rast, un_b.rast) FROM un_a, un_b"
+    sql = "SELECT RS_Stack(un_a.rast, un_b.rast) FROM un_a, un_b"
     compare(sql, sedona, spark, expected=_stacked(a, b))
 
 
@@ -104,7 +110,7 @@ def test_rs_stack_shape_mismatch(width, height, tmp_path):
         bands=1, width=width, height=height, bbox=(0, 0, width, height)
     )
     sedona, spark = _views(tmp_path, [("un_a", a), ("un_b", b)])
-    sql = "SELECT RS_Union(un_a.rast, un_b.rast) FROM un_a, un_b"
+    sql = "SELECT RS_Stack(un_a.rast, un_b.rast) FROM un_a, un_b"
     for eng in (sedona, spark):
         with pytest.raises(Exception):
             eng.decode_raster_result(sql)
@@ -117,5 +123,5 @@ def test_rs_stack_shape_mismatch(width, height, tmp_path):
 def test_rs_stack_mixed_pixel_types(tmp_path):
     a, b = _raster(plant=1), _raster("float64", bands=1, plant=2)
     sedona, spark = _views(tmp_path, [("un_a", a), ("un_b", b)])
-    sql = "SELECT RS_BandPixelType(RS_Union(un_a.rast, un_b.rast), 3) FROM un_a, un_b"
+    sql = "SELECT RS_BandPixelType(RS_Stack(un_a.rast, un_b.rast), 3) FROM un_a, un_b"
     compare(sql, sedona, spark, expected="REAL_64BITS")
