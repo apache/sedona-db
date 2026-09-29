@@ -18,16 +18,18 @@
 //! `RS_Stack` — the bands of several rasters, in order, as one raster.
 //!
 //! ```text
-//! RS_Stack(raster1, raster2[, raster3, ..., raster7])  -> Raster
+//! RS_Stack(raster1[, raster2, ...])  -> Raster
 //! ```
 //!
 //! Sedona Spark 1.9 calls this function `RS_Union`; it stacks bands and does
 //! not merge grids the way a raster union does, hence the name.
 //!
 //! Every band of `raster1`, then every band of `raster2`, and so on, each
-//! keeping its own pixel type, nodata value and name. The rasters must share
-//! their width and height; the result takes the first raster's georeference and
-//! CRS. Any NULL raster gives a NULL result.
+//! keeping its own pixel type, nodata value and name. Any number of rasters can
+//! be stacked, but they must all be on one grid: the same width, height,
+//! geotransform and CRS. A band's spatial dimensions take the first raster's
+//! names (`lat`/`lon` bands stacked onto a `y`/`x` raster become `y`/`x`),
+//! matched by role rather than position. Any NULL raster gives a NULL result.
 //!
 //! No pixel is read: each band is carried over as it is (zero-copy for InDb
 //! bands, by reference for OutDb bands), so the function needs no loading.
@@ -44,30 +46,23 @@ use sedona_raster::traits::{BandOverrides, RasterRef};
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::matchers::ArgMatcher;
 
+use crate::crs_utils::resolve_crs;
 use crate::executor::RasterExecutor;
-
-/// The most rasters one call can join, as in Sedona Spark.
-const MAX_RASTERS: usize = 7;
 
 /// `RS_Stack()` scalar UDF — the bands of several rasters as one raster.
 pub fn rs_stack_udf() -> SedonaScalarUDF {
-    SedonaScalarUDF::new(
-        "rs_stack",
-        (2..=MAX_RASTERS)
-            .map(|num_rasters| Arc::new(RsStack { num_rasters }) as _)
-            .collect(),
-        Volatility::Immutable,
-    )
+    SedonaScalarUDF::new("rs_stack", vec![Arc::new(RsStack)], Volatility::Immutable)
 }
 
+/// One kernel for any number of rasters (at least one).
 #[derive(Debug)]
-struct RsStack {
-    num_rasters: usize,
-}
+struct RsStack;
 
 impl SedonaScalarKernel for RsStack {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        let matchers = (0..self.num_rasters)
+        // A raster matcher per argument, so each argument type-checks as any
+        // raster argument does; with no arguments this expects one and fails.
+        let matchers = (0..args.len().max(1))
             .map(|_| ArgMatcher::is_raster())
             .collect();
         ArgMatcher::new(matchers, SedonaType::Raster).match_args(args)
@@ -116,28 +111,75 @@ impl SedonaScalarKernel for RsStack {
 /// raster's header.
 fn stack(builder: &mut RasterBuilder, rasters: &[&dyn RasterRef]) -> Result<()> {
     let first = rasters[0];
-    let (width, height) = (first.width()?, first.height()?);
     for (k, raster) in rasters.iter().enumerate().skip(1) {
-        let (w, h) = (raster.width()?, raster.height()?);
-        if (w, h) != (width, height) {
-            return exec_err!(
-                "RS_Stack: raster {} is {w} x {h}, but the first raster is {width} x {height}; \
-                 every raster must share its width and height",
-                k + 1
-            );
-        }
+        check_same_grid(first, *raster, k + 1)?;
     }
 
+    let (x_dim, y_dim) = (first.x_dim(), first.y_dim());
     builder.start_raster_from(first, RasterOverrides::default())?;
     for raster in rasters {
+        let (from_x, from_y) = (raster.x_dim(), raster.y_dim());
         for band_idx in 0..raster.num_bands() {
-            raster
-                .band(band_idx)?
-                .copy_into(builder, BandOverrides::default())?;
+            let band = raster.band(band_idx)?;
+            // Rename the band's spatial dimensions to the first raster's,
+            // matching each by role (x to x, y to y) so no order is assumed.
+            let dim_names: Vec<&str> = band
+                .dim_names()
+                .into_iter()
+                .map(|dim| match dim {
+                    d if d == from_x => x_dim,
+                    d if d == from_y => y_dim,
+                    d => d,
+                })
+                .collect();
+            let renamed = dim_names != band.dim_names();
+            band.copy_into(
+                builder,
+                BandOverrides {
+                    dim_names: renamed.then_some(dim_names.as_slice()),
+                    ..Default::default()
+                },
+            )?;
             builder.finish_band()?;
         }
     }
     builder.finish_raster()?;
+    Ok(())
+}
+
+/// Error unless `raster` (the `k`th argument) is on the first raster's grid:
+/// the same width, height, geotransform and CRS.
+fn check_same_grid(first: &dyn RasterRef, raster: &dyn RasterRef, k: usize) -> Result<()> {
+    let (width, height) = (first.width()?, first.height()?);
+    let (w, h) = (raster.width()?, raster.height()?);
+    if (w, h) != (width, height) {
+        return exec_err!(
+            "RS_Stack: raster {k} is {w} x {h}, but the first raster is {width} x {height}; \
+             every raster must be on the same grid"
+        );
+    }
+    if raster.transform() != first.transform() {
+        return exec_err!(
+            "RS_Stack: raster {k} has geotransform {:?}, but the first raster has {:?}; \
+             every raster must be on the same grid",
+            raster.transform(),
+            first.transform()
+        );
+    }
+    // Identical CRS strings are the common case; only differing strings are
+    // parsed, to compare CRSes spelled differently (e.g. EPSG code vs PROJJSON).
+    let same_crs = raster.crs() == first.crs()
+        || match (resolve_crs(first.crs())?, resolve_crs(raster.crs())?) {
+            (None, None) => true,
+            (Some(a), Some(b)) => a.crs_equals(b.as_ref()),
+            _ => false,
+        };
+    if !same_crs {
+        return exec_err!(
+            "RS_Stack: raster {k} has a different CRS than the first raster; every raster must \
+             be on the same grid"
+        );
+    }
     Ok(())
 }
 
@@ -199,23 +241,56 @@ mod tests {
     }
 
     #[test]
-    fn takes_the_first_rasters_georeference_and_crs() {
-        let first = uint8(1, 100.0).crs(Some("EPSG:3857"));
-        let second = uint8(20, -5.0).crs(None);
+    fn rasters_off_the_first_grid_error() {
+        let stack_err = |second: RasterSpec| {
+            tester(2)
+                .invoke_arrays(arrays(vec![vec![Some(uint8(1, 0.0))], vec![Some(second)]]))
+                .unwrap_err()
+                .to_string()
+        };
+        // Shifted georeference.
+        let err = stack_err(uint8(2, 5.0));
+        assert!(err.contains("raster 2 has geotransform"), "{err}");
+        // Different CRS, and a CRS on only one side.
+        let err = stack_err(uint8(2, 0.0).crs(Some("EPSG:3857")));
+        assert!(err.contains("raster 2 has a different CRS"), "{err}");
+        let err = stack_err(uint8(2, 0.0).crs(None));
+        assert!(err.contains("raster 2 has a different CRS"), "{err}");
+    }
+
+    #[test]
+    fn spatial_dimensions_take_the_first_rasters_names() {
+        // Jia's case: a lat/lon raster stacked onto a y/x one.
+        let first = RasterSpec::nd(&["y", "x"], &[2, 3]).band_values(&[1u8, 2, 3, 4, 5, 6]);
+        let second = RasterSpec::nd(&["lat", "lon"], &[2, 3]).band_values(&[7u8, 8, 9, 10, 11, 12]);
         let result = tester(2)
             .invoke_arrays(arrays(vec![vec![Some(first)], vec![Some(second)]]))
             .unwrap();
-        let expected = uint8(1, 100.0)
-            .crs(Some("EPSG:3857"))
-            .band_values(&[20u8, 21, 22, 23, 24, 25]);
+        let expected = RasterSpec::nd(&["y", "x"], &[2, 3])
+            .band_values(&[1u8, 2, 3, 4, 5, 6])
+            .band_values(&[7u8, 8, 9, 10, 11, 12]);
+        assert_rasters_equal(&result, &[Some(expected)]);
+
+        // Non-spatial dimensions keep their names.
+        let first =
+            RasterSpec::nd(&["time", "y", "x"], &[1, 2, 3]).band_values(&[1u8, 2, 3, 4, 5, 6]);
+        let second = RasterSpec::nd(&["time", "lat", "lon"], &[1, 2, 3])
+            .band_values(&[7u8, 8, 9, 10, 11, 12]);
+        let result = tester(2)
+            .invoke_arrays(arrays(vec![vec![Some(first)], vec![Some(second)]]))
+            .unwrap();
+        let expected = RasterSpec::nd(&["time", "y", "x"], &[1, 2, 3])
+            .band_values(&[1u8, 2, 3, 4, 5, 6])
+            .band_values(&[7u8, 8, 9, 10, 11, 12]);
         assert_rasters_equal(&result, &[Some(expected)]);
     }
 
     #[test]
-    fn joins_up_to_seven_rasters() {
-        let rows = (0..7u8).map(|k| vec![Some(uint8(k * 10, 0.0))]).collect();
-        let result = tester(7).invoke_arrays(arrays(rows)).unwrap();
-        let expected = (1..7u8).fold(uint8(0, 0.0), |spec, k| {
+    fn stacks_any_number_of_rasters() {
+        // Past Sedona Spark's limit of seven.
+        let rows = (0..9u8).map(|k| vec![Some(uint8(k * 10, 0.0))]).collect();
+        let result = tester(9).invoke_arrays(arrays(rows)).unwrap();
+        let expected = (1..9u8).fold(uint8(0, 0.0), |spec, k| {
             spec.band_values(&[
                 k * 10,
                 k * 10 + 1,
@@ -226,6 +301,17 @@ mod tests {
             ])
         });
         assert_rasters_equal(&result, &[Some(expected)]);
+
+        // One raster stacks to itself.
+        let result = tester(1)
+            .invoke_arrays(arrays(vec![vec![Some(uint8(3, 0.0))]]))
+            .unwrap();
+        assert_rasters_equal(&result, &[Some(uint8(3, 0.0))]);
+    }
+
+    #[test]
+    fn needs_at_least_one_raster() {
+        assert_eq!(RsStack.return_type(&[]).unwrap(), None);
     }
 
     #[test]
@@ -256,7 +342,7 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(
-            err.contains("raster 2 is 2 x 2, but the first raster is 3 x 2"),
+            err.contains("raster 2 is 2 x 2, but the first raster is 3 x 2; every raster must be on the same grid"),
             "{err}"
         );
     }

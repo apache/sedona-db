@@ -27,9 +27,10 @@ Each case compares the whole output raster, decoded on both engines, and
 anchors it to the inputs' bands stacked in argument order under the first
 raster's grid. The fixtures carry no nodata value: Sedona Spark's raster
 transport is a GeoTIFF, which holds one nodata value per file, so it cannot
-carry bands with different nodata values. One known divergence is an xfail:
-Sedona Spark casts every band to the first raster's pixel type where SedonaDB
-keeps each band's own.
+carry bands with different nodata values. Two known divergences are xfails of
+their own: Sedona Spark casts every band to the first raster's pixel type where
+SedonaDB keeps each band's own, and Sedona Spark ignores all but the first
+raster's georeference where SedonaDB requires one grid.
 """
 
 import numpy as np
@@ -91,12 +92,18 @@ def test_rs_stack_three_rasters(tmp_path):
     compare(sql, sedona, spark, expected=_stacked(a, b, c))
 
 
-def test_rs_stack_takes_the_first_georeference(tmp_path):
-    """The second raster's grid is elsewhere; the result keeps the first's."""
+@pytest.mark.xfail(
+    reason="SedonaDB rejects a raster on another grid; Sedona Spark keeps the "
+    "first raster's grid and ignores the others' georeference"
+)
+def test_rs_stack_another_grid(tmp_path):
+    """The second raster has the same shape but is georeferenced elsewhere."""
     a, b = _raster(plant=1), _raster(plant=2, bbox=(0, 0, 7, 6))
     sedona, spark = _views(tmp_path, [("un_a", a), ("un_b", b)])
     sql = "SELECT RS_Stack(un_a.rast, un_b.rast) FROM un_a, un_b"
-    compare(sql, sedona, spark, expected=_stacked(a, b))
+    for eng in (sedona, spark):
+        with pytest.raises(Exception):
+            eng.decode_raster_result(sql)
 
 
 @pytest.mark.parametrize(

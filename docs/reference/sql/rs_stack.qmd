@@ -18,22 +18,22 @@
 
 title: RS_Stack
 description: >
-  Returns one raster holding the bands of two to seven rasters, in argument
+  Returns one raster holding the bands of any number of rasters, in argument
   order.
 kernels:
   - returns: raster
-    args: [raster, raster]
-  - returns: raster
-    args: [raster, raster, raster]
-  - returns: raster
-    args: [raster, raster, raster, raster]
-  - returns: raster
-    args: [raster, raster, raster, raster, raster]
-  - returns: raster
-    args: [raster, raster, raster, raster, raster, raster]
-  - returns: raster
-    args: [raster, raster, raster, raster, raster, raster, raster]
+    args:
+    - raster
+    - name: rasters
+      type: raster
+      description: >
+        One or more further rasters (any number), on the same grid as the
+        first: the same width, height, geotransform and CRS.
 ---
+
+::: callout-warning
+**Experimental.** This function is experimental; its behavior may change without notice.
+:::
 
 ## Description
 
@@ -41,11 +41,13 @@ Sedona Spark 1.9 calls this function `RS_Union`.
 
 The result holds every band of the first raster, then every band of the second,
 and so on. Each band keeps its own pixel type, nodata value and name, so rasters
-of different pixel types can be joined. The rasters must have the same width
-and height; the result takes the first raster's georeference and CRS, and the
-others' are not checked. A NULL raster gives a NULL result.
+of different pixel types can be stacked. Every raster must be on the first
+raster's grid (the same width, height, geotransform and CRS); a raster on any
+other grid is an error. A band's spatial dimensions take the first raster's
+names, matched by role, so a `lat`/`lon` raster stacked onto a `y`/`x` raster
+gives `y`/`x` bands. A NULL raster gives a NULL result.
 
-No pixel is read: bands are carried over as they are, so joining rasters that
+No pixel is read: bands are carried over as they are, so stacking rasters that
 are still out-of-database does not load them.
 
 ## Examples

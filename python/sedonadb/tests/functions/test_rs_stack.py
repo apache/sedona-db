@@ -91,14 +91,22 @@ def test_rs_stack_keeps_each_bands_pixel_type(con, tmp_path):
     assert list(types.values()) == ["UNSIGNED_8BITS", "REAL_64BITS", "SIGNED_16BITS"]
 
 
-def test_rs_stack_takes_the_first_georeference(con, tmp_path):
-    a, a_data = _tiff(tmp_path, "a", "uint8", 1)
-    b, b_data = _tiff(tmp_path, "b", "uint8", 1, bbox=(0.0, 0.0, 7.0, 6.0), seed=1)
-    got = decode_raster(_stack(con, [a, b]))
-    expected = DecodedRaster(
-        np.concatenate([a_data, b_data]), bbox=BBOX, nodata=[None, None]
+def test_rs_stack_rejects_another_grid(con, tmp_path):
+    """A raster of the same shape but georeferenced elsewhere, or in another
+    CRS, is not on the first raster's grid."""
+    a, _ = _tiff(tmp_path, "a", "uint8", 1)
+    b, _ = _tiff(tmp_path, "b", "uint8", 1, bbox=(0.0, 0.0, 7.0, 6.0), seed=1)
+    with pytest.raises(Exception, match="raster 2 has geotransform"):
+        _stack(con, [a, b])
+    c = tmp_path / "c.tif"
+    write_geotiff(
+        c,
+        random_raster_data("uint8", bands=1, height=6, width=7),
+        bbox=BBOX,
+        crs="EPSG:3857",
     )
-    assert_decoded_equal(got, expected)
+    with pytest.raises(Exception, match="raster 2 has a different CRS"):
+        _stack(con, [a, c])
 
 
 def test_rs_stack_stays_out_of_database(con, tmp_path):
