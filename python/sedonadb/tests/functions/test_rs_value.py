@@ -27,6 +27,8 @@ discriminate flooring from int-truncation in the world-to-pixel math (they
 differ only for negative fractional indices).
 """
 
+import re
+
 import pyarrow as pa
 import pytest
 import sedonadb
@@ -247,14 +249,24 @@ def test_rs_values_matches_comparators(con, tmp_path, dtype):
 def test_out_of_range_band_error_names_the_band(con, tmp_path):
     """An out-of-range band is reported by the 1-based number the query
     passed, not the 0-based index it maps to (band 3 of 2 used to read
-    "Band index 2")."""
+    "Band index 2"), and names the file the raster was read from."""
     tiff = _write_fixture(tmp_path, "uint8", nodata=None)
     x, y = pixel_center(0, 0)
-    message = "Band 3 is out of range: this raster has 2 bands"
+    message = f"Band 3 is out of range: {re.escape(str(tiff))} has 2 bands"
     with pytest.raises(sedonadb._lib.SedonaError, match=message):
         _sedonadb_value(con, tiff, x, y, band=3)
     with pytest.raises(sedonadb._lib.SedonaError, match=message):
         _sedonadb_values(con, tiff, [(x, y)], band=3)
+
+
+def test_out_of_range_band_error_without_a_file(con):
+    """A raster with no source file (built in memory) is "this raster"."""
+    sql = "SELECT RS_Value(RS_Example(), ST_Point(74.58, 110.57, 'OGC:CRS84'), 4)"
+    with pytest.raises(
+        sedonadb._lib.SedonaError,
+        match="Band 4 is out of range: this raster has 3 bands",
+    ):
+        con.sql(sql).to_arrow_table()
 
 
 @pytest.mark.parametrize("dtype", ["uint8", "float64"])
