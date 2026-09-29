@@ -66,7 +66,9 @@ impl SedonaScalarKernel for STDWithin {
         executor.execute_wkb_wkb_void(|maybe0, maybe1| {
             match (maybe0, maybe1, arg2_iter.next().unwrap()) {
                 (Some(a), Some(b), Some(bound)) => {
-                    builder.append_value(point_or_wkb_distance(a, b) <= bound);
+                    builder.append_value(
+                        point_or_wkb_distance(a, b).is_some_and(|distance| distance <= bound),
+                    );
                 }
                 _ => builder.append_null(),
             }
@@ -168,11 +170,29 @@ mod tests {
             &right_sedona_type,
         );
         let distance = arrow_array!(Int32, [Some(1), Some(1), Some(1), Some(1)]);
-        let expected: ArrayRef = arrow_array!(Boolean, [Some(true), Some(false), None, Some(true)]);
+        let expected: ArrayRef =
+            arrow_array!(Boolean, [Some(true), Some(false), None, Some(false)]);
         assert_array_equal(
             &tester.invoke_arrays(vec![arg1, arg2, distance]).unwrap(),
             &expected,
         );
+
+        let result = tester
+            .invoke_scalar_scalar_scalar(
+                create_scalar(Some("POINT EMPTY"), &left_sedona_type),
+                point_3_4.clone(),
+                distance_5.clone(),
+            )
+            .unwrap();
+        assert_eq!(result, ScalarValue::Boolean(Some(false)));
+        let result = tester
+            .invoke_scalar_scalar_scalar(
+                point_0_0,
+                create_scalar(Some("POLYGON EMPTY"), &right_sedona_type),
+                distance_5,
+            )
+            .unwrap();
+        assert_eq!(result, ScalarValue::Boolean(Some(false)));
     }
 
     #[rstest]
