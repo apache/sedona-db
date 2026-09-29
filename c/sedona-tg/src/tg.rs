@@ -362,11 +362,6 @@ mod test {
         );
         test_predicate::<Contains>(
             "GEOMETRYCOLLECTION (LINESTRING (0 0, 0 1), POLYGON ((0 0, 0 1, 1 0, 0 0)))",
-            "LINESTRING (0 0, 0 1)",
-            false,
-        );
-        test_predicate::<Contains>(
-            "GEOMETRYCOLLECTION (LINESTRING (0 0, 0 1), POLYGON ((0 0, 0 1, 1 0, 0 0)))",
             "LINESTRING (0 0, 0.25 0.25)",
             true,
         );
@@ -464,6 +459,19 @@ mod test {
 
     #[test]
     fn unsupported_containment_predicates() {
+        let collection_with_interacting_components = Geom::parse_wkt(
+            "GEOMETRYCOLLECTION (LINESTRING (0 0, 0 1), \
+             POLYGON ((0 0, 0 1, 1 0, 0 0)))",
+            IndexType::Default,
+        )
+        .unwrap();
+        let component = Geom::parse_wkt("LINESTRING (0 0, 0 1)", IndexType::Default).unwrap();
+
+        assert!(matches!(
+            Contains::evaluate(&collection_with_interacting_components, &component),
+            Err(TgError::UnsupportedContainmentPredicate)
+        ));
+
         let collection = Geom::parse_wkt(
             "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)), \
              ((1 0, 2 0, 2 1, 1 1, 1 0)))",

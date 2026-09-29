@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 import pytest
+from sedonadb._lib import SedonaError
 from sedonadb.testing import geom_or_null, PostGIS, SedonaDB, val_or_null
 
 
@@ -76,11 +77,6 @@ from sedonadb.testing import geom_or_null, PostGIS, SedonaDB, val_or_null
             "GEOMETRYCOLLECTION (POINT (0 0), POLYGON ((0 0, 0 1, 1 0, 0 0)))",
             "POINT (0.25 0.25)",
             True,
-        ),
-        (
-            "GEOMETRYCOLLECTION (LINESTRING (0 0, 0 1), POLYGON ((0 0, 0 1, 1 0, 0 0)))",
-            "LINESTRING (0 0, 0 1)",
-            False,
         ),
         (
             "GEOMETRYCOLLECTION (LINESTRING (0 0, 0 1), POLYGON ((0 0, 0 1, 1 0, 0 0)))",
@@ -356,11 +352,6 @@ def test_st_touches(eng, geom1, geom2, expected):
         ("POINT (0.5 0.5)", "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", True),
         ("POINT (0 0)", "MULTIPOINT ((0 0), (1 1))", True),
         (
-            "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
-            "MULTILINESTRING ((0 0, 1 1), (1 1, 2 2))",
-            False,
-        ),
-        (
             "LINESTRING (0 0, 1 1)",
             "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)), ((0 0, 1 0, 1 1, 0 1, 0 0)))",
             True,
@@ -395,6 +386,33 @@ def test_st_within(eng, geom1, geom2, expected):
         f"SELECT ST_Within({geom_or_null(geom1)}, {geom_or_null(geom2)})",
         expected,
     )
+
+
+@pytest.mark.parametrize(
+    ("predicate", "geom1", "geom2"),
+    [
+        (
+            "ST_Contains",
+            "GEOMETRYCOLLECTION (LINESTRING (0 0, 0 1), POLYGON ((0 0, 0 1, 1 0, 0 0)))",
+            "LINESTRING (0 0, 0 1)",
+        ),
+        (
+            "ST_Within",
+            "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
+            "MULTILINESTRING ((0 0, 1 1), (1 1, 2 2))",
+        ),
+    ],
+)
+def test_unsupported_containment_predicate(predicate, geom1, geom2):
+    eng = SedonaDB.create_or_skip()
+    with pytest.raises(
+        SedonaError,
+        match="Containment predicates are not supported for geometries with interacting collection components",
+    ):
+        eng.assert_query_result(
+            f"SELECT {predicate}({geom_or_null(geom1)}, {geom_or_null(geom2)})",
+            False,
+        )
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
