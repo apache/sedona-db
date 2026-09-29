@@ -98,6 +98,12 @@ an engine issue with geometry collections that mix dimensions
 mismatch and joins anyway, which is almost always a mistake, so this raises and
 points at `to_crs()`. `on_attribute` is not supported yet.
 
+Without an index, `drop()` and `rename()` work on columns only, and a sort
+from `sort_values()` holds until an operation that does not preserve row
+order (a join or an aggregation). `astype()` to a string keeps missing values
+missing, like pandas' `"string"` dtype rather than `str`, and formats floats
+the way Arrow does (`"1"`, `"NaN"`).
+
 `dissolve()` aggregates non-geometry columns with `"first"`, which is an
 unordered aggregate: it returns *some* value from the group rather than the one
 from the first row, and unlike GeoPandas it does not skip missing values, so a

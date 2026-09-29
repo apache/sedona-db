@@ -667,6 +667,171 @@ class GeoDataFrame:
         ]
         return GeoDataFrame(joined.select(*projection), geometry)
 
+    # -- geometry and CRS bookkeeping --------------------------------------
+
+    def set_geometry(self, col, inplace=False, crs=None):
+        """Make `col` the active geometry column, as in GeoPandas.
+
+        `col` is the name of a geometry column, or a `GeoSeries` of this
+        frame, which is added under its own name first. `crs` relabels the
+        new active column (overriding any CRS it has) without transforming
+        coordinates. With `inplace=True` this frame changes and None is
+        returned.
+        """
+        target = self if inplace else self._copy()
+        if isinstance(col, Series):
+            if not isinstance(col, GeoSeries):
+                raise TypeError("set_geometry() needs a GeoSeries or a column name")
+            target[col._name] = col
+            name = col._name
+        elif isinstance(col, str):
+            if col not in target.columns:
+                raise ValueError(f"Unknown column {col}")
+            if col not in _geometry_column_names(target._df):
+                raise TypeError(f"Column {col!r} is not a geometry column")
+            name = col
+        else:
+            raise TypeError(
+                f"set_geometry() takes a column name or a GeoSeries, got "
+                f"{type(col).__name__}"
+            )
+        target._geometry_name = name
+        if crs is not None:
+            target.set_crs(crs, allow_override=True, inplace=True)
+        return None if inplace else target
+
+    def rename_geometry(self, col, inplace=False):
+        """Rename the active geometry column to `col`, as in GeoPandas."""
+        if self._geometry_name is None:
+            raise AttributeError("This GeoDataFrame has no active geometry column")
+        if col in self.columns:
+            raise ValueError(f"Column named {col} already exists")
+        target = self if inplace else self._copy()
+        old = target._geometry_name
+        target._rebind(target._df.rename(**{col: old}), renames_columns=True)
+        target._geometry_name = col
+        return None if inplace else target
+
+    def set_crs(self, crs=None, epsg=None, inplace=False, allow_override=False):
+        """Label the active geometry column with a CRS, as in GeoPandas.
+
+        Coordinates are not transformed (use `to_crs` for that). Replacing a
+        different existing CRS needs `allow_override=True`. Returns the frame,
+        this one when `inplace=True`, as GeoPandas does.
+        """
+        if self._geometry_name is None:
+            raise AttributeError("This GeoDataFrame has no active geometry column")
+        if crs is None and epsg is not None:
+            crs = int(epsg)
+        relabeled = self.geometry.set_crs(crs, allow_override=allow_override)
+        target = self if inplace else self._copy()
+        target[target._geometry_name] = relabeled
+        return target
+
+    # -- columns and rows ---------------------------------------------------
+
+    def drop(self, labels=None, axis=0, columns=None, errors="raise"):
+        """Drop columns, as in `DataFrame.drop(columns=...)`.
+
+        There is no index, so only columns can be dropped: pass `columns=`,
+        or `labels` with `axis=1`. Dropping the active geometry column leaves
+        the frame without one, as in GeoPandas.
+        """
+        if columns is None:
+            if axis not in (1, "columns"):
+                raise NotImplementedError(
+                    "drop() removes columns only: there is no index to drop "
+                    "rows by; filter with a boolean mask instead"
+                )
+            columns = labels
+        names = [columns] if isinstance(columns, str) else list(columns)
+        missing = [name for name in names if name not in self.columns]
+        if missing and errors == "raise":
+            raise KeyError(f"{missing} not found in axis")
+        names = [name for name in names if name in self.columns]
+        if not names:
+            return self._copy()
+        geometry = None if self._geometry_name in names else self._geometry_name
+        return GeoDataFrame(self._df.drop(*names), geometry)
+
+    def rename(self, mapper=None, columns=None, axis=None, errors="ignore"):
+        """Rename columns, as in `DataFrame.rename(columns=...)`.
+
+        `columns` (or `mapper` with `axis=1`) is a mapping of old to new names
+        or a function of the old name. As in GeoPandas, renaming the active
+        geometry column this way leaves the frame without an active geometry;
+        `rename_geometry` renames it and keeps it active.
+        """
+        if columns is None:
+            if axis not in (1, "columns"):
+                raise NotImplementedError(
+                    "rename() renames columns only: there is no index; pass "
+                    "columns= or axis=1"
+                )
+            columns = mapper
+        if callable(columns):
+            mapping = {name: columns(name) for name in self.columns}
+        else:
+            mapping = dict(columns)
+            missing = [name for name in mapping if name not in self.columns]
+            if missing and errors == "raise":
+                raise KeyError(f"{missing} not found in axis")
+        mapping = {
+            old: new
+            for old, new in mapping.items()
+            if old in self.columns and old != new
+        }
+        if not mapping:
+            return self._copy()
+        renamed = self._df.rename(**{new: old for old, new in mapping.items()})
+        geometry = None if self._geometry_name in mapping else self._geometry_name
+        return GeoDataFrame(renamed, geometry)
+
+    def sort_values(self, by, ascending=True, na_position="last"):
+        """Sort rows by one or more columns, as in `DataFrame.sort_values`.
+
+        As in pandas, NaN in a float column sorts as missing, placed by
+        `na_position`. Sorting orders the rows this frame produces; a later
+        operation that does not preserve order (a join, an aggregation) may
+        not keep it.
+        """
+        keys = [by] if isinstance(by, str) else list(by)
+        directions = (
+            [ascending] * len(keys) if isinstance(ascending, bool) else list(ascending)
+        )
+        if len(directions) != len(keys):
+            raise ValueError(
+                f"Length of ascending ({len(directions)}) != length of by ({len(keys)})"
+            )
+        if na_position not in ("first", "last"):
+            raise ValueError(f"invalid na_position: {na_position}")
+        missing = [key for key in keys if key not in self.columns]
+        if missing:
+            raise KeyError(missing[0])
+        sort_keys = []
+        for key, up in zip(keys, directions):
+            expr = self._df[key]
+            if _is_floating(self._df, key):
+                # NaN sorts as missing in pandas; the engine orders it above
+                # every number, so it becomes null for the sort key.
+                gate = expr.funcs.isnan().funcs.nullif(lit(True)).cast(pa.float64())
+                expr = expr + gate
+            first = na_position == "first"
+            sort_keys.append(expr.asc(first) if up else expr.desc(first))
+        return GeoDataFrame(self._df.sort(*sort_keys), self._geometry_name)
+
+    def _copy(self):
+        """A new frame over the same data, sharing its lineage."""
+        copy = GeoDataFrame(self._df, self._geometry_name)
+        copy._ancestors = list(self._ancestors)
+        return copy
+
+    def _rebind(self, df, renames_columns=False):
+        """Point this frame at `df`; earlier Series are stale if names moved."""
+        if renames_columns:
+            self._ancestors = []
+        self._df = df
+
     def dissolve(self, by=None, aggfunc="first", dropna=True):
         """Group rows and union each group's geometry.
 
