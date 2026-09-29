@@ -218,9 +218,7 @@ def test_st_intersection_returns_empty(eng, geom1, geom2, expected):
     ("geom1", "geom2", "expected"),
     [
         # Point + Point: different
-        pytest.param(
-            "POINT (0 0)", "POINT (0 1)", "POINT EMPTY", id="point_different"
-        ),
+        pytest.param("POINT (0 0)", "POINT (0 1)", "POINT EMPTY", id="point_different"),
         # Multipoint + Point: disjoint
         pytest.param(
             "MULTIPOINT ((0 0), (1 1))",
