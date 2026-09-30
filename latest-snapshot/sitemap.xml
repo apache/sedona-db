@@ -177,6 +177,10 @@
          <lastmod>2026-09-30</lastmod>
     </url>
     <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/rs_makeemptyraster/</loc>
+         <lastmod>2026-09-30</lastmod>
+    </url>
+    <url>
          <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/rs_metadata/</loc>
          <lastmod>2026-09-30</lastmod>
     </url>
@@ -285,7 +289,15 @@
          <lastmod>2026-09-30</lastmod>
     </url>
     <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/rs_stack/</loc>
+         <lastmod>2026-09-30</lastmod>
+    </url>
+    <url>
          <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/rs_summarystats/</loc>
+         <lastmod>2026-09-30</lastmod>
+    </url>
+    <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/rs_summarystatsall/</loc>
          <lastmod>2026-09-30</lastmod>
     </url>
     <url>
