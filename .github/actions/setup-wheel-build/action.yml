@@ -46,7 +46,7 @@ runs:
     - name: Install cibuildwheel
       shell: bash
       run: |
-        python -m pip install cibuildwheel==3.1.4
+        python -m pip install cibuildwheel==4.2.1
         if [ "${{ inputs.delvewheel }}" = "true" ]; then
           python -m pip install delvewheel
         fi
