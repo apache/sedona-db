@@ -83,6 +83,11 @@ from sedonadb.testing import geom_or_null, PostGIS, SedonaDB, val_or_null
             "LINESTRING (0 0, 0.25 0.25)",
             True,
         ),
+        (
+            "MULTILINESTRING ((0 0, 1 0), (1 0, 2 0))",
+            "MULTIPOINT ((1 0))",
+            True,
+        ),
     ],
 )
 def test_st_contains(eng, geom1, geom2, expected):
@@ -320,6 +325,11 @@ def test_st_intersects(eng, geom1, geom2, expected):
             False,
         ),
         (
+            "LINESTRING (0 1, 3 1)",
+            "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)), ((1 1, 2 1, 2 2, 1 2, 1 1)))",
+            True,
+        ),
+        (
             "POINT (0 0)",
             "GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1), POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0)))",
             True,
@@ -351,6 +361,11 @@ def test_st_touches(eng, geom1, geom2, expected):
         ("POINT (0 0)", "LINESTRING (0 0, 1 1)", False),
         ("POINT (0.5 0.5)", "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", True),
         ("POINT (0 0)", "MULTIPOINT ((0 0), (1 1))", True),
+        (
+            "MULTIPOINT ((1 0))",
+            "MULTILINESTRING ((0 0, 1 0), (1 0, 2 0))",
+            True,
+        ),
         (
             "LINESTRING (0 0, 1 1)",
             "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)), ((0 0, 1 0, 1 1, 0 1, 0 0)))",
