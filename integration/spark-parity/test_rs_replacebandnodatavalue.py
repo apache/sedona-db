@@ -84,3 +84,29 @@ def test_rs_replacebandnodata_single_band(tmp_path):
     anchor = DecodedRaster(pixels, nodata=[99.0], bbox=(100.0, 482.0, 114.0, 500.0))
     sql = "SELECT RS_ReplaceBandNoDataValue(rast, 1, 99.0) FROM replace_one_src"
     compare(sql, sedona, spark, expected=anchor)
+
+
+@SPARK_LACKS_FUNCTION
+def test_rs_replacebandnodata_signed_zero(tmp_path):
+    """A `-0.0` pixel holds a `0.0` nodata value, so RS_ReplaceBandNoDataValue
+    rewrites it along with the `+0.0` pixel. Both engines compare pixels to
+    nodata numerically here, so both read the two zeros as nodata before the
+    call and must carry both over to the new value."""
+    plants = {(1, 1): -0.0, (2, 3): 0.0}
+    sedona, spark = SedonaDB(), SedonaSpark()
+    for eng in (sedona, spark):
+        eng.create_random_raster_view(
+            "replace_zero_src",
+            tmp_path / "replace_zero_src.tif",
+            dtype="float64",
+            bands=1,
+            nodata=0.0,
+            plants=plants,
+        )
+    data = random_raster_data("float64", bands=1, height=6, width=7, plants=plants)
+    pixels = data.copy()
+    pixels[0, 1, 1] = -9999.0
+    pixels[0, 2, 3] = -9999.0
+    anchor = DecodedRaster(pixels, nodata=[-9999.0], bbox=(100.0, 482.0, 114.0, 500.0))
+    sql = "SELECT RS_ReplaceBandNoDataValue(rast, 1, -9999.0) FROM replace_zero_src"
+    compare(sql, sedona, spark, expected=anchor)
