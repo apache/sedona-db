@@ -53,6 +53,17 @@ geopandas = [
     "sedonadb-expr",
 ]
 
+[tool.cibuildwheel]
+# Set here rather than via CIBW_TEST_REQUIRES in the workflow: environment
+# variables take precedence over the overrides below.
+test-requires = ["pytest", "adbc_driver_manager", "geoarrow-pyarrow", "geopandas", "duckdb"]
+
+# DuckDB publishes no free-threaded wheels, and building it from its sdist fails
+# with scikit-build-core >= 1.1. The DuckDB-backed tests skip when it is absent.
+[[tool.cibuildwheel.overrides]]
+select = "cp314t-*"
+test-requires = ["pytest", "adbc_driver_manager", "geoarrow-pyarrow", "geopandas"]
+
 [tool.maturin]
 features = ["pyo3/extension-module"]
 module-name = "sedonadb._lib"
