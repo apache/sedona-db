@@ -3065,8 +3065,8 @@ static bool ring_vertex_is_convex_tangent(const struct tg_ring *ring,
     double seg_y = seg.b.y-seg.a.y;
     double prev_side = seg_x*(prev.y-vertex.y)-seg_y*(prev.x-vertex.x);
     double next_side = seg_x*(next.y-vertex.y)-seg_y*(next.x-vertex.x);
-    return (prev_side < 0 && next_side < 0) ||
-           (prev_side > 0 && next_side > 0);
+    return (prev_side <= 0 && next_side <= 0) ||
+           (prev_side >= 0 && next_side >= 0);
 }
 
 static bool intersegiter(struct tg_segment seg, int index, void *udata) {
@@ -6398,6 +6398,37 @@ static bool geom_contains_iter(const struct tg_geom *geom, void *udata) {
 static bool multilinestring_contains_point(const struct tg_geom *geom,
     struct tg_point point);
 
+struct multilinestring_contains_multipoint_ctx {
+    const struct tg_geom *multiline;
+    bool contains;
+};
+
+static bool multilinestring_contains_multipoint_iter(
+    const struct tg_geom *point, void *udata)
+{
+    struct multilinestring_contains_multipoint_ctx *ctx = udata;
+    if (multilinestring_contains_point(ctx->multiline,
+        tg_geom_point(point)))
+    {
+        ctx->contains = true;
+        return false;
+    }
+    return true;
+}
+
+static bool multilinestring_contains_multipoint(const struct tg_geom *geom,
+    const struct tg_geom *other)
+{
+    if (!tg_geom_covers(geom, other)) {
+        return false;
+    }
+    struct multilinestring_contains_multipoint_ctx ctx = {
+        .multiline = geom,
+    };
+    tg_geom_foreach(other, multilinestring_contains_multipoint_iter, &ctx);
+    return ctx.contains;
+}
+
 static bool multi_contains_geom(const struct tg_geom *geom,
     const struct tg_geom *other)
 {
@@ -6432,9 +6463,15 @@ static bool base_geom_contains_geom(const struct tg_geom *geom,
                     return multilinestring_contains_point(geom,
                         ((struct boxed_point*)other)->point);
                 case BASE_GEOM:
-                    if (other->head.type == TG_POINT) {
+                    switch (other->head.type) {
+                    case TG_POINT:
                         return (other->head.flags&IS_EMPTY) != IS_EMPTY &&
                             multilinestring_contains_point(geom, other->point);
+                    case TG_MULTIPOINT:
+                        return multilinestring_contains_multipoint(geom,
+                            other);
+                    default:
+                        break;
                     }
                     break;
                 default:
@@ -6760,6 +6797,8 @@ static bool base_geom_touches_geom(const struct tg_geom *geom,
                     case TG_MULTILINESTRING:
                         return multilinestring_touches_multilinestring(geom,
                             other);
+                    case TG_MULTIPOINT:
+                        return multi_touches_geom(other, geom);
                     default:
                         break;
                     }

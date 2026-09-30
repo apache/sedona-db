@@ -18,7 +18,7 @@
 # under the License.
 
 # Using paleolimbot/tg for now until all PRs fixing issues are merged
-TG_REF=83252a21af6386087fba354013640e5feab3f137
+TG_REF=d79c058e3a050840ff2fdf738baf7354264119b8
 
 curl -L https://github.com/paleolimbot/tg/raw/${TG_REF}/tg.c \
     -o src/tg/tg.c
