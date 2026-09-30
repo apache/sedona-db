@@ -99,7 +99,6 @@ def test_st_aswkb_alias(eng):
     ("geom"),
     [
         None,
-        # geoarrow-c returns POINT (nan nan) instead of POINT EMPTY
         "POINT EMPTY",
         "LINESTRING EMPTY",
         "POLYGON EMPTY",
@@ -337,7 +336,7 @@ def test_st_affine_3d(
         (None, 1.0, 1.0, None),
         ("POINT (1 2)", None, 1.0, None),
         ("POINT (1 2)", 1.0, None, None),
-        ("POINT EMPTY", 1.0, 1.0, "POINT (nan nan)"),
+        ("POINT EMPTY", 1.0, 1.0, "POINT EMPTY"),
         ("POINT (1 2)", 1.0, 1.0, "POINT (1 2)"),
         ("POINT (1 2)", 2.0, 3.0, "POINT (2 6)"),
         ("LINESTRING (0 0, 1 1)", 2.0, 3.0, "LINESTRING (0 0, 2 3)"),
@@ -391,8 +390,8 @@ def test_st_scale_2d(eng, geom, sx, sy, expected):
         (None, 1.0, 1.0, 1.0, None),
         ("POINT Z (1 2 3)", None, 1.0, 1.0, None),
         ("POINT Z (1 2 3)", 1.0, 1.0, None, None),
-        ("POINT EMPTY", 1.0, 1.0, 1.0, "POINT (nan nan)"),
-        ("POINT Z EMPTY", 1.0, 1.0, 1.0, "POINT Z (nan nan nan)"),
+        ("POINT EMPTY", 1.0, 1.0, 1.0, "POINT EMPTY"),
+        ("POINT Z EMPTY", 1.0, 1.0, 1.0, "POINT Z EMPTY"),
         ("POINT Z (1 2 3)", 1.0, 1.0, 1.0, "POINT Z (1 2 3)"),
         ("POINT Z (1 2 3)", 2.0, 3.0, 4.0, "POINT Z (2 6 12)"),
         ("POINT ZM (1 2 3 4)", 2.0, 3.0, 4.0, "POINT ZM (2 6 12 4)"),
@@ -423,8 +422,8 @@ def test_st_scale_3d(eng, geom, sx, sy, sz, expected):
     [
         (None, 0, None),
         ("POINT (1 2)", None, None),
-        ("POINT EMPTY", 0, "POINT (nan nan)"),
-        ("POINT Z EMPTY", 0, "POINT Z (nan nan nan)"),
+        ("POINT EMPTY", 0, "POINT EMPTY"),
+        ("POINT Z EMPTY", 0, "POINT Z EMPTY"),
         ("POINT (1 2)", 0, "POINT (1 2)"),
         ("POINT (1 2)", math.pi / 2, "POINT (-2 1)"),
         ("POINT (1 2)", math.pi, "POINT (-1 -2)"),
@@ -856,16 +855,13 @@ def test_st_buildarea_non_linework(eng, geom, expected):
             "GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1), POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0)))",
             "POINT (0.5 0.5)",
         ),
-        # Failing: issue with testing code: geoarrow-c rendering POINT (nan, nan)
-        # instead of POINT EMPTY
-        # https://github.com/geoarrow/geoarrow-c/issues/143
-        ("POINT EMPTY", "POINT (nan nan)"),
-        ("LINESTRING EMPTY", "POINT (nan nan)"),
-        ("POLYGON EMPTY", "POINT (nan nan)"),
-        ("MULTIPOINT EMPTY", "POINT (nan nan)"),
-        ("MULTILINESTRING EMPTY", "POINT (nan nan)"),
-        ("MULTIPOLYGON EMPTY", "POINT (nan nan)"),
-        ("GEOMETRYCOLLECTION EMPTY", "POINT (nan nan)"),
+        ("POINT EMPTY", "POINT EMPTY"),
+        ("LINESTRING EMPTY", "POINT EMPTY"),
+        ("POLYGON EMPTY", "POINT EMPTY"),
+        ("MULTIPOINT EMPTY", "POINT EMPTY"),
+        ("MULTILINESTRING EMPTY", "POINT EMPTY"),
+        ("MULTIPOLYGON EMPTY", "POINT EMPTY"),
+        ("GEOMETRYCOLLECTION EMPTY", "POINT EMPTY"),
     ],
 )
 def test_st_centroid(eng, geom, expected):
@@ -885,7 +881,6 @@ def test_st_centroid(eng, geom, expected):
         ("MULTIPOINT (1 1, 2 2, 3 3)", True),  # Distinct points
         ("MULTIPOINT (1 1, 2 2, 1 1)", False),  # Duplicate points make it non-simple
         ("MULTIPOINT EMPTY", True),  # Empty multipoint
-        ("MULTIPOINT (1 1, 2 2, 3 3)", True),
         # LINESTRINGS
         ("LINESTRING (0 0, 1 1)", True),  # Simple straight line
         ("LINESTRING (0 0, 1 1, 2 2)", True),  # Simple line, collinear points
@@ -1592,10 +1587,7 @@ def test_st_delaunaytriangles_flags(eng, geom, only_edges, expected):
     ("geom", "expected"),
     [
         (None, None),
-        # Failing: issue with testing code: geoarrow-c rendering POINT (nan, nan)
-        # instead of POINT EMPTY
-        # https://github.com/geoarrow/geoarrow-c/issues/143
-        ("POINT EMPTY", "POINT (nan nan)"),
+        ("POINT EMPTY", "POINT EMPTY"),
         ("POLYGON EMPTY", "POLYGON EMPTY"),
         ("LINESTRING EMPTY", "LINESTRING EMPTY"),
         ("MULTIPOINT EMPTY", "MULTIPOINT EMPTY"),
@@ -1648,7 +1640,7 @@ def test_st_exteriorring(eng, geom, expected):
     ("geom", "expected"),
     [
         (None, None),
-        ("POINT EMPTY", "POINT (nan nan)"),
+        ("POINT EMPTY", "POINT EMPTY"),
         ("POLYGON EMPTY", "POLYGON EMPTY"),
         ("LINESTRING EMPTY", "LINESTRING EMPTY"),
         ("MULTIPOINT EMPTY", "MULTIPOINT EMPTY"),
@@ -1676,7 +1668,7 @@ def test_st_flipcoordinates(eng, geom, expected):
     ("geom", "expected_2d", "expected_3d"),
     [
         (None, None, None),
-        ("POINT EMPTY", "POINT (nan nan)", "POINT Z (nan nan nan)"),
+        ("POINT EMPTY", "POINT EMPTY", "POINT Z EMPTY"),
         ("POLYGON EMPTY", "POLYGON EMPTY", "POLYGON Z EMPTY"),
         ("LINESTRING EMPTY", "LINESTRING EMPTY", "LINESTRING Z EMPTY"),
         ("MULTIPOINT EMPTY", "MULTIPOINT EMPTY", "MULTIPOINT Z EMPTY"),
@@ -1725,8 +1717,8 @@ def test_st_force3dz_alias(eng):
         (
             "POINT EMPTY",
             5,
-            "POINT M (nan nan nan)",
-            "POINT M (nan nan nan)",
+            "POINT M EMPTY",
+            "POINT M EMPTY",
         ),
         ("POINT (0 1)", 5, "POINT M (0 1 0)", "POINT M (0 1 5)"),
         ("POINT Z (0 1 2)", 5, "POINT M (0 1 0)", "POINT M (0 1 5)"),
@@ -1754,8 +1746,8 @@ def test_st_force3dm(eng, geom, m, expected_without_m, expected_with_m):
             "POINT EMPTY",
             5,
             7,
-            "POINT ZM (nan nan nan nan)",
-            "POINT ZM (nan nan nan nan)",
+            "POINT ZM EMPTY",
+            "POINT ZM EMPTY",
         ),
         ("POINT (0 1)", 5, 7, "POINT ZM (0 1 0 0)", "POINT ZM (0 1 5 7)"),
         ("POINT Z (0 1 2)", 5, 7, "POINT ZM (0 1 2 0)", "POINT ZM (0 1 2 7)"),
@@ -2397,9 +2389,7 @@ def test_typed_geom_constructors_accept_srid(eng, fn_name, wkt, _wrong):
 def test_typed_geom_constructors_accept_matching_empty(eng, fn_name, empty_wkt):
     """Each constructor accepts its own EMPTY type (correct type, empty geometry)."""
     eng = eng.create_or_skip()
-    # geoarrow-c renders POINT EMPTY as POINT (nan nan)
-    expected = "POINT (nan nan)" if empty_wkt == "POINT EMPTY" else empty_wkt
-    eng.assert_query_result(f"SELECT {fn_name}('{empty_wkt}')", expected)
+    eng.assert_query_result(f"SELECT {fn_name}('{empty_wkt}')", empty_wkt)
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
@@ -2463,11 +2453,6 @@ def test_typed_geom_constructors_reject_wrong_empty(eng, fn_name, wkt, wrong_emp
 def test_st_geogfromwkb(eng, geom):
     eng = eng.create_or_skip()
 
-    expected = geom
-    if geom == "POINT EMPTY":
-        # arrow-c returns POINT (nan nan) instead of POINT EMPTY
-        expected = "POINT (nan nan)"
-
     if geom is None:
         wkb = val_or_null(None)
     else:
@@ -2479,7 +2464,7 @@ def test_st_geogfromwkb(eng, geom):
             wkb = f"'{wkb}'::bytea"
         else:
             raise
-    eng.assert_query_result(f"SELECT ST_GeogFromWKB({wkb})", expected)
+    eng.assert_query_result(f"SELECT ST_GeogFromWKB({wkb})", geom)
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
@@ -2499,11 +2484,6 @@ def test_st_geogfromwkb(eng, geom):
 def test_st_geomfromwkb(eng, geom):
     eng = eng.create_or_skip()
 
-    expected = geom
-    if geom == "POINT EMPTY":
-        # arrow-c returns POINT (nan nan) instead of POINT EMPTY
-        expected = "POINT (nan nan)"
-
     if geom is None:
         wkb = val_or_null(None)
     else:
@@ -2515,7 +2495,7 @@ def test_st_geomfromwkb(eng, geom):
             wkb = f"'{wkb}'::bytea"
         else:
             raise
-    eng.assert_query_result(f"SELECT ST_GeomFromWKB({wkb})", expected)
+    eng.assert_query_result(f"SELECT ST_GeomFromWKB({wkb})", geom)
 
 
 # --- ST_XxxFromWKB typed constructors ---
@@ -2627,15 +2607,10 @@ def test_st_linefromwkb_alias(eng):
 def test_st_geomfromwkbunchecked(eng, geom):
     eng = eng.create_or_skip()
 
-    expected = geom
-    if geom == "POINT EMPTY":
-        # arrow-c returns POINT (nan nan) instead of POINT EMPTY
-        expected = "POINT (nan nan)"
-
     wkb = shapely.from_wkt(geom).wkb
     wkb = "0x" + wkb.hex()
 
-    eng.assert_query_result(f"SELECT ST_GeomFromWKBUnchecked({wkb})", expected)
+    eng.assert_query_result(f"SELECT ST_GeomFromWKBUnchecked({wkb})", geom)
 
 
 @pytest.mark.parametrize("eng", [SedonaDB])
@@ -3074,7 +3049,7 @@ def test_st_isring_non_linestring_error(eng, geom):
             "MULTILINESTRING ((0 0, 1 0), (8 8, 9 9))",
         ),
         # empty cases
-        ("POINT EMPTY", "POINT (nan nan)"),
+        ("POINT EMPTY", "POINT EMPTY"),
         ("LINESTRING EMPTY", "LINESTRING EMPTY"),
         ("POLYGON EMPTY", "POLYGON EMPTY"),
         ("MULTIPOINT EMPTY", "MULTIPOINT EMPTY"),
@@ -3235,10 +3210,8 @@ def test_st_maxdistance(eng, geom1, geom2, expected):
             "POLYGON ((0 1, 1 1, 1 0, 0 0, 0 1))",
         ),
         # Empty geometry input is a no-op: empty in -> empty out, input
-        # dimensionality preserved (no Z promotion). POINT EMPTY renders as
-        # "POINT (nan nan)" due to a geoarrow-c serialisation quirk shared by
-        # both engines.
-        ("POINT EMPTY", 1.0, "POINT (nan nan)"),
+        # dimensionality preserved (no Z promotion).
+        ("POINT EMPTY", 1.0, "POINT EMPTY"),
         ("LINESTRING EMPTY", 1.0, "LINESTRING EMPTY"),
         ("POLYGON EMPTY", 1.0, "POLYGON EMPTY"),
     ],
@@ -3256,7 +3229,7 @@ def test_st_reduceprecision(eng, geom, grid_size, expected):
     ("geom", "expected"),
     [
         (None, None),
-        ("POINT EMPTY", "POINT (nan nan)"),
+        ("POINT EMPTY", "POINT EMPTY"),
         ("LINESTRING EMPTY", "LINESTRING EMPTY"),
         ("POLYGON EMPTY", "POLYGON EMPTY"),
         ("MULTIPOINT EMPTY", "MULTIPOINT EMPTY"),
@@ -3654,9 +3627,9 @@ def test_st_pointn(eng, geometry, n, expected):
     ("geom", "expected"),
     [
         (None, None),
-        ("POINT EMPTY", "POINT (nan nan)"),
-        ("LINESTRING EMPTY", "POINT (nan nan)"),
-        ("POLYGON EMPTY", "POINT (nan nan)"),
+        ("POINT EMPTY", "POINT EMPTY"),
+        ("LINESTRING EMPTY", "POINT EMPTY"),
+        ("POLYGON EMPTY", "POINT EMPTY"),
         ("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))", "POINT (2 2)"),
         (
             "POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))",
@@ -4402,7 +4375,7 @@ def test_st_isvalidreason(eng, geom, expected):
         ),
         ("POINT (10 20)", 10.0, "POINT (10 20)"),
         ("LINESTRING EMPTY", 1.0, "LINESTRING EMPTY"),
-        ("POINT EMPTY", 1.0, "POINT (nan nan)"),
+        ("POINT EMPTY", 1.0, "POINT EMPTY"),
         ("POLYGON EMPTY", 1.0, "POLYGON EMPTY"),
         ("LINESTRING (0 0, 0 1)", 1.0, "LINESTRING (0 0, 0 1)"),
         (
@@ -4531,7 +4504,7 @@ def test_st_simplify(eng, geom, tolerance, expected):
         ("LINESTRING (0 0, 0 10)", None, None),
         # Empty geometries
         ("LINESTRING EMPTY", 2, "LINESTRING EMPTY"),
-        ("POINT EMPTY", 2, "POINT (nan nan)"),
+        ("POINT EMPTY", 2, "POINT EMPTY"),
         ("POLYGON EMPTY", 2, "POLYGON EMPTY"),
         #  inner ring simplified
         (
@@ -4567,7 +4540,7 @@ def test_st_simplifypreservetopology(eng, geom, tolerance, expected):
             "POINT EMPTY",
             "POINT (1 2)",
             0.5,
-            "POINT (nan nan)",
+            "POINT EMPTY",
         ),
         (
             "LINESTRING EMPTY",

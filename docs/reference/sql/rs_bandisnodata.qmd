@@ -1,0 +1,48 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: RS_BandIsNoData
+description: >
+  Returns true if every pixel of the band holds the band's nodata value. Returns
+  false if any pixel holds data, or if the band has no nodata value.
+kernels:
+  - returns: boolean
+    args: [raster]
+  - returns: boolean
+    args:
+    - raster
+    - name: band
+      type: integer
+      description: Band index (1-based). Defaults to 1 if not specified.
+---
+
+## Description
+
+A pixel counts as nodata when it equals the band's nodata value; a NaN pixel
+matches a NaN nodata value. A band without a nodata value is never all nodata,
+even if every pixel is 0. Only 2-D rasters are supported.
+
+## Examples
+
+```sql
+SELECT RS_BandIsNoData(RS_Example());
+```
+
+```sql
+SELECT RS_BandIsNoData(RS_Example(), 1);
+```

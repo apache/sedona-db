@@ -26,8 +26,11 @@
 //! anchors are first reduced to the distinct stores, arrays and chunks
 //! they touch ([`LoadPlan`]), then each store is built once, each array is
 //! opened once (one metadata round trip per distinct array rather than
-//! per request), and each distinct chunk is fetched once with up to
-//! [`ZarrLoader::concurrency`] reads in flight. Requests that name the
+//! per request), and each distinct chunk is fetched once. Reads in flight
+//! are bounded by the loader's I/O budget ([`ZarrLoader::concurrency`]),
+//! which every concurrent `load` call on the loader and its clones shares:
+//! DataFusion runs one call per partition at once, and the budget is what
+//! the store sees in total, not per partition. Requests that name the
 //! same chunk share the loaded bytes. Across calls the loader keeps the
 //! store clients and opened arrays (see [`ZarrLoader`]), so a later batch
 //! over the same group pays neither again. All I/O goes through `zarrs`'s
@@ -48,7 +51,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::hash::Hash;
 use std::num::NonZeroUsize;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -60,6 +63,7 @@ use lru::LruCache;
 use object_store::ObjectStore;
 use sedona_common::sedona_internal_datafusion_err;
 use sedona_raster::raster_loader::{AsyncRasterLoader, RasterLoadRequest, RasterLoadResult};
+use tokio::sync::Semaphore;
 use zarrs::array::{Array, ArrayBytes};
 use zarrs::storage::AsyncReadableListableStorageTraits;
 
@@ -73,10 +77,22 @@ use crate::source_uri::{
 /// (see `crate::loader`).
 pub const ZARR_FORMAT: &str = "zarr";
 
-/// Default cap on chunk reads in flight per `load` call. Every partition
-/// issues its own `load` concurrently, so this bounds the per-partition
-/// fan-out, not the process-wide one.
-pub const DEFAULT_LOAD_CONCURRENCY: usize = 8;
+/// Default I/O budget: chunk reads in flight at once across every
+/// concurrent `load` call on a loader (all partitions together), not per
+/// call.
+///
+/// Chosen from `benches/zarr_io_concurrency.rs` (256 chunks of 16 KiB,
+/// one caller and eight callers sharing the budget, Apple M-series, 12
+/// cores). Against an HTTP store adding 10 ms to every request, time halves
+/// with every doubling of the budget up to 64 (3.2 s at 1, 415 ms at 8,
+/// 114 ms at 32, 64 ms at 64, with one or eight callers alike) and is worse
+/// again at 128 (89-104 ms). Against the page-cached local filesystem the
+/// best budget is 8 to 16 (3.2 ms with one caller, 4.1 ms with eight) and
+/// 64 costs 21% more with one caller (3.9 ms) and 5% more with eight
+/// (4.3 ms). 64 also equals the fan-out eight partitions had before the
+/// budget was shared (8 per call). Memory in flight is the budget times
+/// the chunk size, so a larger default was not taken.
+pub const DEFAULT_LOAD_CONCURRENCY: usize = 64;
 
 /// Default number of opened arrays a loader keeps across `load` calls.
 pub const DEFAULT_ARRAY_HANDLE_CAPACITY: usize = 256;
@@ -105,7 +121,29 @@ pub const DEFAULT_ARRAY_HANDLE_TTL: Duration = Duration::from_secs(300);
 #[derive(Debug, Clone)]
 pub struct ZarrLoader {
     concurrency: usize,
+    /// The I/O budget: one permit per chunk read in flight, shared by every
+    /// concurrent `load` call on this loader and its clones.
+    permits: Arc<Semaphore>,
+    io: Arc<IoCounters>,
     handles: Arc<HandleCache>,
+}
+
+/// In-flight chunk reads, for tests and benchmarks.
+#[derive(Debug, Default)]
+struct IoCounters {
+    in_flight: AtomicUsize,
+    peak_in_flight: AtomicUsize,
+}
+
+impl IoCounters {
+    fn enter(&self) {
+        let now = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+        self.peak_in_flight.fetch_max(now, Ordering::SeqCst);
+    }
+
+    fn exit(&self) {
+        self.in_flight.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 impl Default for ZarrLoader {
@@ -118,6 +156,8 @@ impl ZarrLoader {
     pub fn new() -> Self {
         Self {
             concurrency: DEFAULT_LOAD_CONCURRENCY,
+            permits: Arc::new(Semaphore::new(DEFAULT_LOAD_CONCURRENCY)),
+            io: Arc::new(IoCounters::default()),
             handles: Arc::new(HandleCache::new(
                 DEFAULT_ARRAY_HANDLE_CAPACITY,
                 DEFAULT_ARRAY_HANDLE_TTL,
@@ -125,15 +165,30 @@ impl ZarrLoader {
         }
     }
 
-    /// Cap on chunk reads in flight per `load` call. Clamped to at least 1.
+    /// The I/O budget: chunk reads in flight at once, counted across every
+    /// concurrent `load` call on this loader and its clones. Clamped to at
+    /// least 1. Starts a fresh budget, so configure before the loader is
+    /// shared.
     pub fn with_concurrency(mut self, concurrency: usize) -> Self {
+        debug_assert!(
+            Arc::strong_count(&self.permits) == 1,
+            "configure the I/O budget before sharing the loader"
+        );
         self.concurrency = concurrency.max(1);
+        self.permits = Arc::new(Semaphore::new(self.concurrency));
         self
     }
 
-    /// The configured cap on in-flight chunk reads per `load` call.
+    /// The configured I/O budget: the maximum number of chunk reads in
+    /// flight at once across all concurrent calls.
     pub fn concurrency(&self) -> usize {
         self.concurrency
+    }
+
+    /// The most chunk reads this loader has had in flight at once, over its
+    /// lifetime. For tests and benchmarks.
+    pub fn peak_in_flight(&self) -> usize {
+        self.io.peak_in_flight.load(Ordering::SeqCst)
     }
 
     /// Number of opened arrays kept across calls. Clamped to at least 1.
@@ -394,10 +449,12 @@ impl AsyncRasterLoader for ZarrLoader {
             }
         }
 
-        // Fetch each distinct chunk once, `concurrency` at a time. Results
-        // complete out of order, so carry the chunk index and slot them
-        // back afterwards. `try_collect` stops at the first error and drops
-        // whatever is still in flight.
+        // Fetch each distinct chunk once, each read holding one permit of
+        // the shared I/O budget; `buffer_unordered` merely keeps one call
+        // from queueing more futures than the budget could ever run.
+        // Results complete out of order, so carry the chunk index and slot
+        // them back afterwards. `try_collect` stops at the first error and
+        // drops whatever is still in flight, releasing its permits.
         // (A plain loop rather than `iter().map(|..| async move {..})`: the
         // closure form trips rustc's "implementation of `FnOnce` is not
         // general enough" check under async_trait's `Send` bound.)
@@ -406,10 +463,18 @@ impl AsyncRasterLoader for ZarrLoader {
             let array: &Array<dyn AsyncReadableListableStorageTraits> = &arrays[*array_idx];
             let (store, array_path) = &plan.arrays[*array_idx];
             let store_uri = plan.stores[*store].as_str();
+            let permits = Arc::clone(&self.permits);
+            let io = Arc::clone(&self.io);
             fetches.push(async move {
-                retrieve_chunk(array, store_uri, array_path, chunk_indices)
-                    .await
-                    .map(|buffer| (chunk_idx, buffer))
+                let _permit = permits.acquire_owned().await.map_err(|_| {
+                    ArrowError::ExternalError(Box::new(sedona_internal_datafusion_err!(
+                        "Zarr loader: I/O budget closed"
+                    )))
+                })?;
+                io.enter();
+                let result = retrieve_chunk(array, store_uri, array_path, chunk_indices).await;
+                io.exit();
+                result.map(|buffer| (chunk_idx, buffer))
             });
         }
         let fetched: Vec<(usize, Buffer)> = stream::iter(fetches)
@@ -681,6 +746,38 @@ mod tests {
         assert_eq!(ZarrLoader::new().concurrency(), DEFAULT_LOAD_CONCURRENCY);
         assert_eq!(ZarrLoader::new().with_concurrency(0).concurrency(), 1);
         assert_eq!(ZarrLoader::new().with_concurrency(3).concurrency(), 3);
+        assert_eq!(
+            ZarrLoader::new()
+                .with_concurrency(3)
+                .permits
+                .available_permits(),
+            3
+        );
+    }
+
+    /// Eight concurrent calls on clones of one loader with a budget of two
+    /// never have more than two chunk reads in flight between them.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_loads_share_one_io_budget() {
+        let tmp = TempDir::new().unwrap();
+        let store_uri = build_two_array_zarr(&tmp);
+        let uris = two_array_uris(&store_uri);
+        let loader = ZarrLoader::new().with_concurrency(2);
+
+        let mut tasks = Vec::new();
+        for _ in 0..8 {
+            let loader = loader.clone();
+            let uris = uris.clone();
+            tasks.push(tokio::spawn(async move {
+                load_two_arrays(&loader, &uris).await
+            }));
+        }
+        for task in tasks {
+            task.await.unwrap();
+        }
+
+        let peak = loader.peak_in_flight();
+        assert!((1..=2).contains(&peak), "peak in flight {peak}");
     }
 
     #[tokio::test]

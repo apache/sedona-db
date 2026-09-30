@@ -99,7 +99,7 @@ def test_zarr_url_as_table(tmp_path):
 
     url = zarr_path.as_uri()
 
-    # Ground truth: the working explicit-format read of the same `.zarr` group.
+    # Ground truth: the explicit-format read of the same `.zarr` group.
     expected = con.read(url, format="zarr").to_arrow_table()
 
     def assert_matches_expected(table):
@@ -111,6 +111,10 @@ def test_zarr_url_as_table(tmp_path):
 
     # The `file://` URL form is the primary SQL-text feature under test.
     assert_matches_expected(con.sql(f"SELECT * FROM '{url}'").to_arrow_table())
+
+    # The generic Python read uses the same extension lookup and single-object
+    # scan as SQL.
+    assert_matches_expected(con.read(url).to_arrow_table())
 
     # A bare filesystem path (no `file://` scheme) resolves the same way.
     assert_matches_expected(con.sql(f"SELECT * FROM '{zarr_path}'").to_arrow_table())
@@ -289,6 +293,16 @@ def test_zarr_loader_supports_format():
     assert "ZarrRasterLoader" in repr(loader)
 
 
+def test_zarr_loader_io_concurrency_is_configurable():
+    assert sedonadb_zarr.ZarrRasterLoader().io_concurrency() > 0
+    assert sedonadb_zarr.ZarrRasterLoader(io_concurrency=3).io_concurrency() == 3
+
+    sd = sedonadb.connect()
+    ext = sedonadb_zarr.ZarrExtension(io_concurrency=5)
+    sd.register(ext)
+    assert ext.loader.io_concurrency() == 5
+
+
 def test_zarr_loader_handle_stats_start_at_zero():
     loader = sedonadb_zarr.ZarrRasterLoader()
     assert loader.handle_stats() == {
@@ -306,6 +320,9 @@ def test_zarr_extension_reports_handle_reuse_across_calls(zarr_group):
     sd.register(ext)
     assert isinstance(ext.loader, sedonadb_zarr.ZarrRasterLoader)
 
+    # This test counts loader calls, so the host's chunk cache must not
+    # serve the second query: with it on, the loader is never called again.
+    sd.sql("SET sedona.raster.cache_max_bytes = 0").execute()
     t = sd.read(f"file://{zarr_group}", format="zarr")
 
     def load_all():

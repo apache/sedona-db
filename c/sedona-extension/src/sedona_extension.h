@@ -18,6 +18,7 @@
 #ifndef SEDONA_EXTENSION_H
 #define SEDONA_EXTENSION_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -111,6 +112,66 @@ struct ArrowArrayStream {
 
 #endif  // ARROW_C_STREAM_INTERFACE
 #endif  // ARROW_FLAG_DICTIONARY_ORDERED
+
+#ifndef ARROW_C_DEVICE_DATA_INTERFACE
+#define ARROW_C_DEVICE_DATA_INTERFACE
+
+typedef int32_t ArrowDeviceType;
+#define ARROW_DEVICE_CPU 1
+#define ARROW_DEVICE_CUDA 2
+#define ARROW_DEVICE_CUDA_HOST 3
+#define ARROW_DEVICE_OPENCL 4
+#define ARROW_DEVICE_VULKAN 7
+#define ARROW_DEVICE_METAL 8
+#define ARROW_DEVICE_VPI 9
+#define ARROW_DEVICE_ROCM 10
+#define ARROW_DEVICE_ROCM_HOST 11
+#define ARROW_DEVICE_EXT_DEV 12
+#define ARROW_DEVICE_CUDA_MANAGED 13
+#define ARROW_DEVICE_ONEAPI 14
+#define ARROW_DEVICE_WEBGPU 15
+#define ARROW_DEVICE_HEXAGON 16
+
+struct ArrowDeviceArray {
+  struct ArrowArray array;
+  int64_t device_id;
+  ArrowDeviceType device_type;
+  void* sync_event;
+  int64_t reserved[3];
+};
+
+#endif  // ARROW_C_DEVICE_DATA_INTERFACE
+
+#ifndef ARROW_C_ASYNC_STREAM_INTERFACE
+#define ARROW_C_ASYNC_STREAM_INTERFACE
+
+/// Experimental Arrow C async-device stream interface.
+struct ArrowAsyncTask {
+  int (*extract_data)(struct ArrowAsyncTask* self, struct ArrowDeviceArray* out);
+  void* private_data;
+};
+
+struct ArrowAsyncProducer {
+  ArrowDeviceType device_type;
+  void (*request)(struct ArrowAsyncProducer* self, int64_t n);
+  void (*cancel)(struct ArrowAsyncProducer* self);
+  const char* additional_metadata;
+  void* private_data;
+};
+
+struct ArrowAsyncDeviceStreamHandler {
+  int (*on_schema)(struct ArrowAsyncDeviceStreamHandler* self,
+                   struct ArrowSchema* stream_schema);
+  int (*on_next_task)(struct ArrowAsyncDeviceStreamHandler* self,
+                      struct ArrowAsyncTask* task, const char* metadata);
+  void (*on_error)(struct ArrowAsyncDeviceStreamHandler* self, int code,
+                   const char* message, const char* metadata);
+  void (*release)(struct ArrowAsyncDeviceStreamHandler* self);
+  struct ArrowAsyncProducer* producer;
+  void* private_data;
+};
+
+#endif  // ARROW_C_ASYNC_STREAM_INTERFACE
 
 /// \brief Simple ABI-stable scalar function implementation
 ///
@@ -340,9 +401,9 @@ struct SedonaCExecutionPlan {
 
   /// \brief Resolve an asynchronous stream for one partition from this plan
   ///
-  /// This is not currently implemented and must be NULL. In the future,
-  /// out must point to a caller-supplied struct ArrowAsyncDeviceStreamHandler
-  /// as specified in the Arrow C Device Async Stream specification.
+  /// `out` must point to a caller-supplied ArrowAsyncDeviceStreamHandler.
+  /// Implementations may leave this callback NULL when async execution is not
+  /// supported; callers must check it before use.
   int (*execute_async)(const struct SedonaCExecutionPlan* self,
                        struct SedonaCExecutionPlanArgs* args, void* out,
                        struct SedonaCError* err);
@@ -431,6 +492,119 @@ struct SedonaCTableProvider {
   ///
   /// Implementations of this callback must set self->release to NULL.
   void (*release)(struct SedonaCTableProvider* self);
+
+  /// \brief Opaque implementation-specific data
+  void* private_data;
+};
+
+/// \brief ABI-stable schema provider interface
+///
+struct SedonaCSchemaProvider {
+  /// \brief Get the data type of a property
+  int (*get_property_schema)(const struct SedonaCSchemaProvider* self,
+                             const char* property, struct ArrowSchema* out,
+                             struct SedonaCError* err);
+
+  /// \brief Extract a JSON-encoded property from this schema
+  ///
+  /// Supported properties are `owner_name`, `table_names`, and `table_exist`.
+  /// The `table_exist` property accepts `{ "name": "..." }` in args.
+  int (*get_property)(const struct SedonaCSchemaProvider* self, const char* property,
+                      const char* args, struct ArrowArray* out, struct SedonaCError* err);
+
+  /// \brief Look up a table by name
+  int (*table)(const struct SedonaCSchemaProvider* self, const char* name,
+               struct SedonaCTableProvider* out, struct SedonaCError* err);
+
+  /// \brief Create a table from `plan`, taking ownership of the input plan
+  ///
+  /// The returned execution plan performs the create operation when executed.
+  int (*create_table)(const struct SedonaCSchemaProvider* self, const char* name,
+                      struct SedonaCExecutionPlan* plan, struct SedonaCExecutionPlan* out,
+                      struct SedonaCError* err);
+
+  /// \brief Deregister a table by name
+  int (*deregister_table)(const struct SedonaCSchemaProvider* self, const char* name,
+                          struct SedonaCTableProvider* out, struct SedonaCError* err);
+
+  /// \brief Reserved for future use. Must be NULL.
+  void* reserved;
+
+  /// \brief Release this instance
+  ///
+  /// Implementations of this callback must set self->release to NULL.
+  void (*release)(struct SedonaCSchemaProvider* self);
+
+  /// \brief Opaque implementation-specific data
+  void* private_data;
+};
+
+/// \brief ABI-stable catalog provider interface
+struct SedonaCCatalogProvider {
+  /// \brief Get the data type of a property
+  int (*get_property_schema)(const struct SedonaCCatalogProvider* self,
+                             const char* property, struct ArrowSchema* out,
+                             struct SedonaCError* err);
+
+  /// \brief Extract a JSON-encoded property from this catalog
+  ///
+  /// The supported property is `schema_names`.
+  int (*get_property)(const struct SedonaCCatalogProvider* self, const char* property,
+                      const char* args, struct ArrowArray* out, struct SedonaCError* err);
+
+  /// \brief Look up a schema by name
+  int (*schema)(const struct SedonaCCatalogProvider* self, const char* name,
+                struct SedonaCSchemaProvider* out, struct SedonaCError* err);
+
+  /// \brief Create a schema and return it
+  int (*create_schema)(const struct SedonaCCatalogProvider* self, const char* name,
+                       struct SedonaCSchemaProvider* out, struct SedonaCError* err);
+
+  /// \brief Deregister a schema by name
+  int (*deregister_schema)(const struct SedonaCCatalogProvider* self, const char* name,
+                           bool cascade, struct SedonaCSchemaProvider* out,
+                           struct SedonaCError* err);
+
+  /// \brief Reserved for future use. Must be NULL.
+  void* reserved;
+
+  /// \brief Release this instance
+  ///
+  /// Implementations of this callback must set self->release to NULL.
+  void (*release)(struct SedonaCCatalogProvider* self);
+
+  /// \brief Opaque implementation-specific data
+  void* private_data;
+};
+
+/// \brief ABI-stable catalog provider list interface
+struct SedonaCCatalogProviderList {
+  /// \brief Get the data type of a property
+  int (*get_property_schema)(const struct SedonaCCatalogProviderList* self,
+                             const char* property, struct ArrowSchema* out,
+                             struct SedonaCError* err);
+
+  /// \brief Extract a JSON-encoded property from this catalog list
+  ///
+  /// The supported property is `catalog_names`.
+  int (*get_property)(const struct SedonaCCatalogProviderList* self, const char* property,
+                      const char* args, struct ArrowArray* out, struct SedonaCError* err);
+
+  /// \brief Look up a catalog by name
+  int (*catalog)(const struct SedonaCCatalogProviderList* self, const char* name,
+                 struct SedonaCCatalogProvider* out, struct SedonaCError* err);
+
+  /// \brief Create a catalog and return it
+  int (*create_catalog)(const struct SedonaCCatalogProviderList* self, const char* name,
+                        struct SedonaCCatalogProvider* out, struct SedonaCError* err);
+
+  /// \brief Reserved for future use. Must be NULL.
+  void* reserved;
+
+  /// \brief Release this instance
+  ///
+  /// Implementations of this callback must set self->release to NULL.
+  void (*release)(struct SedonaCCatalogProviderList* self);
 
   /// \brief Opaque implementation-specific data
   void* private_data;

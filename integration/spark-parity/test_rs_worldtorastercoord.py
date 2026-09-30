@@ -18,14 +18,11 @@
 
 The combined form returns the pixel coordinate as a POINT geometry;
 results travel through the harness's geometry path (each engine's WKB
-rendered as WKT by geoarrow) so the shared SQL stays RS-only. Every
-case is a cataloged divergence: SedonaDB treats pixel coordinates as
-0-based where Sedona Spark (following PostGIS, and SedonaDB's own
-RS_PixelAs* functions) is 1-based (apache/sedona-db#1235) — and on a
-fractional negative index the engines also disagree on rounding, so
-outside the grid the answers are not even a uniform pixel apart. Both
-engines also accept a point geometry in place of the (x, y) pair, and
-that form carries the same 0- vs 1-based divergence.
+rendered as WKT by geoarrow) so the shared SQL stays RS-only. Both
+engines answer 1-based pixel coordinates, as PostGIS and the
+RS_PixelAs* functions do (apache/sedona-db#1235), in the numeric and
+point-geometry forms alike. Outside the grid, on a fractional negative
+index, the engines still disagree on rounding.
 """
 
 import pytest
@@ -49,11 +46,6 @@ def _engines(name, tmp_path):
         pytest.param(105.0, 493.0, id="interior-fractional"),
     ],
 )
-@pytest.mark.xfail(
-    reason="SedonaDB maps pixel coordinates 0-based (the origin is "
-    "POINT (0 0)); Sedona Spark is 1-based (POINT (1 1)) — "
-    "apache/sedona-db#1235"
-)
 def test_rs_worldtorastercoord(x, y, tmp_path):
     """Points on and between pixel corners map to the same pixel POINT on
     both engines."""
@@ -63,11 +55,10 @@ def test_rs_worldtorastercoord(x, y, tmp_path):
 
 
 @pytest.mark.xfail(
-    reason="outside the grid the divergence is not the uniform one-pixel "
-    "offset: (90, 505) sits -5 columns and -5/3 rows from the origin, and "
-    "SedonaDB truncates the fraction toward zero (POINT (-5 -1)) where "
-    "Sedona Spark floors it before its 1-based shift (POINT (-4 -1)) — the "
-    "rows agree by coincidence while the columns differ"
+    reason="outside the grid the engines round differently: (90, 505) sits -5 "
+    "columns and -5/3 rows from the origin, and SedonaDB truncates the "
+    "fraction toward zero (POINT (-4 0)) where Sedona Spark floors it "
+    "(POINT (-4 -1)) — the columns agree, the rows differ"
 )
 def test_rs_worldtorastercoord_outside(tmp_path):
     """A point outside the grid extrapolates to the same pixel POINT on
@@ -77,12 +68,6 @@ def test_rs_worldtorastercoord_outside(tmp_path):
     compare(sql, sedona, spark)
 
 
-@pytest.mark.xfail(
-    reason="both engines now accept the (raster, point) overload, but SedonaDB "
-    "reads pixel coordinates 0-based where Sedona Spark is 1-based "
-    "(apache/sedona-db#1235), so the point form lands one pixel apart, exactly "
-    "like the numeric form"
-)
 def test_rs_worldtorastercoord_point_overload(tmp_path):
     """The point-geometry form maps the interior point (104 494) to the
     same pixel POINT on both engines."""

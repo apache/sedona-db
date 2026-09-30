@@ -186,13 +186,20 @@ pub fn object_store_for_uri(uri: &str) -> Result<Arc<dyn ObjectStore>, ArrowErro
             Ok(Arc::new(store))
         }
         "http" | "https" => {
+            use object_store::ClientOptions;
             use object_store::http::HttpBuilder;
             // open_storage_from_uri applies the path as a PrefixStore, so the
             // HttpStore must be rooted at scheme+authority only — unlike S3,
             // HttpBuilder roots at whatever URL it's given.
             let authority = format!("{}://{}", url.scheme(), url.authority());
+            // object_store refuses plain `http://` unless asked; an explicit
+            // `http://` URI is the caller asking (local servers, test
+            // fixtures, private networks).
+            let options =
+                ClientOptions::new().with_allow_http(url.scheme().eq_ignore_ascii_case("http"));
             let store = HttpBuilder::new()
                 .with_url(authority)
+                .with_client_options(options)
                 .build()
                 .map_err(|e| build_err("http", e))?;
             Ok(Arc::new(store))

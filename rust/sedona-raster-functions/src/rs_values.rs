@@ -179,7 +179,7 @@ impl RsValues {
                         }
                     }
                 } else {
-                    default_band("RS_Values", raster.num_bands())?
+                    default_band("RS_Values", "2-argument", raster.num_bands())?
                 };
 
                 // Resolve the band buffer, nodata, and affine transform once for
@@ -342,7 +342,7 @@ impl RsValues {
         let const_band = if self.with_band {
             const_band
         } else {
-            Some(default_band("RS_Values", raster.num_bands())?)
+            Some(default_band("RS_Values", "2-argument", raster.num_bands())?)
         };
 
         // Phase 2 — sample. A constant band resolves its buffer/nodata/2-D

@@ -38,11 +38,11 @@ class Read:
 
     def __call__(
         self,
-        table_paths: Union[str, Path, Iterable[str]],
-        *,
+        file_or_files: Union[str, Path, Iterable[str]],
         options: Optional[Dict[str, Any]] = None,
-        partitioning: Union[str, Iterable[str], None] = None,
         format: Union[str, "ExternalFormatSpec", None] = None,
+        *,
+        partitioning: Union[str, Iterable[str], None] = None,
         check_extension: bool = False,
     ) -> DataFrame:
         """Read one or more paths as a DataFrame
@@ -59,7 +59,7 @@ class Read:
         - Custom formats via `ExternalFormatSpec` objects registered at runtime
 
         Args:
-            table_paths: A str, Path, or iterable of paths containing URLs or
+            file_or_files: A str, Path, or iterable of paths containing URLs or
                 local paths. Globs (e.g., `path/*.parquet`) and directories are
                 supported.
             options: Optional dictionary of options to pass to the underlying
@@ -75,8 +75,10 @@ class Read:
             format: Explicit format specification. Can be a string (e.g., `"parquet"`,
                 `"fgb"`) or an `ExternalFormatSpec` object. If `None` (the default),
                 the format is guessed from the file extension.
-            check_extension: When `True`, validates that file extensions match the
-                specified format. Defaults to `False`.
+            check_extension: When `True`, checks extensions for explicitly selected
+                formats, including compression inference and external-format
+                validation. Directory listings are always filtered to matching
+                files. Defaults to `False`.
 
         Examples:
 
@@ -88,10 +90,10 @@ class Read:
             <sedonadb.dataframe.DataFrame object at ...>
 
         """
-        if isinstance(table_paths, (str, Path)):
-            table_paths = [table_paths]
+        if isinstance(file_or_files, (str, Path)):
+            file_or_files = [file_or_files]
 
-        table_paths = [str(path) for path in table_paths]
+        table_paths = [str(path) for path in file_or_files]
 
         if isinstance(partitioning, str):
             partitioning = [partitioning]
@@ -115,9 +117,7 @@ class Read:
                 ),
             )
 
-        # Special case a few format strings. It is theoretically possible to run these
-        # through a generic FileFormatFactory/ListingTable-based path, but for now we
-        # special-case some strings.
+        requested_format = format
         if format is None:
             format = self._guess_format(table_paths)
 
@@ -141,7 +141,7 @@ class Read:
                 check_extension=check_extension,
                 format=PyogrioFormatSpec(format),
             )
-        elif format == "parquet":
+        if format == "parquet":
             options = options.copy()
 
             geometry_columns = options.pop("geometry_columns", None)
@@ -150,31 +150,20 @@ class Read:
 
             validate = options.pop("validate", False)
 
-            return DataFrame(
-                self._ctx,
-                self._ctx._impl.read_parquet(
-                    table_paths,
-                    options,
-                    geometry_columns,
-                    validate,
-                    None if partitioning is None else list(partitioning),
-                ),
-            )
-        elif format == "csv":
-            options = options.copy()
-            has_header = options.pop("has_header", True)
-            delimiter = options.pop("delimiter", ",")
-            return DataFrame(
-                self._ctx,
-                self._ctx._impl.read_csv(table_paths, options, has_header, delimiter),
-            )
-        elif format == "json":
-            return DataFrame(
-                self._ctx,
-                self._ctx._impl.read_json(table_paths, options),
-            )
-        else:
-            raise ValueError(f"No format registered for extension '{format}'")
+            if geometry_columns is not None:
+                options["geometry_columns"] = geometry_columns
+            options["validate"] = validate
+
+        return DataFrame(
+            self._ctx,
+            self._ctx._impl.read(
+                table_paths,
+                options,
+                None if requested_format is None else format,
+                check_extension,
+                None if partitioning is None else list(partitioning),
+            ),
+        )
 
     def parquet(
         self,

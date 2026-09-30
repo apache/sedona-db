@@ -37,6 +37,13 @@ SEXP savvy_InternalContext_deregister_table__ffi(SEXP self__,
 SEXP savvy_InternalContext_list_functions__ffi(SEXP self__);
 SEXP savvy_InternalContext_new__ffi(SEXP c_arg__option_keys,
                                     SEXP c_arg__option_values);
+SEXP savvy_InternalContext_read__ffi(SEXP self__, SEXP c_arg__paths,
+                                     SEXP c_arg__option_keys,
+                                     SEXP c_arg__option_values,
+                                     SEXP c_arg__partitioning,
+                                     SEXP c_arg__partitioning_set,
+                                     SEXP c_arg__check_extension,
+                                     SEXP c_arg__format);
 SEXP savvy_InternalContext_read_parquet__ffi(SEXP self__, SEXP c_arg__paths,
                                              SEXP c_arg__option_keys,
                                              SEXP c_arg__option_values,

@@ -84,6 +84,25 @@ pub trait BandWriter {
 /// share an existing row's backing buffer zero-copy), then
 /// [`Self::finish_band`]. After all bands are added, [`Self::finish`] returns
 /// the band `StructArray`.
+/// Longest band data value a `BinaryView` element can carry.
+///
+/// The Arrow spec stores a view's length as a signed 32-bit integer and Arrow
+/// C++ reads it as `int32_t`, so this is `i32::MAX` even though arrow-rs holds
+/// the length in a `u32`: a longer value is buildable here but comes back as a
+/// negative length through the C data interface.
+pub const MAX_BAND_DATA_LEN: usize = i32::MAX as usize;
+
+/// Reject band data too long to address as a single `BinaryView` value.
+pub fn check_band_data_len(len: usize) -> Result<(), RasterError> {
+    if len > MAX_BAND_DATA_LEN {
+        return Err(RasterError::Invalid(format!(
+            "Band data of {len} bytes exceeds the {MAX_BAND_DATA_LEN}-byte limit for one \
+             BinaryView value"
+        )));
+    }
+    Ok(())
+}
+
 pub struct BandArrayBuilder {
     name: StringBuilder,
     dim_names_values: StringBuilder,
@@ -369,7 +388,10 @@ impl BandArrayBuilder {
                 current_count - self.data_count_at_start
             )));
         }
-        Ok(())
+        // Checked here rather than per call site because band data reaches the
+        // builder both as a zero-copy view and as bytes appended directly
+        // through `band_data_writer`.
+        check_band_data_len(self.data.get_value(self.data_count_at_start).len())
     }
 
     /// Finish building and return the flat band `StructArray` — one row per
@@ -515,6 +537,26 @@ impl BandWriter for BandArrayBuilder {
 
 #[cfg(test)]
 mod tests {
+
+    /// The Arrow spec stores a view's length as a signed 32-bit integer and
+    /// Arrow C++ reads it as int32_t, so this must stay i32::MAX: arrow-rs
+    /// holds the length in a u32 and would accept twice as much, producing a
+    /// value that reads back as a negative length through the C data interface.
+    #[test]
+    fn band_data_limit_is_the_signed_view_length() {
+        assert_eq!(MAX_BAND_DATA_LEN, 2_147_483_647);
+        assert_eq!(MAX_BAND_DATA_LEN, i32::MAX as usize);
+        assert!(MAX_BAND_DATA_LEN < u32::MAX as usize);
+    }
+
+    #[test]
+    fn check_band_data_len_rejects_past_the_signed_limit() {
+        assert!(check_band_data_len(0).is_ok());
+        assert!(check_band_data_len(MAX_BAND_DATA_LEN).is_ok());
+
+        let err = check_band_data_len(MAX_BAND_DATA_LEN + 1).unwrap_err();
+        assert!(err.to_string().contains("2147483647-byte limit"), "{err}");
+    }
     use super::*;
     use crate::array::RasterStructArray;
     use crate::builder::RasterBuilder;

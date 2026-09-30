@@ -16,10 +16,9 @@
 # under the License.
 """SedonaDB vs Sedona Spark parity for RS_PixelAsPoint.
 
-Both engines read the pixel coordinate 1-based — (1, 1) answers the
-origin corner from both, unlike RS_WorldToRasterCoord where SedonaDB is
-0-based (apache/sedona-db#1235) — so the in-grid cases anchor the exact
-WKT. Out of the grid the engines part ways: SedonaDB extrapolates along
+Both engines read the pixel coordinate 1-based, as PostGIS does — (1, 1)
+answers the origin corner from both — so the in-grid cases anchor the
+exact WKT. Out of the grid the engines part ways: SedonaDB extrapolates along
 the geotransform where Sedona Spark raises, even though Sedona Spark's
 own RS_PixelAsCentroid and RS_PixelAsPolygon extrapolate.
 

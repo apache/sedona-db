@@ -210,6 +210,87 @@ sd_ctx_read_parquet <- function(
   new_sedonadb_dataframe(ctx, df)
 }
 
+#' Read one or more files into a DataFrame
+#'
+#' Resolves the reader from `format`, or from the file extension when `format`
+#' is `NULL`. The query is executed lazily when results are requested.
+#'
+#' @param file_or_files One or more paths or URIs.
+#' @param options A named list of scalar reader or object-store options.
+#' @param format An optional file format name such as `"parquet"`, `"csv"`,
+#'   or `"json"`. By default the format is inferred from the path extension.
+#' @param partitioning Optional character vector of hive-style partition column
+#'   names. `NULL` auto-discovers partitions; `character()` disables discovery.
+#' @param check_extension Whether to check extensions for explicitly selected
+#'   formats, including compression inference. Directory listings are always
+#'   filtered to matching files. Defaults to `FALSE`.
+#' @param ctx A SedonaDB context.
+#'
+#' @returns A sedonadb_dataframe
+#' @export
+#'
+#' @examples
+#' path <- system.file("files/natural-earth_cities_geo.parquet", package = "sedonadb")
+#' sd_read(path) |> head(5) |> sd_preview()
+sd_read <- function(
+  file_or_files,
+  options = list(),
+  format = NULL,
+  partitioning = NULL,
+  check_extension = FALSE
+) {
+  sd_ctx_read(ctx(), file_or_files, options, format, partitioning, check_extension)
+}
+
+#' @rdname sd_read
+#' @export
+sd_ctx_read <- function(
+  ctx,
+  file_or_files,
+  options = list(),
+  format = NULL,
+  partitioning = NULL,
+  check_extension = FALSE
+) {
+  check_ctx(ctx)
+
+  if (
+    !is.list(options) ||
+      (length(options) > 0 && (is.null(names(options)) || any(names(options) == "")))
+  ) {
+    stop("`options` must be a named list", call. = FALSE)
+  }
+
+  if (
+    !is.logical(check_extension) ||
+      length(check_extension) != 1L ||
+      is.na(check_extension)
+  ) {
+    stop("`check_extension` must be TRUE or FALSE", call. = FALSE)
+  }
+
+  df <- ctx$read(
+    as.character(file_or_files),
+    as.character(names(options)),
+    vapply(
+      options,
+      function(value) {
+        if (is.logical(value) && length(value) == 1) {
+          tolower(as.character(value))
+        } else {
+          as.character(value)
+        }
+      },
+      character(1)
+    ),
+    if (is.null(partitioning)) character() else as.character(partitioning),
+    !is.null(partitioning),
+    check_extension,
+    format
+  )
+  new_sedonadb_dataframe(ctx, df)
+}
+
 #' Create a DataFrame from SQL
 #'
 #' The query will only be executed when requested.

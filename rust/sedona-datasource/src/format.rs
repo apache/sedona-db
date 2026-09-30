@@ -81,9 +81,28 @@ impl FileFormatFactory for ExternalFormatFactory {
         _state: &dyn Session,
         format_options: &HashMap<String, String>,
     ) -> Result<Arc<dyn FileFormat>> {
-        Ok(Arc::new(ExternalFileFormat {
-            spec: self.spec.with_options(format_options)?,
-        }))
+        // Match DataFusion's CREATE EXTERNAL TABLE convention: reader options
+        // live in the `format` namespace, while other dotted namespaces belong
+        // to table extensions such as object stores. Keep accepting unprefixed
+        // keys for callers that construct factories directly.
+        let spec_options: HashMap<String, String> = format_options
+            .iter()
+            .filter_map(|(key, value)| {
+                if let Some(key) = key.strip_prefix("format.") {
+                    Some((key.to_string(), value.clone()))
+                } else if !key.contains('.') {
+                    Some((key.clone(), value.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let spec = if spec_options.is_empty() {
+            self.spec.clone()
+        } else {
+            self.spec.with_options(&spec_options)?
+        };
+        Ok(Arc::new(ExternalFileFormat { spec }))
     }
 
     fn default(&self) -> Arc<dyn FileFormat> {
@@ -100,13 +119,18 @@ impl GetExt for ExternalFormatFactory {
 }
 
 #[derive(Debug)]
-pub(crate) struct ExternalFileFormat {
+pub struct ExternalFileFormat {
     spec: Arc<dyn ExternalFormatSpec>,
 }
 
 impl ExternalFileFormat {
     pub fn new(spec: Arc<dyn ExternalFormatSpec>) -> Self {
         Self { spec }
+    }
+
+    /// Return the fully configured external format specification.
+    pub fn spec(&self) -> &Arc<dyn ExternalFormatSpec> {
+        &self.spec
     }
 }
 

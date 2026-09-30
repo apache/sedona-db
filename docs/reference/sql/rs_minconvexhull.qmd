@@ -1,0 +1,56 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: RS_MinConvexHull
+description: >
+  Returns the footprint of the raster's data pixels: the polygon over the
+  smallest pixel-aligned rectangle of the grid that holds every pixel not equal
+  to its band's nodata value. Returns null if no pixel holds data.
+kernels:
+  - returns: geometry
+    args: [raster]
+  - returns: geometry
+    args:
+    - raster
+    - name: band
+      type: integer
+      description: >
+        Band index (1-based). When omitted, a pixel holds data if any band
+        holds data there.
+---
+
+## Description
+
+`RS_MinConvexHull` is `RS_ConvexHull` with the nodata margin trimmed off. The
+rectangle is aligned to the raster's grid, so on a rotated or skewed raster the
+result follows the grid axes, like `RS_ConvexHull`. A band without a nodata
+value holds data everywhere, so it spans the whole grid. Only 2-D rasters are
+supported.
+
+## Examples
+
+```sql
+SELECT RS_MinConvexHull(RS_Example());
+```
+
+Every pixel of `RS_Example()`'s first band but the upper-left one holds 1, so
+declaring 1 as its nodata value trims the footprint to that single cell:
+
+```sql
+SELECT RS_MinConvexHull(RS_SetBandNoDataValue(RS_Example(), 1, 1), 1);
+```

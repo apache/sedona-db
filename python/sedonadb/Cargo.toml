@@ -48,6 +48,7 @@ datafusion-ffi = { workspace = true }
 futures = { workspace = true }
 pyo3 = { workspace = true }
 sedona = { workspace = true }
+sedona-common = { workspace = true }
 sedona-adbc = { workspace = true }
 sedona-datasource = { workspace = true }
 sedona-extension = { workspace = true }
