@@ -94,7 +94,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::rs_worldcoordinate::rs_rastertoworldcoordy_udf,
     );
 
-    register_aggregate_udfs!(function_set,);
+    register_aggregate_udfs!(function_set, crate::rs_stack_aggr::rs_stack_aggr_udf,);
 
     function_set
 }
