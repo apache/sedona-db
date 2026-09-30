@@ -32,7 +32,7 @@ BASE = "RS_Example()"
 
 def test_replace_keeps_the_nodata_pixels():
     # Replacing keeps the one nodata pixel as nodata (2047 valid); merely
-    # re-declaring the nodata value turns it into ordinary data (2048 valid).
+    # setting the nodata value turns it into ordinary data (2048 valid).
     SedonaDB().assert_query_result(
         f"""SELECT
             RS_SummaryStats(RS_ReplaceBandNoDataValue({BASE}, 1, 200), 'count', 1),
