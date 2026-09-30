@@ -522,105 +522,126 @@ mod tests {
     use super::*;
     use arrow_array::{ArrayRef, BinaryViewArray, ListArray, NullArray, StructArray};
     use datafusion_common::ScalarValue;
-    use datafusion_expr::ScalarUDF;
+    use datafusion_expr::{ScalarUDF, lit};
     use sedona_schema::crs::{deserialize_crs, lnglat};
     use sedona_schema::datatypes::{
         Edges, WKB_GEOGRAPHY, WKB_GEOMETRY, WKB_LARGE_GEOGRAPHY, WKB_VIEW_GEOGRAPHY,
     };
     use sedona_schema::raster::{band_indices, raster_indices};
-    use sedona_testing::create::{create_scalar_item_crs, create_scalar_value};
+    use sedona_testing::create::create_scalar_item_crs;
     use sedona_testing::raster_spec::{
         RasterSpec, assert_raster_scalar_equals, assert_rasters_equal,
     };
     use sedona_testing::testers::ScalarUdfTester;
-
-    fn i64_t() -> SedonaType {
-        SedonaType::Arrow(DataType::Int64)
-    }
-    fn f64_t() -> SedonaType {
-        SedonaType::Arrow(DataType::Float64)
-    }
-    fn utf8_t() -> SedonaType {
-        SedonaType::Arrow(DataType::Utf8)
-    }
-    fn int(v: i64) -> ColumnarValue {
-        ColumnarValue::Scalar(ScalarValue::Int64(Some(v)))
-    }
-    fn num(v: f64) -> ColumnarValue {
-        ColumnarValue::Scalar(ScalarValue::Float64(Some(v)))
-    }
-    fn text(v: &str) -> ColumnarValue {
-        ColumnarValue::Scalar(ScalarValue::Utf8(Some(v.to_string())))
-    }
-    fn tester(types: Vec<SedonaType>) -> ScalarUdfTester {
-        ScalarUdfTester::new(rs_make_empty_raster_udf().into(), types)
-    }
-    fn invoke_scalar(tester: &ScalarUdfTester, args: Vec<ColumnarValue>) -> ScalarValue {
-        match tester.invoke(args).unwrap() {
-            ColumnarValue::Scalar(scalar) => scalar,
-            ColumnarValue::Array(_) => panic!("expected a scalar result"),
-        }
-    }
-    fn invoke_err(tester: &ScalarUdfTester, args: Vec<ColumnarValue>) -> String {
-        tester.invoke(args).unwrap_err().to_string()
-    }
-
-    fn cell_size_types(typed: bool) -> Vec<SedonaType> {
-        let mut types = vec![i64_t()];
-        if typed {
-            types.push(utf8_t());
-        }
-        types.extend([i64_t(), i64_t(), f64_t(), f64_t(), f64_t()]);
-        types
-    }
-    fn affine_types(typed: bool) -> Vec<SedonaType> {
-        let mut types = vec![i64_t()];
-        if typed {
-            types.push(utf8_t());
-        }
-        types.extend([i64_t(), i64_t()]);
-        types.extend((0..6).map(|_| f64_t()));
-        types.push(i64_t());
-        types
-    }
-    fn extent_types(typed: bool, extent: SedonaType) -> Vec<SedonaType> {
-        let mut types = vec![i64_t()];
-        if typed {
-            types.push(utf8_t());
-        }
-        types.extend([i64_t(), i64_t(), extent]);
-        types
-    }
 
     #[test]
     fn udf_metadata() {
         let udf: ScalarUDF = rs_make_empty_raster_udf().into();
         assert_eq!(udf.name(), "rs_makeemptyraster");
 
-        for types in [
-            cell_size_types(false),
-            cell_size_types(true),
-            affine_types(false),
-            affine_types(true),
-            extent_types(false, WKB_GEOMETRY),
-            extent_types(true, WKB_GEOMETRY),
-        ] {
-            let arity = types.len();
+        // Every form, named by its arguments so a failure says which one.
+        let forms = [
+            (
+                "numBands, width, height, upperLeftX, upperLeftY, cellSize",
+                vec![
+                    SedonaType::Arrow(DataType::Int64),
+                    SedonaType::Arrow(DataType::Int64),
+                    SedonaType::Arrow(DataType::Int64),
+                    SedonaType::Arrow(DataType::Float64),
+                    SedonaType::Arrow(DataType::Float64),
+                    SedonaType::Arrow(DataType::Float64),
+                ],
+            ),
+            (
+                "numBands, bandType, width, height, upperLeftX, upperLeftY, cellSize",
+                vec![
+                    SedonaType::Arrow(DataType::Int64),
+                    SedonaType::Arrow(DataType::Utf8),
+                    SedonaType::Arrow(DataType::Int64),
+                    SedonaType::Arrow(DataType::Int64),
+                    SedonaType::Arrow(DataType::Float64),
+                    SedonaType::Arrow(DataType::Float64),
+                    SedonaType::Arrow(DataType::Float64),
+                ],
+            ),
+            (
+                "numBands, width, height, upperLeftX, upperLeftY, scaleX, scaleY, skewX, skewY, srid",
+                vec![
+                    SedonaType::Arrow(DataType::Int64),
+                    SedonaType::Arrow(DataType::Int64),
+                    SedonaType::Arrow(DataType::Int64),
+                    SedonaType::Arrow(DataType::Float64),
+                    SedonaType::Arrow(DataType::Float64),
+                    SedonaType::Arrow(DataType::Float64),
+                    SedonaType::Arrow(DataType::Float64),
+                    SedonaType::Arrow(DataType::Float64),
+                    SedonaType::Arrow(DataType::Float64),
+                    SedonaType::Arrow(DataType::Int64),
+                ],
+            ),
+            (
+                "numBands, bandType, width, height, upperLeftX, upperLeftY, scaleX, scaleY, skewX, skewY, srid",
+                vec![
+                    SedonaType::Arrow(DataType::Int64),
+                    SedonaType::Arrow(DataType::Utf8),
+                    SedonaType::Arrow(DataType::Int64),
+                    SedonaType::Arrow(DataType::Int64),
+                    SedonaType::Arrow(DataType::Float64),
+                    SedonaType::Arrow(DataType::Float64),
+                    SedonaType::Arrow(DataType::Float64),
+                    SedonaType::Arrow(DataType::Float64),
+                    SedonaType::Arrow(DataType::Float64),
+                    SedonaType::Arrow(DataType::Float64),
+                    SedonaType::Arrow(DataType::Int64),
+                ],
+            ),
+            (
+                "numBands, width, height, extent",
+                vec![
+                    SedonaType::Arrow(DataType::Int64),
+                    SedonaType::Arrow(DataType::Int64),
+                    SedonaType::Arrow(DataType::Int64),
+                    WKB_GEOMETRY,
+                ],
+            ),
+            (
+                "numBands, bandType, width, height, extent",
+                vec![
+                    SedonaType::Arrow(DataType::Int64),
+                    SedonaType::Arrow(DataType::Utf8),
+                    SedonaType::Arrow(DataType::Int64),
+                    SedonaType::Arrow(DataType::Int64),
+                    WKB_GEOMETRY,
+                ],
+            ),
+        ];
+        for (arguments, arg_types) in forms {
+            let tester = ScalarUdfTester::new(udf.clone(), arg_types);
             assert_eq!(
-                tester(types).return_type().unwrap(),
+                tester.return_type().unwrap(),
                 SedonaType::Raster,
-                "arity {arity}"
+                "RS_MakeEmptyRaster({arguments})"
             );
         }
     }
 
     #[test]
     fn cell_size_form_defaults_to_float64_bands_without_crs() {
-        let tester = tester(cell_size_types(false));
-        let result = invoke_scalar(
-            &tester,
-            vec![int(2), int(4), int(3), num(10.0), num(20.0), num(2.5)],
+        // RS_MakeEmptyRaster(numBands, width, height, upperLeftX, upperLeftY, cellSize)
+        let tester = ScalarUdfTester::new(
+            rs_make_empty_raster_udf().into(),
+            vec![
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+            ],
         );
+        let result = tester
+            .invoke_scalars(vec![lit(2), lit(4), lit(3), lit(10.0), lit(20.0), lit(2.5)])
+            .unwrap();
 
         let zeros = vec![0f64; 12];
         let expected = RasterSpec::d2(4, 3)
@@ -633,20 +654,32 @@ mod tests {
 
     #[test]
     fn cell_size_form_with_band_type() {
-        let tester = tester(cell_size_types(true));
-        // Coordinates may be integers: the matcher is numeric, not float.
-        let result = invoke_scalar(
-            &tester,
+        // RS_MakeEmptyRaster(numBands, bandType, width, height, upperLeftX,
+        // upperLeftY, cellSize). The coordinates are integers here: the matcher
+        // is numeric, not float.
+        let tester = ScalarUdfTester::new(
+            rs_make_empty_raster_udf().into(),
             vec![
-                int(1),
-                text("B"),
-                int(4),
-                int(3),
-                num(0.0),
-                num(0.0),
-                num(1.0),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Utf8),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
             ],
         );
+        let result = tester
+            .invoke_scalars(vec![
+                lit(1),
+                lit("B"),
+                lit(4),
+                lit(3),
+                lit(0),
+                lit(0),
+                lit(1),
+            ])
+            .unwrap();
 
         let expected = RasterSpec::d2(4, 3)
             .transform([0.0, 1.0, 0.0, 0.0, 0.0, -1.0])
@@ -657,23 +690,39 @@ mod tests {
 
     #[test]
     fn affine_form_sets_skew_and_srid() {
-        let tester = tester(affine_types(true));
-        let result = invoke_scalar(
-            &tester,
+        // RS_MakeEmptyRaster(numBands, bandType, width, height, upperLeftX,
+        // upperLeftY, scaleX, scaleY, skewX, skewY, srid)
+        let tester = ScalarUdfTester::new(
+            rs_make_empty_raster_udf().into(),
             vec![
-                int(1),
-                text("I"),
-                int(5),
-                int(4),
-                num(100.0),
-                num(200.0),
-                num(2.0),
-                num(-3.0),
-                num(0.5),
-                num(0.25),
-                int(3857),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Utf8),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Int64),
             ],
         );
+        let result = tester
+            .invoke_scalars(vec![
+                lit(1),
+                lit("I"),
+                lit(5),
+                lit(4),
+                lit(100.0),
+                lit(200.0),
+                lit(2.0),
+                lit(-3.0),
+                lit(0.5),
+                lit(0.25),
+                lit(3857),
+            ])
+            .unwrap();
 
         let expected = RasterSpec::d2(5, 4)
             .transform([100.0, 2.0, 0.5, 200.0, 0.25, -3.0])
@@ -684,41 +733,66 @@ mod tests {
 
     #[test]
     fn affine_form_srid_mapping() {
-        let tester = tester(affine_types(false));
-        let args = |srid: i64| {
+        // RS_MakeEmptyRaster(numBands, width, height, upperLeftX, upperLeftY,
+        // scaleX, scaleY, skewX, skewY, srid)
+        let tester = ScalarUdfTester::new(
+            rs_make_empty_raster_udf().into(),
             vec![
-                int(1),
-                int(2),
-                int(2),
-                num(0.0),
-                num(0.0),
-                num(1.0),
-                num(-1.0),
-                num(0.0),
-                num(0.0),
-                int(srid),
-            ]
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Int64),
+            ],
+        );
+        let with_srid = |srid: i64| {
+            tester
+                .invoke_scalars(vec![
+                    lit(1),
+                    lit(2),
+                    lit(2),
+                    lit(0.0),
+                    lit(0.0),
+                    lit(1.0),
+                    lit(-1.0),
+                    lit(0.0),
+                    lit(0.0),
+                    lit(srid),
+                ])
+                .unwrap()
         };
         let base = RasterSpec::d2(2, 2)
             .transform([0.0, 1.0, 0.0, 0.0, 0.0, -1.0])
             .band_values(&[0f64; 4]);
 
         // SRID 0 is "no CRS", 4326 is the lnglat CRS, anything else EPSG:<srid>
-        assert_raster_scalar_equals(&invoke_scalar(&tester, args(0)), &base.clone().crs(None));
+        assert_raster_scalar_equals(&with_srid(0), &base.clone().crs(None));
         assert_raster_scalar_equals(
-            &invoke_scalar(&tester, args(4326)),
+            &with_srid(4326),
             &base.clone().crs(Some(&lnglat().unwrap().to_crs_string())),
         );
-        assert_raster_scalar_equals(
-            &invoke_scalar(&tester, args(32610)),
-            &base.crs(Some("EPSG:32610")),
-        );
+        assert_raster_scalar_equals(&with_srid(32610), &base.crs(Some("EPSG:32610")));
     }
 
     #[test]
     fn extent_form_takes_envelope_and_crs_from_geometry() {
+        // RS_MakeEmptyRaster(numBands, bandType, width, height, extent)
         let geom_type = SedonaType::Wkb(Edges::Planar, deserialize_crs("EPSG:3857").unwrap());
-        let tester = tester(extent_types(true, geom_type.clone()));
+        let tester = ScalarUdfTester::new(
+            rs_make_empty_raster_udf().into(),
+            vec![
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Utf8),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                geom_type,
+            ],
+        );
 
         // A 5 x 4 grid over [0, 10] x [0, 20]: 2-wide, 5-tall north-up pixels
         // anchored at the envelope's top-left corner.
@@ -734,32 +808,33 @@ mod tests {
             "POLYGON ((0 0, 10 0, 0 20, 0 0))",
             "MULTIPOINT ((0 0), (10 20))",
         ] {
-            let result = invoke_scalar(
-                &tester,
-                vec![
-                    int(1),
-                    text("uint8"),
-                    int(5),
-                    int(4),
-                    create_scalar_value(Some(wkt), &geom_type),
-                ],
-            );
+            let result = tester
+                .invoke_scalars(vec![lit(1), lit("uint8"), lit(5), lit(4), lit(wkt)])
+                .unwrap();
             assert_raster_scalar_equals(&result, &expected);
         }
     }
 
     #[test]
     fn extent_form_without_geometry_crs_has_no_crs() {
-        let tester = tester(extent_types(false, WKB_GEOMETRY));
-        let result = invoke_scalar(
-            &tester,
+        // RS_MakeEmptyRaster(numBands, width, height, extent)
+        let tester = ScalarUdfTester::new(
+            rs_make_empty_raster_udf().into(),
             vec![
-                int(1),
-                int(2),
-                int(2),
-                create_scalar_value(Some("POLYGON ((1 1, 3 1, 3 5, 1 5, 1 1))"), &WKB_GEOMETRY),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                WKB_GEOMETRY,
             ],
         );
+        let result = tester
+            .invoke_scalars(vec![
+                lit(1),
+                lit(2),
+                lit(2),
+                lit("POLYGON ((1 1, 3 1, 3 5, 1 5, 1 1))"),
+            ])
+            .unwrap();
 
         let expected = RasterSpec::d2(2, 2)
             .bbox(1.0, 1.0, 3.0, 5.0)
@@ -771,14 +846,23 @@ mod tests {
     #[test]
     fn extent_form_accepts_item_crs_geometry() {
         // e.g. the output of RS_Envelope, whose CRS rides along per item
-        let item_crs_type = SedonaType::new_item_crs(&WKB_GEOMETRY).unwrap();
-        let tester = tester(extent_types(false, item_crs_type));
-        let extent = ColumnarValue::Scalar(create_scalar_item_crs(
+        let tester = ScalarUdfTester::new(
+            rs_make_empty_raster_udf().into(),
+            vec![
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::new_item_crs(&WKB_GEOMETRY).unwrap(),
+            ],
+        );
+        let extent = create_scalar_item_crs(
             Some("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))"),
             Some("EPSG:32610"),
             &WKB_GEOMETRY,
-        ));
-        let result = invoke_scalar(&tester, vec![int(1), int(4), int(4), extent]);
+        );
+        let result = tester
+            .invoke_scalars(vec![lit(1), lit(4), lit(4), lit(extent)])
+            .unwrap();
 
         let expected = RasterSpec::d2(4, 4)
             .bbox(0.0, 0.0, 4.0, 4.0)
@@ -789,11 +873,21 @@ mod tests {
 
     #[test]
     fn zero_bands_is_a_bandless_grid() {
-        let tester = tester(cell_size_types(false));
-        let result = invoke_scalar(
-            &tester,
-            vec![int(0), int(4), int(3), num(0.0), num(0.0), num(1.0)],
+        // RS_MakeEmptyRaster(numBands, width, height, upperLeftX, upperLeftY, cellSize)
+        let tester = ScalarUdfTester::new(
+            rs_make_empty_raster_udf().into(),
+            vec![
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+            ],
         );
+        let result = tester
+            .invoke_scalars(vec![lit(0), lit(4), lit(3), lit(0.0), lit(0.0), lit(1.0)])
+            .unwrap();
         let expected = RasterSpec::d2(4, 3)
             .transform([0.0, 1.0, 0.0, 0.0, 0.0, -1.0])
             .crs(None);
@@ -805,18 +899,27 @@ mod tests {
         // A bandless template holds only grid metadata, so a grid whose band
         // would be too large to address is still valid when no band exists.
         // The same grid with one band is rejected (see invalid_arguments).
-        let tester = tester(cell_size_types(false));
-        let result = invoke_scalar(
-            &tester,
+        let tester = ScalarUdfTester::new(
+            rs_make_empty_raster_udf().into(),
             vec![
-                int(0),
-                int(100_000),
-                int(100_000),
-                num(0.0),
-                num(0.0),
-                num(1.0),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
             ],
         );
+        let result = tester
+            .invoke_scalars(vec![
+                lit(0),
+                lit(100_000),
+                lit(100_000),
+                lit(0.0),
+                lit(0.0),
+                lit(1.0),
+            ])
+            .unwrap();
         let expected = RasterSpec::d2(100_000, 100_000)
             .transform([0.0, 1.0, 0.0, 0.0, 0.0, -1.0])
             .crs(None);
@@ -829,15 +932,6 @@ mod tests {
     struct StubSphericalBounder {
         x: (f64, f64),
         y: (f64, f64),
-    }
-
-    impl Default for StubSphericalBounder {
-        fn default() -> Self {
-            Self {
-                x: (100.0, 140.0),
-                y: (10.0, 30.0),
-            }
-        }
     }
 
     impl sedona_geometry::bounds::WkbBounder2D for StubSphericalBounder {
@@ -881,46 +975,43 @@ mod tests {
         }
     }
 
-    fn config_with_spherical_bounder() -> ConfigOptions {
-        config_with(StubSphericalBounder::default())
-    }
-
-    fn config_with(bounder: StubSphericalBounder) -> ConfigOptions {
-        let mut sedona_options = SedonaOptions::default();
-        sedona_options.runtime = sedona_options
-            .runtime
-            .with_bounder(Edges::Spherical, Arc::new(bounder))
-            .unwrap();
-        let mut config = ConfigOptions::default();
-        config.extensions.insert(sedona_options);
-        config
-    }
-
     #[test]
     fn geography_extent_uses_the_configured_spherical_bounder() {
         // The geography's envelope comes from the registered bounder, not from a
         // planar scan of its coordinates: the stub reports x [100, 140], y [10, 30]
         // for a geography whose planar extent is entirely different.
-        let kernel = RsMakeEmptyRaster::new(Grid::Extent, false);
-        let arg_types = extent_types(false, WKB_GEOGRAPHY);
-        let args = vec![
-            int(1),
-            int(4),
-            int(2),
-            create_scalar_value(Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"), &WKB_GEOGRAPHY),
-        ];
-
-        let result = kernel
-            .invoke(&arg_types, &args, Some(&config_with_spherical_bounder()))
-            .unwrap();
-        let ColumnarValue::Scalar(scalar) = result else {
-            panic!("expected a scalar result");
+        let mut tester = ScalarUdfTester::new(
+            rs_make_empty_raster_udf().into(),
+            vec![
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                WKB_GEOGRAPHY,
+            ],
+        );
+        let options = tester.sedona_options_mut();
+        let bounder = StubSphericalBounder {
+            x: (100.0, 140.0),
+            y: (10.0, 30.0),
         };
+        options.runtime = options
+            .runtime
+            .with_bounder(Edges::Spherical, Arc::new(bounder))
+            .unwrap();
+
+        let result = tester
+            .invoke_scalars(vec![
+                lit(1),
+                lit(4),
+                lit(2),
+                lit("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"),
+            ])
+            .unwrap();
         let expected = RasterSpec::d2(4, 2)
             .transform([100.0, 10.0, 0.0, 30.0, 0.0, -10.0])
             .crs(None)
             .band_values(&[0f64; 8]);
-        assert_raster_scalar_equals(&scalar, &expected);
+        assert_raster_scalar_equals(&result, &expected);
     }
 
     #[test]
@@ -928,31 +1019,38 @@ mod tests {
         // A geography whose CRS rides per item (e.g. ST_SetCRS with a CRS
         // column) is still a geography: its envelope comes from the spherical
         // bounder, not a planar scan.
-        let kernel = RsMakeEmptyRaster::new(Grid::Extent, false);
-        let item_crs_type = SedonaType::new_item_crs(&WKB_GEOGRAPHY).unwrap();
-        let arg_types = extent_types(false, item_crs_type);
-        let args = vec![
-            int(1),
-            int(4),
-            int(2),
-            ColumnarValue::Scalar(create_scalar_item_crs(
-                Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"),
-                Some("EPSG:32610"),
-                &WKB_GEOGRAPHY,
-            )),
-        ];
-
-        let result = kernel
-            .invoke(&arg_types, &args, Some(&config_with_spherical_bounder()))
-            .unwrap();
-        let ColumnarValue::Scalar(scalar) = result else {
-            panic!("expected a scalar result");
+        let mut tester = ScalarUdfTester::new(
+            rs_make_empty_raster_udf().into(),
+            vec![
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::new_item_crs(&WKB_GEOGRAPHY).unwrap(),
+            ],
+        );
+        let options = tester.sedona_options_mut();
+        let bounder = StubSphericalBounder {
+            x: (100.0, 140.0),
+            y: (10.0, 30.0),
         };
+        options.runtime = options
+            .runtime
+            .with_bounder(Edges::Spherical, Arc::new(bounder))
+            .unwrap();
+
+        let extent = create_scalar_item_crs(
+            Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"),
+            Some("EPSG:32610"),
+            &WKB_GEOGRAPHY,
+        );
+        let result = tester
+            .invoke_scalars(vec![lit(1), lit(4), lit(2), lit(extent)])
+            .unwrap();
         let expected = RasterSpec::d2(4, 2)
             .transform([100.0, 10.0, 0.0, 30.0, 0.0, -10.0])
             .crs(Some("EPSG:32610"))
             .band_values(&[0f64; 8]);
-        assert_raster_scalar_equals(&scalar, &expected);
+        assert_raster_scalar_equals(&result, &expected);
     }
 
     #[test]
@@ -960,19 +1058,14 @@ mod tests {
         // Binary, BinaryView and LargeBinary geographies, each with a type-level
         // and an item-level CRS: all of them take the bounder's envelope, never
         // a planar scan of the coordinates.
-        let wkt = Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))");
+        let wkt = "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))";
         for geography in [WKB_GEOGRAPHY, WKB_VIEW_GEOGRAPHY, WKB_LARGE_GEOGRAPHY] {
-            let item_crs = SedonaType::new_item_crs(&geography).unwrap();
             let cases = [
+                (geography.clone(), lit(wkt), None),
                 (
-                    geography.clone(),
-                    create_scalar_value(wkt, &geography),
-                    None,
-                ),
-                (
-                    item_crs,
-                    ColumnarValue::Scalar(create_scalar_item_crs(
-                        wkt,
+                    SedonaType::new_item_crs(&geography).unwrap(),
+                    lit(create_scalar_item_crs(
+                        Some(wkt),
                         Some("EPSG:32610"),
                         &geography,
                     )),
@@ -980,19 +1073,32 @@ mod tests {
                 ),
             ];
             for (extent_type, extent, crs) in cases {
-                let kernel = RsMakeEmptyRaster::new(Grid::Extent, false);
-                let arg_types = extent_types(false, extent_type.clone());
-                let args = vec![int(0), int(4), int(2), extent];
-                let result = kernel
-                    .invoke(&arg_types, &args, Some(&config_with_spherical_bounder()))
-                    .unwrap();
-                let ColumnarValue::Scalar(scalar) = result else {
-                    panic!("expected a scalar result");
+                let mut tester = ScalarUdfTester::new(
+                    rs_make_empty_raster_udf().into(),
+                    vec![
+                        SedonaType::Arrow(DataType::Int64),
+                        SedonaType::Arrow(DataType::Int64),
+                        SedonaType::Arrow(DataType::Int64),
+                        extent_type,
+                    ],
+                );
+                let options = tester.sedona_options_mut();
+                let bounder = StubSphericalBounder {
+                    x: (100.0, 140.0),
+                    y: (10.0, 30.0),
                 };
+                options.runtime = options
+                    .runtime
+                    .with_bounder(Edges::Spherical, Arc::new(bounder))
+                    .unwrap();
+
+                let result = tester
+                    .invoke_scalars(vec![lit(0), lit(4), lit(2), extent])
+                    .unwrap();
                 let expected = RasterSpec::d2(4, 2)
                     .transform([100.0, 10.0, 0.0, 30.0, 0.0, -10.0])
                     .crs(crs);
-                assert_raster_scalar_equals(&scalar, &expected);
+                assert_raster_scalar_equals(&result, &expected);
             }
         }
     }
@@ -1002,59 +1108,91 @@ mod tests {
         // The bounder reports a wraparound longitude interval [170, -170] for
         // an extent crossing the antimeridian: 20 degrees, unrolled to
         // [170, 190] rather than read as a negative width.
-        let kernel = RsMakeEmptyRaster::new(Grid::Extent, false);
-        let arg_types = extent_types(false, WKB_GEOGRAPHY);
-        let args = vec![
-            int(0),
-            int(4),
-            int(2),
-            create_scalar_value(Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"), &WKB_GEOGRAPHY),
-        ];
-        let config = config_with(StubSphericalBounder {
+        let mut tester = ScalarUdfTester::new(
+            rs_make_empty_raster_udf().into(),
+            vec![
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                WKB_GEOGRAPHY,
+            ],
+        );
+        let options = tester.sedona_options_mut();
+        let bounder = StubSphericalBounder {
             x: (170.0, -170.0),
             y: (10.0, 20.0),
-        });
-
-        let result = kernel.invoke(&arg_types, &args, Some(&config)).unwrap();
-        let ColumnarValue::Scalar(scalar) = result else {
-            panic!("expected a scalar result");
         };
+        options.runtime = options
+            .runtime
+            .with_bounder(Edges::Spherical, Arc::new(bounder))
+            .unwrap();
+
+        let result = tester
+            .invoke_scalars(vec![
+                lit(0),
+                lit(4),
+                lit(2),
+                lit("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"),
+            ])
+            .unwrap();
         let expected = RasterSpec::d2(4, 2)
             .transform([170.0, 5.0, 0.0, 20.0, 0.0, -5.0])
             .crs(None);
-        assert_raster_scalar_equals(&scalar, &expected);
+        assert_raster_scalar_equals(&result, &expected);
     }
 
     #[test]
     fn infinite_extent_is_an_error() {
         // A geography spanning every longitude has an unbounded x interval.
-        let kernel = RsMakeEmptyRaster::new(Grid::Extent, false);
-        let arg_types = extent_types(false, WKB_GEOGRAPHY);
-        let args = vec![
-            int(0),
-            int(4),
-            int(2),
-            create_scalar_value(Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"), &WKB_GEOGRAPHY),
-        ];
-        let config = config_with(StubSphericalBounder {
+        let mut tester = ScalarUdfTester::new(
+            rs_make_empty_raster_udf().into(),
+            vec![
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                WKB_GEOGRAPHY,
+            ],
+        );
+        let options = tester.sedona_options_mut();
+        let bounder = StubSphericalBounder {
             x: (f64::NEG_INFINITY, f64::INFINITY),
             y: (80.0, 90.0),
-        });
-        let err = kernel.invoke(&arg_types, &args, Some(&config)).unwrap_err();
+        };
+        options.runtime = options
+            .runtime
+            .with_bounder(Edges::Spherical, Arc::new(bounder))
+            .unwrap();
+
+        let err = tester
+            .invoke_scalars(vec![
+                lit(0),
+                lit(4),
+                lit(2),
+                lit("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"),
+            ])
+            .unwrap_err();
         assert!(err.to_string().contains("finite envelope"), "{err}");
     }
 
     #[test]
     fn geography_extent_without_a_bounder_is_an_error() {
-        let kernel = RsMakeEmptyRaster::new(Grid::Extent, false);
-        let arg_types = extent_types(false, WKB_GEOGRAPHY);
-        let args = vec![
-            int(1),
-            int(4),
-            int(2),
-            create_scalar_value(Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"), &WKB_GEOGRAPHY),
-        ];
-        let err = kernel.invoke(&arg_types, &args, None).unwrap_err();
+        let tester = ScalarUdfTester::new(
+            rs_make_empty_raster_udf().into(),
+            vec![
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                WKB_GEOGRAPHY,
+            ],
+        );
+        let err = tester
+            .invoke_scalars(vec![
+                lit(1),
+                lit(4),
+                lit(2),
+                lit("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"),
+            ])
+            .unwrap_err();
         assert!(
             err.to_string().contains("needs a spherical bounder"),
             "{err}"
@@ -1065,10 +1203,23 @@ mod tests {
     fn null_typed_extent_column_yields_null_rasters() {
         // An all-null extent column arrives typed as Null rather than as WKB;
         // every row is a null geometry, as a NULL extent scalar already was.
-        let tester = tester(extent_types(false, SedonaType::Arrow(DataType::Null)));
+        let tester = ScalarUdfTester::new(
+            rs_make_empty_raster_udf().into(),
+            vec![
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Null),
+            ],
+        );
         let extents: ArrayRef = Arc::new(NullArray::new(2));
         let result = tester
-            .invoke(vec![int(1), int(2), int(2), ColumnarValue::Array(extents)])
+            .invoke(vec![
+                ColumnarValue::Scalar(ScalarValue::Int64(Some(1))),
+                ColumnarValue::Scalar(ScalarValue::Int64(Some(2))),
+                ColumnarValue::Scalar(ScalarValue::Int64(Some(2))),
+                ColumnarValue::Array(extents),
+            ])
             .unwrap();
         let ColumnarValue::Array(array) = result else {
             panic!("expected an array result");
@@ -1078,16 +1229,27 @@ mod tests {
 
     #[test]
     fn array_inputs_yield_one_raster_per_row_with_nulls_propagated() {
-        let tester = tester(cell_size_types(false));
+        // RS_MakeEmptyRaster(numBands, width, height, upperLeftX, upperLeftY, cellSize)
+        let tester = ScalarUdfTester::new(
+            rs_make_empty_raster_udf().into(),
+            vec![
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+            ],
+        );
         let widths: ArrayRef = Arc::new(Int64Array::from(vec![Some(4), None, Some(2)]));
         let result = tester
             .invoke(vec![
-                int(1),
+                ColumnarValue::Scalar(ScalarValue::Int64(Some(1))),
                 ColumnarValue::Array(widths),
-                int(3),
-                num(0.0),
-                num(0.0),
-                num(1.0),
+                ColumnarValue::Scalar(ScalarValue::Int64(Some(3))),
+                ColumnarValue::Scalar(ScalarValue::Float64(Some(0.0))),
+                ColumnarValue::Scalar(ScalarValue::Float64(Some(0.0))),
+                ColumnarValue::Scalar(ScalarValue::Float64(Some(1.0))),
             ])
             .unwrap();
         let ColumnarValue::Array(array) = result else {
@@ -1105,101 +1267,152 @@ mod tests {
 
     #[test]
     fn null_band_type_or_srid_yields_null_raster() {
-        let tester_typed = tester(cell_size_types(true));
-        let null_type = ColumnarValue::Scalar(ScalarValue::Utf8(None));
-        let result = invoke_scalar(
-            &tester_typed,
+        // RS_MakeEmptyRaster(numBands, bandType, width, height, upperLeftX,
+        // upperLeftY, cellSize) with a NULL bandType
+        let tester = ScalarUdfTester::new(
+            rs_make_empty_raster_udf().into(),
             vec![
-                int(1),
-                null_type,
-                int(2),
-                int(2),
-                num(0.0),
-                num(0.0),
-                num(1.0),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Utf8),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
             ],
         );
+        let result = tester
+            .invoke_scalars(vec![
+                lit(1),
+                lit(ScalarValue::Utf8(None)),
+                lit(2),
+                lit(2),
+                lit(0.0),
+                lit(0.0),
+                lit(1.0),
+            ])
+            .unwrap();
         assert!(result.is_null());
 
-        let tester_affine = tester(affine_types(false));
-        let null_srid = ColumnarValue::Scalar(ScalarValue::Int64(None));
-        let result = invoke_scalar(
-            &tester_affine,
+        // RS_MakeEmptyRaster(numBands, width, height, upperLeftX, upperLeftY,
+        // scaleX, scaleY, skewX, skewY, srid) with a NULL srid
+        let tester = ScalarUdfTester::new(
+            rs_make_empty_raster_udf().into(),
             vec![
-                int(1),
-                int(2),
-                int(2),
-                num(0.0),
-                num(0.0),
-                num(1.0),
-                num(-1.0),
-                num(0.0),
-                num(0.0),
-                null_srid,
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Int64),
             ],
         );
+        let result = tester
+            .invoke_scalars(vec![
+                lit(1),
+                lit(2),
+                lit(2),
+                lit(0.0),
+                lit(0.0),
+                lit(1.0),
+                lit(-1.0),
+                lit(0.0),
+                lit(0.0),
+                lit(ScalarValue::Int64(None)),
+            ])
+            .unwrap();
         assert!(result.is_null());
 
-        let tester_extent = tester(extent_types(false, WKB_GEOMETRY));
-        let result = invoke_scalar(
-            &tester_extent,
+        // RS_MakeEmptyRaster(numBands, width, height, extent) with a NULL extent
+        let tester = ScalarUdfTester::new(
+            rs_make_empty_raster_udf().into(),
             vec![
-                int(1),
-                int(2),
-                int(2),
-                create_scalar_value(None, &WKB_GEOMETRY),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                WKB_GEOMETRY,
             ],
         );
+        let result = tester
+            .invoke_scalars(vec![lit(1), lit(2), lit(2), lit(ScalarValue::Null)])
+            .unwrap();
         assert!(result.is_null());
     }
 
     #[test]
     fn invalid_arguments_error() {
-        let tester_cell = tester(cell_size_types(true));
-        let cell = |bands: i64, band_type: &str, width: i64, height: i64| {
+        // RS_MakeEmptyRaster(numBands, bandType, width, height, upperLeftX,
+        // upperLeftY, cellSize)
+        let tester = ScalarUdfTester::new(
+            rs_make_empty_raster_udf().into(),
             vec![
-                int(bands),
-                text(band_type),
-                int(width),
-                int(height),
-                num(0.0),
-                num(0.0),
-                num(1.0),
-            ]
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Utf8),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+            ],
+        );
+        let cell_size_err = |bands: i64, band_type: &str, width: i64, height: i64| {
+            tester
+                .invoke_scalars(vec![
+                    lit(bands),
+                    lit(band_type),
+                    lit(width),
+                    lit(height),
+                    lit(0.0),
+                    lit(0.0),
+                    lit(1.0),
+                ])
+                .unwrap_err()
+                .to_string()
         };
 
-        let err = invoke_err(&tester_cell, cell(-1, "uint8", 2, 2));
+        let err = cell_size_err(-1, "uint8", 2, 2);
         assert!(err.contains("num_bands must be >= 0"), "{err}");
 
-        let err = invoke_err(&tester_cell, cell(1, "uint8", 0, 2));
+        let err = cell_size_err(1, "uint8", 0, 2);
         assert!(err.contains("width and height must be positive"), "{err}");
 
-        let err = invoke_err(&tester_cell, cell(1, "complex128", 2, 2));
+        let err = cell_size_err(1, "complex128", 2, 2);
         assert!(err.contains("Unsupported pixelType"), "{err}");
 
         // 100k x 100k float64 is 80 GB per band: past the BinaryView limit
-        let err = invoke_err(&tester_cell, cell(1, "float64", 100_000, 100_000));
+        let err = cell_size_err(1, "float64", 100_000, 100_000);
         assert!(err.contains("2 GiB per-band limit"), "{err}");
 
         // 50k x 50k uint8 is 2.5 GB: under u32::MAX but over the signed int32
         // length the Arrow spec (and Arrow C++) uses for a view.
-        let err = invoke_err(&tester_cell, cell(1, "uint8", 50_000, 50_000));
+        let err = cell_size_err(1, "uint8", 50_000, 50_000);
         assert!(err.contains("2 GiB per-band limit"), "{err}");
 
-        let tester_extent = tester(extent_types(false, WKB_GEOMETRY));
-        let extent = |wkt: &str| {
+        // RS_MakeEmptyRaster(numBands, width, height, extent)
+        let tester = ScalarUdfTester::new(
+            rs_make_empty_raster_udf().into(),
             vec![
-                int(1),
-                int(2),
-                int(2),
-                create_scalar_value(Some(wkt), &WKB_GEOMETRY),
-            ]
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                WKB_GEOMETRY,
+            ],
+        );
+        let extent_err = |wkt: &str| {
+            tester
+                .invoke_scalars(vec![lit(1), lit(2), lit(2), lit(wkt)])
+                .unwrap_err()
+                .to_string()
         };
-        let err = invoke_err(&tester_extent, extent("POINT (1 1)"));
+        let err = extent_err("POINT (1 1)");
         assert!(err.contains("positive width and height"), "{err}");
-        let err = invoke_err(&tester_extent, extent("LINESTRING (0 0, 0 5)"));
+        let err = extent_err("LINESTRING (0 0, 0 5)");
         assert!(err.contains("positive width and height"), "{err}");
-        let err = invoke_err(&tester_extent, extent("POLYGON EMPTY"));
+        let err = extent_err("POLYGON EMPTY");
         assert!(err.contains("empty"), "{err}");
     }
 
@@ -1207,17 +1420,28 @@ mod tests {
     fn every_band_shares_one_block_of_zeros() {
         // Two rows of two 8x8 uint8 bands: 64 bytes each, past the inline
         // view size, yet the output carries a single data block.
-        let tester = tester(cell_size_types(true));
+        let tester = ScalarUdfTester::new(
+            rs_make_empty_raster_udf().into(),
+            vec![
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Utf8),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+            ],
+        );
         let widths: ArrayRef = Arc::new(Int64Array::from(vec![8, 8]));
         let result = tester
             .invoke(vec![
-                int(2),
-                text("uint8"),
+                ColumnarValue::Scalar(ScalarValue::Int64(Some(2))),
+                ColumnarValue::Scalar(ScalarValue::Utf8(Some("uint8".to_string()))),
                 ColumnarValue::Array(widths),
-                int(8),
-                num(0.0),
-                num(0.0),
-                num(1.0),
+                ColumnarValue::Scalar(ScalarValue::Int64(Some(8))),
+                ColumnarValue::Scalar(ScalarValue::Float64(Some(0.0))),
+                ColumnarValue::Scalar(ScalarValue::Float64(Some(0.0))),
+                ColumnarValue::Scalar(ScalarValue::Float64(Some(1.0))),
             ])
             .unwrap();
         let ColumnarValue::Array(array) = result else {
