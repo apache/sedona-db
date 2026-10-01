@@ -65,8 +65,9 @@ Useful knobs, both read by `sedonadb.testing_spark`:
 
 ## Conventions
 
-One test file per RS_ function, named `test_rs_<function>.py` — parity coverage
-for a function lands in its own file, not appended to a neighbor's.
+One test file per function, named `test_rs_<function>.py` or
+`test_st_<function>.py` — parity coverage for a function lands in its own file,
+not appended to a neighbor's.
 
 Where the two engines are known to diverge and we intend to close the gap, mark
 the case `xfail(reason=...)` rather than deleting or loosening it. The suite then

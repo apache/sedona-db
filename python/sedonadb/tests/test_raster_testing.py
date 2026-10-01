@@ -22,6 +22,8 @@ bbox-constructed `DecodedRaster`s), so a wrong bbox-derived geotransform
 would agree with itself there.
 """
 
+import re
+
 import numpy as np
 import pytest
 
@@ -55,6 +57,25 @@ def test_decoded_raster_write_geotiff_requires_uniform_nodata(tmp_path):
     raster = DecodedRaster.random(nodata=[7.0, None])
     with pytest.raises(ValueError, match="file-wide"):
         raster.write_geotiff(tmp_path / "nonuniform.tif")
+
+
+@pytest.mark.parametrize(
+    ("dtype", "nodata"),
+    [("uint8", -9999.0), ("uint8", 256.0), ("int16", float("nan")), ("int32", 0.5)],
+)
+def test_write_geotiff_writes_nodata_the_dtype_cannot_hold(tmp_path, dtype, nodata):
+    """The declared nodata lands in the file even when the dtype cannot hold
+    it. rasterio's `nodatavals` reports None for an out-of-range one, so read
+    GDAL's own view of the band back through a VRT copy."""
+    pytest.importorskip("rasterio")
+    import rasterio.shutil
+
+    path = tmp_path / "unrepresentable.tif"
+    write_geotiff(path, np.zeros((1, 6, 7), dtype=dtype), bbox=BBOX, nodata=nodata)
+    rasterio.shutil.copy(str(path), str(tmp_path / "copy.vrt"), driver="VRT")
+    vrt = (tmp_path / "copy.vrt").read_text()
+    (written,) = re.findall(r"<NoDataValue>(.*)</NoDataValue>", vrt)
+    np.testing.assert_equal(float(written), nodata)  # NaN equals NaN here
 
 
 def test_write_geotiff_bbox_places_the_grid(tmp_path):

@@ -53,6 +53,7 @@ unsafe extern "C" {
     pub fn tg_geom_equals(a: *const tg_geom, b: *const tg_geom) -> bool;
     pub fn tg_geom_intersects(a: *const tg_geom, b: *const tg_geom) -> bool;
     pub fn tg_geom_disjoint(a: *const tg_geom, b: *const tg_geom) -> bool;
+    pub fn tg_geom_containment_predicates_supported(a: *const tg_geom, b: *const tg_geom) -> bool;
     pub fn tg_geom_contains(a: *const tg_geom, b: *const tg_geom) -> bool;
     pub fn tg_geom_within(a: *const tg_geom, b: *const tg_geom) -> bool;
     pub fn tg_geom_covers(a: *const tg_geom, b: *const tg_geom) -> bool;

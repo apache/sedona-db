@@ -26,7 +26,7 @@ use sedona_expr::{
     scalar_udf::{ScalarKernelRef, SedonaScalarKernel},
 };
 use sedona_functions::executor::{PointOrWkb, PointXYExecutor};
-use sedona_geo_generic_alg::line_measures::DistanceExt;
+use sedona_geo_generic_alg::{HasDimensions, line_measures::DistanceExt};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 /// ST_Distance() implementation using [DistanceExt]
@@ -60,7 +60,10 @@ impl SedonaScalarKernel for STDistance {
 
         executor.execute_wkb_wkb_void(|maybe0, maybe1| {
             match (maybe0, maybe1) {
-                (Some(a), Some(b)) => builder.append_value(point_or_wkb_distance(a, b)),
+                (Some(a), Some(b)) => match point_or_wkb_distance(a, b) {
+                    Some(distance) => builder.append_value(distance),
+                    None => builder.append_null(),
+                },
                 _ => builder.append_null(),
             }
             Ok(())
@@ -74,16 +77,22 @@ impl SedonaScalarKernel for STDistance {
 /// from the coordinates; any other combination defers to the generic
 /// [DistanceExt] (a Point operand becomes a [`geo_types::Point`] so the mixed
 /// Point/geometry case never re-parses the Point). Shared with `ST_DWithin`.
-pub(crate) fn point_or_wkb_distance(a: &PointOrWkb, b: &PointOrWkb) -> f64 {
+pub(crate) fn point_or_wkb_distance(a: &PointOrWkb, b: &PointOrWkb) -> Option<f64> {
     match (a, b) {
         (PointOrWkb::Point(ax, ay), PointOrWkb::Point(bx, by)) => {
             let dx = ax - bx;
             let dy = ay - by;
-            (dx * dx + dy * dy).sqrt()
+            Some((dx * dx + dy * dy).sqrt())
         }
-        (PointOrWkb::Point(x, y), PointOrWkb::Other(wkb)) => Point::new(*x, *y).distance_ext(wkb),
-        (PointOrWkb::Other(wkb), PointOrWkb::Point(x, y)) => wkb.distance_ext(&Point::new(*x, *y)),
-        (PointOrWkb::Other(wkb0), PointOrWkb::Other(wkb1)) => wkb0.distance_ext(wkb1),
+        (PointOrWkb::Point(x, y), PointOrWkb::Other(wkb)) => {
+            (!wkb.is_empty()).then(|| Point::new(*x, *y).distance_ext(wkb))
+        }
+        (PointOrWkb::Other(wkb), PointOrWkb::Point(x, y)) => {
+            (!wkb.is_empty()).then(|| wkb.distance_ext(&Point::new(*x, *y)))
+        }
+        (PointOrWkb::Other(wkb0), PointOrWkb::Other(wkb1)) => {
+            (!wkb0.is_empty() && !wkb1.is_empty()).then(|| wkb0.distance_ext(wkb1))
+        }
     }
 }
 
@@ -138,6 +147,22 @@ mod tests {
         assert!(result.is_null());
         let result = tester
             .invoke_scalar_scalar(point_0_0.clone(), ScalarValue::Null)
+            .unwrap();
+        assert!(result.is_null());
+
+        // Distance involving an empty geometry is undefined.
+        let result = tester
+            .invoke_scalar_scalar(
+                create_scalar(Some("POINT EMPTY"), &left_sedona_type),
+                point_3_4.clone(),
+            )
+            .unwrap();
+        assert!(result.is_null());
+        let result = tester
+            .invoke_scalar_scalar(
+                point_0_0,
+                create_scalar(Some("POLYGON EMPTY"), &right_sedona_type),
+            )
             .unwrap();
         assert!(result.is_null());
     }

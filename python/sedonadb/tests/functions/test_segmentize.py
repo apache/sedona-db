@@ -26,7 +26,7 @@ from sedonadb.testing import PostGIS, SedonaDB, geom_or_null, val_or_null
         # Nulls
         pytest.param("POINT (0 0)", None, None, id="null_length"),
         # Empties
-        pytest.param("POINT EMPTY", 1e9, "POINT (nan nan)", id="empty_point"),
+        pytest.param("POINT EMPTY", 1e9, "POINT EMPTY", id="empty_point"),
         pytest.param(
             "LINESTRING EMPTY", 1e9, "LINESTRING EMPTY", id="empty_linestring"
         ),

@@ -36,7 +36,8 @@ test = [
     "adbc-driver-postgresql",
     "datafusion",
     "duckdb",
-    "geoarrow-pyarrow",
+    "geoarrow-c>=0.4.0",
+    "geoarrow-pyarrow>=0.3.0",
     "geopandas",
     "pandas",
     "polars",
@@ -51,6 +52,21 @@ geopandas = [
     "geopandas",
     "sedonadb-expr",
 ]
+
+[tool.cibuildwheel]
+# Set here rather than via CIBW_TEST_REQUIRES in the workflow: environment
+# variables take precedence over the overrides below.
+test-requires = ["pytest", "adbc_driver_manager", "geoarrow-pyarrow", "geopandas", "duckdb"]
+# pyarrow (and shapely, pyogrio, adbc-driver-manager, duckdb) publish no cp315
+# wheels yet, so the test environment cannot be installed. Build the wheels
+# but skip testing them until those are available.
+test-skip = "cp315*"
+
+# DuckDB publishes no free-threaded wheels, and building it from its sdist fails
+# with scikit-build-core >= 1.1. The DuckDB-backed tests skip when it is absent.
+[[tool.cibuildwheel.overrides]]
+select = "cp314t-*"
+test-requires = ["pytest", "adbc_driver_manager", "geoarrow-pyarrow", "geopandas"]
 
 [tool.maturin]
 features = ["pyo3/extension-module"]

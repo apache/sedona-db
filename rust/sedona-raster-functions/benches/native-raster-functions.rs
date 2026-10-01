@@ -119,6 +119,15 @@ fn criterion_benchmark(c: &mut Criterion) {
     );
     benchmark::scalar(c, &f, "native-raster", "rs_height", Raster(64, 64));
     benchmark::scalar(c, &f, "native-raster", "rs_numbands", Raster(64, 64));
+    // RS_MakeEmptyRaster (extent form): one 64x64 float64 band per polygon.
+    // Int64 ranges are half-open, so (1, 2) is the constant 1.
+    benchmark::scalar(
+        c,
+        &f,
+        "native-raster",
+        "rs_makeemptyraster",
+        BenchmarkArgs::ArrayArrayArrayArray(Int64(1, 2), Int64(64, 65), Int64(64, 65), Polygon(4)),
+    );
     // RS_PixelAsPoint, RS_PixelAsCentroid, RS_PixelAsPolygon
     benchmark::scalar(
         c,

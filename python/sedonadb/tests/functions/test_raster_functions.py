@@ -155,7 +155,8 @@ def test_rs_value_default_band_requires_single_band(con):
 # RS_WorldToRasterCoord and its X/Y variants map a world coordinate into the
 # raster's pixel space. The two argument forms — a pair of ordinates, or a
 # single point geometry — are the same mapping, so both are exercised against
-# the same expectation. RS_Example is skewed (scale 2, skew 1), and (10, 20)
+# the same expectation. Pixel coordinates are 1-based, as in PostGIS
+# ST_WorldToRasterCoord. RS_Example is skewed (scale 2, skew 1), and (10, 20)
 # maps outside the grid: the mapping extrapolates rather than clamping.
 @pytest.mark.parametrize(
     "coord",
@@ -167,9 +168,9 @@ def test_rs_value_default_band_requires_single_band(con):
 @pytest.mark.parametrize(
     ("fn", "expected"),
     [
-        ("RS_WorldToRasterCoordX", -2),
-        ("RS_WorldToRasterCoordY", -28),
-        ("RS_WorldToRasterCoord", "POINT (-2 -28)"),
+        ("RS_WorldToRasterCoordX", -1),
+        ("RS_WorldToRasterCoordY", -27),
+        ("RS_WorldToRasterCoord", "POINT (-1 -27)"),
     ],
 )
 def test_rs_worldtorastercoord(fn, expected, coord):

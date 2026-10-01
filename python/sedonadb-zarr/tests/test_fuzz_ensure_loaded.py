@@ -349,8 +349,9 @@ def test_fuzz_ensure_loaded_mixed_zarr_geotiff_indb(tmp_path, seed):
             key, rep, nullify, px, py,
             RS_EnsureLoaded(raster) AS loaded,
             RS_NumBands(raster) AS nbands,
-            RS_Value(raster, px, py, 1) AS first_value,
-            RS_Value(raster, px, py, RS_NumBands(raster)) AS last_value
+            -- px/py are 0-based array offsets; RS_Value's grid form is 1-based
+            RS_Value(raster, px + 1, py + 1, 1) AS first_value,
+            RS_Value(raster, px + 1, py + 1, RS_NumBands(raster)) AS last_value
         FROM fuzzed
         ORDER BY ord, rep
         """
