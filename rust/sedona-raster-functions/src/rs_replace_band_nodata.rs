@@ -234,26 +234,10 @@ mod tests {
     use datafusion_expr::ScalarUDF;
     use sedona_schema::datatypes::RASTER;
     use sedona_schema::raster::{band_indices, raster_indices};
-    use sedona_testing::raster_spec::{RasterSpec, assert_rasters_equal, raster_array};
+    use sedona_testing::raster_spec::{
+        RasterSpec, assert_raster_scalar_equals, assert_rasters_equal, raster_array,
+    };
     use sedona_testing::testers::ScalarUdfTester;
-
-    /// Run the 3-argument form over one row per spec.
-    fn replace(specs: Vec<Option<RasterSpec>>, band: i64, nodata: f64) -> Result<ArrayRef> {
-        let n = specs.len();
-        let tester = ScalarUdfTester::new(
-            rs_replace_band_nodata_value_udf().into(),
-            vec![
-                RASTER,
-                SedonaType::Arrow(DataType::Int64),
-                SedonaType::Arrow(DataType::Float64),
-            ],
-        );
-        tester.invoke_arrays(vec![
-            Arc::new(raster_array(specs)),
-            Arc::new(Int64Array::from(vec![band; n])),
-            Arc::new(Float64Array::from(vec![nodata; n])),
-        ])
-    }
 
     #[test]
     fn udf_metadata() {
@@ -273,13 +257,23 @@ mod tests {
             .nodata(0u8)
             .band_values(&[0u8, 9, 0])
             .nodata(0u8);
-        let result = replace(vec![Some(input)], 1, 255.0).unwrap();
+        let tester = ScalarUdfTester::new(
+            rs_replace_band_nodata_value_udf().into(),
+            vec![
+                RASTER,
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Float64),
+            ],
+        );
+        let result = tester
+            .invoke_scalar_scalar_scalar(&input, 1, 255.0)
+            .unwrap();
         let expected = RasterSpec::d2(3, 1)
             .band_values(&[255u8, 5, 255])
             .nodata(255u8)
             .band_values(&[0u8, 9, 0])
             .nodata(0u8);
-        assert_rasters_equal(&result, &[Some(expected)]);
+        assert_raster_scalar_equals(&result, &expected);
     }
 
     #[test]
@@ -339,35 +333,65 @@ mod tests {
         let input = RasterSpec::d2(3, 1)
             .band_values(&[-0.0f64, 0.0, 1.5])
             .nodata(0.0f64);
-        let result = replace(vec![Some(input)], 1, -9999.0).unwrap();
+        let tester = ScalarUdfTester::new(
+            rs_replace_band_nodata_value_udf().into(),
+            vec![
+                RASTER,
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Float64),
+            ],
+        );
+        let result = tester
+            .invoke_scalar_scalar_scalar(&input, 1, -9999.0)
+            .unwrap();
         let expected = RasterSpec::d2(3, 1)
             .band_values(&[-9999.0f64, -9999.0, 1.5])
             .nodata(-9999.0f64);
-        assert_rasters_equal(&result, &[Some(expected)]);
+        assert_raster_scalar_equals(&result, &expected);
 
         let other_nan = f32::from_bits(f32::NAN.to_bits() | 1);
         let input = RasterSpec::d2(3, 1)
             .band_values(&[f32::NAN, other_nan, 2.0])
             .nodata(f32::NAN);
-        let result = replace(vec![Some(input)], 1, -1.0).unwrap();
+        let result = tester.invoke_scalar_scalar_scalar(&input, 1, -1.0).unwrap();
         let expected = RasterSpec::d2(3, 1)
             .band_values(&[-1.0f32, -1.0, 2.0])
             .nodata(-1.0f32);
-        assert_rasters_equal(&result, &[Some(expected)]);
+        assert_raster_scalar_equals(&result, &expected);
     }
 
     #[test]
     fn a_band_without_nodata_errors() {
         let input = RasterSpec::d2(2, 1).band_values(&[0u8, 3]);
-        let err = replace(vec![Some(input)], 1, 7.0).unwrap_err().to_string();
+        let tester = ScalarUdfTester::new(
+            rs_replace_band_nodata_value_udf().into(),
+            vec![
+                RASTER,
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Float64),
+            ],
+        );
+        let err = tester
+            .invoke_scalar_scalar_scalar(&input, 1, 7.0)
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("no nodata value to replace"), "{err}");
     }
 
     #[test]
     fn a_nodata_the_band_type_cannot_hold_errors() {
         let input = RasterSpec::d2(2, 1).band_values(&[0u8, 3]).nodata(0u8);
+        let tester = ScalarUdfTester::new(
+            rs_replace_band_nodata_value_udf().into(),
+            vec![
+                RASTER,
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Float64),
+            ],
+        );
         for value in [256.0, 1.5, -1.0] {
-            let err = replace(vec![Some(input.clone())], 1, value)
+            let err = tester
+                .invoke_scalar_scalar_scalar(&input, 1, value)
                 .unwrap_err()
                 .to_string();
             assert!(err.contains(FUNC), "{value}: {err}");
@@ -376,9 +400,20 @@ mod tests {
 
     #[test]
     fn band_out_of_range_errors() {
-        let input = || Some(RasterSpec::d2(2, 1).band_values(&[0u8, 3]).nodata(0u8));
+        let input = RasterSpec::d2(2, 1).band_values(&[0u8, 3]).nodata(0u8);
+        let tester = ScalarUdfTester::new(
+            rs_replace_band_nodata_value_udf().into(),
+            vec![
+                RASTER,
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Float64),
+            ],
+        );
         for (band, expected) in [(0, "1-based"), (-1, "1-based"), (2, "out of range")] {
-            let err = replace(vec![input()], band, 7.0).unwrap_err().to_string();
+            let err = tester
+                .invoke_scalar_scalar_scalar(&input, band, 7.0)
+                .unwrap_err()
+                .to_string();
             assert!(err.contains(expected), "{band}: {err}");
         }
     }
@@ -409,7 +444,18 @@ mod tests {
         let input = RasterSpec::d2(1, 1)
             .band_values_nd(&["time", "y", "x"], &[2, 1, 1], &[0u8, 3])
             .nodata(0u8);
-        let err = replace(vec![Some(input)], 1, 7.0).unwrap_err().to_string();
+        let tester = ScalarUdfTester::new(
+            rs_replace_band_nodata_value_udf().into(),
+            vec![
+                RASTER,
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Float64),
+            ],
+        );
+        let err = tester
+            .invoke_scalar_scalar_scalar(&input, 1, 7.0)
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("2-D"), "{err}");
     }
 }
