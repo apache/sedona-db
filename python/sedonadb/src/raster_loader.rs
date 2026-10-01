@@ -350,8 +350,10 @@ impl PyRasterLoadRequest {
 }
 
 /// Python-visible view entry
+// Clone only: from_py_object clones the entry, which clippy flags as
+// clone_on_copy if the type is also Copy.
 #[pyclass(from_py_object)]
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct PyViewEntry {
     #[pyo3(get)]
     pub source_axis: i64,
