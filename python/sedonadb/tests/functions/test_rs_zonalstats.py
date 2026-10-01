@@ -371,3 +371,134 @@ def test_sql_text_smoke(con, tmp_path):
         params=(str(path), GEOM_RECT),
     ).to_arrow_table()
     assert everything["r"][0].as_py()["count"] == expected["count"]
+
+
+def _register_zonal_join_views(con, tmp_path):
+    """Views for join tests: `zonal_dem` (one materialised raster row) and
+    `zonal_zones` (three polygons). The rect selects pixels; the sliver
+    intersects the raster but covers no pixel centre (count 0); the disjoint
+    zone never intersects. Returns the raster band for the numpy reference."""
+    path, band = fixture_raster(tmp_path)
+    con.create_data_frame(
+        con.sql("SELECT RS_FromPath($1) AS rast", params=(str(path),)).to_arrow_table()
+    ).to_view("zonal_dem", overwrite=True)
+    zones = con.create_data_frame(
+        pa.table(
+            {
+                "name": ["rect", "sliver", "disjoint"],
+                "wkt": [GEOM_RECT, GEOM_SLIVER, GEOM_DISJOINT],
+            }
+        )
+    )
+    zones.select(
+        name=zones.name, geometry=con.funcs.st_geomfromtext(zones.wkt)
+    ).to_view("zonal_zones", overwrite=True)
+    return band
+
+
+@pytest.mark.parametrize("join", ["JOIN", "LEFT JOIN"])
+def test_where_on_struct_field_over_a_join(con, tmp_path, join):
+    """apache/sedona-db#1265: a WHERE on a field of the struct RS_ZonalStatsAll
+    returns, over a join, used to fail with 'async functions should not be
+    called directly'. DataFusion pushes the predicate into an inner join's
+    filter, which the join evaluates synchronously, so the async
+    RS_EnsureLoaded the planner injects around the raster argument was never
+    hoisted. Over an outer join the predicate stays above the join and always
+    worked. Filtering in SQL must match filtering the unfiltered result."""
+    band = _register_zonal_join_views(con, tmp_path)
+    inner = (
+        "SELECT z.name, RS_ZonalStatsAll(d.rast, z.geometry) AS s "
+        f"FROM zonal_zones z {join} zonal_dem d ON RS_Intersects(d.rast, z.geometry)"
+    )
+    expected = numpy_reference(band, GEOM_RECT, all_touched=False, exclude_no_data=True)
+
+    unfiltered = con.sql(
+        f"SELECT name, s.count AS count FROM ({inner}) ORDER BY name"
+    ).to_arrow_table()
+    rows = list(zip(unfiltered["name"].to_pylist(), unfiltered["count"].to_pylist()))
+    joined = [("rect", expected["count"]), ("sliver", 0)]
+    assert rows == ([("disjoint", None)] if join == "LEFT JOIN" else []) + joined
+
+    filtered = con.sql(
+        f"SELECT name, s.count AS count FROM ({inner}) WHERE s.count > 0 ORDER BY name"
+    ).to_arrow_table()
+    assert list(zip(filtered["name"].to_pylist(), filtered["count"].to_pylist())) == [
+        ("rect", expected["count"])
+    ]
+
+
+@pytest.mark.parametrize(
+    "join",
+    [
+        "JOIN",
+        pytest.param(
+            "LEFT JOIN",
+            marks=pytest.mark.xfail(
+                strict=True,
+                raises=Exception,
+                reason="an async call in an outer join's ON clause is evaluated "
+                "synchronously by the join; hoisting it would change which rows "
+                "are null-extended (apache/datafusion#16520, 'Join expression')",
+            ),
+        ),
+    ],
+)
+def test_async_call_in_join_on_clause(con, tmp_path, join):
+    """An RS_ZonalStatsAll call written directly in the ON clause. For an inner
+    join it is a post-join predicate and is planned above the join; for an
+    outer join it must stay in the join and is unsupported for now."""
+    _register_zonal_join_views(con, tmp_path)
+
+    matched = con.sql(
+        "SELECT z.name, d.rast IS NOT NULL AS matched "
+        f"FROM zonal_zones z {join} zonal_dem d "
+        "ON RS_Intersects(d.rast, z.geometry) "
+        "AND RS_ZonalStatsAll(d.rast, z.geometry)['count'] > 0 "
+        "ORDER BY name"
+    ).to_arrow_table()
+    rows = list(zip(matched["name"].to_pylist(), matched["matched"].to_pylist()))
+    if join == "LEFT JOIN":
+        assert rows == [("disjoint", False), ("rect", True), ("sliver", False)]
+    else:
+        assert rows == [("rect", True)]
+
+
+# A VRT whose only source is a file that does not exist. RS_FromPath reads its
+# metadata fine; any pixel read (the RS_EnsureLoaded the planner injects) fails
+# at the loader, which makes an unwanted load observable.
+MISSING_SOURCE_VRT = (
+    '<VRTDataset rasterXSize="10" rasterYSize="10"><SRS>EPSG:4326</SRS>'
+    "<GeoTransform>0,1,0,10,0,-1</GeoTransform>"
+    '<VRTRasterBand dataType="Byte" band="1"><SimpleSource>'
+    '<SourceFilename relativeToVRT="0">/nonexistent/missing.tif</SourceFilename>'
+    "<SourceBand>1</SourceBand></SimpleSource></VRTRasterBand></VRTDataset>"
+)
+
+
+def test_async_call_in_unreached_case_branch_is_not_evaluated(con):
+    """An RS_ZonalStatsAll call in a CASE branch of the ON clause that no row
+    reaches must not load the raster. The join evaluates CASE lazily; hoisting
+    the conjunct above the join would hand the call to AsyncFuncExec, which
+    evaluates it for every row, so the planner leaves such conjuncts in the
+    join. The raster's only source is missing, so an unwanted load errors.
+
+    The join is a spatial join on purpose: over a nested-loop join DataFusion
+    pushes the one-sided loader into a synchronous projection below the join,
+    which fails regardless of this rule."""
+    con.create_data_frame(
+        con.sql(
+            "SELECT 1 AS id, RS_FromPath($1) AS rast", params=(MISSING_SOURCE_VRT,)
+        ).to_arrow_table()
+    ).to_view("zonal_missing_dem", overwrite=True)
+    con.sql(
+        "SELECT 2 AS id, 'rect' AS name, ST_SetSRID(ST_GeomFromText($1), 4326) AS geometry",
+        params=("POLYGON ((1 1, 4 1, 4 4, 1 4, 1 1))",),
+    ).to_view("zonal_missing_zones", overwrite=True)
+
+    rows = con.sql(
+        "SELECT z.name FROM zonal_missing_zones z JOIN zonal_missing_dem d "
+        "ON RS_Intersects(d.rast, z.geometry) "
+        "AND CASE WHEN d.id < z.id THEN 1 "
+        "ELSE RS_ZonalStatsAll(d.rast, z.geometry)['count'] END > 0"
+    ).to_arrow_table()
+    assert rows["name"].to_pylist() == ["rect"]
