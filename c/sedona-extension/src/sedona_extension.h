@@ -503,11 +503,14 @@ struct SedonaCTableProvider {
 /// UTF-8; identifiers and arguments are UTF-8 JSON. Strings are borrowed for the
 /// duration of the call. All successful outputs transfer ownership to the caller.
 struct SedonaCCatalogProviderList {
-  /// Get a property's schema. list_identifiers is non-null Utf8.
+  /// Get a property's schema. name and list_identifiers are non-null Utf8.
   int (*get_property_schema)(const struct SedonaCCatalogProviderList* self,
                              const char* property, struct ArrowSchema* out,
                              struct SedonaCError* err);
-  /// Get a JSON-encoded property. list_identifiers accepts
+  /// Get a JSON-encoded property. name returns the stable implementation name
+  /// (e.g., "iceberg") as a JSON string and takes no arguments. It must be
+  /// available without catalog I/O and is cached on import.
+  /// list_identifiers accepts
   /// args: {"prefix": [...], "depth": null|integer, "suffix": [...]}.
   /// Prefix and suffix match exact components. Depth counts components after
   /// prefix, including the prefix itself at depth zero; null is unlimited.

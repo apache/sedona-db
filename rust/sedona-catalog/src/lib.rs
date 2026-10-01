@@ -104,6 +104,12 @@ pub struct DropObjectOptions {
 /// including listing errors, are propagated to the caller.
 #[async_trait]
 pub trait SedonaCatalogList: Debug + Send + Sync {
+    /// Return the stable name of this catalog implementation, such as `iceberg`.
+    /// This identifies the implementation for provider selection (for example,
+    /// a SQL `USING` clause), independently of the catalog names in its hierarchy.
+    /// The name must be available without catalog I/O.
+    fn name(&self) -> &str;
+
     /// List objects beneath an exact, literal prefix, including the prefix itself
     /// if it identifies an object. `depth` limits the number of additional path
     /// components: zero is an exact lookup, one includes immediate children,

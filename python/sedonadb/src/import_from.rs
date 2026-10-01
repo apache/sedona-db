@@ -296,20 +296,20 @@ mod tests {
     unsafe extern "C" fn catalog_list_property_schema(
         _self_: *const SedonaCCatalogProviderList,
         _property: *const std::ffi::c_char,
-        _out: *mut FFI_ArrowSchema,
-        _error: *mut SedonaCError,
+        out: *mut FFI_ArrowSchema,
+        error: *mut SedonaCError,
     ) -> std::ffi::c_int {
-        0
+        sedona_extension::utils::write_utf8_property_schema(out, error)
     }
 
     unsafe extern "C" fn catalog_list_property(
         _self_: *const SedonaCCatalogProviderList,
         _property: *const std::ffi::c_char,
         _args: *const std::ffi::c_char,
-        _out: *mut FFI_ArrowArray,
-        _error: *mut SedonaCError,
+        out: *mut FFI_ArrowArray,
+        error: *mut SedonaCError,
     ) -> std::ffi::c_int {
-        0
+        sedona_extension::utils::write_json_property(&"test", out, error)
     }
 
     unsafe extern "C" fn catalog_list_table(

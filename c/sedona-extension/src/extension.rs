@@ -484,7 +484,7 @@ impl Drop for SedonaCExecutionPlan {
 #[derive(Default)]
 #[repr(C)]
 pub struct SedonaCCatalogProviderList {
-    /// Get the schema of a property. `list_identifiers` is non-null Utf8.
+    /// Get the schema of a property. `name` and `list_identifiers` are non-null Utf8.
     pub get_property_schema: Option<
         unsafe extern "C" fn(
             self_: *const Self,
@@ -493,7 +493,9 @@ pub struct SedonaCCatalogProviderList {
             err: *mut SedonaCError,
         ) -> c_int,
     >,
-    /// Get a JSON-encoded property. `list_identifiers` accepts
+    /// Get a JSON-encoded property. `name` returns the implementation name as a
+    /// JSON string and takes no arguments. It must be available without catalog
+    /// I/O and is cached on import. `list_identifiers` accepts
     /// {"prefix": [...], "depth": null|integer, "suffix": [...]} in `args`.
     /// Its output is one non-null Utf8 Arrow value containing a CatalogObject array.
     pub get_property: Option<

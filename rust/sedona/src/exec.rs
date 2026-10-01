@@ -368,6 +368,10 @@ mod tests {
 
     #[async_trait]
     impl SedonaCatalogList for TestCatalog {
+        fn name(&self) -> &str {
+            "test"
+        }
+
         async fn list_identifiers(
             &self,
             prefix: &[&str],

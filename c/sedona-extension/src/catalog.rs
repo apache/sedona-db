@@ -36,7 +36,7 @@ use datafusion_catalog::{Session, TableProvider};
 use datafusion_common::{DataFusionError, Result};
 use datafusion_physical_plan::ExecutionPlan;
 use sedona_catalog::{CatalogObject, CreateObjectOptions, DropObjectOptions, SedonaCatalogList};
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     ffi::{c_char, c_int, CString},
     fmt::{Debug, Formatter},
@@ -132,7 +132,7 @@ unsafe extern "C" fn get_property_schema(
     err: *mut SedonaCError,
 ) -> c_int {
     match cstr_from_ptr_or_empty(property).as_ref() {
-        "list_identifiers" => write_utf8_property_schema(out, err),
+        "name" | "list_identifiers" => write_utf8_property_schema(out, err),
         property => {
             set_ffi_error!(err, "Unknown catalog property: {}", property);
             libc::EINVAL
@@ -148,21 +148,34 @@ unsafe extern "C" fn get_property(
     err: *mut SedonaCError,
 ) -> c_int {
     let property = cstr_from_ptr_or_empty(property);
-    if property != "list_identifiers" {
-        set_ffi_error!(err, "Unknown catalog property: {}", property);
-        return libc::EINVAL;
-    }
     let exported = &*((*raw).private_data as *const ExportedCatalogProviderList);
-    let result = (|| {
-        let args: ListArgs = parse_json_c_args(args)?;
-        exported.run(exported.inner.list_identifiers(
-            &refs(&args.prefix),
-            args.depth,
-            &refs(&args.suffix),
-        ))
-    })();
+    match property.as_ref() {
+        "name" => write_json_property(&exported.inner.name(), out, err),
+        "list_identifiers" => {
+            let result = (|| {
+                let args: ListArgs = parse_json_c_args(args)?;
+                exported.run(exported.inner.list_identifiers(
+                    &refs(&args.prefix),
+                    args.depth,
+                    &refs(&args.suffix),
+                ))
+            })();
+            write_json_result_property(result, out, err)
+        }
+        property => {
+            set_ffi_error!(err, "Unknown catalog property: {}", property);
+            libc::EINVAL
+        }
+    }
+}
+
+unsafe fn write_json_result_property<T: Serialize>(
+    result: Result<T>,
+    out: *mut FFI_ArrowArray,
+    err: *mut SedonaCError,
+) -> c_int {
     match result {
-        Ok(objects) => write_json_property(&objects, out, err),
+        Ok(value) => write_json_property(&value, out, err),
         Err(error) => {
             set_ffi_error!(err, "{}", error);
             libc::EINVAL
@@ -278,11 +291,12 @@ unsafe extern "C" fn release(raw: *mut SedonaCCatalogProviderList) {
     raw.release = None;
 }
 
-/// Imports a catalog without retaining the consumer's session. Blocking C calls
-/// run off the async executor, and retain the raw object until completion even
-/// if the calling future is cancelled.
+/// Imports a catalog without retaining the consumer's session. The implementation
+/// name is read once at import. Async operations run blocking C calls off the
+/// executor and retain the raw object until completion even if cancelled.
 pub struct ImportedCatalogProviderList {
     inner: Arc<SedonaCCatalogProviderList>,
+    name: String,
     runtime: Arc<RuntimeHandle>,
 }
 
@@ -293,7 +307,7 @@ impl Debug for ImportedCatalogProviderList {
 }
 
 impl ImportedCatalogProviderList {
-    /// Validate the required callbacks without performing catalog I/O.
+    /// Validate the required callbacks and cache the implementation name.
     pub fn try_new(inner: SedonaCCatalogProviderList, runtime: Arc<RuntimeHandle>) -> Result<Self> {
         if inner.release.is_none()
             || inner.get_property_schema.is_none()
@@ -306,8 +320,20 @@ impl ImportedCatalogProviderList {
                 "SedonaCCatalogProviderList is missing a required callback"
             );
         }
+        let name = call_get_json_property_impl(
+            "name",
+            "SedonaCCatalogProviderList",
+            None::<&()>,
+            |property, out, err| unsafe {
+                inner.get_property_schema.unwrap()(&inner, property, out, err)
+            },
+            |property, args, out, err| unsafe {
+                inner.get_property.unwrap()(&inner, property, args, out, err)
+            },
+        )?;
         Ok(Self {
             inner: Arc::new(inner),
+            name,
             runtime,
         })
     }
@@ -322,10 +348,35 @@ impl ImportedCatalogProviderList {
             .await
             .map_err(|e| DataFusionError::External(Box::new(e)))?
     }
+
+    async fn property<T: DeserializeOwned + Send + 'static, A: Serialize + Send + 'static>(
+        &self,
+        property: &'static str,
+        args: Option<A>,
+    ) -> Result<T> {
+        self.call(move |raw| {
+            call_get_json_property_impl(
+                property,
+                "SedonaCCatalogProviderList",
+                args.as_ref(),
+                |property, out, err| unsafe {
+                    raw.get_property_schema.unwrap()(raw.as_ref(), property, out, err)
+                },
+                |property, args, out, err| unsafe {
+                    raw.get_property.unwrap()(raw.as_ref(), property, args, out, err)
+                },
+            )
+        })
+        .await
+    }
 }
 
 #[async_trait]
 impl SedonaCatalogList for ImportedCatalogProviderList {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
     async fn list_identifiers(
         &self,
         prefix: &[&str],
@@ -337,20 +388,7 @@ impl SedonaCatalogList for ImportedCatalogProviderList {
             depth,
             suffix: suffix.iter().map(|s| s.to_string()).collect(),
         };
-        self.call(move |raw| {
-            call_get_json_property_impl(
-                "list_identifiers",
-                "SedonaCCatalogProviderList",
-                Some(&args),
-                |property, out, err| unsafe {
-                    raw.get_property_schema.unwrap()(raw.as_ref(), property, out, err)
-                },
-                |property, args, out, err| unsafe {
-                    raw.get_property.unwrap()(raw.as_ref(), property, args, out, err)
-                },
-            )
-        })
-        .await
+        self.property("list_identifiers", Some(args)).await
     }
 
     async fn table(&self, identifier: &[&str]) -> Result<Option<Arc<dyn TableProvider>>> {
@@ -534,6 +572,10 @@ mod tests {
 
     #[async_trait]
     impl SedonaCatalogList for TestCatalog {
+        fn name(&self) -> &str {
+            "iceberg"
+        }
+
         async fn list_identifiers(
             &self,
             prefix: &[&str],
@@ -634,6 +676,7 @@ mod tests {
     async fn round_trip_async_operations_and_optional_plans() -> Result<()> {
         let catalog = Arc::new(TestCatalog::default());
         let imported = ImportedCatalogProviderList::try_new(raw(catalog.clone()), runtime())?;
+        assert_eq!(imported.name(), "iceberg");
         let objects = imported
             .list_identifiers(&["catalog"], Some(2), &["schema.with.dot", "table"])
             .await?;
@@ -800,9 +843,12 @@ mod tests {
         unsafe extern "C" fn failing_schema(
             _raw: *const SedonaCCatalogProviderList,
             property: *const c_char,
-            _out: *mut FFI_ArrowSchema,
+            out: *mut FFI_ArrowSchema,
             err: *mut SedonaCError,
         ) -> c_int {
+            if cstr_from_ptr_or_empty(property) == "name" {
+                return write_utf8_property_schema(out, err);
+            }
             set_ffi_error!(
                 err,
                 "Schema unavailable for {}",
@@ -819,6 +865,28 @@ mod tests {
             .to_string()
             .contains("Schema unavailable for list_identifiers"));
         Ok(())
+    }
+
+    #[test]
+    fn failed_name_import_releases_the_catalog() {
+        unsafe extern "C" fn failing_property(
+            _raw: *const SedonaCCatalogProviderList,
+            _property: *const c_char,
+            _args: *const c_char,
+            _out: *mut FFI_ArrowArray,
+            err: *mut SedonaCError,
+        ) -> c_int {
+            set_ffi_error!(err, "Name unavailable");
+            libc::EIO
+        }
+
+        let catalog = Arc::new(TestCatalog::default());
+        let weak = Arc::downgrade(&catalog);
+        let mut raw = raw(catalog);
+        raw.get_property = Some(failing_property);
+        let error = ImportedCatalogProviderList::try_new(raw, runtime()).unwrap_err();
+        assert!(error.to_string().contains("Name unavailable"));
+        assert!(weak.upgrade().is_none());
     }
 
     #[test]
