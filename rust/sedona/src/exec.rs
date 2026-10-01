@@ -142,6 +142,9 @@ pub(crate) async fn execute_sedona_catalog_ddl(
         DdlStatement::CreateIndex(cmd) => {
             create.object_type = CatalogObjectType::Index;
             create.mode = create_mode(cmd.if_not_exists, false)?;
+            // The logical plan is not forwarded for indexes. Preserve the SQL
+            // AST, including the indexed expressions, method, and uniqueness.
+            create.definition = Some(statement.to_string());
             // Indexes belong to a table. An absent final component requests an
             // implementation-defined index name.
             let mut identifier = table_identifier(&cmd.table);
@@ -207,6 +210,9 @@ pub(crate) async fn execute_sedona_catalog_ddl(
     let Some(owner) = owner else {
         return Ok(None);
     };
+    // Validate only foreign targets, before building a physical input or calling
+    // the extension. The built-in path can preserve this metadata itself.
+    reject_unsupported_create_metadata(ddl)?;
     let identifier: Vec<&str> = identifier.iter().map(String::as_str).collect();
     let plan = if let Some(options) = drop {
         owner.drop_object(&identifier, &options).await?
@@ -223,6 +229,56 @@ pub(crate) async fn execute_sedona_catalog_ddl(
     Ok(Some(
         ctx.ctx.read_table(Arc::new(CatalogDdlProvider { plan }))?,
     ))
+}
+
+fn reject_unsupported_create_metadata(ddl: &DdlStatement) -> Result<()> {
+    let mut unsupported = Vec::new();
+    let (statement, constraints, column_defaults) = match ddl {
+        DdlStatement::CreateMemoryTable(cmd) => (
+            "CREATE TABLE",
+            !cmd.constraints.is_empty(),
+            !cmd.column_defaults.is_empty(),
+        ),
+        DdlStatement::CreateExternalTable(cmd) => {
+            // DataFusion's SQL definition omits these fields. It also flattens
+            // multiple WITH ORDER clauses into one, changing their meaning.
+            if !cmd.schema.fields().is_empty() {
+                unsupported.push("column declarations");
+            }
+            if !cmd.table_partition_cols.is_empty() {
+                unsupported.push("PARTITIONED BY");
+            }
+            if !cmd.order_exprs.is_empty() {
+                unsupported.push("WITH ORDER");
+            }
+            if cmd.unbounded {
+                unsupported.push("UNBOUNDED");
+            }
+            if !cmd.options.is_empty() {
+                unsupported.push("OPTIONS");
+            }
+            (
+                "CREATE EXTERNAL TABLE",
+                !cmd.constraints.is_empty(),
+                !cmd.column_defaults.is_empty(),
+            )
+        }
+        _ => return Ok(()),
+    };
+    if constraints {
+        unsupported.push("table constraints");
+    }
+    if column_defaults {
+        unsupported.push("column defaults");
+    }
+    if unsupported.is_empty() {
+        Ok(())
+    } else {
+        exec_err!(
+            "{statement} for a foreign catalog cannot preserve: {}",
+            unsupported.join(", ")
+        )
+    }
 }
 
 fn create_mode(if_not_exists: bool, or_replace: bool) -> Result<CreateMode> {
@@ -571,6 +627,79 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn foreign_memory_table_rejects_unpreserved_metadata() -> Result<()> {
+        let (ctx, catalog) = test_context();
+        for prefix in [
+            "CREATE TABLE",
+            "CREATE TABLE IF NOT EXISTS",
+            "CREATE OR REPLACE TABLE",
+        ] {
+            for (columns, expected) in [
+                ("value BIGINT DEFAULT 42", "column defaults"),
+                ("value BIGINT, PRIMARY KEY (value)", "table constraints"),
+                ("value BIGINT UNIQUE", "table constraints"),
+                (
+                    "value BIGINT DEFAULT 42, PRIMARY KEY (value)",
+                    "table constraints, column defaults",
+                ),
+            ] {
+                for table in ["created", "existing"] {
+                    let sql = format!("{prefix} foreign.public.{table} ({columns})");
+                    let error = ctx.sql(&sql).await.unwrap_err().to_string();
+                    assert!(
+                        error.contains(&format!("cannot preserve: {expected}")),
+                        "{sql}: {error}"
+                    );
+                }
+            }
+        }
+        assert!(catalog.creates.lock().unwrap().is_empty());
+        assert!(catalog
+            .objects
+            .lock()
+            .unwrap()
+            .contains_key(&owned(&["foreign", "public", "existing"])));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn builtin_memory_table_preserves_metadata_with_foreign_catalog() -> Result<()> {
+        let (ctx, catalog) = test_context();
+        ctx.sql("CREATE TABLE builtin (value BIGINT DEFAULT 42, PRIMARY KEY (value))")
+            .await?
+            .collect()
+            .await?;
+        let table = ctx.ctx.table_provider("builtin").await?;
+        assert!(!table.constraints().unwrap().is_empty());
+        assert!(table.get_column_default("value").is_some());
+        assert!(catalog.creates.lock().unwrap().is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn foreign_index_preserves_specification_in_definition() -> Result<()> {
+        let (ctx, catalog) = test_context();
+        for sql in [
+            "CREATE INDEX idx ON foreign.public.existing (value)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx ON foreign.public.existing USING btree (value DESC)",
+            "CREATE INDEX idx ON foreign.public.existing ((value + 1))",
+            "CREATE INDEX \"index.with.dot\" ON foreign.public.existing (value ASC, (value + 1) DESC)",
+        ] {
+            ctx.sql(sql).await?;
+            let received = catalog.creates.lock().unwrap().last().unwrap().clone();
+            assert_eq!(received.1.object_type, CatalogObjectType::Index);
+            assert!(!received.2);
+            let definition = received.1.definition.unwrap();
+            let original = DFParser::parse_sql(sql)?.pop_front().unwrap();
+            // The extension can parse the complete index definition, including
+            // attributes absent from the catalog options and physical input.
+            let forwarded = DFParser::parse_sql(&definition)?.pop_front().unwrap();
+            assert_eq!(forwarded.to_string(), original.to_string());
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn foreign_drops_route_flags_and_recheck_at_execution() -> Result<()> {
         let (ctx, catalog) = test_context();
         let df = ctx
@@ -693,7 +822,7 @@ mod tests {
     #[tokio::test]
     async fn foreign_external_table_preserves_definition_without_opening_source() -> Result<()> {
         let (ctx, catalog) = test_context();
-        let df = ctx.sql("CREATE EXTERNAL TABLE foreign.public.external (value BIGINT) STORED AS CSV LOCATION 'does-not-exist.csv'").await?;
+        let df = ctx.sql("CREATE EXTERNAL TABLE foreign.public.external STORED AS CSV LOCATION 'does-not-exist.csv'").await?;
         let received = catalog.creates.lock().unwrap().last().unwrap().clone();
         assert!(received.1.external && !received.2);
         assert!(received
@@ -702,6 +831,78 @@ mod tests {
             .unwrap()
             .contains("does-not-exist.csv"));
         df.collect().await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn foreign_external_table_rejects_unpreserved_metadata() -> Result<()> {
+        let (ctx, catalog) = test_context();
+        for prefix in [
+            "CREATE EXTERNAL TABLE",
+            "CREATE EXTERNAL TABLE IF NOT EXISTS",
+            "CREATE OR REPLACE EXTERNAL TABLE",
+        ] {
+            for (clauses, expected) in [
+                ("(value BIGINT) STORED AS CSV", "column declarations"),
+                ("STORED AS CSV PARTITIONED BY (part)", "PARTITIONED BY"),
+                (
+                    "(value BIGINT) STORED AS CSV WITH ORDER (value) WITH ORDER (value DESC)",
+                    "column declarations, WITH ORDER",
+                ),
+                (
+                    "STORED AS CSV OPTIONS ('format.has_header' 'true')",
+                    "OPTIONS",
+                ),
+                (
+                    "(value BIGINT, PRIMARY KEY (value)) STORED AS CSV",
+                    "column declarations, table constraints",
+                ),
+                (
+                    "(value BIGINT DEFAULT 42) STORED AS CSV",
+                    "column declarations, column defaults",
+                ),
+            ] {
+                let sql = format!(
+                    "{prefix} foreign.public.existing {clauses} LOCATION 'does-not-exist.csv'"
+                );
+                let error = ctx.sql(&sql).await.unwrap_err().to_string();
+                assert!(
+                    error.contains(&format!("cannot preserve: {expected}")),
+                    "{sql}: {error}"
+                );
+            }
+        }
+        let error = ctx.sql("CREATE UNBOUNDED EXTERNAL TABLE foreign.public.external STORED AS CSV LOCATION 'does-not-exist.csv'").await.unwrap_err().to_string();
+        assert!(error.contains("cannot preserve: UNBOUNDED"), "{error}");
+        assert!(catalog.creates.lock().unwrap().is_empty());
+        assert!(catalog
+            .objects
+            .lock()
+            .unwrap()
+            .contains_key(&owned(&["foreign", "public", "existing"])));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn builtin_external_table_preserves_metadata_with_foreign_catalog() -> Result<()> {
+        let (ctx, catalog) = test_context();
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("input.csv");
+        std::fs::write(&path, "value\n42\n")?;
+        ctx.sql(&format!(
+            "CREATE EXTERNAL TABLE builtin (value BIGINT) STORED AS CSV LOCATION '{}' OPTIONS ('format.has_header' 'true')",
+            path.display()
+        ))
+        .await?
+        .collect()
+        .await?;
+        let batches = ctx.sql("SELECT * FROM builtin").await?.collect().await?;
+        assert_eq!(
+            batches.iter().map(|batch| batch.num_rows()).sum::<usize>(),
+            1
+        );
+        assert_eq!(batches[0].schema().field(0).data_type(), &DataType::Int64);
+        assert!(catalog.creates.lock().unwrap().is_empty());
         Ok(())
     }
 

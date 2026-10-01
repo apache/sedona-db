@@ -78,8 +78,11 @@ pub struct CreateObjectOptions {
     pub temporary: bool,
     /// Whether this is an external table.
     pub external: bool,
-    /// Optional SQL definition supplied by the planner for views and external
-    /// tables. This is passed through as supplied and may omit DDL clauses.
+    /// Optional SQL definition for views, external tables, and indexes. Index
+    /// definitions preserve the SQL AST, including expressions, method, and
+    /// uniqueness. View and external table definitions are supplied by the
+    /// planner and may omit DDL clauses; Sedona SQL rejects external table
+    /// metadata that cannot be preserved.
     pub definition: Option<String>,
 }
 
