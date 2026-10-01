@@ -258,58 +258,39 @@ mod tests {
     use sedona_testing::raster_spec::{RasterSpec, assert_raster_scalar_equals, raster_array};
     use sedona_testing::testers::AggregateUdfTester;
 
-    /// A 3 x 2 uint8 raster whose one band counts up from `start`
-    fn uint8(start: u8) -> RasterSpec {
-        RasterSpec::d2(3, 2).band_values(&[
-            start,
-            start + 1,
-            start + 2,
-            start + 3,
-            start + 4,
-            start + 5,
-        ])
-    }
-
-    fn tester() -> AggregateUdfTester {
-        AggregateUdfTester::new(
-            rs_stack_aggr_udf().into(),
-            vec![RASTER, SedonaType::Arrow(DataType::Int64)],
-        )
-    }
-
-    /// Aggregate batches of (raster, index) rows, each batch through its own
-    /// accumulator and state as `AggregateUdfTester` does
-    fn aggregate(batches: Vec<Vec<(Option<RasterSpec>, Option<i64>)>>) -> Result<ScalarValue> {
-        let batches = batches
-            .into_iter()
-            .map(|rows| {
-                let (rasters, indexes): (Vec<_>, Vec<_>) = rows.into_iter().unzip();
-                vec![
-                    Arc::new(raster_array(rasters)) as ArrayRef,
-                    Arc::new(Int64Array::from(indexes)) as ArrayRef,
-                ]
-            })
-            .collect::<Vec<_>>();
-        tester().aggregate_columns(&batches)
-    }
-
     #[test]
     fn udf_metadata() {
         let udf: AggregateUDF = rs_stack_aggr_udf().into();
         assert_eq!(udf.name(), "rs_stack_aggr");
-        assert_eq!(tester().return_type().unwrap(), SedonaType::Raster);
+        let tester = AggregateUdfTester::new(udf, vec![RASTER, SedonaType::Arrow(DataType::Int64)]);
+        assert_eq!(tester.return_type().unwrap(), SedonaType::Raster);
     }
 
     #[test]
     fn stacks_bands_in_index_order_across_batches() {
         // Rows arrive out of order and split across batches (and so across
         // partial states); the index alone decides the band order.
-        let result = aggregate(vec![
-            vec![(Some(uint8(20)), Some(3)), (Some(uint8(0)), Some(1))],
-            vec![(Some(uint8(10)), Some(2))],
-        ])
-        .unwrap();
-        let expected = uint8(0)
+        let tester = AggregateUdfTester::new(
+            rs_stack_aggr_udf().into(),
+            vec![RASTER, SedonaType::Arrow(DataType::Int64)],
+        );
+        let first = RasterSpec::d2(3, 2).band_values(&[0u8, 1, 2, 3, 4, 5]);
+        let second = RasterSpec::d2(3, 2).band_values(&[10u8, 11, 12, 13, 14, 15]);
+        let third = RasterSpec::d2(3, 2).band_values(&[20u8, 21, 22, 23, 24, 25]);
+        let result = tester
+            .aggregate_columns(&[
+                vec![
+                    Arc::new(raster_array(vec![Some(third), Some(first)])) as ArrayRef,
+                    Arc::new(Int64Array::from(vec![3, 1])) as ArrayRef,
+                ],
+                vec![
+                    Arc::new(raster_array(vec![Some(second)])) as ArrayRef,
+                    Arc::new(Int64Array::from(vec![2])) as ArrayRef,
+                ],
+            ])
+            .unwrap();
+        let expected = RasterSpec::d2(3, 2)
+            .band_values(&[0u8, 1, 2, 3, 4, 5])
             .band_values(&[10u8, 11, 12, 13, 14, 15])
             .band_values(&[20u8, 21, 22, 23, 24, 25]);
         assert_raster_scalar_equals(&result, &expected);
@@ -317,13 +298,22 @@ mod tests {
 
     #[test]
     fn keeps_every_band_of_each_raster() {
-        let two_bands = uint8(0).band_values(&[6u8, 7, 8, 9, 10, 11]);
-        let result = aggregate(vec![vec![
-            (Some(uint8(20)), Some(1)),
-            (Some(two_bands), Some(0)),
-        ]])
-        .unwrap();
-        let expected = uint8(0)
+        let tester = AggregateUdfTester::new(
+            rs_stack_aggr_udf().into(),
+            vec![RASTER, SedonaType::Arrow(DataType::Int64)],
+        );
+        let two_bands = RasterSpec::d2(3, 2)
+            .band_values(&[0u8, 1, 2, 3, 4, 5])
+            .band_values(&[6u8, 7, 8, 9, 10, 11]);
+        let one_band = RasterSpec::d2(3, 2).band_values(&[20u8, 21, 22, 23, 24, 25]);
+        let result = tester
+            .aggregate_columns(&[vec![
+                Arc::new(raster_array(vec![Some(one_band), Some(two_bands)])) as ArrayRef,
+                Arc::new(Int64Array::from(vec![1, 0])) as ArrayRef,
+            ]])
+            .unwrap();
+        let expected = RasterSpec::d2(3, 2)
+            .band_values(&[0u8, 1, 2, 3, 4, 5])
             .band_values(&[6u8, 7, 8, 9, 10, 11])
             .band_values(&[20u8, 21, 22, 23, 24, 25]);
         assert_raster_scalar_equals(&result, &expected);
@@ -331,13 +321,23 @@ mod tests {
 
     #[test]
     fn evenly_spaced_indexes_may_step_by_more_than_one() {
-        let result = aggregate(vec![vec![
-            (Some(uint8(10)), Some(10)),
-            (Some(uint8(0)), Some(0)),
-            (Some(uint8(20)), Some(20)),
-        ]])
-        .unwrap();
-        let expected = uint8(0)
+        let tester = AggregateUdfTester::new(
+            rs_stack_aggr_udf().into(),
+            vec![RASTER, SedonaType::Arrow(DataType::Int64)],
+        );
+        let rasters = vec![
+            Some(RasterSpec::d2(3, 2).band_values(&[10u8, 11, 12, 13, 14, 15])),
+            Some(RasterSpec::d2(3, 2).band_values(&[0u8, 1, 2, 3, 4, 5])),
+            Some(RasterSpec::d2(3, 2).band_values(&[20u8, 21, 22, 23, 24, 25])),
+        ];
+        let result = tester
+            .aggregate_columns(&[vec![
+                Arc::new(raster_array(rasters)) as ArrayRef,
+                Arc::new(Int64Array::from(vec![10, 0, 20])) as ArrayRef,
+            ]])
+            .unwrap();
+        let expected = RasterSpec::d2(3, 2)
+            .band_values(&[0u8, 1, 2, 3, 4, 5])
             .band_values(&[10u8, 11, 12, 13, 14, 15])
             .band_values(&[20u8, 21, 22, 23, 24, 25]);
         assert_raster_scalar_equals(&result, &expected);
@@ -345,32 +345,78 @@ mod tests {
 
     #[test]
     fn a_null_raster_or_index_skips_the_row() {
-        let result = aggregate(vec![vec![
-            (Some(uint8(0)), Some(1)),
-            (None, Some(2)),
-            (Some(uint8(10)), None),
-            (Some(uint8(20)), Some(2)),
-        ]])
-        .unwrap();
-        let expected = uint8(0).band_values(&[20u8, 21, 22, 23, 24, 25]);
+        let tester = AggregateUdfTester::new(
+            rs_stack_aggr_udf().into(),
+            vec![RASTER, SedonaType::Arrow(DataType::Int64)],
+        );
+        let rasters = vec![
+            Some(RasterSpec::d2(3, 2).band_values(&[0u8, 1, 2, 3, 4, 5])),
+            None,
+            Some(RasterSpec::d2(3, 2).band_values(&[10u8, 11, 12, 13, 14, 15])),
+            Some(RasterSpec::d2(3, 2).band_values(&[20u8, 21, 22, 23, 24, 25])),
+        ];
+        let result = tester
+            .aggregate_columns(&[vec![
+                Arc::new(raster_array(rasters)) as ArrayRef,
+                Arc::new(Int64Array::from(vec![Some(1), Some(2), None, Some(2)])) as ArrayRef,
+            ]])
+            .unwrap();
+        let expected = RasterSpec::d2(3, 2)
+            .band_values(&[0u8, 1, 2, 3, 4, 5])
+            .band_values(&[20u8, 21, 22, 23, 24, 25]);
         assert_raster_scalar_equals(&result, &expected);
     }
 
     #[test]
     fn no_rows_gives_null() {
-        let result = aggregate(vec![vec![(None, Some(1)), (Some(uint8(0)), None)]]).unwrap();
+        let tester = AggregateUdfTester::new(
+            rs_stack_aggr_udf().into(),
+            vec![RASTER, SedonaType::Arrow(DataType::Int64)],
+        );
+        let rasters = vec![
+            None,
+            Some(RasterSpec::d2(3, 2).band_values(&[0u8, 1, 2, 3, 4, 5])),
+        ];
+        let result = tester
+            .aggregate_columns(&[vec![
+                Arc::new(raster_array(rasters)) as ArrayRef,
+                Arc::new(Int64Array::from(vec![Some(1), None])) as ArrayRef,
+            ]])
+            .unwrap();
         assert!(result.is_null());
-        let result = aggregate(vec![vec![]]).unwrap();
+
+        let result = tester
+            .aggregate_columns(&[vec![
+                Arc::new(raster_array(vec![])) as ArrayRef,
+                Arc::new(Int64Array::from(Vec::<i64>::new())) as ArrayRef,
+            ]])
+            .unwrap();
         assert!(result.is_null());
     }
 
     #[test]
     fn a_repeated_index_errors() {
-        let err = aggregate(vec![
-            vec![(Some(uint8(0)), Some(1))],
-            vec![(Some(uint8(10)), Some(1))],
-        ])
-        .unwrap_err();
+        // The two rows meet only when their batches' states are merged.
+        let tester = AggregateUdfTester::new(
+            rs_stack_aggr_udf().into(),
+            vec![RASTER, SedonaType::Arrow(DataType::Int64)],
+        );
+        let err = tester
+            .aggregate_columns(&[
+                vec![
+                    Arc::new(raster_array(vec![Some(
+                        RasterSpec::d2(3, 2).band_values(&[0u8, 1, 2, 3, 4, 5]),
+                    )])) as ArrayRef,
+                    Arc::new(Int64Array::from(vec![1])) as ArrayRef,
+                ],
+                vec![
+                    Arc::new(raster_array(vec![Some(
+                        RasterSpec::d2(3, 2).band_values(&[10u8, 11, 12, 13, 14, 15]),
+                    )])) as ArrayRef,
+                    Arc::new(Int64Array::from(vec![1])) as ArrayRef,
+                ],
+            ])
+            .unwrap_err();
         assert!(
             err.to_string()
                 .contains("index 1 is given to more than one raster"),
@@ -380,12 +426,21 @@ mod tests {
 
     #[test]
     fn unevenly_spaced_indexes_error() {
-        let err = aggregate(vec![vec![
-            (Some(uint8(0)), Some(1)),
-            (Some(uint8(10)), Some(2)),
-            (Some(uint8(20)), Some(4)),
-        ]])
-        .unwrap_err();
+        let tester = AggregateUdfTester::new(
+            rs_stack_aggr_udf().into(),
+            vec![RASTER, SedonaType::Arrow(DataType::Int64)],
+        );
+        let rasters = vec![
+            Some(RasterSpec::d2(3, 2).band_values(&[0u8, 1, 2, 3, 4, 5])),
+            Some(RasterSpec::d2(3, 2).band_values(&[10u8, 11, 12, 13, 14, 15])),
+            Some(RasterSpec::d2(3, 2).band_values(&[20u8, 21, 22, 23, 24, 25])),
+        ];
+        let err = tester
+            .aggregate_columns(&[vec![
+                Arc::new(raster_array(rasters)) as ArrayRef,
+                Arc::new(Int64Array::from(vec![1, 2, 4])) as ArrayRef,
+            ]])
+            .unwrap_err();
         assert!(
             err.to_string().contains(
                 "indexes must be evenly spaced, but 2 to 4 is a step of 2 where 1 to 2 is a \
@@ -397,14 +452,24 @@ mod tests {
 
     #[test]
     fn rasters_off_the_lowest_index_grid_error() {
-        let err = aggregate(vec![vec![
-            (Some(uint8(0)), Some(1)),
-            (
-                Some(uint8(10).transform([5.0, 1.0, 0.0, 0.0, 0.0, -1.0])),
-                Some(2),
+        let tester = AggregateUdfTester::new(
+            rs_stack_aggr_udf().into(),
+            vec![RASTER, SedonaType::Arrow(DataType::Int64)],
+        );
+        let moved = vec![
+            Some(RasterSpec::d2(3, 2).band_values(&[0u8, 1, 2, 3, 4, 5])),
+            Some(
+                RasterSpec::d2(3, 2)
+                    .transform([5.0, 1.0, 0.0, 0.0, 0.0, -1.0])
+                    .band_values(&[10u8, 11, 12, 13, 14, 15]),
             ),
-        ]])
-        .unwrap_err();
+        ];
+        let err = tester
+            .aggregate_columns(&[vec![
+                Arc::new(raster_array(moved)) as ArrayRef,
+                Arc::new(Int64Array::from(vec![1, 2])) as ArrayRef,
+            ]])
+            .unwrap_err();
         assert!(
             err.to_string()
                 .contains("RS_Stack_Aggr: the raster with index 2 has geotransform"),
@@ -415,11 +480,16 @@ mod tests {
             "{err}"
         );
 
-        let err = aggregate(vec![vec![
-            (Some(uint8(0)), Some(1)),
-            (Some(RasterSpec::d2(2, 3).band_values(&[0u8; 6])), Some(2)),
-        ]])
-        .unwrap_err();
+        let reshaped = vec![
+            Some(RasterSpec::d2(3, 2).band_values(&[0u8, 1, 2, 3, 4, 5])),
+            Some(RasterSpec::d2(2, 3).band_values(&[0u8; 6])),
+        ];
+        let err = tester
+            .aggregate_columns(&[vec![
+                Arc::new(raster_array(reshaped)) as ArrayRef,
+                Arc::new(Int64Array::from(vec![1, 2])) as ArrayRef,
+            ]])
+            .unwrap_err();
         assert!(
             err.to_string()
                 .contains("the raster with index 2 is 2 x 3, but the raster with index 1 is 3 x 2"),
@@ -429,12 +499,21 @@ mod tests {
 
     #[test]
     fn indexes_far_apart_do_not_overflow() {
-        let err = aggregate(vec![vec![
-            (Some(uint8(0)), Some(i64::MIN)),
-            (Some(uint8(10)), Some(0)),
-            (Some(uint8(20)), Some(i64::MAX)),
-        ]])
-        .unwrap_err();
+        let tester = AggregateUdfTester::new(
+            rs_stack_aggr_udf().into(),
+            vec![RASTER, SedonaType::Arrow(DataType::Int64)],
+        );
+        let rasters = vec![
+            Some(RasterSpec::d2(3, 2).band_values(&[0u8, 1, 2, 3, 4, 5])),
+            Some(RasterSpec::d2(3, 2).band_values(&[10u8, 11, 12, 13, 14, 15])),
+            Some(RasterSpec::d2(3, 2).band_values(&[20u8, 21, 22, 23, 24, 25])),
+        ];
+        let err = tester
+            .aggregate_columns(&[vec![
+                Arc::new(raster_array(rasters)) as ArrayRef,
+                Arc::new(Int64Array::from(vec![i64::MIN, 0, i64::MAX])) as ArrayRef,
+            ]])
+            .unwrap_err();
         assert!(err.to_string().contains("evenly spaced"), "{err}");
     }
 }
