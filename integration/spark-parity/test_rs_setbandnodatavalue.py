@@ -190,8 +190,11 @@ def test_rs_setbandnodata_out_of_range_band_rejected(band, tmp_path):
 
 @pytest.mark.parametrize("dtype", ["float32", "float64"])
 @pytest.mark.xfail(
-    reason="after setting a NaN nodata, Sedona Spark reports the band nodata "
-    "as NULL where SedonaDB reports NaN"
+    reason="needs a Sedona release carrying apache/sedona#3366 — the released "
+    "1.9.1 jar reports the band nodata as NULL after setting NaN where "
+    "SedonaDB reports NaN; Sedona master supports NaN as a band nodata (and "
+    "#3368 writes it to GeoTIFF) and agrees, verified against a jar built "
+    "from it"
 )
 def test_rs_setbandnodata_nan_on_float(dtype, tmp_path):
     """Setting a NaN nodata on a float band reads back the same from both

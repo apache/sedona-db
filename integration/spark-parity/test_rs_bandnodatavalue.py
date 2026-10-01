@@ -89,7 +89,10 @@ def test_rs_band_nodata(dtype, tmp_path):
 
 @pytest.mark.parametrize("dtype", ["float32", "float64"])
 @pytest.mark.xfail(
-    reason="SedonaDB reads a NaN file nodata back as NaN; Sedona Spark returns NULL"
+    reason="needs a Sedona release carrying apache/sedona#3366 — the released "
+    "1.9.1 jar returns NULL where SedonaDB reads the NaN file nodata back as "
+    "NaN; Sedona master supports NaN as a band nodata and agrees, verified "
+    "against a jar built from it"
 )
 def test_rs_band_nodata_nan(dtype, tmp_path):
     """A float band whose file nodata is NaN (GeoTIFF encodes it) reads back
