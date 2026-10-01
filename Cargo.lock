@@ -6150,6 +6150,7 @@ dependencies = [
  "criterion",
  "datafusion-common",
  "datafusion-expr",
+ "futures",
  "lru 0.18.0",
  "sedona-common",
  "sedona-expr",

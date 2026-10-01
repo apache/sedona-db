@@ -110,6 +110,47 @@ def test_rs_ensureloaded(con, sedona_testing):
     assert arr[0, 0] == 2324
 
 
+def test_rs_ensureloaded_many_files_in_one_batch(con, sedona_testing):
+    """A batch of OutDb rasters from many different files is read file by
+    file in parallel; every row must still get its own file's pixels.
+
+    Each fixture's mean is computed alone, then all of them are loaded
+    together, repeated and interleaved, in one batch and compared row by row.
+    """
+    names = ["test1.tiff", "test2.tif", "test3.tif", "test4.tiff", "test5.tiff"]
+    paths = [str(sedona_testing / "data/raster" / name) for name in names]
+
+    def mean_of(path):
+        return (
+            con.sql(
+                "SELECT RS_SummaryStats(RS_FromPath($1), 'mean', 1) AS m",
+                params=(path,),
+            )
+            .to_arrow_table()["m"][0]
+            .as_py()
+        )
+
+    expected = {path: mean_of(path) for path in paths}
+    assert len(set(expected.values())) > 1, "fixtures should be distinguishable"
+
+    rows = [paths[(i * 3) % len(paths)] for i in range(40)]
+    df = pd.DataFrame({"i": range(len(rows)), "path": rows})
+    con.create_data_frame(df).to_view("ensureloaded_many_files", overwrite=True)
+    result = (
+        con.sql(
+            """
+            SELECT i, path, RS_SummaryStats(RS_FromPath(path), 'mean', 1) AS m
+            FROM ensureloaded_many_files ORDER BY i
+            """
+        )
+        .to_arrow_table()
+        .to_pylist()
+    )
+    assert len(result) == len(rows)
+    for row in result:
+        assert row["m"] == expected[row["path"]], row
+
+
 # Point sampling. RS_Example fills band `b` with the constant value `b`, except
 # the top-left pixel which is set to the nodata value (127). (74.58, 110.57) is
 # the centroid of pixel (10, 10) (0-based) in the raster's OGC:CRS84 space; the
