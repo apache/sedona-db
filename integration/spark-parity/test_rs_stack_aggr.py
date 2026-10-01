@@ -16,12 +16,12 @@
 # under the License.
 """SedonaDB vs Sedona Spark parity for RS_Stack_Aggr.
 
-Every case is an xfail for now: the Sedona Spark 1.9.1 release the suite pins
-calls this aggregate RS_Union_Aggr, and the rename to RS_Stack_Aggr
-(apache/sedona#3427) is not released yet. The cases start passing once the pin
-moves to a release that has RS_Stack_Aggr; drop the module-level xfail then.
-(The refusal cases already xpass, because Sedona Spark refuses the name it does
-not know.)
+The Sedona Spark 1.9.1 release the suite pins calls this aggregate
+RS_Union_Aggr, and the rename to RS_Stack_Aggr (apache/sedona#3427) is not
+released yet. Every case that needs a result from Sedona Spark is an xfail until
+the pin moves to a release that has RS_Stack_Aggr; drop those markers then. The
+refusal cases carry no marker: Sedona Spark already refuses the name it does not
+know, and it keeps refusing those inputs once it has the aggregate.
 
 Each raster is registered as its own view and the rows are gathered with
 UNION ALL, each with its index, listed out of index order so the index and not
@@ -29,17 +29,18 @@ the row order decides the band order. Each case compares the whole output
 raster, decoded on both engines, and anchors it to the inputs' bands stacked in
 index order under the lowest-index raster's grid. As in test_rs_stack.py, the
 fixtures carry no nodata value, and Sedona Spark ignoring every raster's
-georeference but the first is an xfail of its own.
+georeference but the first, where SedonaDB requires one grid, is pinned down as
+a test of what each engine does, so it fails loudly if either engine changes.
 """
 
 import numpy as np
 import pytest
 
-from sedonadb.raster_testing import DecodedRaster, write_geotiff
+from sedonadb.raster_testing import DecodedRaster, assert_decoded_equal, write_geotiff
 from sedonadb.testing import SedonaDB, compare
 from sedonadb.testing_spark import SedonaSpark
 
-pytestmark = pytest.mark.xfail(
+no_rs_stack_aggr = pytest.mark.xfail(
     reason="Sedona Spark 1.9.1 has no RS_Stack_Aggr; it calls the aggregate "
     "RS_Union_Aggr until the rename in apache/sedona#3427 is released"
 )
@@ -88,6 +89,7 @@ def _sql(rows, select="RS_Stack_Aggr(rast, i)"):
     return f"SELECT {select} FROM ({union}) AS t"
 
 
+@no_rs_stack_aggr
 def test_rs_stack_aggr(tmp_path):
     a, b, c = _raster(plant=1), _raster(bands=2, plant=2), _raster(plant=3)
     sedona, spark = _views(tmp_path, [("sa_a", a), ("sa_b", b), ("sa_c", c)])
@@ -95,6 +97,7 @@ def test_rs_stack_aggr(tmp_path):
     compare(sql, sedona, spark, expected=_stacked(a, b, c))
 
 
+@no_rs_stack_aggr
 def test_rs_stack_aggr_index_step(tmp_path):
     """Evenly spaced indexes need not step by one."""
     a, b = _raster(plant=1), _raster(plant=2)
@@ -115,18 +118,17 @@ def test_rs_stack_aggr_bad_indexes(indexes, tmp_path):
             eng.decode_raster_result(sql)
 
 
-@pytest.mark.xfail(
-    reason="SedonaDB rejects a raster on another grid; Sedona Spark keeps the "
-    "first raster's grid and ignores the others' georeference"
-)
+@no_rs_stack_aggr
 def test_rs_stack_aggr_another_grid(tmp_path):
-    """The second raster has the same shape but is georeferenced elsewhere."""
+    """The second raster has the same shape but is georeferenced elsewhere.
+    The engines diverge: SedonaDB rejects it, Sedona Spark keeps the
+    lowest-index raster's grid and ignores the others' georeference."""
     a, b = _raster(plant=1), _raster(plant=2, bbox=(0, 0, 7, 6))
     sedona, spark = _views(tmp_path, [("sa_a", a), ("sa_b", b)])
     sql = _sql([("sa_a", 1), ("sa_b", 2)])
-    for eng in (sedona, spark):
-        with pytest.raises(Exception):
-            eng.decode_raster_result(sql)
+    with pytest.raises(Exception):
+        sedona.decode_raster_result(sql)
+    assert_decoded_equal(spark.decode_raster_result(sql), _stacked(a, b), context=sql)
 
 
 def test_rs_stack_aggr_shape_mismatch(tmp_path):
