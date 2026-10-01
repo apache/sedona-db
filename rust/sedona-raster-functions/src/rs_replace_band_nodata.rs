@@ -74,9 +74,9 @@ pub fn rs_replace_band_nodata_value_udf() -> SedonaScalarUDF {
     // The kernel reads and rewrites pixel bytes, so the raster argument must be
     // materialised InDb first; the planner injects RS_EnsureLoaded on this flag.
     .with_metadata(NEEDS_PIXELS_METADATA_KEY, "true")
-    // The output is InDb too (the addressed band is fresh bytes, the others are
-    // copied from the loaded input), so a consumer must not wrap it in another
-    // RS_EnsureLoaded.
+    // The output is InDb too (the addressed band is fresh bytes or its loaded
+    // bytes, the others are copied from the loaded input), so a consumer must
+    // not wrap it in another RS_EnsureLoaded.
     .with_metadata(RETURNS_BYTES_METADATA_KEY, "true")
 }
 
@@ -150,18 +150,22 @@ fn replace_band_nodata(
     builder.start_raster_from(raster, RasterOverrides::default())?;
     for band_idx in 0..raster.num_bands() {
         let band = raster.band(band_idx)?;
-        let overrides = if band_idx + 1 == band_num {
+        let overrides = match &data {
             // The new bytes are the band's visible pixels, packed row-major, so
             // they carry an identity view over the visible shape.
-            BandOverrides {
-                data: Override::Set(&data),
+            Some(data) if band_idx + 1 == band_num => BandOverrides {
+                data: Override::Set(data),
                 view: Override::Clear,
                 source_shape: Some(band.shape()),
                 nodata: Override::Set(&new_nodata),
                 ..Default::default()
-            }
-        } else {
-            BandOverrides::default()
+            },
+            // No pixel held the old nodata, so only the declared value changes.
+            None if band_idx + 1 == band_num => BandOverrides {
+                nodata: Override::Set(&new_nodata),
+                ..Default::default()
+            },
+            _ => BandOverrides::default(),
         };
         band.copy_into(builder, overrides)?;
         builder.finish_band()?;
@@ -171,8 +175,9 @@ fn replace_band_nodata(
 }
 
 /// The band's visible pixels, packed row-major, with every pixel that reads as
-/// nodata rewritten to `new_nodata`.
-fn replace_nodata_pixels(band: &dyn BandRef, new_nodata: &[u8]) -> Result<Buffer> {
+/// nodata rewritten to `new_nodata`, or `None` when no pixel reads as nodata
+/// and the band's bytes can be kept as they are.
+fn replace_nodata_pixels(band: &dyn BandRef, new_nodata: &[u8]) -> Result<Option<Buffer>> {
     let Some(matcher) = NodataMatcher::for_band(FUNC, band)? else {
         return exec_err!(
             "{FUNC}: the band has no nodata value to replace; use RS_SetBandNoDataValue to set one"
@@ -180,6 +185,21 @@ fn replace_nodata_pixels(band: &dyn BandRef, new_nodata: &[u8]) -> Result<Buffer
     };
     let buffer = spatial_2d_buffer(FUNC, band)?;
     let (height, width) = (buffer.shape[0], buffer.shape[1]);
+
+    // Look for a nodata pixel before copying anything: a band without one
+    // keeps its bytes, at the cost of a scan up to the first match.
+    let mut any_nodata = false;
+    scan_pixels(FUNC, &buffer, |_, _, pixel| {
+        if matcher.matches(pixel) {
+            any_nodata = true;
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    })?;
+    if !any_nodata {
+        return Ok(None);
+    }
 
     // A broadcast view can describe far more pixels than its source holds, so
     // size the packed output with checked arithmetic and reject it before
@@ -202,31 +222,31 @@ fn replace_nodata_pixels(band: &dyn BandRef, new_nodata: &[u8]) -> Result<Buffer
         });
         ControlFlow::Continue(())
     })?;
-    Ok(Buffer::from_vec(data))
+    Ok(Some(Buffer::from_vec(data)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::{ArrayRef, Float64Array, Int64Array};
+    use arrow_array::{
+        ArrayRef, BinaryViewArray, Float64Array, Int64Array, ListArray, StructArray,
+    };
     use datafusion_expr::ScalarUDF;
     use sedona_schema::datatypes::RASTER;
+    use sedona_schema::raster::{band_indices, raster_indices};
     use sedona_testing::raster_spec::{RasterSpec, assert_rasters_equal, raster_array};
     use sedona_testing::testers::ScalarUdfTester;
-
-    fn i64_t() -> SedonaType {
-        SedonaType::Arrow(DataType::Int64)
-    }
-    fn f64_t() -> SedonaType {
-        SedonaType::Arrow(DataType::Float64)
-    }
 
     /// Run the 3-argument form over one row per spec.
     fn replace(specs: Vec<Option<RasterSpec>>, band: i64, nodata: f64) -> Result<ArrayRef> {
         let n = specs.len();
         let tester = ScalarUdfTester::new(
             rs_replace_band_nodata_value_udf().into(),
-            vec![RASTER, i64_t(), f64_t()],
+            vec![
+                RASTER,
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Float64),
+            ],
         );
         tester.invoke_arrays(vec![
             Arc::new(raster_array(specs)),
@@ -260,6 +280,56 @@ mod tests {
             .band_values(&[0u8, 9, 0])
             .nodata(0u8);
         assert_rasters_equal(&result, &[Some(expected)]);
+    }
+
+    #[test]
+    fn a_band_without_nodata_pixels_keeps_its_bytes() {
+        // No pixel holds the old nodata 0, so only the declared value moves
+        // and the band's 16 bytes (past the 12 a view holds inline) are carried
+        // over without a copy.
+        let input = RasterSpec::d2(4, 4).band_values(&[1u8; 16]).nodata(0u8);
+        let input: ArrayRef = Arc::new(raster_array(vec![Some(input)]));
+        let tester = ScalarUdfTester::new(
+            rs_replace_band_nodata_value_udf().into(),
+            vec![
+                RASTER,
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Float64),
+            ],
+        );
+        let result = tester
+            .invoke_arrays(vec![
+                input.clone(),
+                Arc::new(Int64Array::from(vec![1])),
+                Arc::new(Float64Array::from(vec![255.0])),
+            ])
+            .unwrap();
+        let expected = RasterSpec::d2(4, 4).band_values(&[1u8; 16]).nodata(255u8);
+        assert_rasters_equal(&result, &[Some(expected)]);
+
+        let data_buffer = |rasters: &ArrayRef| {
+            let bands = rasters
+                .as_any()
+                .downcast_ref::<StructArray>()
+                .unwrap()
+                .column(raster_indices::BANDS)
+                .as_any()
+                .downcast_ref::<ListArray>()
+                .unwrap()
+                .values()
+                .as_any()
+                .downcast_ref::<StructArray>()
+                .unwrap()
+                .clone();
+            let data = bands
+                .column(band_indices::DATA)
+                .as_any()
+                .downcast_ref::<BinaryViewArray>()
+                .unwrap()
+                .clone();
+            data.data_buffers()[0].as_ptr()
+        };
+        assert_eq!(data_buffer(&result), data_buffer(&input));
     }
 
     #[test]
@@ -317,7 +387,11 @@ mod tests {
     fn null_arguments_give_a_null_raster() {
         let tester = ScalarUdfTester::new(
             rs_replace_band_nodata_value_udf().into(),
-            vec![RASTER, i64_t(), f64_t()],
+            vec![
+                RASTER,
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Float64),
+            ],
         );
         let spec = || Some(RasterSpec::d2(2, 1).band_values(&[0u8, 3]).nodata(0u8));
         let result = tester
