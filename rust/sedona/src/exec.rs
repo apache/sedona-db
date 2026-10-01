@@ -14,433 +14,224 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+use crate::{context::SedonaContext, object_storage::register_object_store_and_config_extensions};
 use async_trait::async_trait;
 use datafusion::catalog::{Session, TableProvider};
 use datafusion::prelude::DataFrame;
+use datafusion::{error::Result, sql::parser::Statement};
 use datafusion_common::{exec_err, SchemaReference, TableReference};
 use datafusion_expr::{DdlStatement, LogicalPlan, TableType};
 use datafusion_physical_plan::ExecutionPlan;
-use sedona_catalog::{
-    CatalogObjectType, CreateCatalogOptions, CreateMode, CreateSchemaOptions, CreateTableOptions,
-    DropSchemaOptions, DropTableOptions, SedonaSchema,
-};
-use std::fmt::Debug;
-use std::sync::Arc;
+use sedona_catalog::{CatalogObjectType, CreateMode, CreateObjectOptions, DropObjectOptions};
+use std::{fmt::Debug, sync::Arc};
 
-use crate::{context::SedonaContext, object_storage::register_object_store_and_config_extensions};
-
-use datafusion::{
-    error::{DataFusionError, Result},
-    sql::parser::Statement,
-};
-
-/// A Sedona-specific hook for creating a logical plan from a SQL Statement
-///
-/// Currently this provides support for CREATE EXTERNAL TABLE and
+/// Resolve tables asynchronously and configure stores required by SQL I/O.
 pub(crate) async fn create_plan_from_sql(
     ctx: &SedonaContext,
     statement: Statement,
-) -> Result<LogicalPlan, DataFusionError> {
-    let mut plan = ctx.ctx.state().statement_to_plan(statement).await?;
-
+) -> Result<LogicalPlan> {
+    let mut plan = crate::catalog_planner::statement_to_plan(ctx, statement).await?;
     if let LogicalPlan::Ddl(DdlStatement::CreateExternalTable(cmd)) = &plan {
-        if targets_foreign_catalog(ctx, &cmd.name)? {
-            reject_unsupported_external_table_metadata(cmd)?;
+        let state = ctx.ctx.state();
+        let defaults = &state.config_options().catalog;
+        let name = cmd
+            .name
+            .clone()
+            .resolve(&defaults.default_catalog, &defaults.default_schema);
+        if ctx
+            .catalog_registry()
+            .foreign_catalog(&name.catalog)
+            .await?
+            .is_none()
+        {
+            register_object_store_and_config_extensions(ctx, &cmd.location, &cmd.options).await?;
         }
-        register_object_store_and_config_extensions(ctx, &cmd.location, &cmd.options).await?;
     }
-
     if let LogicalPlan::Copy(copy_to) = &mut plan {
         register_object_store_and_config_extensions(ctx, &copy_to.output_url, &copy_to.options)
             .await?;
     }
-
     Ok(plan)
 }
 
-/// Execute DDL against the Sedona-owned catalog interfaces when the target is
-/// backed by a foreign catalog. Returning `None` delegates ordinary DDL to
-/// DataFusion unchanged.
+/// Route catalog DDL to one async extension. Built-in targets retain DataFusion behavior.
+/// No existence checks or mutations happen here: the returned plan owns them.
 pub(crate) async fn execute_sedona_catalog_ddl(
     ctx: &SedonaContext,
     plan: &LogicalPlan,
-) -> Result<Option<DataFrame>, DataFusionError> {
+    statement: &Statement,
+) -> Result<Option<DataFrame>> {
     let LogicalPlan::Ddl(ddl) = plan else {
         return Ok(None);
     };
-
-    match ddl {
+    let state = ctx.ctx.state();
+    let defaults = &state.config_options().catalog;
+    let table_identifier = |name: &TableReference| {
+        let resolved = name
+            .clone()
+            .resolve(&defaults.default_catalog, &defaults.default_schema);
+        vec![
+            resolved.catalog.to_string(),
+            resolved.schema.to_string(),
+            resolved.table.to_string(),
+        ]
+    };
+    let mut create = CreateObjectOptions::default();
+    let mut drop = None;
+    let mut input = None;
+    let identifier = match ddl {
         DdlStatement::CreateCatalog(cmd) => {
-            let catalogs = ctx.catalog_registry();
-            if !catalogs.has_foreign_catalog_list() {
-                return Ok(None);
-            }
-            if catalogs.catalog_exists(&cmd.catalog_name)? {
-                if cmd.if_not_exists {
-                    return Ok(Some(ctx.ctx.read_empty()?));
-                }
-                return exec_err!("Catalog '{}' already exists", cmd.catalog_name);
-            }
-            catalogs
-                .create_foreign_catalog(
-                    &cmd.catalog_name,
-                    &CreateCatalogOptions {
-                        mode: if cmd.if_not_exists {
-                            CreateMode::CreateOrIgnore
-                        } else {
-                            CreateMode::Create
-                        },
-                    },
-                )
-                .expect("foreign catalog list checked above")?;
-            Ok(Some(ctx.ctx.read_empty()?))
+            create.object_type = CatalogObjectType::Catalog;
+            create.mode = create_mode(cmd.if_not_exists, false)?;
+            vec![cmd.catalog_name.clone()]
         }
         DdlStatement::CreateCatalogSchema(cmd) => {
-            let tokens: Vec<&str> = cmd.schema_name.split('.').collect();
-            let (catalog_name, schema_name) = match tokens.as_slice() {
-                [schema] => {
-                    let state = ctx.ctx.state();
-                    (
-                        state.config().options().catalog.default_catalog.clone(),
-                        (*schema).to_string(),
-                    )
-                }
-                [catalog, schema] => ((*catalog).to_string(), (*schema).to_string()),
-                _ => return Ok(None),
+            create.object_type = CatalogObjectType::Schema;
+            create.mode = create_mode(cmd.if_not_exists, false)?;
+            use datafusion_expr::sqlparser::ast::{SchemaName, Statement as SqlStatement};
+            // The logical plan's schema_name has lost identifier quoting.
+            let sql = match statement {
+                Statement::Statement(sql) => Some(sql.as_ref()),
+                _ => None,
             };
-            let Some(catalog) = ctx.catalog_registry().foreign_catalog(&catalog_name)? else {
-                return Ok(None);
+            let Some(SqlStatement::CreateSchema { schema_name, .. }) = sql else {
+                return sedona_common::sedona_internal_err!(
+                    "Expected CREATE SCHEMA statement for CreateCatalogSchema plan"
+                );
             };
-            if catalog.schema(&schema_name)?.is_some() {
-                if cmd.if_not_exists {
-                    return Ok(Some(ctx.ctx.read_empty()?));
+            let name = match schema_name {
+                SchemaName::Simple(name) | SchemaName::NamedAuthorization(name, _) => {
+                    name.to_string()
                 }
-                return exec_err!("Schema '{schema_name}' already exists");
+                SchemaName::UnnamedAuthorization(name) => name.to_string(),
+            };
+            match TableReference::parse_str_normalized(
+                &name,
+                !state.config_options().sql_parser.enable_ident_normalization,
+            ) {
+                TableReference::Bare { table } => {
+                    vec![defaults.default_catalog.clone(), table.to_string()]
+                }
+                TableReference::Partial { schema, table } => {
+                    vec![schema.to_string(), table.to_string()]
+                }
+                _ => return exec_err!("Expected schema or catalog.schema: {name}"),
             }
-            catalog.create(
-                &schema_name,
-                &CreateSchemaOptions {
-                    mode: if cmd.if_not_exists {
-                        CreateMode::CreateOrIgnore
-                    } else {
-                        CreateMode::Create
-                    },
-                },
-            )?;
-            Ok(Some(ctx.ctx.read_empty()?))
-        }
-        DdlStatement::CreateExternalTable(cmd) => {
-            let state = ctx.ctx.state();
-            let action = prepare_foreign_table_create(
-                ctx,
-                &cmd.name,
-                cmd.if_not_exists,
-                cmd.or_replace,
-                cmd.temporary,
-                true,
-            )?;
-            if !matches!(&action, ForeignTableCreateAction::NotForeign) {
-                reject_unsupported_external_table_metadata(cmd)?;
-            }
-            let target = match action {
-                ForeignTableCreateAction::NotForeign => return Ok(None),
-                ForeignTableCreateAction::Ignore => {
-                    return Ok(Some(ctx.ctx.read_empty()?));
-                }
-                ForeignTableCreateAction::Create(target) => target,
-            };
-
-            let file_type = cmd.file_type.to_uppercase();
-            let factory = state
-                .table_factories()
-                .get(file_type.as_str())
-                .ok_or_else(|| {
-                    datafusion::error::DataFusionError::Execution(format!(
-                        "Unable to find factory for {}",
-                        cmd.file_type
-                    ))
-                })?;
-            let provider = factory.create(&state, cmd).await?;
-            let input = provider.scan(&state, None, &[], None).await?;
-            Ok(Some(finish_foreign_table_create(ctx, target, input)?))
         }
         DdlStatement::CreateMemoryTable(cmd) => {
-            let state = ctx.ctx.state();
-            let action = prepare_foreign_table_create(
-                ctx,
-                &cmd.name,
-                cmd.if_not_exists,
-                cmd.or_replace,
-                cmd.temporary,
-                false,
-            )?;
-            if !matches!(&action, ForeignTableCreateAction::NotForeign) {
-                reject_unsupported_memory_table_metadata(cmd)?;
-            }
-            let target = match action {
-                ForeignTableCreateAction::NotForeign => return Ok(None),
-                ForeignTableCreateAction::Ignore => {
-                    return Ok(Some(ctx.ctx.read_empty()?));
-                }
-                ForeignTableCreateAction::Create(target) => target,
-            };
-
-            let input = state.create_physical_plan(cmd.input.as_ref()).await?;
-            Ok(Some(finish_foreign_table_create(ctx, target, input)?))
+            create.mode = create_mode(cmd.if_not_exists, cmd.or_replace)?;
+            create.temporary = cmd.temporary;
+            input = Some(cmd.input.as_ref());
+            table_identifier(&cmd.name)
+        }
+        DdlStatement::CreateExternalTable(cmd) => {
+            create.mode = create_mode(cmd.if_not_exists, cmd.or_replace)?;
+            create.temporary = cmd.temporary;
+            create.external = true;
+            create.definition = cmd.definition.clone();
+            table_identifier(&cmd.name)
         }
         DdlStatement::CreateView(cmd) => {
-            if targets_foreign_catalog(ctx, &cmd.name)? {
-                return exec_err!(
-                    "Creating views is not supported for foreign view '{}'",
-                    cmd.name
-                );
+            create.object_type = CatalogObjectType::View;
+            create.definition = cmd.definition.clone();
+            create.mode = create_mode(false, cmd.or_replace)?;
+            create.temporary = cmd.temporary;
+            input = Some(cmd.input.as_ref());
+            table_identifier(&cmd.name)
+        }
+        DdlStatement::CreateIndex(cmd) => {
+            create.object_type = CatalogObjectType::Index;
+            create.mode = create_mode(cmd.if_not_exists, false)?;
+            // Indexes belong to a table. An absent final component requests an
+            // implementation-defined index name.
+            let mut identifier = table_identifier(&cmd.table);
+            if let Some(name) = &cmd.name {
+                identifier.push(name.clone());
             }
-            Ok(None)
+            identifier
         }
         DdlStatement::DropTable(cmd) => {
-            drop_foreign_object(ctx, &cmd.name, cmd.if_exists, CatalogObjectType::Table)
+            drop = Some(DropObjectOptions {
+                object_type: CatalogObjectType::Table,
+                if_exists: cmd.if_exists,
+                ..Default::default()
+            });
+            table_identifier(&cmd.name)
         }
         DdlStatement::DropView(cmd) => {
-            drop_foreign_object(ctx, &cmd.name, cmd.if_exists, CatalogObjectType::View)
+            drop = Some(DropObjectOptions {
+                object_type: CatalogObjectType::View,
+                if_exists: cmd.if_exists,
+                ..Default::default()
+            });
+            table_identifier(&cmd.name)
         }
-        DdlStatement::DropCatalogSchema(cmd) => drop_foreign_schema(
-            ctx,
-            &cmd.name,
-            cmd.if_exists,
-            &DropSchemaOptions {
+        DdlStatement::DropCatalogSchema(cmd) => {
+            drop = Some(DropObjectOptions {
+                object_type: CatalogObjectType::Schema,
                 if_exists: cmd.if_exists,
                 cascade: cmd.cascade,
-            },
-        ),
-        _ => Ok(None),
-    }
-}
-
-struct ForeignTableCreate {
-    schema: Arc<dyn SedonaSchema>,
-    table_name: String,
-    options: CreateTableOptions,
-}
-
-enum ForeignTableCreateAction {
-    NotForeign,
-    Ignore,
-    Create(ForeignTableCreate),
-}
-
-/// Resolve and validate a foreign table create.
-fn prepare_foreign_table_create(
-    ctx: &SedonaContext,
-    name: &TableReference,
-    if_not_exists: bool,
-    or_replace: bool,
-    temporary: bool,
-    external: bool,
-) -> Result<ForeignTableCreateAction, DataFusionError> {
-    let state = ctx.ctx.state();
-    let catalog_options = &state.config_options().catalog;
-    let resolved = name.clone().resolve(
-        &catalog_options.default_catalog,
-        &catalog_options.default_schema,
-    );
-    let Some(catalog) = ctx.catalog_registry().foreign_catalog(&resolved.catalog)? else {
-        return Ok(ForeignTableCreateAction::NotForeign);
-    };
-    let Some(schema) = catalog.schema(&resolved.schema)? else {
-        return exec_err!(
-            "Schema '{}.{}' doesn't exist",
-            resolved.catalog,
-            resolved.schema
-        );
-    };
-
-    let mode = match (if_not_exists, or_replace) {
-        (true, true) => return exec_err!("'IF NOT EXISTS' cannot coexist with 'REPLACE'"),
-        (true, false) => CreateMode::CreateOrIgnore,
-        (false, true) => CreateMode::Replace,
-        (false, false) => CreateMode::Create,
-    };
-    match (mode, schema.table_exist(&resolved.table)?) {
-        (CreateMode::CreateOrIgnore, true) => return Ok(ForeignTableCreateAction::Ignore),
-        (CreateMode::Create, true) => return exec_err!("Table '{name}' already exists"),
-        _ => {}
-    }
-
-    Ok(ForeignTableCreateAction::Create(ForeignTableCreate {
-        schema,
-        table_name: resolved.table.to_string(),
-        options: CreateTableOptions {
-            mode,
-            temporary,
-            external,
-        },
-    }))
-}
-
-fn finish_foreign_table_create(
-    ctx: &SedonaContext,
-    target: ForeignTableCreate,
-    input: Arc<dyn ExecutionPlan>,
-) -> Result<DataFrame, DataFusionError> {
-    let state = ctx.ctx.state();
-    let create = target
-        .schema
-        .create(&state, &target.table_name, &target.options, input)?;
-    ctx.ctx
-        .read_table(Arc::new(CatalogDdlProvider { plan: create }))
-}
-
-fn reject_unsupported_memory_table_metadata(
-    cmd: &datafusion_expr::CreateMemoryTable,
-) -> Result<(), DataFusionError> {
-    let mut unsupported = Vec::new();
-    if !cmd.constraints.is_empty() {
-        unsupported.push("table constraints");
-    }
-    if !cmd.column_defaults.is_empty() {
-        unsupported.push("column defaults");
-    }
-
-    if unsupported.is_empty() {
-        Ok(())
-    } else {
-        exec_err!(
-            "CREATE TABLE for a foreign catalog cannot preserve: {}",
-            unsupported.join(", ")
-        )
-    }
-}
-
-fn reject_unsupported_external_table_metadata(
-    cmd: &datafusion_expr::CreateExternalTable,
-) -> Result<(), DataFusionError> {
-    let mut unsupported = Vec::new();
-    if !cmd.table_partition_cols.is_empty() {
-        unsupported.push("PARTITIONED BY");
-    }
-    if !cmd.order_exprs.is_empty() {
-        unsupported.push("WITH ORDER");
-    }
-    if cmd.unbounded {
-        unsupported.push("UNBOUNDED");
-    }
-    if !cmd.options.is_empty() {
-        unsupported.push("OPTIONS");
-    }
-    if !cmd.constraints.is_empty() {
-        unsupported.push("table constraints");
-    }
-    if !cmd.column_defaults.is_empty() {
-        unsupported.push("column defaults");
-    }
-
-    if unsupported.is_empty() {
-        Ok(())
-    } else {
-        exec_err!(
-            "CREATE EXTERNAL TABLE for a foreign catalog cannot preserve: {}",
-            unsupported.join(", ")
-        )
-    }
-}
-
-fn targets_foreign_catalog(ctx: &SedonaContext, name: &TableReference) -> Result<bool> {
-    let state = ctx.ctx.state();
-    let catalog_options = &state.config_options().catalog;
-    let resolved = name.clone().resolve(
-        &catalog_options.default_catalog,
-        &catalog_options.default_schema,
-    );
-    Ok(ctx
-        .catalog_registry()
-        .foreign_catalog(&resolved.catalog)?
-        .is_some())
-}
-
-fn drop_foreign_object(
-    ctx: &SedonaContext,
-    name: &TableReference,
-    if_exists: bool,
-    object_type: CatalogObjectType,
-) -> Result<Option<DataFrame>, DataFusionError> {
-    let state = ctx.ctx.state();
-    let catalog_options = &state.config_options().catalog;
-    let resolved = name.clone().resolve(
-        &catalog_options.default_catalog,
-        &catalog_options.default_schema,
-    );
-    let Some(catalog) = ctx.catalog_registry().foreign_catalog(&resolved.catalog)? else {
-        return Ok(None);
-    };
-    let drop_plan = match catalog.schema(&resolved.schema)? {
-        Some(schema) => schema.drop_table(
-            &resolved.table,
-            &DropTableOptions {
-                if_exists,
-                object_type: Some(object_type),
-                purge: false,
-            },
-        )?,
-        None => None,
-    };
-
-    if let Some(plan) = drop_plan {
-        return Ok(Some(
-            ctx.ctx.read_table(Arc::new(CatalogDdlProvider { plan }))?,
-        ));
-    }
-    if if_exists {
-        return Ok(Some(ctx.ctx.read_empty()?));
-    }
-
-    let kind = match object_type {
-        CatalogObjectType::Table => "Table",
-        CatalogObjectType::View => "View",
-    };
-    exec_err!("{kind} '{name}' doesn't exist.")
-}
-
-fn drop_foreign_schema(
-    ctx: &SedonaContext,
-    name: &SchemaReference,
-    if_exists: bool,
-    options: &DropSchemaOptions,
-) -> Result<Option<DataFrame>, DataFusionError> {
-    let catalog_name = match name {
-        SchemaReference::Full { catalog, .. } => catalog.as_ref(),
-        SchemaReference::Bare { .. } => {
-            let state = ctx.ctx.state();
-            return drop_foreign_schema_in_catalog(
-                ctx,
-                &state.config_options().catalog.default_catalog,
-                name,
-                if_exists,
-                options,
-            );
+                ..Default::default()
+            });
+            match &cmd.name {
+                SchemaReference::Bare { schema } => {
+                    vec![defaults.default_catalog.clone(), schema.to_string()]
+                }
+                SchemaReference::Full { catalog, schema } => {
+                    vec![catalog.to_string(), schema.to_string()]
+                }
+            }
         }
+        DdlStatement::CreateFunction(_) | DdlStatement::DropFunction(_) => return Ok(None),
     };
-    drop_foreign_schema_in_catalog(ctx, catalog_name, name, if_exists, options)
-}
-
-fn drop_foreign_schema_in_catalog(
-    ctx: &SedonaContext,
-    catalog_name: &str,
-    name: &SchemaReference,
-    if_exists: bool,
-    options: &DropSchemaOptions,
-) -> Result<Option<DataFrame>, DataFusionError> {
-    let Some(catalog) = ctx.catalog_registry().foreign_catalog(catalog_name)? else {
+    // DataFusion's logical DropTable/DropView omit these SQL flags.
+    if let (Some(options), Statement::Statement(sql)) = (&mut drop, statement) {
+        if let datafusion_expr::sqlparser::ast::Statement::Drop { cascade, purge, .. } =
+            sql.as_ref()
+        {
+            options.cascade = *cascade;
+            options.purge = *purge;
+        }
+    }
+    let registry = ctx.catalog_registry();
+    let owner = registry.foreign_catalog(&identifier[0]).await?;
+    let owner = if matches!(ddl, DdlStatement::CreateCatalog(_)) && owner.is_none() {
+        // Existing built-in catalogs remain owned by DataFusion.
+        if state.catalog_list().catalog(&identifier[0]).is_some() {
+            return Ok(None);
+        }
+        registry.latest_foreign()
+    } else {
+        owner
+    };
+    let Some(owner) = owner else {
         return Ok(None);
     };
-    if let Some(plan) = catalog.drop_schema(name.schema_name(), options)? {
-        return Ok(Some(
-            ctx.ctx.read_table(Arc::new(CatalogDdlProvider { plan }))?,
-        ));
+    let identifier: Vec<&str> = identifier.iter().map(String::as_str).collect();
+    let plan = if let Some(options) = drop {
+        owner.drop_object(&identifier, &options).await?
+    } else {
+        let input = if let Some(input) = input {
+            Some(state.create_physical_plan(input).await?)
+        } else {
+            None
+        };
+        owner
+            .create_object(&state, &identifier, &create, input)
+            .await?
+    };
+    Ok(Some(
+        ctx.ctx.read_table(Arc::new(CatalogDdlProvider { plan }))?,
+    ))
+}
+
+fn create_mode(if_not_exists: bool, or_replace: bool) -> Result<CreateMode> {
+    match (if_not_exists, or_replace) {
+        (true, true) => exec_err!("'IF NOT EXISTS' cannot coexist with 'REPLACE'"),
+        (true, false) => Ok(CreateMode::CreateOrIgnore),
+        (false, true) => Ok(CreateMode::Replace),
+        (false, false) => Ok(CreateMode::Create),
     }
-    if if_exists {
-        return Ok(Some(ctx.ctx.read_empty()?));
-    }
-    exec_err!("Schema '{name}' doesn't exist.")
 }
 
 /// Presents a catalog DDL execution plan as a one-shot DataFrame so DDL keeps
@@ -480,25 +271,21 @@ impl TableProvider for CatalogDdlProvider {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Mutex;
-
-    use arrow_schema::Schema;
-    use datafusion::common::plan_datafusion_err;
-    use datafusion::common::plan_err;
-    use datafusion::datasource::listing::ListingTableUrl;
-    use datafusion::sql::parser::DFParser;
+    use super::*;
+    use arrow_schema::{DataType, Field, Schema};
+    use datafusion::{
+        common::{plan_datafusion_err, plan_err},
+        datasource::{empty::EmptyTable, listing::ListingTableUrl},
+        sql::parser::DFParser,
+    };
     use datafusion_execution::TaskContext;
     use datafusion_expr::sqlparser::dialect::dialect_from_str;
-    use datafusion_physical_plan::empty::EmptyExec;
     use datafusion_physical_plan::{
-        DisplayAs, DisplayFormatType, PlanProperties, SendableRecordBatchStream,
+        empty::EmptyExec, DisplayAs, DisplayFormatType, PlanProperties, SendableRecordBatchStream,
     };
-    use sedona_catalog::{DropSchemaOptions, SedonaCatalog, SedonaCatalogList, SedonaSchema};
+    use sedona_catalog::{CatalogObject, SedonaCatalogList};
+    use std::{collections::HashMap, sync::Mutex};
     use url::Url;
-
-    use super::*;
 
     type DropAction = Box<dyn FnOnce() -> Result<()> + Send>;
 
@@ -567,569 +354,433 @@ mod tests {
         }
     }
 
-    #[derive(Debug)]
-    struct DropTestCatalogList {
-        catalog: Arc<dyn SedonaCatalog>,
-    }
-
-    impl SedonaCatalogList for DropTestCatalogList {
-        fn catalog_names(&self) -> Result<Vec<String>> {
-            Ok(vec!["foreign".to_owned()])
-        }
-
-        fn catalog(&self, name: &str) -> Result<Option<Arc<dyn SedonaCatalog>>> {
-            Ok((name == "foreign").then(|| self.catalog.clone()))
-        }
-
-        fn create(
-            &self,
-            _name: &str,
-            _options: &CreateCatalogOptions,
-        ) -> Result<Arc<dyn SedonaCatalog>> {
-            datafusion_common::not_impl_err!("not needed by drop tests")
-        }
-    }
-
-    #[derive(Debug)]
-    struct DropTestCatalog {
-        schema: Arc<dyn SedonaSchema>,
-        schema_exists: Arc<AtomicBool>,
-    }
-
-    impl SedonaCatalog for DropTestCatalog {
-        fn schema_names(&self) -> Result<Vec<String>> {
-            if self.schema_exists.load(Ordering::SeqCst) {
-                Ok(vec!["public".to_owned()])
-            } else {
-                Ok(Vec::new())
-            }
-        }
-
-        fn schema(&self, name: &str) -> Result<Option<Arc<dyn SedonaSchema>>> {
-            Ok(
-                (name == "public" && self.schema_exists.load(Ordering::SeqCst))
-                    .then(|| self.schema.clone()),
-            )
-        }
-
-        fn create(
-            &self,
-            _name: &str,
-            _options: &CreateSchemaOptions,
-        ) -> Result<Arc<dyn SedonaSchema>> {
-            datafusion_common::not_impl_err!("not needed by drop tests")
-        }
-
-        fn drop_schema(
-            &self,
-            name: &str,
-            options: &DropSchemaOptions,
-        ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
-            if name != "public" || !self.schema_exists.load(Ordering::SeqCst) {
-                return Ok(None);
-            }
-            if !options.cascade {
-                return datafusion_common::exec_err!("public must be dropped with cascade");
-            }
-            let schema_exists = self.schema_exists.clone();
-            let if_exists = options.if_exists;
-            Ok(Some(Arc::new(DropTestExec::new(move || {
-                let existed = schema_exists.swap(false, Ordering::SeqCst);
-                if !existed && !if_exists {
-                    return datafusion_common::exec_err!("public no longer exists");
-                }
-                Ok(())
-            }))))
-        }
-    }
-
-    #[derive(Debug)]
-    struct DropTestSchema {
-        objects: Arc<Mutex<HashMap<String, CatalogObjectType>>>,
-        received: Mutex<Vec<DropTableOptions>>,
-    }
-
-    #[async_trait]
-    impl SedonaSchema for DropTestSchema {
-        fn table_names(&self) -> Result<Vec<String>> {
-            Ok(self.objects.lock().unwrap().keys().cloned().collect())
-        }
-
-        async fn table(&self, _name: &str) -> Result<Option<Arc<dyn TableProvider>>> {
-            Ok(None)
-        }
-
-        fn create(
-            &self,
-            _session: &dyn Session,
-            _name: &str,
-            _options: &CreateTableOptions,
-            _input: Arc<dyn ExecutionPlan>,
-        ) -> Result<Arc<dyn ExecutionPlan>> {
-            datafusion_common::not_impl_err!("not needed by drop tests")
-        }
-
-        fn drop_table(
-            &self,
-            name: &str,
-            options: &DropTableOptions,
-        ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
-            self.received.lock().unwrap().push(*options);
-            let objects = self.objects.lock().unwrap();
-            let Some(actual_type) = objects.get(name).copied() else {
-                return Ok(None);
-            };
-            if options.object_type.is_some() && options.object_type != Some(actual_type) {
-                return Ok(None);
-            }
-            drop(objects);
-            let objects = self.objects.clone();
-            let name = name.to_owned();
-            let if_exists = options.if_exists;
-            Ok(Some(Arc::new(DropTestExec::new(move || {
-                let removed = objects.lock().unwrap().remove(&name);
-                if removed.is_none() && !if_exists {
-                    return datafusion_common::exec_err!("{name} no longer exists");
-                }
-                Ok(())
-            }))))
-        }
-
-        fn table_exist(&self, name: &str) -> Result<bool> {
-            Ok(self.objects.lock().unwrap().contains_key(name))
-        }
-    }
-
     #[derive(Debug, Default)]
-    struct CreateTestSchema {
-        received: Mutex<Vec<(String, CreateTableOptions)>>,
+    struct TestCatalog {
+        objects: Arc<Mutex<HashMap<Vec<String>, CatalogObjectType>>>,
+        creates: Mutex<Vec<(Vec<String>, CreateObjectOptions, bool)>>,
+        drops: Mutex<Vec<(Vec<String>, DropObjectOptions)>>,
+        fail: bool,
+    }
+
+    fn owned(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|s| s.to_string()).collect()
     }
 
     #[async_trait]
-    impl SedonaSchema for CreateTestSchema {
-        fn table_names(&self) -> Result<Vec<String>> {
-            Ok(Vec::new())
-        }
-
-        async fn table(&self, _name: &str) -> Result<Option<Arc<dyn TableProvider>>> {
-            Ok(None)
-        }
-
-        fn create(
+    impl SedonaCatalogList for TestCatalog {
+        async fn list_identifiers(
             &self,
-            _session: &dyn Session,
-            name: &str,
-            options: &CreateTableOptions,
-            input: Arc<dyn ExecutionPlan>,
-        ) -> Result<Arc<dyn ExecutionPlan>> {
-            self.received
+            prefix: &[&str],
+            depth: Option<usize>,
+            suffix: &[&str],
+        ) -> Result<Vec<CatalogObject>> {
+            tokio::task::yield_now().await;
+            if self.fail {
+                return exec_err!("foreign catalog lookup failed");
+            }
+            let prefix = owned(prefix);
+            let suffix = owned(suffix);
+            Ok(self
+                .objects
                 .lock()
                 .unwrap()
-                .push((name.to_owned(), *options));
-            Ok(input)
+                .iter()
+                .filter(|(id, _)| {
+                    id.starts_with(&prefix)
+                        && id.ends_with(&suffix)
+                        && depth.is_none_or(|depth| id.len() <= prefix.len() + depth)
+                })
+                .map(|(id, kind)| CatalogObject {
+                    identifier: id.clone(),
+                    object_type: *kind,
+                })
+                .collect())
         }
 
-        fn drop_table(
+        async fn table(&self, identifier: &[&str]) -> Result<Option<Arc<dyn TableProvider>>> {
+            tokio::task::yield_now().await;
+            if matches!(
+                self.objects.lock().unwrap().get(&owned(identifier)),
+                Some(CatalogObjectType::Table | CatalogObjectType::View)
+            ) {
+                Ok(Some(Arc::new(EmptyTable::new(Arc::new(Schema::new(
+                    vec![Field::new("value", DataType::Int64, true)],
+                ))))))
+            } else {
+                Ok(None)
+            }
+        }
+
+        async fn create_object(
             &self,
-            _name: &str,
-            _options: &DropTableOptions,
-        ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
-            datafusion_common::not_impl_err!("not needed by create tests")
+            _session: &dyn Session,
+            identifier: &[&str],
+            options: &CreateObjectOptions,
+            input: Option<Arc<dyn ExecutionPlan>>,
+        ) -> Result<Arc<dyn ExecutionPlan>> {
+            tokio::task::yield_now().await;
+            let identifier = owned(identifier);
+            self.creates.lock().unwrap().push((
+                identifier.clone(),
+                options.clone(),
+                input.is_some(),
+            ));
+            let objects = self.objects.clone();
+            let options = options.clone();
+            Ok(Arc::new(DropTestExec::new(move || {
+                let mut objects = objects.lock().unwrap();
+                if objects.contains_key(&identifier) {
+                    match options.mode {
+                        CreateMode::Create => return exec_err!("already exists"),
+                        CreateMode::CreateOrIgnore => return Ok(()),
+                        CreateMode::Replace => {}
+                    }
+                }
+                objects.insert(identifier, options.object_type);
+                Ok(())
+            })))
         }
 
-        fn table_exist(&self, _name: &str) -> Result<bool> {
-            Ok(false)
+        async fn drop_object(
+            &self,
+            identifier: &[&str],
+            options: &DropObjectOptions,
+        ) -> Result<Arc<dyn ExecutionPlan>> {
+            tokio::task::yield_now().await;
+            let identifier = owned(identifier);
+            self.drops
+                .lock()
+                .unwrap()
+                .push((identifier.clone(), *options));
+            let objects = self.objects.clone();
+            let options = *options;
+            Ok(Arc::new(DropTestExec::new(move || {
+                let mut objects = objects.lock().unwrap();
+                match objects.get(&identifier) {
+                    None if options.if_exists => return Ok(()),
+                    None => return exec_err!("no longer exists"),
+                    Some(kind) if *kind != options.object_type => {
+                        return exec_err!("wrong object kind")
+                    }
+                    _ => {}
+                }
+                if options.cascade {
+                    objects.retain(|id, _| !id.starts_with(&identifier));
+                } else {
+                    objects.remove(&identifier);
+                }
+                Ok(())
+            })))
         }
     }
 
-    #[tokio::test]
-    async fn foreign_drop_distinguishes_tables_and_views() -> Result<()> {
-        let schema = Arc::new(DropTestSchema {
-            objects: Arc::new(Mutex::new(HashMap::from([
-                ("table_one".to_owned(), CatalogObjectType::Table),
-                ("view_one".to_owned(), CatalogObjectType::View),
-            ]))),
-            received: Mutex::new(Vec::new()),
-        });
-        let catalog: Arc<dyn SedonaCatalog> = Arc::new(DropTestCatalog {
-            schema: schema.clone(),
-            schema_exists: Arc::new(AtomicBool::new(true)),
-        });
-        let ctx = SedonaContext::new();
-        ctx.register_catalog_list(Arc::new(DropTestCatalogList { catalog }));
-
-        let drop_table = ctx.sql("DROP TABLE foreign.public.table_one").await?;
-        assert!(schema.table_exist("table_one")?);
-        drop_table.collect().await?;
-        assert!(!schema.table_exist("table_one")?);
-
-        let error = ctx
-            .sql("DROP TABLE foreign.public.view_one")
-            .await
-            .unwrap_err();
-        assert!(error.to_string().contains("doesn't exist"));
-        assert!(schema.table_exist("view_one")?);
-
-        let drop_view = ctx.sql("DROP VIEW foreign.public.view_one").await?;
-        assert!(schema.table_exist("view_one")?);
-        drop_view.collect().await?;
-        assert!(!schema.table_exist("view_one")?);
-        assert_eq!(
-            *schema.received.lock().unwrap(),
-            vec![
-                DropTableOptions {
-                    if_exists: false,
-                    object_type: Some(CatalogObjectType::Table),
-                    purge: false,
-                },
-                DropTableOptions {
-                    if_exists: false,
-                    object_type: Some(CatalogObjectType::Table),
-                    purge: false,
-                },
-                DropTableOptions {
-                    if_exists: false,
-                    object_type: Some(CatalogObjectType::View),
-                    purge: false,
-                },
-            ]
-        );
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn foreign_drop_schema_is_lazy() -> Result<()> {
-        let schema: Arc<dyn SedonaSchema> = Arc::new(DropTestSchema {
-            objects: Arc::new(Mutex::new(HashMap::new())),
-            received: Mutex::new(Vec::new()),
-        });
-        let catalog = Arc::new(DropTestCatalog {
-            schema,
-            schema_exists: Arc::new(AtomicBool::new(true)),
-        });
-        let ctx = SedonaContext::new();
-        ctx.register_catalog_list(Arc::new(DropTestCatalogList {
-            catalog: catalog.clone(),
-        }));
-
-        let drop_schema = ctx.sql("DROP SCHEMA foreign.public CASCADE").await?;
-        assert!(catalog.schema("public")?.is_some());
-        drop_schema.collect().await?;
-        assert!(catalog.schema("public")?.is_none());
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn foreign_drop_if_exists_is_preserved_until_execution() -> Result<()> {
-        let schema = Arc::new(DropTestSchema {
-            objects: Arc::new(Mutex::new(HashMap::from([(
-                "table_one".to_owned(),
+    fn test_context() -> (SedonaContext, Arc<TestCatalog>) {
+        let catalog = Arc::new(TestCatalog::default());
+        catalog.objects.lock().unwrap().extend([
+            (owned(&["foreign"]), CatalogObjectType::Catalog),
+            (owned(&["foreign", "public"]), CatalogObjectType::Schema),
+            (
+                owned(&["foreign", "public", "existing"]),
                 CatalogObjectType::Table,
-            )]))),
-            received: Mutex::new(Vec::new()),
-        });
-        let catalog = Arc::new(DropTestCatalog {
-            schema: schema.clone(),
-            schema_exists: Arc::new(AtomicBool::new(true)),
-        });
+            ),
+        ]);
         let ctx = SedonaContext::new();
-        ctx.register_catalog_list(Arc::new(DropTestCatalogList {
-            catalog: catalog.clone(),
-        }));
+        ctx.register_catalog_list(catalog.clone());
+        (ctx, catalog)
+    }
 
-        let drop_table = ctx
-            .sql("DROP TABLE IF EXISTS foreign.public.table_one")
+    #[tokio::test]
+    async fn foreign_create_routes_all_object_kinds_and_is_deferred() -> Result<()> {
+        let (ctx, catalog) = test_context();
+        for (sql, kind, identifier, input) in [
+            (
+                "CREATE DATABASE new_catalog",
+                CatalogObjectType::Catalog,
+                owned(&["new_catalog"]),
+                false,
+            ),
+            (
+                "CREATE SCHEMA foreign.new_schema",
+                CatalogObjectType::Schema,
+                owned(&["foreign", "new_schema"]),
+                false,
+            ),
+            (
+                "CREATE TABLE foreign.public.created AS SELECT 1 AS value",
+                CatalogObjectType::Table,
+                owned(&["foreign", "public", "created"]),
+                true,
+            ),
+            (
+                "CREATE VIEW foreign.public.view_one AS SELECT value FROM foreign.public.existing",
+                CatalogObjectType::View,
+                owned(&["foreign", "public", "view_one"]),
+                true,
+            ),
+            (
+                "CREATE INDEX idx ON foreign.public.existing (value)",
+                CatalogObjectType::Index,
+                owned(&["foreign", "public", "existing", "idx"]),
+                false,
+            ),
+        ] {
+            let df = ctx.sql(sql).await?;
+            assert!(
+                !catalog.objects.lock().unwrap().contains_key(&identifier),
+                "{sql}"
+            );
+            let received = catalog.creates.lock().unwrap().last().unwrap().clone();
+            assert_eq!(received.0, identifier);
+            assert_eq!(received.1.object_type, kind);
+            assert_eq!(received.2, input);
+            df.collect().await?;
+            assert_eq!(
+                catalog.objects.lock().unwrap().get(&identifier),
+                Some(&kind)
+            );
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn foreign_create_modes_and_view_definition_are_preserved() -> Result<()> {
+        let (ctx, catalog) = test_context();
+        for (prefix, mode) in [
+            ("CREATE TABLE", CreateMode::Create),
+            ("CREATE TABLE IF NOT EXISTS", CreateMode::CreateOrIgnore),
+            ("CREATE OR REPLACE TABLE", CreateMode::Replace),
+        ] {
+            let sql = format!("{prefix} foreign.public.existing (value BIGINT)");
+            let df = ctx.sql(&sql).await?;
+            let options = catalog.creates.lock().unwrap().last().unwrap().1.clone();
+            assert_eq!(options.mode, mode);
+            if mode == CreateMode::Create {
+                assert!(df.collect().await.is_err());
+            } else {
+                df.collect().await?;
+            }
+        }
+        ctx.sql("CREATE OR REPLACE TEMPORARY VIEW foreign.public.view_one AS SELECT 1 AS value")
             .await?;
-        schema.objects.lock().unwrap().remove("table_one");
-        drop_table.collect().await?;
-        assert!(schema.received.lock().unwrap()[0].if_exists);
+        let options = catalog.creates.lock().unwrap().last().unwrap().1.clone();
+        assert_eq!(options.mode, CreateMode::Replace);
+        assert!(options.temporary);
+        assert!(options.definition.unwrap().contains("SELECT 1 AS value"));
+        Ok(())
+    }
 
-        let drop_schema = ctx
+    #[tokio::test]
+    async fn foreign_drops_route_flags_and_recheck_at_execution() -> Result<()> {
+        let (ctx, catalog) = test_context();
+        let df = ctx
+            .sql("DROP TABLE IF EXISTS foreign.public.existing PURGE")
+            .await?;
+        assert!(catalog
+            .objects
+            .lock()
+            .unwrap()
+            .remove(&owned(&["foreign", "public", "existing"]))
+            .is_some());
+        df.collect().await?;
+        assert!(catalog.drops.lock().unwrap().last().unwrap().1.purge);
+        let df = ctx.sql("DROP TABLE foreign.public.missing").await?;
+        assert!(df
+            .collect()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("no longer exists"));
+        catalog.objects.lock().unwrap().insert(
+            owned(&["foreign", "public", "view_one"]),
+            CatalogObjectType::View,
+        );
+        let wrong = ctx.sql("DROP TABLE foreign.public.view_one").await?;
+        assert!(wrong
+            .collect()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("wrong object kind"));
+        ctx.sql("DROP VIEW foreign.public.view_one")
+            .await?
+            .collect()
+            .await?;
+        let df = ctx
             .sql("DROP SCHEMA IF EXISTS foreign.public CASCADE")
             .await?;
-        catalog.schema_exists.store(false, Ordering::SeqCst);
-        drop_schema.collect().await?;
-
+        assert!(catalog
+            .objects
+            .lock()
+            .unwrap()
+            .contains_key(&owned(&["foreign", "public"])));
+        df.collect().await?;
+        let options = catalog.drops.lock().unwrap().last().unwrap().1;
+        assert!(options.cascade && options.if_exists);
+        assert_eq!(options.object_type, CatalogObjectType::Schema);
         Ok(())
     }
 
     #[tokio::test]
-    async fn foreign_drop_without_if_exists_errors_when_object_disappears() -> Result<()> {
-        let schema = Arc::new(DropTestSchema {
-            objects: Arc::new(Mutex::new(HashMap::from([(
-                "table_one".to_owned(),
-                CatalogObjectType::Table,
-            )]))),
-            received: Mutex::new(Vec::new()),
-        });
-        let catalog: Arc<dyn SedonaCatalog> = Arc::new(DropTestCatalog {
-            schema: schema.clone(),
-            schema_exists: Arc::new(AtomicBool::new(true)),
-        });
-        let ctx = SedonaContext::new();
-        ctx.register_catalog_list(Arc::new(DropTestCatalogList { catalog }));
-
-        let drop_table = ctx.sql("DROP TABLE foreign.public.table_one").await?;
-        schema.objects.lock().unwrap().remove("table_one");
-        let error = drop_table.collect().await.unwrap_err();
-        assert!(error.to_string().contains("no longer exists"));
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn foreign_create_does_not_drop_existing_objects_eagerly() -> Result<()> {
-        let schema = Arc::new(DropTestSchema {
-            objects: Arc::new(Mutex::new(HashMap::from([
-                ("table_one".to_owned(), CatalogObjectType::Table),
-                ("view_one".to_owned(), CatalogObjectType::View),
-            ]))),
-            received: Mutex::new(Vec::new()),
-        });
-        let catalog: Arc<dyn SedonaCatalog> = Arc::new(DropTestCatalog {
-            schema: schema.clone(),
-            schema_exists: Arc::new(AtomicBool::new(true)),
-        });
-        let ctx = SedonaContext::new();
-        ctx.register_catalog_list(Arc::new(DropTestCatalogList { catalog }));
-
-        ctx.sql("CREATE TABLE IF NOT EXISTS foreign.public.table_one AS SELECT 1")
+    async fn foreign_async_lookup_and_builtin_fallback() -> Result<()> {
+        let (ctx, catalog) = test_context();
+        ctx.sql("SELECT value FROM foreign.public.existing")
             .await?
             .collect()
             .await?;
-        assert!(schema.table_exist("table_one")?);
-
-        let table_error = ctx
-            .sql("CREATE OR REPLACE TABLE foreign.public.table_one AS SELECT 1")
+        ctx.sql("CREATE TABLE builtin AS SELECT 1 AS value")
+            .await?
+            .collect()
+            .await?;
+        ctx.sql("SELECT * FROM builtin JOIN foreign.public.existing USING (value)")
+            .await?
+            .collect()
+            .await?;
+        assert!(catalog.creates.lock().unwrap().is_empty());
+        // No synchronous adapter is exposed.
+        assert!(ctx.ctx.catalog("foreign").is_none());
+        let failing = Arc::new(TestCatalog {
+            fail: true,
+            ..Default::default()
+        });
+        ctx.register_catalog_list(failing);
+        assert!(ctx
+            .sql("SELECT * FROM builtin")
             .await
-            .unwrap_err();
-        assert!(table_error.to_string().contains("not needed by drop tests"));
-        assert!(schema.table_exist("table_one")?);
-
-        let view_error = ctx
-            .sql("CREATE OR REPLACE VIEW foreign.public.view_one AS SELECT 1")
-            .await
-            .unwrap_err();
-        assert!(view_error
+            .unwrap_err()
             .to_string()
-            .contains("Creating views is not supported"));
-        assert!(schema.table_exist("view_one")?);
-        assert!(schema.received.lock().unwrap().is_empty());
-
-        Ok(())
-    }
-
-    fn create_test_context(schema: Arc<dyn SedonaSchema>) -> SedonaContext {
-        let catalog: Arc<dyn SedonaCatalog> = Arc::new(DropTestCatalog {
-            schema,
-            schema_exists: Arc::new(AtomicBool::new(true)),
-        });
-        let ctx = SedonaContext::new();
-        ctx.register_catalog_list(Arc::new(DropTestCatalogList { catalog }));
-        ctx
-    }
-
-    #[rstest::rstest]
-    #[case("CREATE TABLE", CreateMode::Create)]
-    #[case("CREATE TABLE IF NOT EXISTS", CreateMode::CreateOrIgnore)]
-    #[case("CREATE OR REPLACE TABLE", CreateMode::Replace)]
-    #[tokio::test]
-    async fn foreign_ctas_uses_managed_create(
-        #[case] create: &str,
-        #[case] mode: CreateMode,
-    ) -> Result<()> {
-        let schema = Arc::new(CreateTestSchema::default());
-        let ctx = create_test_context(schema.clone());
-
-        ctx.sql(&format!(
-            "{create} foreign.public.created AS SELECT 1 AS value"
-        ))
-        .await?;
-
-        assert_eq!(
-            *schema.received.lock().unwrap(),
-            vec![(
-                "created".to_owned(),
-                CreateTableOptions {
-                    mode,
-                    temporary: false,
-                    external: false,
-                }
-            )]
-        );
+            .contains("foreign catalog lookup failed"));
         Ok(())
     }
 
     #[tokio::test]
-    async fn foreign_memory_table_rejects_unpreserved_metadata() -> Result<()> {
-        let schema = Arc::new(CreateTestSchema::default());
-        let ctx = create_test_context(schema.clone());
-        let cases = [
-            ("value BIGINT DEFAULT 42", "column defaults"),
-            ("value BIGINT, PRIMARY KEY (value)", "table constraints"),
-            ("value BIGINT UNIQUE", "table constraints"),
-            (
-                "value BIGINT DEFAULT 42, PRIMARY KEY (value)",
-                "table constraints, column defaults",
-            ),
-        ];
-
-        for (columns, expected) in cases {
-            let error = ctx
-                .sql(&format!("CREATE TABLE foreign.public.created ({columns})"))
-                .await
-                .unwrap_err();
-            assert!(
-                error
-                    .to_string()
-                    .contains(&format!("cannot preserve: {expected}")),
-                "expected {expected:?} in {error}"
-            );
-        }
-        assert!(schema.received.lock().unwrap().is_empty());
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn foreign_memory_table_metadata_is_rejected_for_existing_tables() -> Result<()> {
-        let schema = Arc::new(DropTestSchema {
-            objects: Arc::new(Mutex::new(HashMap::from([(
-                "table_one".to_owned(),
-                CatalogObjectType::Table,
-            )]))),
-            received: Mutex::new(Vec::new()),
-        });
-        let ctx = create_test_context(schema.clone());
-
-        for create in ["CREATE TABLE IF NOT EXISTS", "CREATE OR REPLACE TABLE"] {
-            let error = ctx
-                .sql(&format!(
-                    "{create} foreign.public.table_one \
-                     (value BIGINT DEFAULT 42, PRIMARY KEY (value))"
-                ))
-                .await
-                .unwrap_err();
-            assert!(error
-                .to_string()
-                .contains("cannot preserve: table constraints, column defaults"));
-            assert!(schema.table_exist("table_one")?);
-        }
-        assert!(schema.received.lock().unwrap().is_empty());
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn builtin_memory_table_preserves_metadata_with_foreign_catalog() -> Result<()> {
-        let schema = Arc::new(CreateTestSchema::default());
-        let ctx = create_test_context(schema.clone());
-        ctx.sql("CREATE TABLE created (value BIGINT DEFAULT 42, PRIMARY KEY (value))")
+    async fn foreign_quoted_identifiers_and_listing() -> Result<()> {
+        let (ctx, catalog) = test_context();
+        ctx.sql("CREATE SCHEMA foreign.\"schema.with.dot\"")
             .await?
             .collect()
             .await?;
-
-        let table = ctx.ctx.table_provider("created").await?;
-        assert!(!table.constraints().unwrap().is_empty());
-        assert!(table.get_column_default("value").is_some());
-        assert!(schema.received.lock().unwrap().is_empty());
+        ctx.sql("CREATE TABLE foreign.\"schema.with.dot\".\"table.with.dot\" AS SELECT 1 AS value")
+            .await?
+            .collect()
+            .await?;
+        ctx.sql("SELECT * FROM foreign.\"schema.with.dot\".\"table.with.dot\"")
+            .await?
+            .collect()
+            .await?;
+        assert_eq!(
+            catalog
+                .list_identifiers(&["foreign"], Some(0), &[])
+                .await?
+                .len(),
+            1
+        );
+        assert_eq!(
+            catalog
+                .list_identifiers(&["foreign"], Some(1), &[])
+                .await?
+                .len(),
+            3
+        );
+        assert_eq!(
+            catalog
+                .list_identifiers(&[], None, &["schema.with.dot", "table.with.dot"])
+                .await?
+                .len(),
+            1
+        );
+        assert!(catalog
+            .list_identifiers(&["missing"], None, &[])
+            .await?
+            .is_empty());
         Ok(())
     }
 
     #[tokio::test]
-    async fn foreign_external_table_sets_external_create_option() -> Result<()> {
-        let schema = Arc::new(CreateTestSchema::default());
-        let ctx = create_test_context(schema.clone());
-        let dir = tempfile::tempdir()?;
-        let path = dir.path().join("values.csv");
-        std::fs::write(&path, "1\n")?;
+    async fn foreign_external_table_preserves_definition_without_opening_source() -> Result<()> {
+        let (ctx, catalog) = test_context();
+        let df = ctx.sql("CREATE EXTERNAL TABLE foreign.public.external (value BIGINT) STORED AS CSV LOCATION 'does-not-exist.csv'").await?;
+        let received = catalog.creates.lock().unwrap().last().unwrap().clone();
+        assert!(received.1.external && !received.2);
+        assert!(received
+            .1
+            .definition
+            .unwrap()
+            .contains("does-not-exist.csv"));
+        df.collect().await?;
+        Ok(())
+    }
 
+    #[tokio::test]
+    async fn function_ddl_is_delegated_to_datafusion() -> Result<()> {
+        let (ctx, catalog) = test_context();
+        for sql in [
+            "CREATE FUNCTION fun() RETURNS INT RETURN 1",
+            "DROP FUNCTION IF EXISTS fun",
+        ] {
+            let statement = DFParser::parse_sql(sql)?.pop_front().unwrap();
+            let plan = create_plan_from_sql(&ctx, statement.clone()).await?;
+            assert!(execute_sedona_catalog_ddl(&ctx, &plan, &statement)
+                .await?
+                .is_none());
+        }
+        assert!(catalog.creates.lock().unwrap().is_empty());
+        assert!(catalog.drops.lock().unwrap().is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn foreign_ownership_precedence_and_default_namespaces() -> Result<()> {
+        let (ctx, older) = test_context();
+        let newer = Arc::new(TestCatalog::default());
+        newer.objects.lock().unwrap().extend([
+            (owned(&["foreign"]), CatalogObjectType::Catalog),
+            (owned(&["datafusion"]), CatalogObjectType::Catalog),
+            (owned(&["datafusion", "public"]), CatalogObjectType::Schema),
+        ]);
+        ctx.register_catalog_list(newer.clone());
+        // A newer owner shadows the entire older catalog, including missing tables.
+        assert!(ctx
+            .sql("SELECT * FROM foreign.public.existing")
+            .await
+            .is_err());
+        ctx.sql("CREATE TABLE t AS SELECT 1 AS value")
+            .await?
+            .collect()
+            .await?;
+        ctx.sql("CREATE SCHEMA s").await?.collect().await?;
+        assert!(newer
+            .objects
+            .lock()
+            .unwrap()
+            .contains_key(&owned(&["datafusion", "public", "t"])));
+        assert!(newer
+            .objects
+            .lock()
+            .unwrap()
+            .contains_key(&owned(&["datafusion", "s"])));
+        assert!(older.creates.lock().unwrap().is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn foreign_planner_preserves_session_features() -> Result<()> {
+        let (ctx, _) = test_context();
+        for sql in [
+            "SELECT ST_AsText(ST_Point(1, 2))",
+            "SELECT count(*), sum(value), row_number() OVER () FROM foreign.public.existing",
+            "WITH RECURSIVE t(n) AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM t WHERE n < 3) SELECT * FROM t",
+        ] {
+            ctx.sql(sql).await?.collect().await?;
+        }
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("output.parquet");
         ctx.sql(&format!(
-            "CREATE EXTERNAL TABLE foreign.public.created (value BIGINT) \
-             STORED AS CSV LOCATION '{}'",
+            "COPY (SELECT * FROM foreign.public.existing) TO '{}' STORED AS PARQUET",
             path.display()
         ))
+        .await?
+        .collect()
         .await?;
-
-        assert_eq!(
-            *schema.received.lock().unwrap(),
-            vec![(
-                "created".to_owned(),
-                CreateTableOptions {
-                    mode: CreateMode::Create,
-                    temporary: false,
-                    external: true,
-                }
-            )]
-        );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn foreign_external_table_rejects_unpreserved_metadata() -> Result<()> {
-        let schema = Arc::new(CreateTestSchema::default());
-        let ctx = create_test_context(schema.clone());
-        let error = ctx
-            .sql(
-                "CREATE EXTERNAL TABLE foreign.public.created (value BIGINT) \
-                 STORED AS CSV LOCATION 'values.csv' \
-                 OPTIONS ('format.has_header' 'true')",
-            )
-            .await
-            .unwrap_err();
-
-        assert!(error.to_string().contains("cannot preserve: OPTIONS"));
-        assert!(schema.received.lock().unwrap().is_empty());
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn external_table_metadata_validation_covers_optional_clauses() -> Result<()> {
-        let ctx = SedonaContext::new();
-        let cases = [
-            (
-                "CREATE EXTERNAL TABLE t (value BIGINT) STORED AS CSV \
-                 PARTITIONED BY (part BIGINT) LOCATION 'values.csv'",
-                "PARTITIONED BY",
-            ),
-            (
-                "CREATE EXTERNAL TABLE t (value BIGINT) STORED AS CSV \
-                 WITH ORDER (value) LOCATION 'values.csv'",
-                "WITH ORDER",
-            ),
-            (
-                "CREATE UNBOUNDED EXTERNAL TABLE t (value BIGINT) \
-                 STORED AS CSV LOCATION 'values.csv'",
-                "UNBOUNDED",
-            ),
-            (
-                "CREATE EXTERNAL TABLE t (value BIGINT) STORED AS CSV \
-                 LOCATION 'values.csv' OPTIONS ('format.has_header' 'true')",
-                "OPTIONS",
-            ),
-            (
-                "CREATE EXTERNAL TABLE t (value BIGINT, PRIMARY KEY (value)) \
-                 STORED AS CSV LOCATION 'values.csv'",
-                "table constraints",
-            ),
-            (
-                "CREATE EXTERNAL TABLE t (value BIGINT DEFAULT 1) \
-                 STORED AS CSV LOCATION 'values.csv'",
-                "column defaults",
-            ),
-        ];
-
-        for (sql, expected) in cases {
-            let plan = ctx.ctx.state().create_logical_plan(sql).await?;
-            let LogicalPlan::Ddl(DdlStatement::CreateExternalTable(cmd)) = plan else {
-                panic!("expected CreateExternalTable plan for {sql}");
-            };
-            let error = reject_unsupported_external_table_metadata(&cmd).unwrap_err();
-            assert!(
-                error.to_string().contains(expected),
-                "expected {expected:?} in {error}"
-            );
-        }
         Ok(())
     }
 

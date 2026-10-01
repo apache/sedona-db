@@ -15,175 +15,134 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! Version-independent catalog interfaces used by SedonaDB extensions.
+//! Asynchronous catalog operations used by SedonaDB extensions.
 //!
-//! DataFusion's catalog traits are designed around registering Rust objects.
-//! That is not a useful ownership boundary for a foreign catalog: an Iceberg,
-//! PostGIS, or Python implementation needs to *create* an object in its own
-//! system. The traits in this crate mirror DataFusion's catalog hierarchy but
-//! replace each `register_*` operation with [`SedonaCatalogList::create`],
-//! [`SedonaCatalog::create`], or [`SedonaSchema::create`].
-
-mod adapter;
-
-use std::fmt::Debug;
-use std::sync::Arc;
+//! Identifiers are paths of literal components, never dot-separated SQL names.
+//! No catalog or schema objects, or synchronous DataFusion adapters, are needed.
 
 use async_trait::async_trait;
 use datafusion_catalog::{Session, TableProvider};
 use datafusion_common::Result;
 use datafusion_physical_plan::ExecutionPlan;
 use serde::{Deserialize, Serialize};
+use std::{fmt::Debug, sync::Arc};
 
-pub use adapter::{DataFusionCatalog, DataFusionCatalogList, DataFusionSchema};
-
-/// The behavior to use when creating an object that already exists.
+/// Behavior when creating an object that already exists.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CreateMode {
-    /// Create the object and return an error if it already exists.
+    /// Fail if the object exists.
     #[default]
     Create,
-    /// Create the object unless it already exists.
+    /// Leave an existing object unchanged.
     CreateOrIgnore,
-    /// Create the object, replacing an existing object with the same name.
+    /// Replace the existing object.
     Replace,
 }
 
-/// Options for creating a catalog.
+/// Kind of object in the catalog hierarchy.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct CreateCatalogOptions {
-    /// The behavior to use when a catalog with the same name already exists.
-    pub mode: CreateMode,
-}
-
-/// Options for creating a schema.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct CreateSchemaOptions {
-    /// The behavior to use when a schema with the same name already exists.
-    pub mode: CreateMode,
-}
-
-/// Options for creating a table.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct CreateTableOptions {
-    /// The behavior to use when a table with the same name already exists.
-    pub mode: CreateMode,
-    /// Whether the table is temporary.
-    pub temporary: bool,
-    /// Whether the table is backed by an external data source.
-    pub external: bool,
-}
-
-/// Options for dropping a schema.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct DropSchemaOptions {
-    /// Whether a missing schema should be ignored when the drop plan executes.
-    pub if_exists: bool,
-    /// Whether objects contained by the schema should also be dropped.
-    pub cascade: bool,
-}
-
-/// The kind of catalog object targeted by a table-like operation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CatalogObjectType {
+    /// A catalog (database).
+    Catalog,
+    /// A schema (namespace).
+    Schema,
     /// A physical table.
+    #[default]
     Table,
     /// A non-materialized view.
     View,
+    /// An index belonging to a table.
+    Index,
 }
 
-/// Options for dropping a table.
+/// An entry returned by [`SedonaCatalogList::list_identifiers`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogObject {
+    /// Full path from the root, including all parent components.
+    pub identifier: Vec<String>,
+    /// Kind of this object, independent of its path length.
+    pub object_type: CatalogObjectType,
+}
+
+/// Options for creating any catalog object.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CreateObjectOptions {
+    /// Kind of object to create.
+    pub object_type: CatalogObjectType,
+    /// Conflict behavior, applied when the returned plan executes.
+    pub mode: CreateMode,
+    /// Whether the object is temporary.
+    pub temporary: bool,
+    /// Whether this is an external table.
+    pub external: bool,
+    /// Optional SQL definition supplied by the planner for views and external
+    /// tables. This is passed through as supplied and may omit DDL clauses.
+    pub definition: Option<String>,
+}
+
+/// Options for dropping any catalog object.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
-pub struct DropTableOptions {
-    /// Whether a missing object should be ignored when the drop plan executes.
+pub struct DropObjectOptions {
+    /// Expected kind. Implementations must not drop an object of another kind.
+    pub object_type: CatalogObjectType,
+    /// Ignore a missing object at execution time.
     pub if_exists: bool,
-    /// The expected kind of object, or `None` when the caller cannot distinguish it.
-    ///
-    /// Implementations should not drop an object whose kind does not match.
-    pub object_type: Option<CatalogObjectType>,
-    /// Whether data and metadata referenced by a table should also be deleted.
-    /// This option does not apply to views.
+    /// Also drop contained/dependent objects.
+    pub cascade: bool,
+    /// Delete referenced data as well as metadata, where applicable.
     pub purge: bool,
 }
 
-/// A collection of catalogs backed by a SedonaDB extension.
-pub trait SedonaCatalogList: Debug + Send + Sync {
-    /// Return the names of the catalogs in this list.
-    fn catalog_names(&self) -> Result<Vec<String>>;
-
-    /// Return the catalog named `name`, or `None` when it does not exist.
-    fn catalog(&self, name: &str) -> Result<Option<Arc<dyn SedonaCatalog>>>;
-
-    /// Create a catalog in the backing catalog system.
-    fn create(&self, name: &str, options: &CreateCatalogOptions) -> Result<Arc<dyn SedonaCatalog>>;
-}
-
-/// A collection of schemas backed by a SedonaDB extension.
-pub trait SedonaCatalog: Debug + Send + Sync {
-    /// Return the names of the schemas in this catalog.
-    fn schema_names(&self) -> Result<Vec<String>>;
-
-    /// Return the schema named `name`, or `None` when it does not exist.
-    fn schema(&self, name: &str) -> Result<Option<Arc<dyn SedonaSchema>>>;
-
-    /// Create a schema in the backing catalog system.
-    fn create(&self, name: &str, options: &CreateSchemaOptions) -> Result<Arc<dyn SedonaSchema>>;
-
-    /// Build a plan that drops a schema from the backing catalog system.
-    ///
-    /// Returns `None` when the schema does not exist. The returned plan performs
-    /// the drop operation when it is executed and must apply
-    /// [`DropSchemaOptions::if_exists`] at execution time.
-    fn drop_schema(
-        &self,
-        name: &str,
-        options: &DropSchemaOptions,
-    ) -> Result<Option<Arc<dyn ExecutionPlan>>>;
-}
-
-/// A collection of tables backed by a SedonaDB extension.
+/// A catalog extension with asynchronous lookup and deferred mutations.
+///
+/// SQL uses `[catalog]`, `[catalog, schema]`, and `[catalog, schema, table]`.
+/// Implementations may expose deeper hierarchies through listing. All errors,
+/// including listing errors, are propagated to the caller.
 #[async_trait]
-pub trait SedonaSchema: Debug + Send + Sync {
-    /// Return the name of the schema owner, when one is available.
-    fn owner_name(&self) -> Result<Option<&str>> {
-        Ok(None)
-    }
-
-    /// Return the names of the tables in this schema.
-    fn table_names(&self) -> Result<Vec<String>>;
-
-    /// Return the table named `name`, or `None` when it does not exist.
-    async fn table(&self, name: &str) -> Result<Option<Arc<dyn TableProvider>>>;
-
-    /// Create a table from a physical input plan using the calling session.
+pub trait SedonaCatalogList: Debug + Send + Sync {
+    /// List objects beneath an exact, literal prefix, including the prefix itself
+    /// if it identifies an object. `depth` limits the number of additional path
+    /// components: zero is an exact lookup, one includes immediate children,
+    /// and `None` includes all descendants. An empty prefix addresses the root.
     ///
-    /// The returned plan performs the create operation when it is executed.
-    fn create(
+    /// `suffix` matches exact trailing identifier components, independently of
+    /// the prefix and depth. An empty suffix means no filtering.
+    /// Return full identifiers, without duplicates; ordering is unspecified.
+    /// Missing prefixes return an empty list. Catalog/schema entries must be
+    /// included even when empty, allowing a future ADBC get_objects consumer to
+    /// enumerate the hierarchy and obtain column metadata via `table()`.
+    async fn list_identifiers(
+        &self,
+        prefix: &[&str],
+        depth: Option<usize>,
+        suffix: &[&str],
+    ) -> Result<Vec<CatalogObject>>;
+
+    /// Look up a table or view by its full identifier; missing objects return None.
+    async fn table(&self, identifier: &[&str]) -> Result<Option<Arc<dyn TableProvider>>>;
+
+    /// Build a create plan without changing catalog state. `input` provides the
+    /// managed table/view schema and data when applicable; it is absent for
+    /// external tables, namespaces, and indexes. `session` belongs to
+    /// this call and must not be retained by the catalog. The returned plan applies
+    /// conflict behavior and validates the parent namespace when executed.
+    async fn create_object(
         &self,
         session: &dyn Session,
-        name: &str,
-        options: &CreateTableOptions,
-        input: Arc<dyn ExecutionPlan>,
+        identifier: &[&str],
+        options: &CreateObjectOptions,
+        input: Option<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>>;
 
-    /// Build a plan that drops a table from the backing catalog system.
-    ///
-    /// Returns `None` when the table does not exist. The returned plan performs
-    /// the drop operation when it is executed and must apply
-    /// [`DropTableOptions::if_exists`] at execution time.
-    fn drop_table(
+    /// Build a drop plan without changing catalog state. Missing-object and
+    /// object-kind checks belong to execution, including `if_exists` handling.
+    async fn drop_object(
         &self,
-        name: &str,
-        options: &DropTableOptions,
-    ) -> Result<Option<Arc<dyn ExecutionPlan>>>;
-
-    /// Return whether a table named `name` exists in this schema.
-    fn table_exist(&self, name: &str) -> Result<bool>;
+        identifier: &[&str],
+        options: &DropObjectOptions,
+    ) -> Result<Arc<dyn ExecutionPlan>>;
 }

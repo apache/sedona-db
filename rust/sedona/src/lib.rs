@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 mod catalog;
+mod catalog_planner;
 pub mod context;
 pub mod context_builder;
 mod exec;

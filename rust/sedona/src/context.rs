@@ -511,7 +511,8 @@ impl SedonaContext {
     /// Register a foreign catalog list for this session.
     ///
     /// Later registrations take precedence over earlier foreign catalogs and
-    /// DataFusion's built-in catalogs when names overlap.
+    /// DataFusion's built-in catalogs when names overlap in Sedona SQL. Foreign
+    /// objects are not exposed through the synchronous DataFusion catalog API.
     pub fn register_catalog_list(&self, catalogs: Arc<dyn SedonaCatalogList>) {
         self.catalogs.register_foreign(catalogs);
     }
@@ -667,7 +668,7 @@ impl SedonaContext {
         let mut results = Vec::with_capacity(statements.len());
         for statement in statements {
             let plan = create_plan_from_sql(self, statement.clone()).await?;
-            let df = if let Some(df) = execute_sedona_catalog_ddl(self, &plan).await? {
+            let df = if let Some(df) = execute_sedona_catalog_ddl(self, &plan, &statement).await? {
                 df
             } else {
                 self.ctx.execute_logical_plan(plan).await?

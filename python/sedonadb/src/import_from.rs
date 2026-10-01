@@ -289,7 +289,7 @@ mod tests {
     use pyo3::types::PyDict;
     use sedona_expr::scalar_udf::SimpleSedonaScalarKernel;
     use sedona_extension::{
-        extension::{SedonaCCatalogProvider, SedonaCError, SedonaCScalarKernel},
+        extension::{SedonaCError, SedonaCExecutionPlan, SedonaCScalarKernel},
         scalar_kernel::ExportedScalarKernel,
     };
 
@@ -312,10 +312,29 @@ mod tests {
         0
     }
 
-    unsafe extern "C" fn catalog_list_catalog(
+    unsafe extern "C" fn catalog_list_table(
         _self_: *const SedonaCCatalogProviderList,
-        _name: *const std::ffi::c_char,
-        _out: *mut SedonaCCatalogProvider,
+        _identifier: *const std::ffi::c_char,
+        _out: *mut SedonaCTableProvider,
+        _error: *mut SedonaCError,
+    ) -> std::ffi::c_int {
+        0
+    }
+
+    unsafe extern "C" fn catalog_list_create(
+        _self_: *const SedonaCCatalogProviderList,
+        _args: *const std::ffi::c_char,
+        _input: *mut SedonaCExecutionPlan,
+        _out: *mut SedonaCExecutionPlan,
+        _error: *mut SedonaCError,
+    ) -> std::ffi::c_int {
+        0
+    }
+
+    unsafe extern "C" fn catalog_list_drop(
+        _self_: *const SedonaCCatalogProviderList,
+        _args: *const std::ffi::c_char,
+        _out: *mut SedonaCExecutionPlan,
         _error: *mut SedonaCError,
     ) -> std::ffi::c_int {
         0
@@ -332,8 +351,9 @@ mod tests {
             let raw = SedonaCCatalogProviderList {
                 get_property_schema: Some(catalog_list_property_schema),
                 get_property: Some(catalog_list_property),
-                catalog: Some(catalog_list_catalog),
-                create_catalog: None,
+                table: Some(catalog_list_table),
+                create_object: Some(catalog_list_create),
+                drop_object: Some(catalog_list_drop),
                 reserved: std::ptr::null_mut(),
                 release: Some(catalog_list_release),
                 private_data: std::ptr::null_mut(),
