@@ -42,6 +42,7 @@ use std::sync::Arc;
 
 use datafusion_common::tree_node::{Transformed, TreeNode};
 use datafusion_common::{Column, DFSchema, Result};
+use datafusion_expr::async_udf::AsyncScalarUDF;
 use datafusion_expr::expr::{Alias, ScalarFunction};
 use datafusion_expr::expr_schema::ExprSchemable;
 use datafusion_expr::{Expr, LogicalPlan, ScalarUDF};
@@ -155,8 +156,10 @@ fn merged_input_schema(inputs: &[&LogicalPlan]) -> Option<Arc<DFSchema>> {
 /// raster-typed arg with `RS_EnsureLoaded`. Two guards keep it correct:
 /// it never wraps `RS_EnsureLoaded` itself (recursion), and it never
 /// re-wraps an arg already wrapped in `RS_EnsureLoaded` (idempotency,
-/// required because optimizer rules run to a fixpoint). `loaded` names the
-/// input columns that already carry loaded bytes (see [`loaded_columns`]).
+/// required because optimizer rules run to a fixpoint). It also leaves alone
+/// an arg that calls an async UDF below it (see [`calls_async_udf`]). `loaded`
+/// names the input columns that already carry loaded bytes (see
+/// [`loaded_columns`]).
 fn rewrite_expr_node(
     expr: Expr,
     schema: &Arc<DFSchema>,
@@ -208,6 +211,11 @@ fn rewrite_expr_node(
             // passes) or a function that returns materialised bytes (avoids a
             // redundant nested async wrap; apache/datafusion#20031).
             if already_loaded(&arg, loaded) {
+                return arg;
+            }
+            // Don't wrap an argument that calls an async UDF anywhere below
+            // it: the wrap would be un-hoistable (see `calls_async_udf`).
+            if calls_async_udf(&arg) {
                 return arg;
             }
             if expr_is_raster(&arg, schema) {
@@ -291,6 +299,41 @@ fn already_loaded(expr: &Expr, loaded: &HashSet<Column>) -> bool {
         Expr::Alias(alias) => already_loaded(&alias.expr, loaded),
         _ => false,
     }
+}
+
+/// True if `expr` contains a call to an async scalar UDF (such as
+/// `rs_ensureloaded`) anywhere in its tree, in which case the rule must not
+/// wrap it in `RS_EnsureLoaded`.
+///
+/// [`already_loaded`] covers an argument that *is* a loader, but not one that
+/// merely contains one, e.g. a user UDF over a loaded raster:
+/// `RS_SummaryStats(my_udf(RS_EnsureLoaded(rast)), 'mean', 1)`. Wrapping that
+/// argument yields `rs_ensureloaded(my_udf(rs_ensureloaded(rast)))`: an async
+/// call inside another async call's arguments. DataFusion's physical planner
+/// can't hoist nested async calls (apache/datafusion#20031): only the innermost
+/// lands in `AsyncFuncExec`, the outer one is invoked synchronously, and the
+/// query fails with "async functions should not be called directly" — for
+/// every input, whatever the argument returns. So such a wrap can never run,
+/// and leaving the argument alone is strictly better:
+///
+/// - When the argument returns in-database bytes (the common case: a Python
+///   UDF building its result with `Raster.from_numpy`), the kernel reads them
+///   and the query succeeds.
+/// - When it returns an OutDb raster, the kernel fails with a clear OutDb
+///   byte-access error, not a wrong result. The user can load it explicitly in
+///   a subquery or CTE, where the loader is a separate projection.
+///
+/// `rs_ensureloaded` is matched by name as well, like in [`already_loaded`],
+/// so the rule's unit tests can stand it in with a sync UDF. Any other async
+/// UDF nests just the same, so it counts too.
+fn calls_async_udf(expr: &Expr) -> bool {
+    expr.exists(|e| {
+        Ok(matches!(e, Expr::ScalarFunction(sf)
+            if sf.func.name() == "rs_ensureloaded"
+                || sf.func.inner().downcast_ref::<AsyncScalarUDF>().is_some()))
+    })
+    // The closure never errors.
+    .unwrap_or(false)
 }
 
 /// The output columns of `plan` that already carry loaded raster bytes.
@@ -433,6 +476,17 @@ mod tests {
         Arc::new(ScalarUDF::new_from_impl(udf))
     }
 
+    /// A raster -> raster UDF with no annotations, standing in for a user
+    /// UDF (e.g. a Python UDF) that transforms a raster.
+    fn unannotated_raster_udf(name: &str) -> Arc<ScalarUDF> {
+        let kernel: ScalarKernelRef = SimpleSedonaScalarKernel::new_ref(
+            ArgMatcher::new(vec![ArgMatcher::is_raster()], SedonaType::Raster),
+            Arc::new(|_, _| unreachable!("stub kernel; not invoked at plan time")),
+        );
+        let udf = SedonaScalarUDF::new(name, vec![kernel], Volatility::Immutable);
+        Arc::new(ScalarUDF::new_from_impl(udf))
+    }
+
     fn raster_schema_named(name: &str) -> Arc<DFSchema> {
         let field = SedonaType::Raster.to_storage_field(name, true).unwrap();
         let arrow_schema = Arc::new(Schema::new(vec![field]));
@@ -505,6 +559,60 @@ mod tests {
             0,
             "an argument that already returns loaded bytes must not be wrapped: {out:?}"
         );
+    }
+
+    #[test]
+    fn does_not_wrap_arg_containing_a_loader() {
+        // Models RS_SummaryStats(my_udf(RS_EnsureLoaded(rast)), ...): the
+        // argument isn't a loader itself but calls one below. Wrapping it would
+        // nest rs_ensureloaded inside rs_ensureloaded, which DataFusion can't
+        // hoist (apache/datafusion#20031).
+        let schema = raster_schema_named("rast");
+        let udf = fake_ensure_loaded_udf();
+        let arg = Expr::ScalarFunction(ScalarFunction {
+            func: unannotated_raster_udf("my_udf"),
+            args: vec![wrap_for_loading(col("rast"), &udf)],
+        });
+        let call = Expr::ScalarFunction(ScalarFunction {
+            func: needs_bytes_udf("rs_mock"),
+            args: vec![arg],
+        });
+        let out = rewrite(call, &schema, &udf);
+        assert_eq!(
+            count_ensure_loaded(&out),
+            1,
+            "an argument containing a loader must not be wrapped: {out:?}"
+        );
+
+        // The same argument without the loader is still wrapped.
+        let call = Expr::ScalarFunction(ScalarFunction {
+            func: needs_bytes_udf("rs_mock"),
+            args: vec![Expr::ScalarFunction(ScalarFunction {
+                func: unannotated_raster_udf("my_udf"),
+                args: vec![col("rast")],
+            })],
+        });
+        let out = rewrite(call, &schema, &udf);
+        assert_eq!(count_ensure_loaded(&out), 1, "{out:?}");
+    }
+
+    #[test]
+    fn calls_async_udf_finds_any_async_udf_below() {
+        let other_async = Arc::new(fake_async_raster_udf("rs_other_async"));
+        let arg = Expr::ScalarFunction(ScalarFunction {
+            func: unannotated_raster_udf("my_udf"),
+            args: vec![Expr::ScalarFunction(ScalarFunction {
+                func: other_async,
+                args: vec![col("rast")],
+            })],
+        });
+        assert!(calls_async_udf(&arg));
+
+        let arg = Expr::ScalarFunction(ScalarFunction {
+            func: unannotated_raster_udf("my_udf"),
+            args: vec![col("rast")],
+        });
+        assert!(!calls_async_udf(&arg));
     }
 
     #[test]
@@ -794,24 +902,25 @@ mod tests {
     /// `OptimizeProjections` merges. Returns its argument's (raster) field.
     #[derive(Debug)]
     struct FakeAsyncEnsureLoaded {
+        name: &'static str,
         signature: Signature,
     }
 
     impl PartialEq for FakeAsyncEnsureLoaded {
-        fn eq(&self, _other: &Self) -> bool {
-            true
+        fn eq(&self, other: &Self) -> bool {
+            self.name == other.name
         }
     }
     impl Eq for FakeAsyncEnsureLoaded {}
     impl Hash for FakeAsyncEnsureLoaded {
         fn hash<H: Hasher>(&self, state: &mut H) {
-            "rs_ensureloaded".hash(state);
+            self.name.hash(state);
         }
     }
 
     impl ScalarUDFImpl for FakeAsyncEnsureLoaded {
         fn name(&self) -> &str {
-            "rs_ensureloaded"
+            self.name
         }
 
         fn signature(&self) -> &Signature {
@@ -842,7 +951,13 @@ mod tests {
     }
 
     fn fake_async_ensure_loaded_udf() -> ScalarUDF {
+        fake_async_raster_udf("rs_ensureloaded")
+    }
+
+    /// An async raster -> raster UDF named `name` (see `FakeAsyncEnsureLoaded`).
+    fn fake_async_raster_udf(name: &'static str) -> ScalarUDF {
         AsyncScalarUDF::new(Arc::new(FakeAsyncEnsureLoaded {
+            name,
             signature: Signature::any(1, Volatility::Stable),
         }))
         .into_scalar_udf()
@@ -1042,6 +1157,55 @@ mod tests {
         );
 
         // The one loader is the AsyncFuncExec's; nothing calls it synchronously.
+        let physical = df.create_physical_plan().await.unwrap();
+        let physical_str = displayable(physical.as_ref()).indent(true).to_string();
+        assert!(physical_str.contains("AsyncFuncExec"), "{physical_str}");
+        assert_eq!(
+            physical_str.matches("rs_ensureloaded").count(),
+            1,
+            "{physical_str}"
+        );
+    }
+
+    /// A `needs_pixels` call over a user UDF whose argument is a user-written
+    /// loader, through the whole optimizer and the physical planner:
+    ///   SELECT rs_mock(my_udf(rs_ensureloaded(rast))) FROM t
+    /// Wrapping `my_udf(..)` nested one loader inside the other; the physical
+    /// planner hoisted only the inner one (apache/datafusion#20031) and the
+    /// query failed with "async functions should not be called directly".
+    #[tokio::test]
+    async fn optimizer_does_not_nest_a_loader_around_a_user_loader() {
+        use crate::optimizer::register_ensure_loaded_optimizer;
+        use datafusion::catalog::MemTable;
+        use datafusion::physical_plan::displayable;
+        use datafusion::prelude::SessionContext;
+
+        let builder =
+            register_ensure_loaded_optimizer(SessionStateBuilder::new().with_default_features())
+                .unwrap();
+        let ctx = SessionContext::new_with_state(builder.build());
+        ctx.register_udf(fake_async_ensure_loaded_udf());
+        ctx.register_udf(ScalarUDF::clone(&needs_bytes_udf("rs_mock")));
+        ctx.register_udf(ScalarUDF::clone(&unannotated_raster_udf("my_udf")));
+        let schema = Arc::new(Schema::new(vec![
+            SedonaType::Raster.to_storage_field("rast", true).unwrap(),
+        ]));
+        let table = MemTable::try_new(schema, vec![vec![]]).unwrap();
+        ctx.register_table("t", Arc::new(table)).unwrap();
+
+        let df = ctx
+            .sql("SELECT rs_mock(my_udf(rs_ensureloaded(rast))) AS v FROM t")
+            .await
+            .unwrap();
+
+        let optimized = df.clone().into_optimized_plan().unwrap();
+        assert_eq!(
+            loader_stats(&optimized),
+            (1, 0),
+            "expected the user's loader only, un-nested, got: {}",
+            optimized.display_indent()
+        );
+
         let physical = df.create_physical_plan().await.unwrap();
         let physical_str = displayable(physical.as_ref()).indent(true).to_string();
         assert!(physical_str.contains("AsyncFuncExec"), "{physical_str}");
