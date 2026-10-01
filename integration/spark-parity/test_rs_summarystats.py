@@ -196,10 +196,6 @@ def test_rs_summarystats_uint32_high_values(tmp_path):
     compare(sql, sedona, spark, expected=9442450951.0)
 
 
-@pytest.mark.xfail(
-    reason="SedonaDB packs the file nodata into the band dtype (0.5 becomes 0), "
-    "so it leaves out real 0 pixels; Sedona Spark's 0.5 matches no pixel"
-)
 def test_rs_summarystats_fractional_nodata_on_int_band(tmp_path):
     data = np.array([[[0, 0, 1], [2, 3, 0]]], dtype="uint8")
     sedona, spark = _engines("ss_frac_src", tmp_path, data, nodata=0.5)

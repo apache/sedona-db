@@ -17,30 +17,32 @@
 
 """SedonaDB vs Sedona Spark parity for RS_Stack.
 
-Every case is an xfail for now: the Sedona Spark 1.9.1 release the suite pins
-calls this function RS_Union, and the rename to RS_Stack (apache/sedona#3427)
-is not released yet. The cases start passing once the pin moves to a release
-that has RS_Stack; drop the module-level xfail then. (The refusal cases already
-xpass, because Sedona Spark refuses the name it does not know.)
+The Sedona Spark 1.9.1 release the suite pins calls this function RS_Union,
+and the rename to RS_Stack (apache/sedona#3427) is not released yet. Every case
+that needs a result from Sedona Spark is an xfail until the pin moves to a
+release that has RS_Stack; drop those markers then. The refusal case carries no
+marker: Sedona Spark already refuses the name it does not know, and it keeps
+refusing mismatched shapes once it has the function.
 
 Each case compares the whole output raster, decoded on both engines, and
 anchors it to the inputs' bands stacked in argument order under the first
 raster's grid. The fixtures carry no nodata value: Sedona Spark's raster
 transport is a GeoTIFF, which holds one nodata value per file, so it cannot
-carry bands with different nodata values. Two known divergences are xfails of
-their own: Sedona Spark casts every band to the first raster's pixel type where
-SedonaDB keeps each band's own, and Sedona Spark ignores all but the first
-raster's georeference where SedonaDB requires one grid.
+carry bands with different nodata values. One known divergence is an xfail of
+its own: Sedona Spark casts every band to the first raster's pixel type where
+SedonaDB keeps each band's own. A second, Sedona Spark ignoring all but the first
+raster's georeference where SedonaDB requires one grid, is pinned down as a test
+of what each engine does, so it fails loudly if either engine changes.
 """
 
 import numpy as np
 import pytest
 
-from sedonadb.raster_testing import DecodedRaster, write_geotiff
+from sedonadb.raster_testing import DecodedRaster, assert_decoded_equal, write_geotiff
 from sedonadb.testing import SedonaDB, compare
 from sedonadb.testing_spark import SedonaSpark
 
-pytestmark = pytest.mark.xfail(
+no_rs_stack = pytest.mark.xfail(
     reason="Sedona Spark 1.9.1 has no RS_Stack; it calls the function RS_Union "
     "until the rename in apache/sedona#3427 is released"
 )
@@ -78,6 +80,7 @@ def _stacked(*rasters):
     )
 
 
+@no_rs_stack
 def test_rs_stack(tmp_path):
     a, b = _raster(plant=1), _raster(plant=2)
     sedona, spark = _views(tmp_path, [("un_a", a), ("un_b", b)])
@@ -85,6 +88,7 @@ def test_rs_stack(tmp_path):
     compare(sql, sedona, spark, expected=_stacked(a, b))
 
 
+@no_rs_stack
 def test_rs_stack_three_rasters(tmp_path):
     a, b, c = _raster(plant=1), _raster(bands=1, plant=2), _raster(plant=3)
     sedona, spark = _views(tmp_path, [("un_a", a), ("un_b", b), ("un_c", c)])
@@ -92,18 +96,17 @@ def test_rs_stack_three_rasters(tmp_path):
     compare(sql, sedona, spark, expected=_stacked(a, b, c))
 
 
-@pytest.mark.xfail(
-    reason="SedonaDB rejects a raster on another grid; Sedona Spark keeps the "
-    "first raster's grid and ignores the others' georeference"
-)
+@no_rs_stack
 def test_rs_stack_another_grid(tmp_path):
-    """The second raster has the same shape but is georeferenced elsewhere."""
+    """The second raster has the same shape but is georeferenced elsewhere.
+    The engines diverge: SedonaDB rejects it, Sedona Spark keeps the first
+    raster's grid and ignores the others' georeference."""
     a, b = _raster(plant=1), _raster(plant=2, bbox=(0, 0, 7, 6))
     sedona, spark = _views(tmp_path, [("un_a", a), ("un_b", b)])
     sql = "SELECT RS_Stack(un_a.rast, un_b.rast) FROM un_a, un_b"
-    for eng in (sedona, spark):
-        with pytest.raises(Exception):
-            eng.decode_raster_result(sql)
+    with pytest.raises(Exception):
+        sedona.decode_raster_result(sql)
+    assert_decoded_equal(spark.decode_raster_result(sql), _stacked(a, b), context=sql)
 
 
 @pytest.mark.parametrize(

@@ -483,9 +483,11 @@ mod tests {
         let err = binary_tester
             .invoke_array_scalar(wkt_array.clone(), r#"{"width_hint": -1}"#)
             .unwrap_err();
+        // The message is the standard library's, whose wording changes between
+        // Rust releases, so compare with it rather than a copy of its text.
         assert_eq!(
             err.message(),
-            "out of range integral type conversion attempted"
+            usize::try_from(-1i64).unwrap_err().to_string()
         );
 
         // For a very small width hint, we should get truncated values
