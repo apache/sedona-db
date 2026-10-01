@@ -115,17 +115,12 @@ pub trait SedonaCatalogList: Debug + Send + Sync {
     /// components: zero is an exact lookup, one includes immediate children,
     /// and `None` includes all descendants. An empty prefix addresses the root.
     ///
-    /// `suffix` matches exact trailing identifier components, independently of
-    /// the prefix and depth. An empty suffix means no filtering.
     /// Return full identifiers, without duplicates; ordering is unspecified.
-    /// Missing prefixes return an empty list. Catalog/schema entries must be
-    /// included even when empty, allowing a future ADBC get_objects consumer to
-    /// enumerate the hierarchy and obtain column metadata via `table()`.
+    /// Missing prefixes return an empty list.
     async fn list_identifiers(
         &self,
         prefix: &[&str],
         depth: Option<usize>,
-        suffix: &[&str],
     ) -> Result<Vec<CatalogObject>>;
 
     /// Look up a table or view by its full identifier; missing objects return None.

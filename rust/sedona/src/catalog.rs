@@ -68,7 +68,7 @@ impl SedonaCatalogRegistry {
         let foreign = self.foreign.read().clone();
         for catalogs in foreign.iter().rev() {
             if catalogs
-                .list_identifiers(&[name], Some(0), &[])
+                .list_identifiers(&[name], Some(0))
                 .await?
                 .iter()
                 .any(|object| {

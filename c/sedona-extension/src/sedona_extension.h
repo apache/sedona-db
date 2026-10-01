@@ -511,17 +511,16 @@ struct SedonaCCatalogProviderList {
   /// (e.g., "iceberg") as a JSON string and takes no arguments. It must be
   /// available without catalog I/O and is cached on import.
   /// list_identifiers accepts
-  /// args: {"prefix": [...], "depth": null|integer, "suffix": [...]}.
-  /// Prefix and suffix match exact components. Depth counts components after
+  /// args: {"prefix": [...], "depth": null|integer}.
+  /// Prefix matches exact components. Depth counts components after
   /// prefix, including the prefix itself at depth zero; null is unlimited.
   /// out: one non-null Utf8 Arrow value containing a JSON array of
   /// {"identifier": [...], "object_type": "catalog"|"schema"|"table"|"view"|"index"}.
-  int (*get_property)(const struct SedonaCCatalogProviderList* self,
-                      const char* property, const char* args, struct ArrowArray* out,
-                      struct SedonaCError* err);
+  int (*get_property)(const struct SedonaCCatalogProviderList* self, const char* property,
+                      const char* args, struct ArrowArray* out, struct SedonaCError* err);
   /// identifier: JSON array of literal components. Missing table: NULL release.
   int (*table)(const struct SedonaCCatalogProviderList* self, const char* identifier,
-                struct SedonaCTableProvider* out, struct SedonaCError* err);
+               struct SedonaCTableProvider* out, struct SedonaCError* err);
   /// args: {"identifier": [...], "options": {"object_type": ..., "mode":
   /// "create"|"create_or_ignore"|"replace", "temporary": bool, "external": bool,
   /// "definition": null|string}}. Missing options fields use their Rust defaults.
@@ -529,13 +528,13 @@ struct SedonaCCatalogProviderList {
   /// when taking ownership. out is required on success and defers the mutation
   /// (including existence/conflict checks) until execution.
   int (*create_object)(const struct SedonaCCatalogProviderList* self, const char* args,
-                        struct SedonaCExecutionPlan* input,
-                        struct SedonaCExecutionPlan* out, struct SedonaCError* err);
+                       struct SedonaCExecutionPlan* input,
+                       struct SedonaCExecutionPlan* out, struct SedonaCError* err);
   /// args: {"identifier": [...], "options": {"object_type": ..., "if_exists": bool,
   /// "cascade": bool, "purge": bool}}. Missing fields use their Rust defaults.
   /// out is required on success, including for DROP IF EXISTS.
   int (*drop_object)(const struct SedonaCCatalogProviderList* self, const char* args,
-                      struct SedonaCExecutionPlan* out, struct SedonaCError* err);
+                     struct SedonaCExecutionPlan* out, struct SedonaCError* err);
   /// Reserved; must be NULL.
   void* reserved;
   /// Release the instance and set release to NULL.

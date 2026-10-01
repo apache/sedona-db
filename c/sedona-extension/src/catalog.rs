@@ -49,7 +49,6 @@ use std::{
 struct ListArgs {
     prefix: Vec<String>,
     depth: Option<usize>,
-    suffix: Vec<String>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -154,11 +153,11 @@ unsafe extern "C" fn get_property(
         "list_identifiers" => {
             let result = (|| {
                 let args: ListArgs = parse_json_c_args(args)?;
-                exported.run(exported.inner.list_identifiers(
-                    &refs(&args.prefix),
-                    args.depth,
-                    &refs(&args.suffix),
-                ))
+                exported.run(
+                    exported
+                        .inner
+                        .list_identifiers(&refs(&args.prefix), args.depth),
+                )
             })();
             write_json_result_property(result, out, err)
         }
@@ -381,12 +380,10 @@ impl SedonaCatalogList for ImportedCatalogProviderList {
         &self,
         prefix: &[&str],
         depth: Option<usize>,
-        suffix: &[&str],
     ) -> Result<Vec<CatalogObject>> {
         let args = ListArgs {
             prefix: prefix.iter().map(|s| s.to_string()).collect(),
             depth,
-            suffix: suffix.iter().map(|s| s.to_string()).collect(),
         };
         self.property("list_identifiers", Some(args)).await
     }
@@ -580,7 +577,6 @@ mod tests {
             &self,
             prefix: &[&str],
             depth: Option<usize>,
-            suffix: &[&str],
         ) -> Result<Vec<CatalogObject>> {
             tokio::time::sleep(std::time::Duration::from_millis(1)).await;
             if self.fail {
@@ -589,7 +585,7 @@ mod tests {
             self.calls
                 .lock()
                 .unwrap()
-                .push(format!("list:{prefix:?}:{depth:?}:{suffix:?}"));
+                .push(format!("list:{prefix:?}:{depth:?}"));
             Ok(vec![CatalogObject {
                 identifier: vec!["catalog".into(), "schema.with.dot".into(), "table".into()],
                 object_type: CatalogObjectType::Table,
@@ -677,18 +673,14 @@ mod tests {
         let catalog = Arc::new(TestCatalog::default());
         let imported = ImportedCatalogProviderList::try_new(raw(catalog.clone()), runtime())?;
         assert_eq!(imported.name(), "iceberg");
-        let objects = imported
-            .list_identifiers(&["catalog"], Some(2), &["schema.with.dot", "table"])
-            .await?;
+        let objects = imported.list_identifiers(&["catalog"], Some(2)).await?;
         assert_eq!(
             objects[0].identifier,
             ["catalog", "schema.with.dot", "table"]
         );
         assert_eq!(objects[0].object_type, CatalogObjectType::Table);
-        imported.list_identifiers(&[], None, &[]).await?;
-        imported
-            .list_identifiers(&["catalog"], Some(0), &[])
-            .await?;
+        imported.list_identifiers(&[], None).await?;
+        imported.list_identifiers(&["catalog"], Some(0)).await?;
         assert!(imported
             .table(&["catalog", "schema.with.dot", "table"])
             .await?
@@ -738,8 +730,7 @@ mod tests {
         datafusion_physical_plan::collect(plan, state.task_ctx()).await?;
         assert_eq!(catalog.mutations.load(Ordering::SeqCst), 2);
         let calls = catalog.calls.lock().unwrap();
-        assert!(calls[0].contains("Some(2)"));
-        assert!(calls[0].contains("schema.with.dot"));
+        assert_eq!(calls[0], "list:[\"catalog\"]:Some(2)");
         assert!(calls
             .iter()
             .any(|call| call.contains("CreateOrIgnore") && call.contains("temporary: true")));
@@ -755,7 +746,7 @@ mod tests {
         });
         let imported = ImportedCatalogProviderList::try_new(raw(catalog), runtime())?;
         assert!(imported
-            .list_identifiers(&[], None, &[])
+            .list_identifiers(&[], None)
             .await
             .unwrap_err()
             .to_string()
@@ -860,7 +851,7 @@ mod tests {
         let mut raw = raw(Arc::new(TestCatalog::default()));
         raw.get_property_schema = Some(failing_schema);
         let imported = ImportedCatalogProviderList::try_new(raw, runtime())?;
-        let error = imported.list_identifiers(&[], None, &[]).await.unwrap_err();
+        let error = imported.list_identifiers(&[], None).await.unwrap_err();
         assert!(error
             .to_string()
             .contains("Schema unavailable for list_identifiers"));

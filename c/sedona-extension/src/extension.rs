@@ -496,7 +496,7 @@ pub struct SedonaCCatalogProviderList {
     /// Get a JSON-encoded property. `name` returns the implementation name as a
     /// JSON string and takes no arguments. It must be available without catalog
     /// I/O and is cached on import. `list_identifiers` accepts
-    /// {"prefix": [...], "depth": null|integer, "suffix": [...]} in `args`.
+    /// {"prefix": [...], "depth": null|integer} in `args`.
     /// Its output is one non-null Utf8 Arrow value containing a CatalogObject array.
     pub get_property: Option<
         unsafe extern "C" fn(

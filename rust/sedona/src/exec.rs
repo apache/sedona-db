@@ -376,14 +376,12 @@ mod tests {
             &self,
             prefix: &[&str],
             depth: Option<usize>,
-            suffix: &[&str],
         ) -> Result<Vec<CatalogObject>> {
             tokio::task::yield_now().await;
             if self.fail {
                 return exec_err!("foreign catalog lookup failed");
             }
             let prefix = owned(prefix);
-            let suffix = owned(suffix);
             Ok(self
                 .objects
                 .lock()
@@ -391,7 +389,6 @@ mod tests {
                 .iter()
                 .filter(|(id, _)| {
                     id.starts_with(&prefix)
-                        && id.ends_with(&suffix)
                         && depth.is_none_or(|depth| id.len() <= prefix.len() + depth)
                 })
                 .map(|(id, kind)| CatalogObject {
@@ -672,28 +669,22 @@ mod tests {
             .collect()
             .await?;
         assert_eq!(
-            catalog
-                .list_identifiers(&["foreign"], Some(0), &[])
-                .await?
-                .len(),
+            catalog.list_identifiers(&["foreign"], Some(0)).await?.len(),
             1
         );
         assert_eq!(
-            catalog
-                .list_identifiers(&["foreign"], Some(1), &[])
-                .await?
-                .len(),
+            catalog.list_identifiers(&["foreign"], Some(1)).await?.len(),
             3
         );
         assert_eq!(
             catalog
-                .list_identifiers(&[], None, &["schema.with.dot", "table.with.dot"])
+                .list_identifiers(&["foreign", "schema.with.dot", "table.with.dot"], None)
                 .await?
                 .len(),
             1
         );
         assert!(catalog
-            .list_identifiers(&["missing"], None, &[])
+            .list_identifiers(&["missing"], None)
             .await?
             .is_empty());
         Ok(())
