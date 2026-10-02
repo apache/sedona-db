@@ -28,8 +28,10 @@ from packaging.version import Version
 import sedonadb_geopandas as sgpd
 
 # Released sedonadb 0.4.1 misclassifies some boundary-only predicate cases
-# (#1165), fixed on main; the full parity corpus skips there.
+# (#1165), so sjoin() refuses to run there; the refusal itself is tested by
+# patching the version string.
 _OLD_ENGINE = Version(sedonadb.__version__) < Version("0.5.0a0")
+pytestmark = pytest.mark.skipif(_OLD_ENGINE, reason="sjoin() needs sedonadb >= 0.5")
 
 PREDICATES = [
     "intersects",
@@ -65,6 +67,12 @@ RIGHT = [
     None,
 ]
 
+# EPSG:3857 as a legacy PROJ string: the same CRS under a different spelling.
+MERCATOR_PROJ = (
+    "+proj=merc +a=6378137 +b=6378137 +lat_ts=0 +lon_0=0 +x_0=0 +y_0=0 +k=1 "
+    "+units=m +nadgrids=@null +wktext +no_defs"
+)
+
 
 def _pairs(frame):
     """The matched (left row, right row) pairs, with None for an unmatched side."""
@@ -77,9 +85,6 @@ def _pairs(frame):
     return collections.Counter(zip(map(key, frame["a"]), map(key, frame["b"])))
 
 
-@pytest.mark.skipif(
-    _OLD_ENGINE, reason="sedonadb < 0.5 misclassifies boundary cases (#1165)"
-)
 @pytest.mark.parametrize("how", ["inner", "left", "right"])
 @pytest.mark.parametrize("predicate", PREDICATES)
 def test_sjoin_matches_geopandas_pair_for_pair(predicate, how):
@@ -177,6 +182,30 @@ def test_sjoin_suffixes_follow_geopandas():
     assert "v_a" in custom.columns and "v_b" in custom.columns
 
 
+@pytest.mark.parametrize("how", ["inner", "left", "right"])
+@pytest.mark.parametrize("suffixes", [(None, "right"), ("left", None)])
+def test_sjoin_none_suffix_keeps_the_name(how, suffixes):
+    left = gpd.GeoDataFrame(
+        {"v": [1]}, geometry=gpd.GeoSeries.from_wkt(["POINT (0 0)"]), crs=3857
+    )
+    right = gpd.GeoDataFrame(
+        {"v": [2]},
+        geometry=gpd.GeoSeries.from_wkt(["POLYGON ((-1 -1, 1 -1, 1 1, -1 1, -1 -1))"]),
+        crs=3857,
+    )
+    lsuffix, rsuffix = suffixes
+    ours = sgpd.from_geopandas(left).sjoin(
+        sgpd.from_geopandas(right), how=how, lsuffix=lsuffix, rsuffix=rsuffix
+    )
+    expected = gpd.sjoin(left, right, how=how, lsuffix=lsuffix, rsuffix=rsuffix)
+    assert ours.columns == [c for c in expected.columns if not c.startswith("index_")]
+    # Both unsuffixed would collide, as GeoPandas also refuses.
+    with pytest.raises(ValueError, match="duplicate column name"):
+        sgpd.from_geopandas(left).sjoin(
+            sgpd.from_geopandas(right), how=how, lsuffix=None, rsuffix=None
+        )
+
+
 def test_sjoin_rejects_suffix_generated_duplicates():
     # Suffixing can collide with a column that already carries the suffix;
     # the engine cannot hold duplicate names, so this raises up front.
@@ -267,14 +296,60 @@ def test_sjoin_requires_matching_crs():
     for other in (right, bare):
         with pytest.raises(ValueError, match="to_crs"):
             sgpd.from_geopandas(left).sjoin(sgpd.from_geopandas(other))
-    # The same CRS spelled differently is the same CRS.
-    same = gpd.GeoDataFrame(
-        {"b": [0]}, geometry=gpd.GeoSeries.from_wkt(["POINT (0 0)"]), crs="EPSG:3857"
+
+
+@pytest.mark.parametrize("how", ["inner", "left", "right"])
+@pytest.mark.parametrize(
+    "crs",
+    [
+        (3857, "EPSG:3857"),
+        ("EPSG:3857", MERCATOR_PROJ),
+        (MERCATOR_PROJ, "EPSG:3857"),
+    ],
+)
+def test_sjoin_accepts_the_same_crs_spelled_differently(crs, how):
+    # The engine compares CRS metadata literally and would refuse an EPSG code
+    # against the matching PROJ string; each output column keeps its own CRS.
+    left_crs, right_crs = crs
+    left = gpd.GeoDataFrame(
+        {"a": [0, 1]}, geometry=gpd.points_from_xy([0, 5], [0, 5]), crs=left_crs
     )
-    assert (
-        len(sgpd.from_geopandas(left).sjoin(sgpd.from_geopandas(same)).to_geopandas())
-        == 1
+    right = gpd.GeoDataFrame(
+        {"b": [0]},
+        geometry=gpd.GeoSeries.from_wkt(["POLYGON ((-1 -1, 1 -1, 1 1, -1 1, -1 -1))"]),
+        crs=right_crs,
     )
+    ours = sgpd.from_geopandas(left).sjoin(
+        sgpd.from_geopandas(right), how=how, predicate="within"
+    )
+    expected = gpd.sjoin(left, right, how=how, predicate="within")
+    result = ours.to_geopandas()
+    assert _pairs(result) == _pairs(expected)
+    assert result.crs == expected.crs
+    assert "SpatialJoinExec" in ours._df.explain().to_pandas().to_string()
+
+
+@pytest.mark.parametrize("version", ["0.4.1", "0.5.0a3", "0.5.0"])
+def test_sjoin_refuses_engines_that_misclassify_boundaries(monkeypatch, version):
+    # Released 0.4.1 finds no match for a multipoint with a vertex on the
+    # square's boundary (#1165); nightlies and later releases carry the fix.
+    left = sgpd.from_geopandas(
+        gpd.GeoDataFrame(
+            {"a": [0]}, geometry=gpd.GeoSeries.from_wkt(["MULTIPOINT ((0 0), (1 1))"])
+        )
+    )
+    right = sgpd.from_geopandas(
+        gpd.GeoDataFrame(
+            {"b": [0]},
+            geometry=gpd.GeoSeries.from_wkt(["POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))"]),
+        )
+    )
+    monkeypatch.setattr(sedonadb, "__version__", version)
+    if version == "0.4.1":
+        with pytest.raises(ImportError, match="sedonadb 0.5 or later"):
+            left.sjoin(right, predicate="within")
+    else:
+        assert len(left.sjoin(right, predicate="within").to_geopandas()) == 1
 
 
 def test_sjoin_validation():

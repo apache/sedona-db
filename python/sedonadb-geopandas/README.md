@@ -96,7 +96,9 @@ an engine issue with geometry collections that mix dimensions
 
 `sjoin()` requires both geometry columns to share a CRS: GeoPandas warns on a
 mismatch and joins anyway, which is almost always a mistake, so this raises and
-points at `to_crs()`. `on_attribute` is not supported yet.
+points at `to_crs()`. `on_attribute` is not supported yet. It needs sedonadb
+0.5 or later: released 0.4.1 returns wrong matches for boundary cases of some
+predicates (apache/sedona-db#1165), so it refuses to run there.
 
 `dissolve()` aggregates non-geometry columns with `"first"`, which is an
 unordered aggregate: it returns *some* value from the group rather than the one

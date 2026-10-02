@@ -19,6 +19,7 @@
 import numbers
 
 import pyarrow as pa
+import sedonadb
 from sedonadb.expr import Expr, Literal, lit
 from shapely.geometry.base import BaseGeometry
 
@@ -518,8 +519,10 @@ class GeoDataFrame:
             how: `"inner"`, `"left"`, or `"right"`.
             predicate: One of `intersects`, `within`, `contains`, `touches`,
                 `crosses`, `overlaps`, `covers`, `covered_by`, `dwithin`.
-            lsuffix: Suffix for left columns whose names also occur on the right.
-            rsuffix: Suffix for the corresponding right columns.
+            lsuffix: Suffix for left columns whose names also occur on the right;
+                `None` keeps them unsuffixed.
+            rsuffix: Suffix for the corresponding right columns; `None` keeps
+                them unsuffixed.
             distance: Required by (and only used with) `predicate="dwithin"`.
             on_attribute: Not supported yet.
 
@@ -531,7 +534,8 @@ class GeoDataFrame:
         Differences from GeoPandas: there is no row index, so no
         `index_left`/`index_right` column is produced; and the two geometry
         columns must share a CRS (GeoPandas warns and joins anyway, which is
-        almost always a mistake). Use `to_crs` on one side first.
+        almost always a mistake). Use `to_crs` on one side first. Requires
+        sedonadb 0.5 or later.
         """
         if not isinstance(other, GeoDataFrame):
             raise TypeError(
@@ -586,12 +590,33 @@ class GeoDataFrame:
                 f"{left_crs} and {right_crs}; reproject one side with to_crs() first"
             )
 
+        # Released sedonadb 0.4.1 misclassifies boundary-only cases of several
+        # predicates (apache/sedona-db#1165): a multipoint with a vertex on a
+        # polygon's boundary is not `within` it, for instance. Nightlies
+        # (0.5.0aN) carry the fix, so major.minor is enough to tell them apart.
+        engine = tuple(int(part) for part in sedonadb.__version__.split(".")[:2])
+        if engine < (0, 5):
+            raise ImportError(
+                f"sjoin() requires sedonadb 0.5 or later (version "
+                f"{sedonadb.__version__} is installed): earlier releases return wrong "
+                f"matches for boundary cases of spatial predicates "
+                f"(apache/sedona-db#1165)"
+            )
+
         # Both sides are aliased so the predicate and the output projection can
         # name columns unambiguously when both frames use the same names.
         left = self._df.alias("sjoin_left")
         right = other._df.alias("sjoin_right")
         left_geom = left[self._geometry_name]
         right_geom = right[other._geometry_name]
+        if left_crs is not None and left_crs.to_json() != right_crs.to_json():
+            # The same CRS can be spelled differently (an EPSG code and the
+            # matching PROJ string), and the engine refuses that as a mismatch.
+            # Only the predicate's operand is restamped; each output column keeps
+            # its own CRS.
+            right_geom = right_geom.funcs.st_setcrs(
+                self._df._ctx.lit(left_crs.to_json())
+            )
         # Always a single spatial predicate: that is what the planner rewrites
         # into an indexed spatial join. A composition (`a OR b`) falls back to a
         # nested-loop join, which is quadratic.
@@ -609,7 +634,7 @@ class GeoDataFrame:
         # geometry is no collision while an ordinary column sharing the retained
         # geometry's name is. As in GeoPandas, the retained geometry keeps its
         # name and only the other side's column is suffixed; ordinary collisions
-        # suffix both sides.
+        # suffix both sides, except a side whose suffix is None.
         emitted_left = [
             name
             for name in self.columns
@@ -623,7 +648,7 @@ class GeoDataFrame:
         collisions = set(emitted_left) & set(emitted_right)
 
         def out_name(name, suffix, is_retained_geometry):
-            if name not in collisions or is_retained_geometry:
+            if name not in collisions or is_retained_geometry or suffix is None:
                 return name
             return f"{name}_{suffix}"
 
@@ -636,16 +661,17 @@ class GeoDataFrame:
             for name in emitted_right
         ]
         # Suffixing can itself collide (left `v` and `v_left` against a right
-        # `v` both want `v_left`). The engine cannot hold duplicate names, so
-        # this says so up front rather than failing on a generated name.
-        # (GeoPandas allows the duplicate with a FutureWarning.)
+        # `v` both want `v_left`), as can two unsuffixed sides. The engine
+        # cannot hold duplicate names, so this says so up front rather than
+        # failing on a generated name. (GeoPandas allows a suffix-generated
+        # duplicate with a FutureWarning.)
         final_names = left_out + right_out
         duplicates = sorted({n for n in final_names if final_names.count(n) > 1})
         if duplicates:
             raise ValueError(
-                f"sjoin() would produce duplicate column name(s) {duplicates}: the "
-                f"suffixes {lsuffix!r}/{rsuffix!r} collide with an existing column. "
-                f"Pass different lsuffix/rsuffix values, or rename the column first."
+                f"sjoin() would produce duplicate column name(s) {duplicates} with "
+                f"lsuffix={lsuffix!r} and rsuffix={rsuffix!r}. Pass different "
+                f"suffixes, or rename the column first."
             )
 
         projection = [
