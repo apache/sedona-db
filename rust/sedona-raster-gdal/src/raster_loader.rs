@@ -20,9 +20,14 @@
 //! Reads OutDb raster bands identified by a `#band=N` URI fragment via
 //! GDAL's blocking API. The blocking work runs inside
 //! `tokio::task::spawn_blocking` so the caller's async runtime is not
-//! stalled. Dataset opens are cached per-thread via the existing
-//! `GDALDatasetCache` thread-local, so repeated queries against the
-//! same file pay one open per worker thread.
+//! stalled. Each read opens its file, reads the requested bands, and closes
+//! it again; the loader keeps no datasets open between calls. Repeat loads
+//! are served before they reach the loader, by `RS_EnsureLoaded`'s session
+//! chunk cache, and GDAL's own `/vsicurl` cache makes reopening a remote
+//! file cheap. A per-thread dataset cache here hit rarely (reads land on
+//! whichever blocking thread is free), held open file descriptors on every
+//! blocking thread the budget brings, and kept about a gigabyte more
+//! resident on a 640-COG load, for no measurable gain in wall time.
 //!
 //! `load` treats its request slice as a batch: requests are grouped by
 //! file, and each file is read by its own blocking task, so a batch of
@@ -83,14 +88,14 @@ use arrow_schema::ArrowError;
 use async_trait::async_trait;
 use datafusion_common::{DataFusionError, Result as DFResult};
 use futures::{StreamExt, TryStreamExt, stream};
+use sedona_gdal::dataset::Dataset;
 use sedona_gdal::raster::rasterband::RasterBand;
 use sedona_raster::raster_loader::{AsyncRasterLoader, RasterLoadRequest, RasterLoadResult};
 use sedona_raster::traits::{is_spatial_dim_pair, split_outdb_band_fragment};
 use sedona_schema::raster::BandDataType;
 use tokio::sync::Semaphore;
 
-use crate::gdal_common::{convert_gdal_err, gdal_to_band_data_type, with_gdal};
-use crate::gdal_dataset_provider::thread_local_cache;
+use crate::gdal_common::{convert_gdal_err, gdal_to_band_data_type, open_gdal_dataset, with_gdal};
 
 /// Diagnostic name for the GDAL raster loader (reported via
 /// [`AsyncRasterLoader::name`]). GDAL is a catch-all loader — it doesn't key
@@ -122,19 +127,17 @@ pub const MAX_OUTDB_LOAD_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 /// real: the load part of the query took 169 s at 1, 23 s at 8, 14 s at 16,
 /// 10 s at 32 and 9 s at 64 and 128, so past 32 the store, not the budget,
 /// is the limit. Against the page-cached local filesystem a larger budget
-/// never hurt (80 ms at 1, 12 ms at 8, 9.7 ms at 32, 8.7 ms at 64). Each
-/// blocking thread keeps its own dataset cache, so the threads a larger
-/// budget brings each hold open datasets (file descriptors, for local
-/// files); that cost, for no measured gain past 32, is why 64 was not
-/// taken. Memory in flight does not grow with the budget: `EnsureLoadedExec`
-/// already bounds the bytes one call returns.
+/// never hurt (80 ms at 1, 12 ms at 8, 9.7 ms at 32, 8.7 ms at 64). With
+/// no measured gain past 32, the smaller budget was taken: each file in
+/// flight holds a blocking thread and an open dataset. Memory in flight
+/// does not grow with the budget: `EnsureLoadedExec` already bounds the
+/// bytes one call returns.
 pub const DEFAULT_LOAD_CONCURRENCY: usize = 32;
 
 /// GDAL-backed `AsyncRasterLoader`.
 ///
-/// The only state is the I/O budget, which clones share. The per-thread
-/// dataset cache lives in a thread-local owned by
-/// `sedona-raster-gdal::gdal_dataset_provider`.
+/// The only state is the I/O budget, which clones share. Datasets are opened
+/// per read and closed when the read returns (see the module docs).
 #[derive(Debug, Clone)]
 pub struct GdalLoader {
     concurrency: usize,
@@ -429,6 +432,10 @@ fn read_file(
 ) -> DFResult<Vec<(usize, Buffer)>> {
     with_gdal(|gdal| {
         let mut buffers = Vec::with_capacity(reqs.len());
+        // The file's bands share one open dataset, dropped (closed) when this
+        // call returns. `load_all` groups requests by file, so this opens once
+        // per call; the path check keeps it correct if a group ever mixes files.
+        let mut open: Option<(String, Dataset)> = None;
         for (req_idx, req) in reqs {
             if cancel.load(Ordering::Acquire) {
                 return Err(cancelled_err(0, req.height));
@@ -436,8 +443,13 @@ fn read_file(
 
             // `#band=N` fragment, with N defaulting to 1 if absent.
             let (path, band_num) = split_outdb_band_fragment(&req.uri)?;
-            let cache = thread_local_cache()?;
-            let dataset = cache.get_or_create_outdb_source(gdal, &path, None)?;
+            let dataset = match &mut open {
+                Some((open_path, dataset)) if *open_path == path => &*dataset,
+                slot => {
+                    let dataset = open_gdal_dataset(gdal, &path, None)?;
+                    &slot.insert((path, dataset)).1
+                }
+            };
             let band = dataset
                 .rasterband(band_num as usize)
                 .map_err(convert_gdal_err)?;
@@ -545,6 +557,7 @@ fn cancelled_err(y_start: usize, height: usize) -> DataFusionError {
 mod tests {
     use super::*;
     use crate::gdal_common::with_gdal;
+    use crate::gdal_dataset_provider::thread_local_cache;
     use sedona_gdal::raster::types::Buffer as GdalBuffer;
     use sedona_raster::view_entries::ViewEntries;
     use sedona_schema::raster::BandDataType;
