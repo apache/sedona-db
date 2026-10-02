@@ -3625,6 +3625,8 @@ entirely.</p>
 <ul>
 <li>Python UDFs annotated with arrow_aggregate_udf or arrow_udf</li>
 <li>An ExternalFormatSpec implementing a custom datasource type</li>
+<li>A native catalog list whose <strong>sedonadb_catalog_list</strong> method returns
+  a sedonadb_catalog_list PyCapsule</li>
 <li>An object implementing <strong>sedonadb_extension</strong>(ctx, **kwargs), which
   is called with this context and any keyword arguments passed.</li>
 <li>A single function object implementing <strong>sedonadb_scalar_udf</strong>(self),
