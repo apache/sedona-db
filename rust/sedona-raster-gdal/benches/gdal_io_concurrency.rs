@@ -141,8 +141,8 @@ fn sweep(
     root: &Path,
     prefix: &str,
     rt: &tokio::runtime::Runtime,
+    generation: &AtomicUsize,
 ) {
-    let generation = AtomicUsize::new(0);
     let mut group = c.benchmark_group(group_name);
     group.sample_size(10);
     for callers in CALLERS {
@@ -259,6 +259,9 @@ fn bench_io_budget(c: &mut Criterion) {
         .enable_all()
         .build()
         .unwrap();
+    // One counter for both sweeps: they share `tmp`, and each leaves its
+    // last generation's directory behind.
+    let generation = AtomicUsize::new(0);
 
     sweep(
         c,
@@ -266,6 +269,7 @@ fn bench_io_budget(c: &mut Criterion) {
         tmp.path(),
         &tmp.path().display().to_string(),
         &rt,
+        &generation,
     );
 
     let latency_ms: u64 = std::env::var("GDAL_BENCH_LATENCY_MS")
@@ -281,6 +285,7 @@ fn bench_io_budget(c: &mut Criterion) {
                 tmp.path(),
                 &prefix,
                 &rt,
+                &generation,
             );
         }
         None => eprintln!("python3 not available or server did not start; skipping the HTTP store"),
