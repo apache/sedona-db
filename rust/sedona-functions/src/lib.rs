@@ -28,6 +28,7 @@ mod st_asbinary;
 mod st_asewkb;
 mod st_astext;
 mod st_azimuth;
+mod st_boundary;
 mod st_collect_agg;
 mod st_dimension;
 mod st_dump;
