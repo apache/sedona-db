@@ -88,9 +88,9 @@ computed rather than when the property is read.
 Binary geometry operations (`intersects`, `within`, `distance`,
 `intersection`, ...) take either a single Shapely geometry, which takes the
 column's CRS, or a `GeoSeries` from the same frame, matched row by row as with
-GeoPandas' `align=False`; there is no index to align on. `touches` and
-`within` inherit an engine issue with some boundary-only configurations
-(apache/sedona-db#1165).
+GeoPandas' `align=False`; there is no index to align on. `touches` inherits
+an engine issue with geometry collections that mix dimensions
+(apache/sedona-db#1383).
 
 `dissolve()` aggregates non-geometry columns with `"first"`, which is an
 unordered aggregate: it returns *some* value from the group rather than the one

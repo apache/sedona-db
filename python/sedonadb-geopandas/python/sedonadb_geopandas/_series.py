@@ -833,19 +833,6 @@ class GeoSeries(Series):
         expr = getattr(self._expr.geo, name)(self._other(other))
         return Series(self._df, expr.funcs.coalesce(lit(False)), name)
 
-    def _without_empty(self, expr, other_expr):
-        """`expr` with rows where either operand is empty made missing.
-
-        The engine treats an empty geometry as at distance 0 from anything
-        (apache/sedona-db#1356), where GeoPandas (and PostGIS) treat the
-        distance as undefined.
-        """
-        from sedonadb.expr import lit
-
-        empty = self._expr.geo.is_empty() | other_expr.geo.is_empty()
-        gate = empty.funcs.nullif(lit(True)).cast(pa.float64())
-        return expr + gate
-
     def intersects(self, other, align=None):
         """Whether each geometry intersects `other` (`ST_Intersects`)."""
         return self._predicate("intersects", other, align)
@@ -855,18 +842,14 @@ class GeoSeries(Series):
         return self._predicate("contains", other, align)
 
     def within(self, other, align=None):
-        """Whether each geometry is within `other` (`ST_Within`).
-
-        Known engine issue: some boundary-only configurations are misclassified
-        (apache/sedona-db#1165).
-        """
+        """Whether each geometry is within `other` (`ST_Within`)."""
         return self._predicate("within", other, align)
 
     def touches(self, other, align=None):
         """Whether each geometry touches `other` (`ST_Touches`).
 
-        Known engine issue: a line touching a polygon only at a vertex it does
-        not share is not detected (apache/sedona-db#1165).
+        Known engine issue: a geometry collection mixing dimensions can be
+        misclassified (apache/sedona-db#1383).
         """
         return self._predicate("touches", other, align)
 
@@ -932,10 +915,9 @@ class GeoSeries(Series):
                 # number, so the comparison alone would say True.
                 return Series(self._df, lit(False), "dwithin")
             threshold = lit(float(value))
-        # Measured through ST_Distance so an empty operand gives a missing
-        # distance (and so False), which ST_DWithin treats as distance 0.
-        dist = self._without_empty(self._expr.geo.distance(other_expr), other_expr)
-        within = dist <= threshold
+        # Measured through ST_Distance, so a row-wise threshold works and an
+        # empty operand (a missing distance) is never within.
+        within = self._expr.geo.distance(other_expr) <= threshold
         if row_wise:
             # The same NaN rule, per row.
             within = within & ~threshold.funcs.isnan()
@@ -948,8 +930,7 @@ class GeoSeries(Series):
         """
         _check_align(align)
         other_expr = self._other(other)
-        expr = self._without_empty(self._expr.geo.distance(other_expr), other_expr)
-        return Series(self._df, expr, "distance")
+        return Series(self._df, self._expr.geo.distance(other_expr), "distance")
 
     def intersection(self, other, align=None):
         """The intersection of each geometry with `other` (`ST_Intersection`)."""

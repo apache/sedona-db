@@ -29,10 +29,17 @@ import numpy as np
 import pandas as pd
 import pyproj
 import pytest
+import sedonadb
 import shapely
+from packaging.version import Version
 from sedonadb.expr import lit
 
 import sedonadb_geopandas as sgpd
+
+# Released sedonadb 0.4.1 still has engine bugs fixed on main (boundary-only
+# predicates, distances to empty geometries); tests that need the fix skip
+# there.
+_OLD_ENGINE = Version(sedonadb.__version__) < Version("0.5.0a0")
 
 CORPUS = [
     "POINT (1 2)",
@@ -570,6 +577,8 @@ def _binary_case():
 @pytest.mark.parametrize("name", PREDICATES + ["distance"] + SET_OPERATIONS)
 @pytest.mark.parametrize("operand", ["column", "scalar"])
 def test_binary_operations_match_geopandas(name, operand):
+    if _OLD_ENGINE and name == "distance":
+        pytest.skip("sedonadb < 0.5 measures empty geometries as distance 0 (#1356)")
     # Against a column of the same frame (row by row) and against a single
     # Shapely geometry, including empty and missing operands: GeoPandas
     # answers False for a predicate and NaN for a distance there.
@@ -585,6 +594,9 @@ def test_binary_operations_match_geopandas(name, operand):
 
 
 @pytest.mark.parametrize("operand", ["column", "scalar"])
+@pytest.mark.skipif(
+    _OLD_ENGINE, reason="sedonadb < 0.5 measures empty geometries as distance 0 (#1356)"
+)
 def test_dwithin_matches_geopandas(operand):
     left, right, g, b = _binary_case()
     scalar = shapely.from_wkt("POINT (3 3)")
@@ -594,9 +606,12 @@ def test_dwithin_matches_geopandas(operand):
         assert got == left.dwithin(reference_other, distance).tolist()
 
 
+@pytest.mark.skipif(
+    _OLD_ENGINE, reason="sedonadb < 0.5 measures empty geometries as distance 0 (#1356)"
+)
 def test_empty_operands_have_no_distance():
-    # The engine measures an empty geometry as at distance 0 from anything,
-    # so dwithin said True; GeoPandas (and PostGIS) treat it as undefined.
+    # The distance to an empty geometry is undefined, as in GeoPandas (and
+    # PostGIS), so dwithin is False there.
     gs = gpd.GeoSeries.from_wkt(["POINT EMPTY", "POINT (0 0)"], crs="EPSG:3857")
     g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
     distances = g.distance(shapely.Point(0, 0)).to_pandas().tolist()
@@ -627,9 +642,9 @@ def test_binary_operations_reject_other_frames_and_alignment():
         g.intersects([shapely.Point(1, 1)])
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="engine misclassifies boundary-only configurations (apache/sedona-db#1165)",
+@pytest.mark.skipif(
+    _OLD_ENGINE,
+    reason="sedonadb < 0.5 misclassifies these boundary-only cases (#1165)",
 )
 @pytest.mark.parametrize(
     "name,left,right",
@@ -641,7 +656,7 @@ def test_binary_operations_reject_other_frames_and_alignment():
     ],
     ids=["touches-corner", "within-boundary-point"],
 )
-def test_known_boundary_predicate_issues(name, left, right):
+def test_boundary_only_predicates_match_geopandas(name, left, right):
     gs = gpd.GeoSeries.from_wkt([left], crs="EPSG:3857")
     g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
     expected = getattr(gs, name)(shapely.from_wkt(right)).tolist()
@@ -735,3 +750,23 @@ def test_dwithin_accepts_numpy_thresholds(threshold):
     g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
     got = g.dwithin(shapely.Point(0, 0), threshold).to_pandas().tolist()
     assert got == gs.dwithin(shapely.Point(0, 0), threshold).tolist()
+
+
+@pytest.mark.xfail(
+    not _OLD_ENGINE,
+    strict=True,
+    reason="engine misclassifies collections mixing dimensions (apache/sedona-db#1383)",
+)
+def test_touches_with_a_mixed_dimension_collection():
+    # The line lies on the polygon's boundary but the point is inside it, so
+    # the interiors intersect and the two do not touch. Released 0.4.1 gets
+    # this right; the tg update after it regressed it.
+    gs = gpd.GeoSeries.from_wkt(
+        ["POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))"], crs="EPSG:3857"
+    )
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    collection = shapely.from_wkt(
+        "GEOMETRYCOLLECTION (POINT (1 1), LINESTRING (0 0, 1 0))"
+    )
+    assert gs.touches(collection).tolist() == [False]
+    assert g.touches(collection).to_pandas().tolist() == [False]
