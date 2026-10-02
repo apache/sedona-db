@@ -16,6 +16,8 @@
 # under the License.
 """GeoPandas-style GeoDataFrame backed by a lazy SedonaDB frame."""
 
+import numbers
+
 import pyarrow as pa
 from sedonadb.expr import Expr, Literal, lit
 from shapely.geometry.base import BaseGeometry
@@ -29,6 +31,21 @@ _REPR_HTML_ROWS = 10
 # Default for the `geometry` argument, distinguishing "not specified, apply the
 # heuristic" from an explicit `None` meaning "this frame has no active geometry".
 _DERIVE = object()
+
+
+# GeoPandas' sjoin predicates, each mapped to the `.geo` method the engine's
+# planner rewrites into an indexed spatial join.
+_SJOIN_PREDICATES = {
+    "intersects": "intersects",
+    "within": "within",
+    "contains": "contains",
+    "touches": "touches",
+    "crosses": "crosses",
+    "overlaps": "overlaps",
+    "covers": "covers",
+    "covered_by": "covered_by",
+    "dwithin": "d_within",
+}
 
 
 def _geometry_column_names(df):
@@ -480,6 +497,164 @@ class GeoDataFrame:
         transformed = self._df[self._geometry_name].geo.transform(lit(crs))
         new_df = self._df.mutate(transformed.alias(self._geometry_name))
         return GeoDataFrame(new_df, self._geometry_name)
+
+    def sjoin(
+        self,
+        other,
+        how="inner",
+        predicate="intersects",
+        lsuffix="left",
+        rsuffix="right",
+        distance=None,
+        on_attribute=None,
+    ):
+        """Join two frames on a spatial predicate, as in `geopandas.sjoin`.
+
+        The predicate reads left-relative-to-right: with `predicate="within"`,
+        rows are matched where the left geometry is within the right one.
+
+        Args:
+            other: The right-hand `GeoDataFrame`.
+            how: `"inner"`, `"left"`, or `"right"`.
+            predicate: One of `intersects`, `within`, `contains`, `touches`,
+                `crosses`, `overlaps`, `covers`, `covered_by`, `dwithin`.
+            lsuffix: Suffix for left columns whose names also occur on the right.
+            rsuffix: Suffix for the corresponding right columns.
+            distance: Required by (and only used with) `predicate="dwithin"`.
+            on_attribute: Not supported yet.
+
+        Returns:
+            A `GeoDataFrame` carrying one geometry column: the left frame's for
+            `how="inner"`/`"left"`, the right frame's for `how="right"`, as in
+            GeoPandas.
+
+        Differences from GeoPandas: there is no row index, so no
+        `index_left`/`index_right` column is produced; and the two geometry
+        columns must share a CRS (GeoPandas warns and joins anyway, which is
+        almost always a mistake). Use `to_crs` on one side first.
+        """
+        if not isinstance(other, GeoDataFrame):
+            raise TypeError(
+                f"sjoin() expects a GeoDataFrame, got {type(other).__name__}"
+            )
+        if self._geometry_name is None or other._geometry_name is None:
+            raise ValueError(
+                "sjoin() requires an active geometry column on both frames"
+            )
+        if how not in ("inner", "left", "right"):
+            raise ValueError(
+                f"sjoin() `how` must be 'inner', 'left', or 'right', got {how!r}"
+            )
+        if predicate not in _SJOIN_PREDICATES:
+            raise ValueError(
+                f"sjoin() `predicate` must be one of {sorted(_SJOIN_PREDICATES)}, "
+                f"got {predicate!r}"
+            )
+        if on_attribute is not None:
+            raise NotImplementedError("sjoin() does not support on_attribute yet")
+        if (predicate == "dwithin") != (distance is not None):
+            raise ValueError(
+                "sjoin() `distance` is required for predicate='dwithin' and accepted "
+                "only for that predicate"
+            )
+        if distance is not None:
+            # Only a single number. A Series or expression cannot be a distance:
+            # the predicate is built against re-aliased copies of both frames, so
+            # a column reference would resolve by name inside the join rather
+            # than against the frame it was read from.
+            from sedonadb_geopandas._series import _numeric_value
+
+            if isinstance(distance, (Series, Expr)) or not is_scalar(distance):
+                raise TypeError(
+                    f"sjoin() `distance` must be a number, got {type(distance).__name__}"
+                )
+            distance = _numeric_value(distance)
+            if not isinstance(distance, numbers.Real) or isinstance(distance, bool):
+                raise TypeError(
+                    f"sjoin() `distance` must be a number, got {type(distance).__name__}"
+                )
+            distance = float(distance)
+
+        from sedonadb_geopandas._series import _same_crs
+
+        left_crs, right_crs = self.crs, other.crs
+        if (left_crs is None) != (right_crs is None) or (
+            left_crs is not None and not _same_crs(left_crs, right_crs.to_json())
+        ):
+            raise ValueError(
+                f"sjoin() needs both geometry columns in the same CRS, got "
+                f"{left_crs} and {right_crs}; reproject one side with to_crs() first"
+            )
+
+        # Both sides are aliased so the predicate and the output projection can
+        # name columns unambiguously when both frames use the same names.
+        left = self._df.alias("sjoin_left")
+        right = other._df.alias("sjoin_right")
+        left_geom = left[self._geometry_name]
+        right_geom = right[other._geometry_name]
+        # Always a single spatial predicate: that is what the planner rewrites
+        # into an indexed spatial join. A composition (`a OR b`) falls back to a
+        # nested-loop join, which is quadratic.
+        if predicate == "dwithin":
+            on = left_geom.geo.d_within(right_geom, lit(distance))
+        else:
+            on = getattr(left_geom.geo, _SJOIN_PREDICATES[predicate])(right_geom)
+        joined = left.join(right, on=on, how=how)
+
+        # One geometry column survives: whichever side GeoPandas keeps.
+        keep_left_geom = how != "right"
+        geometry = self._geometry_name if keep_left_geom else other._geometry_name
+
+        # Collisions are counted over the columns actually emitted, so a dropped
+        # geometry is no collision while an ordinary column sharing the retained
+        # geometry's name is. As in GeoPandas, the retained geometry keeps its
+        # name and only the other side's column is suffixed; ordinary collisions
+        # suffix both sides.
+        emitted_left = [
+            name
+            for name in self.columns
+            if keep_left_geom or name != self._geometry_name
+        ]
+        emitted_right = [
+            name
+            for name in other.columns
+            if not keep_left_geom or name != other._geometry_name
+        ]
+        collisions = set(emitted_left) & set(emitted_right)
+
+        def out_name(name, suffix, is_retained_geometry):
+            if name not in collisions or is_retained_geometry:
+                return name
+            return f"{name}_{suffix}"
+
+        left_out = [
+            out_name(name, lsuffix, keep_left_geom and name == geometry)
+            for name in emitted_left
+        ]
+        right_out = [
+            out_name(name, rsuffix, not keep_left_geom and name == geometry)
+            for name in emitted_right
+        ]
+        # Suffixing can itself collide (left `v` and `v_left` against a right
+        # `v` both want `v_left`). The engine cannot hold duplicate names, so
+        # this says so up front rather than failing on a generated name.
+        # (GeoPandas allows the duplicate with a FutureWarning.)
+        final_names = left_out + right_out
+        duplicates = sorted({n for n in final_names if final_names.count(n) > 1})
+        if duplicates:
+            raise ValueError(
+                f"sjoin() would produce duplicate column name(s) {duplicates}: the "
+                f"suffixes {lsuffix!r}/{rsuffix!r} collide with an existing column. "
+                f"Pass different lsuffix/rsuffix values, or rename the column first."
+            )
+
+        projection = [
+            left[name].alias(out) for name, out in zip(emitted_left, left_out)
+        ]
+        projection += [
+            right[name].alias(out) for name, out in zip(emitted_right, right_out)
+        ]
+        return GeoDataFrame(joined.select(*projection), geometry)
 
     def dissolve(self, by=None, aggfunc="first", dropna=True):
         """Group rows and union each group's geometry.
