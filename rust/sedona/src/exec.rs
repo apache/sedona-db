@@ -15,15 +15,12 @@
 // specific language governing permissions and limitations
 // under the License.
 use crate::{context::SedonaContext, object_storage::register_object_store_and_config_extensions};
-use async_trait::async_trait;
-use datafusion::catalog::{Session, TableProvider};
-use datafusion::prelude::DataFrame;
 use datafusion::{error::Result, sql::parser::Statement};
 use datafusion_common::{exec_err, SchemaReference, TableReference};
-use datafusion_expr::{DdlStatement, LogicalPlan, TableType};
+use datafusion_expr::{DdlStatement, LogicalPlan};
 use datafusion_physical_plan::ExecutionPlan;
 use sedona_catalog::{CatalogObjectType, CreateMode, CreateObjectOptions, DropObjectOptions};
-use std::{fmt::Debug, sync::Arc};
+use std::sync::Arc;
 
 /// Resolve tables asynchronously and configure stores required by SQL I/O.
 pub(crate) async fn create_plan_from_sql(
@@ -56,11 +53,11 @@ pub(crate) async fn create_plan_from_sql(
 
 /// Route catalog DDL to one async extension. Built-in targets retain DataFusion behavior.
 /// No existence checks or mutations happen here: the returned plan owns them.
-pub(crate) async fn execute_sedona_catalog_ddl(
+pub(crate) async fn resolve_sedona_catalog_ddl(
     ctx: &SedonaContext,
     plan: &LogicalPlan,
     statement: &Statement,
-) -> Result<Option<DataFrame>> {
+) -> Result<Option<Arc<dyn ExecutionPlan>>> {
     let LogicalPlan::Ddl(ddl) = plan else {
         return Ok(None);
     };
@@ -226,9 +223,7 @@ pub(crate) async fn execute_sedona_catalog_ddl(
             .create_object(&state, &identifier, &create, input)
             .await?
     };
-    Ok(Some(
-        ctx.ctx.read_table(Arc::new(CatalogDdlProvider { plan }))?,
-    ))
+    Ok(Some(plan))
 }
 
 fn reject_unsupported_create_metadata(ddl: &DdlStatement) -> Result<()> {
@@ -290,46 +285,13 @@ fn create_mode(if_not_exists: bool, or_replace: bool) -> Result<CreateMode> {
     }
 }
 
-/// Presents a catalog DDL execution plan as a one-shot DataFrame so DDL keeps
-/// SedonaDB's lazy `.execute()`/`.collect()` behavior.
-struct CatalogDdlProvider {
-    plan: Arc<dyn ExecutionPlan>,
-}
-
-impl Debug for CatalogDdlProvider {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CatalogDdlProvider")
-            .field("plan", &self.plan)
-            .finish()
-    }
-}
-
-#[async_trait]
-impl TableProvider for CatalogDdlProvider {
-    fn schema(&self) -> arrow_schema::SchemaRef {
-        self.plan.schema()
-    }
-
-    fn table_type(&self) -> TableType {
-        TableType::Temporary
-    }
-
-    async fn scan(
-        &self,
-        _state: &dyn Session,
-        _projection: Option<&Vec<usize>>,
-        _filters: &[datafusion_expr::Expr],
-        _limit: Option<usize>,
-    ) -> Result<Arc<dyn ExecutionPlan>> {
-        Ok(self.plan.clone())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use arrow_schema::{DataType, Field, Schema};
+    use async_trait::async_trait;
     use datafusion::{
+        catalog::{Session, TableProvider},
         common::{plan_datafusion_err, plan_err},
         datasource::{empty::EmptyTable, listing::ListingTableUrl},
         sql::parser::DFParser,
@@ -340,7 +302,7 @@ mod tests {
         empty::EmptyExec, DisplayAs, DisplayFormatType, PlanProperties, SendableRecordBatchStream,
     };
     use sedona_catalog::{CatalogObject, SedonaCatalogList};
-    use std::{collections::HashMap, sync::Mutex};
+    use std::{collections::HashMap, fmt::Debug, sync::Mutex};
     use url::Url;
 
     type DropAction = Box<dyn FnOnce() -> Result<()> + Send>;
@@ -403,9 +365,13 @@ mod tests {
             partition: usize,
             context: Arc<TaskContext>,
         ) -> Result<SendableRecordBatchStream> {
-            if let Some(drop_action) = self.drop_action.lock().unwrap().take() {
-                drop_action()?;
-            }
+            let drop_action = self
+                .drop_action
+                .lock()
+                .unwrap()
+                .take()
+                .expect("DDL executed twice");
+            drop_action()?;
             self.inner.execute(partition, context)
         }
     }
@@ -415,6 +381,7 @@ mod tests {
         objects: Arc<Mutex<HashMap<Vec<String>, CatalogObjectType>>>,
         creates: Mutex<Vec<(Vec<String>, CreateObjectOptions, bool)>>,
         drops: Mutex<Vec<(Vec<String>, DropObjectOptions)>>,
+        ddl_output: Option<Arc<dyn ExecutionPlan>>,
         fail: bool,
     }
 
@@ -484,7 +451,7 @@ mod tests {
             ));
             let objects = self.objects.clone();
             let options = options.clone();
-            Ok(Arc::new(DropTestExec::new(move || {
+            let mut plan = DropTestExec::new(move || {
                 let mut objects = objects.lock().unwrap();
                 if objects.contains_key(&identifier) {
                     match options.mode {
@@ -495,7 +462,11 @@ mod tests {
                 }
                 objects.insert(identifier, options.object_type);
                 Ok(())
-            })))
+            });
+            if let Some(output) = &self.ddl_output {
+                plan.inner = output.clone();
+            }
+            Ok(Arc::new(plan))
         }
 
         async fn drop_object(
@@ -547,7 +518,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn foreign_create_routes_all_object_kinds_and_is_deferred() -> Result<()> {
+    async fn foreign_create_routes_all_object_kinds_and_executes_eagerly() -> Result<()> {
         let (ctx, catalog) = test_context();
         for (sql, kind, identifier, input) in [
             (
@@ -583,13 +554,14 @@ mod tests {
         ] {
             let df = ctx.sql(sql).await?;
             assert!(
-                !catalog.objects.lock().unwrap().contains_key(&identifier),
+                catalog.objects.lock().unwrap().contains_key(&identifier),
                 "{sql}"
             );
             let received = catalog.creates.lock().unwrap().last().unwrap().clone();
             assert_eq!(received.0, identifier);
             assert_eq!(received.1.object_type, kind);
             assert_eq!(received.2, input);
+            df.clone().collect().await?;
             df.collect().await?;
             assert_eq!(
                 catalog.objects.lock().unwrap().get(&identifier),
@@ -608,13 +580,13 @@ mod tests {
             ("CREATE OR REPLACE TABLE", CreateMode::Replace),
         ] {
             let sql = format!("{prefix} foreign.public.existing (value BIGINT)");
-            let df = ctx.sql(&sql).await?;
+            let result = ctx.sql(&sql).await;
             let options = catalog.creates.lock().unwrap().last().unwrap().1.clone();
             assert_eq!(options.mode, mode);
             if mode == CreateMode::Create {
-                assert!(df.collect().await.is_err());
+                assert!(result.unwrap_err().to_string().contains("already exists"));
             } else {
-                df.collect().await?;
+                result?.collect().await?;
             }
         }
         ctx.sql("CREATE OR REPLACE TEMPORARY VIEW foreign.public.view_one AS SELECT 1 AS value")
@@ -678,13 +650,13 @@ mod tests {
 
     #[tokio::test]
     async fn foreign_index_preserves_specification_in_definition() -> Result<()> {
-        let (ctx, catalog) = test_context();
         for sql in [
             "CREATE INDEX idx ON foreign.public.existing (value)",
             "CREATE UNIQUE INDEX IF NOT EXISTS idx ON foreign.public.existing USING btree (value DESC)",
             "CREATE INDEX idx ON foreign.public.existing ((value + 1))",
             "CREATE INDEX \"index.with.dot\" ON foreign.public.existing (value ASC, (value + 1) DESC)",
         ] {
+            let (ctx, catalog) = test_context();
             ctx.sql(sql).await?;
             let received = catalog.creates.lock().unwrap().last().unwrap().clone();
             assert_eq!(received.1.object_type, CatalogObjectType::Index);
@@ -700,22 +672,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn foreign_drops_route_flags_and_recheck_at_execution() -> Result<()> {
+    async fn foreign_drops_route_flags_and_execute_eagerly() -> Result<()> {
         let (ctx, catalog) = test_context();
         let df = ctx
             .sql("DROP TABLE IF EXISTS foreign.public.existing PURGE")
             .await?;
-        assert!(catalog
+        assert!(!catalog
             .objects
             .lock()
             .unwrap()
-            .remove(&owned(&["foreign", "public", "existing"]))
-            .is_some());
+            .contains_key(&owned(&["foreign", "public", "existing"])));
+        df.clone().collect().await?;
         df.collect().await?;
         assert!(catalog.drops.lock().unwrap().last().unwrap().1.purge);
-        let df = ctx.sql("DROP TABLE foreign.public.missing").await?;
-        assert!(df
-            .collect()
+        ctx.sql("DROP TABLE IF EXISTS foreign.public.existing")
+            .await?;
+        assert!(ctx
+            .sql("DROP TABLE foreign.public.missing")
             .await
             .unwrap_err()
             .to_string()
@@ -724,9 +697,8 @@ mod tests {
             owned(&["foreign", "public", "view_one"]),
             CatalogObjectType::View,
         );
-        let wrong = ctx.sql("DROP TABLE foreign.public.view_one").await?;
-        assert!(wrong
-            .collect()
+        assert!(ctx
+            .sql("DROP TABLE foreign.public.view_one")
             .await
             .unwrap_err()
             .to_string()
@@ -738,7 +710,7 @@ mod tests {
         let df = ctx
             .sql("DROP SCHEMA IF EXISTS foreign.public CASCADE")
             .await?;
-        assert!(catalog
+        assert!(!catalog
             .objects
             .lock()
             .unwrap()
@@ -747,6 +719,72 @@ mod tests {
         let options = catalog.drops.lock().unwrap().last().unwrap().1;
         assert!(options.cascade && options.if_exists);
         assert_eq!(options.object_type, CatalogObjectType::Schema);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn foreign_ddl_preserves_results_without_reexecuting() -> Result<()> {
+        let (ctx, catalog) = test_context();
+        let output = ctx.ctx.sql("SELECT 42 AS count").await?;
+        let expected = output.clone().collect().await?;
+        let output = output.create_physical_plan().await?;
+        ctx.register_catalog_list(Arc::new(TestCatalog {
+            objects: catalog.objects.clone(),
+            ddl_output: Some(output),
+            ..Default::default()
+        }));
+
+        let df = ctx
+            .sql("CREATE TABLE foreign.public.created AS SELECT 1 AS value")
+            .await?;
+        assert!(catalog
+            .objects
+            .lock()
+            .unwrap()
+            .contains_key(&owned(&["foreign", "public", "created"])));
+        assert_eq!(df.clone().collect().await?, expected);
+        assert_eq!(df.collect().await?, expected);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn foreign_ddl_executes_before_planning_dependent_statements() -> Result<()> {
+        let (ctx, catalog) = test_context();
+        let results = ctx
+            .multi_sql(
+                "CREATE DATABASE new_catalog;
+                 CREATE SCHEMA new_catalog.public;
+                 CREATE TABLE new_catalog.public.created AS SELECT 1 AS value;
+                 SELECT value FROM new_catalog.public.created;
+                 DROP TABLE new_catalog.public.created;
+                 CREATE TABLE new_catalog.public.created AS SELECT 2 AS value",
+            )
+            .await?;
+        assert_eq!(results.len(), 6);
+        assert_eq!(
+            catalog
+                .objects
+                .lock()
+                .unwrap()
+                .get(&owned(&["new_catalog", "public", "created"])),
+            Some(&CatalogObjectType::Table)
+        );
+        for df in results {
+            df.clone().collect().await?;
+            df.collect().await?;
+        }
+
+        // An execution error must prevent subsequent statements from running.
+        assert!(ctx
+            .multi_sql(
+                "CREATE TABLE new_catalog.public.created AS SELECT 3 AS value;
+                 DROP TABLE new_catalog.public.created",
+            )
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("already exists"));
+        assert_eq!(catalog.drops.lock().unwrap().len(), 1);
         Ok(())
     }
 
@@ -915,7 +953,7 @@ mod tests {
         ] {
             let statement = DFParser::parse_sql(sql)?.pop_front().unwrap();
             let plan = create_plan_from_sql(&ctx, statement.clone()).await?;
-            assert!(execute_sedona_catalog_ddl(&ctx, &plan, &statement)
+            assert!(resolve_sedona_catalog_ddl(&ctx, &plan, &statement)
                 .await?
                 .is_none());
         }

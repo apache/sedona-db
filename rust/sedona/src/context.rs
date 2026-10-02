@@ -19,7 +19,7 @@ use std::{
     sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard},
 };
 
-use crate::exec::{create_plan_from_sql, execute_sedona_catalog_ddl};
+use crate::exec::{create_plan_from_sql, resolve_sedona_catalog_ddl};
 use crate::object_storage::ensure_object_store_registered_with_options;
 use crate::read::{read_provider, resolve_read_format};
 use crate::url_table::install_sedona_url_table;
@@ -32,6 +32,7 @@ use arrow_array::RecordBatch;
 use arrow_schema::{DataType, Schema};
 use async_trait::async_trait;
 use datafusion::datasource::file_format::{format_as_file_type, FileFormatFactory};
+use datafusion::datasource::MemTable;
 use datafusion::{
     common::plan_err,
     error::{DataFusionError, Result},
@@ -668,8 +669,15 @@ impl SedonaContext {
         let mut results = Vec::with_capacity(statements.len());
         for statement in statements {
             let plan = create_plan_from_sql(self, statement.clone()).await?;
-            let df = if let Some(df) = execute_sedona_catalog_ddl(self, &plan, &statement).await? {
-                df
+            let df = if let Some(plan) = resolve_sedona_catalog_ddl(self, &plan, &statement).await?
+            {
+                // Like DataFusion's built-in DDL, finish catalog mutations before
+                // planning the next statement. Return results that can be collected
+                // repeatedly without executing the DDL again.
+                let schema = plan.schema();
+                let batches = datafusion_physical_plan::collect(plan, self.ctx.task_ctx()).await?;
+                let table = MemTable::try_new(schema, vec![batches])?;
+                self.ctx.read_table(Arc::new(table))?
             } else {
                 self.ctx.execute_logical_plan(plan).await?
             };
