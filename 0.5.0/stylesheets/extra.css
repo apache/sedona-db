@@ -1,0 +1,349 @@
+/*
+  Licensed to the Apache Software Foundation (ASF) under one
+  or more contributor license agreements.  See the NOTICE file
+  distributed with this work for additional information
+  regarding copyright ownership.  The ASF licenses this file
+  to you under the Apache License, Version 2.0 (the
+  "License"); you may not use this file except in compliance
+  with the License.  You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing,
+  software distributed under the License is distributed on an
+  "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+  KIND, either express or implied.  See the License for the
+  specific language governing permissions and limitations
+  under the License.
+*/
+
+/* ==========================================================================
+   Variables (from _vars.scss)
+   ========================================================================== */
+:root {
+  --color-red: #CA463A;
+  --color-red-hover: #EA5547;
+  --color-white: #fff;
+  --color-dark: #1C1C1C;
+  --color-light-blue: #E2ECF3;
+  --color-violet: #7142FF;
+  --font-inter: 'Inter', sans-serif;
+}
+
+/* ==========================================================================
+   Container (from _header.scss)
+   ========================================================================== */
+.container {
+  max-width: 1170px;
+  width: 100%;
+  padding-left: 24px;
+  padding-right: 24px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* ==========================================================================
+   Header (from _header.scss)
+   ========================================================================== */
+.md-header {
+  box-shadow: none;
+  background-color: var(--color-dark);
+}
+
+.md-header .md-header__inner {
+  background-color: var(--color-dark);
+  min-height: 80px;
+  padding: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.md-header__inner .left-part {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+}
+
+.md-header__inner .right-part {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 32px;
+}
+
+@media (min-width: 1220px) {
+  .md-header__inner .right-part .md-search__inner {
+    max-width: 510px;
+  }
+}
+
+.md-header__inner .header-logo {
+  padding: 0;
+  margin: 0;
+}
+
+.md-header__inner .header-logo img,
+.md-header__inner .header-logo svg {
+  height: 42px;
+  width: auto;
+  display: block;
+  object-fit: contain;
+}
+
+.md-header__title {
+  font-size: 0;
+}
+
+/* Also target the default .md-logo */
+.md-header .md-logo img,
+.md-header .md-logo svg {
+  height: 42px;
+  width: auto;
+}
+
+/* Header mobile */
+@media (max-width: 1219px) {
+  .md-header .container {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+  .md-header .md-header__inner {
+    min-height: 60px;
+  }
+  .md-header__inner .header-logo img,
+  .md-header__inner .header-logo svg {
+    height: 23px;
+  }
+  .md-header__inner .right-part {
+    gap: 0;
+  }
+  .md-header__inner .right-part .btn-group {
+    display: none;
+  }
+  .md-header__inner .right-part .btn-search {
+    margin: 0;
+  }
+  .md-header .md-header__button {
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-right: 14px;
+  }
+  .md-header .md-header__button.btn-search {
+    display: none;
+  }
+}
+
+@media (max-width: 959px) {
+  .md-header .md-header__button.btn-search {
+    display: flex;
+  }
+}
+
+/* ==========================================================================
+   Navigation Tabs (from _header.scss)
+   ========================================================================== */
+.md-tabs {
+  background-color: var(--color-red);
+}
+
+.md-tabs .md-grid {
+  max-width: 100%;
+}
+
+.md-tabs .md-tabs__list {
+  display: flex;
+  justify-content: center;
+}
+
+.md-tabs .md-tabs__list .md-tabs__item a {
+  font-family: var(--font-inter);
+  font-style: normal;
+  font-weight: 500;
+  font-size: 14px;
+  line-height: 1.22;
+  color: var(--color-white);
+}
+
+/* ==========================================================================
+   Mobile Sidebar / Nav (from _header.scss)
+   ========================================================================== */
+@media (max-width: 1219px) {
+  [dir=ltr] .md-sidebar--primary {
+    left: -280px;
+  }
+  [data-md-toggle=drawer]:checked ~ .md-container .md-sidebar--primary {
+    transform: translateX(280px);
+  }
+  .md-sidebar--primary {
+    width: 280px;
+  }
+  .md-sidebar--primary .md-nav--primary .md-nav__title[for=__drawer] {
+    background-color: var(--color-dark);
+    padding: 24px;
+    height: auto;
+  }
+  .md-sidebar--primary .md-nav--primary .md-nav__title[for=__drawer] img {
+    height: 82px;
+    width: auto;
+    display: block;
+    object-fit: contain;
+  }
+  .md-sidebar--primary .md-nav__source {
+    background-color: #000;
+    padding: 16px 24px;
+  }
+  .md-sidebar--primary .md-nav__source .md-source__icon svg {
+    margin-left: 0;
+  }
+  .md-sidebar--primary .md-nav__list,
+  .md-sidebar--primary .md-nav__title ~ .md-nav__list {
+    padding-bottom: 75px;
+    background-color: var(--color-dark);
+  }
+  .md-sidebar--primary .md-nav__list .md-nav__item,
+  .md-sidebar--primary .md-nav__title ~ .md-nav__list .md-nav__item {
+    border-bottom: 1px solid #323232;
+  }
+  .md-sidebar--primary .md-nav__list .md-nav__item .md-nav__link,
+  .md-sidebar--primary .md-nav__title ~ .md-nav__list .md-nav__item .md-nav__link {
+    font-family: var(--font-inter);
+    font-style: normal;
+    font-weight: 400;
+    font-size: 16px;
+    line-height: 1.67;
+    align-items: center;
+    letter-spacing: 0.18px;
+    color: #FFFFFF;
+    padding-left: 24px;
+    padding-right: 24px;
+    padding-top: 12px;
+    padding-bottom: 12px;
+    min-height: 50px;
+  }
+  .md-sidebar--primary .md-nav__list .btn-group,
+  .md-sidebar--primary .md-nav__title ~ .md-nav__list .btn-group {
+    padding-left: 24px;
+    padding-right: 24px;
+    padding-top: 32px;
+  }
+  .md-sidebar--primary .md-nav__list .btn-group .btn,
+  .md-sidebar--primary .md-nav__title ~ .md-nav__list .btn-group .btn {
+    width: 100%;
+  }
+  .md-sidebar--primary .md-nav--primary .md-nav__title {
+    background-color: #000;
+    color: var(--color-white);
+    padding-left: 24px;
+  }
+}
+
+/* Desktop sidebar */
+@media (min-width: 1220px) {
+  .md-sidebar--primary .btn-group {
+    display: none;
+  }
+}
+
+/* ==========================================================================
+   Footer (from _footer.scss)
+   ========================================================================== */
+.footer {
+  background-color: var(--color-dark);
+}
+
+.footer .footer__top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 32px;
+  padding-top: 64px;
+  gap: 48px;
+  flex-wrap: wrap;
+}
+
+.footer .footer__top .footer-logo {
+  height: 30px;
+  width: auto;
+  display: block;
+  object-fit: contain;
+}
+
+.footer .footer__top .md-social {
+  padding: 0;
+  margin: 0;
+  gap: 18px;
+}
+
+.footer .footer__top .md-social .md-social__link {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 32px;
+  height: 32px;
+}
+
+.footer .footer__top .md-social .md-social__link svg,
+.footer .footer__top .md-social .md-social__link img {
+  width: 28px;
+  height: 28px;
+  max-height: 28px;
+  display: block;
+  object-fit: contain;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.footer .footer__top .md-social .md-social__link:hover svg,
+.footer .footer__top .md-social .md-social__link:hover img {
+  color: var(--color-white);
+}
+
+.footer .footer-hr {
+  background-color: #323232;
+  height: 1px;
+  width: 100%;
+  display: block;
+  margin: 0;
+  border: 0;
+}
+
+.footer .footer__bot {
+  padding-top: 32px;
+  padding-bottom: 64px;
+}
+
+.footer .footer__bot .md-copyright {
+  font-family: var(--font-inter);
+  font-style: normal;
+  font-weight: 400;
+  font-size: 12px;
+  line-height: 1.25;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.footer .footer__bot .md-copyright a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  transition: 0.3s all ease;
+}
+
+.footer .footer__bot .md-copyright a:hover {
+  color: var(--color-white);
+}
+
+@media (max-width: 480px) {
+  .footer .footer__top {
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+  }
+  .footer .footer__bot .md-copyright {
+    text-align: left;
+  }
+}

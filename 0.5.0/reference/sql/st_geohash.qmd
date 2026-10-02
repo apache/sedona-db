@@ -1,0 +1,85 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: ST_GeoHash
+description: Returns the GeoHash string of a geometry with the given precision.
+kernels:
+  - returns: string
+    args: [geometry]
+  - returns: string
+    args:
+    - geometry
+    - name: precision
+      type: integer
+      description: Number of base-32 characters in the returned GeoHash.
+  - returns: string
+    args: [geography]
+  - returns: string
+    args:
+    - geography
+    - name: precision
+      type: integer
+      description: Number of base-32 characters in the returned GeoHash.
+---
+
+## Description
+
+Encodes the geometry as a base-32 GeoHash string with `precision` characters.
+Non-point geometries are encoded using the center of their bounding box.
+A non-positive precision
+returns an empty string, and precision is capped at 20 characters.
+
+A GeoHash is defined against the WGS84 datum, so the argument must carry either
+a WGS84 CRS (`EPSG:4326` / `OGC:CRS84`) or no CRS at all; anything else raises
+an error. Use `ST_Transform()` to reproject first. This includes other
+geographic CRSes such as NAD83, whose units are degrees but whose datum differs
+from WGS84 by enough to shift the result at high precision.
+
+The same rule applies whether the CRS belongs to the column or to the
+individual rows; only the timing differs. A column-level CRS is known while the
+query is planned, so it is rejected before any row is read. A row-level CRS is
+not known until the row is reached, so it is rejected then. To encode only the
+WGS84 rows of a mixed column, filter them first — `WHERE ST_SRID(geom) = 4326`
+is applied before the encoding, so the other rows never reach it.
+
+Latitudes outside -90 to 90 return `NULL`. Longitudes outside -180 to 180 are
+wrapped back into range when the argument declares a WGS84 CRS, so a longitude
+of 181 encodes as -179; without a declared CRS they return `NULL` instead,
+matching Apache Sedona.
+
+When `precision` is omitted, the argument must be a `POINT` and is encoded at
+the maximum precision of 20 characters. Any other geometry type raises an
+error, because there is no single obvious precision for a geometry that covers
+an area.
+
+Geography arguments are bounded on the sphere and require the s2geography
+bounder to be registered on the session.
+
+## Examples
+
+```sql
+SELECT ST_GeoHash(ST_GeomFromWKT('POINT (21.4234 52.0423)'), 10);
+```
+
+```sql
+SELECT ST_GeoHash(ST_GeomFromWKT('POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))'), 8);
+```
+
+```sql
+SELECT ST_GeoHash(ST_GeomFromWKT('POINT (21.4234 52.0423)'));
+```

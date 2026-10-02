@@ -1,0 +1,47 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: RS_FromGDALRaster
+description: >
+  Decodes a GDAL-readable raster (e.g. a GeoTIFF) from binary content into an
+  in-database raster.
+kernels:
+  - returns: raster
+    args:
+    - name: content
+      type: binary
+      description: >
+        Raster file bytes in any format GDAL can read (GeoTIFF, PNG, …). A NULL
+        input yields a NULL raster.
+---
+
+## Description
+
+`RS_FromGDALRaster` parses raster file bytes with GDAL and returns an in-database
+raster with all band data materialised inline — the inverse of
+[`RS_AsGeoTiff`](rs_asgeotiff.qmd), and the binary counterpart of
+[`RS_FromPath`](rs_frompath.qmd) (which references a file on disk as an out-db
+raster instead). A `NULL` input yields a `NULL` raster.
+
+It is typically applied to a binary column holding encoded rasters — for example
+rasters produced by `RS_AsGeoTiff`, which round-trips back through
+`RS_FromGDALRaster`:
+
+```sql
+SELECT RS_Width(RS_FromGDALRaster(RS_AsGeoTiff(RS_Example())));
+```

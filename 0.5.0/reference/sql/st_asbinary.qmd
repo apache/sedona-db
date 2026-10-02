@@ -1,0 +1,45 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: ST_AsBinary
+description: Converts a geometry or geography to Well-Known Binary (WKB) format.
+kernels:
+  - returns: binary
+    args: [geometry]
+  - returns: binary
+    args: [geography]
+---
+
+## Description
+
+`ST_AsBinary()` Returns the Well-Known Binary representation of a geometry or geography. This function also has the alias ST_AsWKB.
+
+`ST_AsBinary()` may preserve the underlying Arrow storage type of the input geometry. For example,
+when the input geometry is backed by Arrow `BinaryView` storage, the WKB output may also use
+`BinaryView` storage. If a downstream consumer requires simpler Arrow storage such as `Binary`,
+wrap the result with `sd_simplifystorage()`.
+
+## Examples
+
+```sql
+SELECT ST_AsBinary(ST_Point(1.0, 2.0));
+```
+
+```sql
+SELECT ST_AsBinary(ST_GeogPoint(1.0, 2.0));
+```

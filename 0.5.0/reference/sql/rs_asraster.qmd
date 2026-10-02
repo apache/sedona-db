@@ -1,0 +1,136 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: RS_AsRaster
+description: Rasterizes a geometry using the grid of a reference raster.
+kernels:
+  - returns: raster
+    args:
+    - name: geometry
+      type: geometry
+    - name: reference_raster
+      type: raster
+    - name: pixel_type
+      type: string
+  - returns: raster
+    args:
+    - name: geometry
+      type: geometry
+    - name: reference_raster
+      type: raster
+    - name: pixel_type
+      type: string
+    - name: all_touched
+      type: boolean
+  - returns: raster
+    args:
+    - name: geometry
+      type: geometry
+    - name: reference_raster
+      type: raster
+    - name: pixel_type
+      type: string
+    - name: all_touched
+      type: boolean
+    - name: burn_value
+      type: double
+  - returns: raster
+    args:
+    - name: geometry
+      type: geometry
+    - name: reference_raster
+      type: raster
+    - name: pixel_type
+      type: string
+    - name: all_touched
+      type: boolean
+    - name: burn_value
+      type: double
+    - name: nodata_value
+      type: double
+  - returns: raster
+    args:
+    - name: geometry
+      type: geometry
+    - name: reference_raster
+      type: raster
+    - name: pixel_type
+      type: string
+    - name: all_touched
+      type: boolean
+    - name: burn_value
+      type: double
+    - name: nodata_value
+      type: double
+    - name: use_geometry_extent
+      type: boolean
+  - returns: raster
+    args:
+    - name: geometry
+      type: geometry
+    - name: reference_raster
+      type: raster
+    - name: pixel_type
+      type: string
+    - name: all_touched
+      type: boolean
+    - name: burn_value
+      type: double
+    - name: nodata_value
+      type: double
+    - name: use_geometry_extent
+      type: boolean
+---
+
+::: callout-warning
+**Experimental.** This function is experimental; its behavior may change without notice.
+:::
+
+## Description
+
+Creates a single-band in-db raster by rasterizing `geometry` onto the grid
+defined by `reference_raster`.
+
+The output pixel type is controlled by `pixel_type`. Optional arguments control
+whether pixels touched by the geometry are burned, the value burned into covered
+pixels, the nodata fill value, and whether the output extent is cropped to the
+geometry extent or kept equal to the full reference raster extent.
+
+When both `geometry` and `reference_raster` have a CRS and they differ,
+`geometry` is reprojected into the reference raster's CRS before rasterization.
+An error is returned if exactly one of them has a CRS.
+
+## Examples
+
+```sql
+WITH r AS (
+  SELECT RS_FromPath('https://download.osgeo.org/geotiff/samples/gdal_eg/cea.tif') AS raster
+)
+SELECT RS_Width(
+  RS_AsRaster(
+    RS_ConvexHull(raster),
+    raster,
+    'float64',
+    false,
+    1.0,
+    0.0,
+    false
+  )
+)
+FROM r;
+```

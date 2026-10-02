@@ -1,0 +1,66 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: RS_ReplaceBandNoDataValue
+description: >
+  Moves a band's nodata value to a new value, carrying the nodata pixels with
+  it: every pixel that reads as nodata is rewritten to the new value, which then
+  becomes the band's nodata, so the same pixels read as nodata before and after.
+kernels:
+  - returns: raster
+    args:
+    - raster
+    - name: band
+      type: int
+      description: Band index (1-based).
+    - name: nodata
+      type: float64
+      description: >
+        The new nodata value. It must fit the band's data type exactly.
+---
+
+## Description
+
+`RS_SetBandNoDataValue` changes only the declared nodata value, so pixels that
+held the old value become ordinary data. `RS_ReplaceBandNoDataValue` also
+rewrites those pixels, so they keep reading as nodata.
+
+A pixel reads as nodata by the same rules sampling uses: exactly for integer
+bands, and numerically for float bands, so `-0.0` matches a `0.0` nodata and
+any NaN matches a NaN nodata. Other bands are unchanged.
+
+The band must already have a nodata value; otherwise there is nothing to
+replace and the call is an error. A null raster, band or nodata value gives a
+null raster. Only 2-D rasters are supported.
+
+## Examples
+
+Band 1 of `RS_Example()` has a nodata value of 127, held by one of its 2048
+pixels. Replacing the nodata value keeps that pixel as nodata, so 2047 pixels
+stay valid; merely setting a new nodata value with `RS_SetBandNoDataValue`
+turns it into ordinary data, leaving 2048 valid:
+
+```sql
+SELECT
+  RS_SummaryStats(RS_ReplaceBandNoDataValue(RS_Example(), 1, 200), 'count', 1),
+  RS_SummaryStats(RS_SetBandNoDataValue(RS_Example(), 1, 200), 'count', 1);
+```
+
+```sql
+SELECT RS_BandNoDataValue(RS_ReplaceBandNoDataValue(RS_Example(), 1, 200), 1);
+```

@@ -1,0 +1,77 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: RS_DimSize
+description: Returns the size of a named dimension in a raster band.
+kernels:
+  - returns: int64
+    args:
+    - raster
+    - name: dim_name
+      type: utf8
+      description: Name of the dimension to query (e.g., 'x', 'y', 'time').
+  - returns: int64
+    args:
+    - raster
+    - name: dim_name
+      type: utf8
+      description: Name of the dimension to query.
+    - name: band
+      type: int
+      description: Band index (1-based). A null or out-of-range index returns null.
+---
+
+::: callout-warning
+**Experimental.** This function is experimental; its behavior may change without notice.
+:::
+
+## Description
+
+Returns the size of a named dimension in a raster. For example,
+`RS_DimSize(raster, 'x')` returns the width and `RS_DimSize(raster, 'time')`
+returns the number of time steps.
+
+This is equivalent to looking up a specific entry in
+[RS_Shape](rs_shape.qmd) by name rather than by position.
+
+### Heterogeneous rasters
+
+Bands within a raster can have different dimensionality. When the band index
+is omitted, `RS_DimSize` considers only the bands that carry the named
+dimension ("pass-through"):
+
+- If at least one band carries the dimension and they all agree on its
+  size, that size is returned.
+- If the bands that carry the dimension disagree on its size, an error is
+  returned prompting the user to specify a band index.
+- If **no** band carries the dimension, an error is returned. This usually
+  signals a typo'd dimension name.
+
+When the band index is supplied explicitly, returns the size of the
+dimension in that band, or `NULL` if the band does not carry it.
+
+## Examples
+
+```sql
+-- RS_Example() produces a 2-D raster, so 'x' and 'y' are the only dims.
+SELECT RS_DimSize(RS_Example(), 'x');
+```
+
+```sql
+SELECT RS_DimSize(RS_Example(), 'y');
+```

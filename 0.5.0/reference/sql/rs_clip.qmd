@@ -1,0 +1,135 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: RS_Clip
+description: >
+  Clips a raster to a geometry, setting pixels outside the geometry to nodata
+  and (by default) cropping to the geometry's bounding box.
+kernels:
+  - returns: raster
+    args:
+    - raster
+    - {name: band, type: integer}
+    - {name: geom, type: geometry}
+  - returns: raster
+    args:
+    - raster
+    - {name: band, type: integer}
+    - {name: geom, type: geometry}
+    - {name: all_touched, type: boolean}
+  - returns: raster
+    args:
+    - raster
+    - {name: band, type: integer}
+    - {name: geom, type: geometry}
+    - {name: all_touched, type: boolean}
+    - {name: no_data_value, type: double}
+  - returns: raster
+    args:
+    - raster
+    - {name: band, type: integer}
+    - {name: geom, type: geometry}
+    - {name: all_touched, type: boolean}
+    - {name: no_data_value, type: double}
+    - {name: crop, type: boolean}
+  - returns: raster
+    args:
+    - raster
+    - name: band
+      type: integer
+      description: >
+        1-based index of the band to clip, or 0 to clip every band. A NULL
+        band yields a NULL result.
+    - name: geom
+      type: geometry
+      description: >
+        Clip geometry. Reprojected into the raster's CRS when both carry one;
+        it is an error for exactly one side to have a CRS.
+    - name: all_touched
+      type: boolean
+      description: >
+        If true, keep every pixel the geometry touches; otherwise keep only
+        pixels whose center falls inside it. Defaults to false.
+    - name: no_data_value
+      type: double
+      description: >
+        Value written to pixels outside the geometry. Defaults to the band's
+        own nodata value, or the band data type's minimum if it has none. It is
+        an error if the value does not fit the band's data type.
+    - name: crop
+      type: boolean
+      description: Crop the output to the geometry's bounding box. Defaults to true.
+    - name: lenient
+      type: boolean
+      description: >
+        If true, a geometry that does not intersect the raster yields NULL;
+        if false, it raises an error. Defaults to true.
+---
+
+::: callout-warning
+**Experimental.** This function is experimental; its behavior may change without notice.
+:::
+
+## Description
+
+`RS_Clip` clips a raster to a geometry, in the spirit of PostGIS `ST_Clip`.
+Pixels of the selected band that fall outside the geometry are set to the
+band's nodata value (or `no_data_value` if given); pixels inside are kept. When
+`crop` is true (the default) the output is cropped to the geometry's bounding
+box intersected with the raster extent, snapped to the pixel grid; unselected
+pixels within that window remain as nodata padding. Otherwise the original
+extent is preserved.
+
+The geometry is reprojected into the raster's CRS when both carry one. If
+exactly one side has a CRS, the call errors; if neither does, the geometry is
+used as-is.
+
+A pixel is selected only when its center falls inside the geometry. A geometry
+smaller than a pixel, or a thin sliver, can therefore select no pixels even
+though it overlaps the raster; set `all_touched` to true to keep every pixel the
+geometry touches instead.
+
+The clip is a 2-D `(y, x)` operation. For an N-D raster (bands with extra
+dimensions such as `time`), the same mask and crop window are broadcast across
+every non-spatial plane, so the non-spatial dimensions are preserved and only
+the `(y, x)` extent changes.
+
+## Examples
+
+```sql
+SELECT RS_Width(
+  RS_Clip(
+    RS_Example(),
+    1,
+    ST_GeomFromText('POLYGON ((60 90, 160 90, 160 190, 60 190, 60 90))', 'OGC:CRS84')
+  )
+);
+```
+
+```sql
+SELECT RS_Width(
+  RS_Clip(
+    RS_Example(),
+    1,
+    ST_GeomFromText('POLYGON ((60 90, 160 90, 160 190, 60 190, 60 90))', 'OGC:CRS84'),
+    false,
+    0.0,
+    false
+  )
+);
+```

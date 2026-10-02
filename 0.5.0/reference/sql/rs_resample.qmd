@@ -1,0 +1,145 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: RS_Resample
+description: >
+  Resamples a raster onto a new pixel grid — a new width/height, a new pixel
+  size, and/or a snapped origin — in the same CRS.
+kernels:
+  - returns: raster
+    args:
+    - name: raster
+      type: raster
+      description: The input raster to resample.
+    - name: reference_raster
+      type: raster
+      description: >
+        A raster whose grid — dimensions (or pixel size, when `use_scale` is
+        true) and origin — defines the output grid. Must share the input's CRS.
+    - name: use_scale
+      type: boolean
+      description: >
+        When false, `width_or_scale`/`height_or_scale` are output pixel
+        dimensions and the world extent is preserved; when true, they are the
+        target pixel size.
+    - name: algorithm
+      type: string
+      description: >
+        Resampling algorithm (case-insensitive): `NearestNeighbor` (the
+        default), `Bilinear`, `Cubic` (alias `Bicubic`), `CubicSpline`,
+        `Lanczos`, `Average`, or `Mode`.
+  - returns: raster
+    args:
+    - name: raster
+      type: raster
+    - name: width_or_scale
+      type: double
+      description: >
+        Output width in pixels when `use_scale` is false (a fractional value is
+        an error), or the target x pixel size (`scaleX`) when `use_scale` is true.
+    - name: height_or_scale
+      type: double
+      description: >
+        Output height in pixels when `use_scale` is false (a fractional value is
+        an error), or the target y pixel size (`scaleY`, negative for a north-up
+        raster) when `use_scale` is true.
+    - name: use_scale
+      type: boolean
+    - name: algorithm
+      type: string
+  - returns: raster
+    args:
+    - name: raster
+      type: raster
+    - name: width_or_scale
+      type: double
+    - name: height_or_scale
+      type: double
+    - name: grid_x
+      type: double
+      description: X coordinate of the grid the output origin snaps to.
+    - name: grid_y
+      type: double
+      description: Y coordinate of the grid the output origin snaps to.
+    - name: use_scale
+      type: boolean
+    - name: algorithm
+      type: string
+---
+
+::: callout-warning
+**Experimental.** This function is experimental; its behavior may change without
+notice.
+:::
+
+## Description
+
+`RS_Resample` changes a raster's pixel grid while keeping its band count and
+order and per-band nodata. Pixel values are recomputed by GDAL with the chosen
+`algorithm` (nearest neighbour by default). The output stays in the input's
+CRS — `RS_Resample` never reprojects (use
+[`RS_ReprojectMatch`](rs_reprojectmatch.qmd) for that).
+
+`RS_Resample` has three positional overloads:
+
+- **`RS_Resample(raster, width_or_scale, height_or_scale, use_scale, algorithm)`** —
+  when `use_scale` is false, `width_or_scale`/`height_or_scale` are the output pixel
+  dimensions (a fractional value is an error) and the world extent is preserved.
+  When `use_scale` is true they are the target pixel size (`scaleX`, `scaleY`,
+  with `scaleY` negative for a north-up raster); the pixel size is kept exact and
+  the extent grows by up to one pixel so it tiles into whole pixels. Cells
+  outside the source footprint become nodata.
+- **`RS_Resample(raster, width_or_scale, height_or_scale, grid_x, grid_y, use_scale,
+  algorithm)`** — additionally snaps the output origin to the grid anchored at
+  `(grid_x, grid_y)`, expanding outward so the original extent stays covered.
+- **`RS_Resample(raster, reference_raster, use_scale, algorithm)`** — takes the
+  target dimensions (or pixel size, when `use_scale`) and the origin grid from
+  `reference_raster`, which must share the input's CRS (it is an error otherwise).
+
+`algorithm` (case-insensitive) is one of `NearestNeighbor` (the default),
+`Bilinear`, `Cubic` (alias `Bicubic`), `CubicSpline`, `Lanczos`, `Average`, or
+`Mode`.
+
+Dimensions and pixel size use the rows-then-columns intuition of the raster
+(`height_or_scale`/`scaleY` for rows, `width_or_scale`/`scaleX` for columns). In the
+extent-preserving dimension form, a skewed or rotated raster is re-gridded with
+its footprint preserved (both the scale and skew terms of each axis scale by the
+same factor). A scale change or origin snap on a skewed raster is not supported
+and errors.
+
+For an N-D raster (bands with extra dimensions such as `time`), the resample is
+a 2-D `(y, x)` operation broadcast across every non-spatial plane, so the
+non-spatial dimensions are preserved and only the `(y, x)` extent changes.
+
+::: callout-note
+Extent-growing scale changes and origin snaps read the entire raster into memory.
+:::
+
+## Examples
+
+Downsample the example raster (64 x 32) to half its dimensions:
+
+```sql
+SELECT RS_Width(RS_Resample(RS_Example(), 32, 16, false, 'NearestNeighbor'));
+```
+
+Upsample to twice its dimensions with bilinear resampling:
+
+```sql
+SELECT RS_Height(RS_Resample(RS_Example(), 128, 64, false, 'Bilinear'));
+```
