@@ -46,7 +46,7 @@ sedona-gdal = { workspace = true }
 sedona-raster = { workspace = true }
 sedona-raster-functions = { workspace = true }
 sedona-schema = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
 
 [features]
 # Enable bindgen for GDAL versions without pre-built bindings (e.g., GDAL 3.13+).
