@@ -16,6 +16,8 @@
 # under the License.
 """pandas/GeoPandas-style Series backed by a SedonaDB expression."""
 
+import numbers
+
 import pyarrow as pa
 
 from sedonadb_geopandas._temporal import (
@@ -452,6 +454,22 @@ class Series:
         return f"<{type(self).__name__} {self._expr!r} (lazy; call .to_pandas())>"
 
 
+def _buffer_style(style, names, argument):
+    """A buffer style as a GEOS parameter name.
+
+    Accepts the name, Shapely's `BufferCapStyle`/`BufferJoinStyle` enum
+    member, or its integer code (1, 2, 3 in the order of `names`), as
+    GeoPandas does.
+    """
+    value = getattr(style, "value", style)
+    if isinstance(value, numbers.Integral) and not isinstance(value, bool):
+        if 1 <= value <= len(names):
+            return names[value - 1]
+    elif value in names:
+        return value
+    raise ValueError(f"{argument} must be one of {list(names)}, got {style!r}")
+
+
 def _same_crs(current, crs):
     """Whether an existing CRS and a requested one denote the same CRS."""
     import pyproj
@@ -620,33 +638,27 @@ class GeoSeries(Series):
         """Buffer each geometry by `distance` (`ST_Buffer`), as in GeoPandas.
 
         The style arguments and their defaults are GeoPandas', passed to the
-        engine as GEOS buffer parameters. The resolution matters even at its
-        default: without it the engine approximates a quarter circle with 8
-        segments rather than GeoPandas' 16.
+        engine as GEOS buffer parameters; styles may be given as names,
+        Shapely's `BufferCapStyle`/`BufferJoinStyle` enums, or their integer
+        codes, as in GeoPandas. The resolution matters even at its default:
+        without it the engine approximates a quarter circle with 8 segments
+        rather than GeoPandas' 16.
         """
         from sedonadb.expr import lit
 
-        caps = {"round": "round", "flat": "flat", "square": "square"}
-        joins = {"round": "round", "mitre": "mitre", "bevel": "bevel"}
-        if cap_style not in caps:
-            raise ValueError(
-                f"cap_style must be one of {sorted(caps)}, got {cap_style!r}"
-            )
-        if join_style not in joins:
-            raise ValueError(
-                f"join_style must be one of {sorted(joins)}, got {join_style!r}"
-            )
-        params = f"quad_segs={int(resolution)} endcap={caps[cap_style]}"
+        cap = _buffer_style(cap_style, ("round", "flat", "square"), "cap_style")
+        join = _buffer_style(join_style, ("round", "mitre", "bevel"), "join_style")
+        params = f"quad_segs={int(resolution)} endcap={cap}"
         if self._is_geography():
             # Spherical buffering accepts only these two parameters.
-            if join_style != "round" or mitre_limit != 5.0 or single_sided:
+            if join != "round" or mitre_limit != 5.0 or single_sided:
                 raise NotImplementedError(
                     "buffer() on geography supports resolution and cap_style "
                     "only; join_style, mitre_limit and single_sided need "
                     "planar geometry"
                 )
         else:
-            params += f" join={joins[join_style]} mitre_limit={float(mitre_limit)}"
+            params += f" join={join} mitre_limit={float(mitre_limit)}"
             if single_sided:
                 params += " side=left" if distance >= 0 else " side=right"
         return self._geo(self._expr.geo.buffer(distance, lit(params)))
@@ -712,9 +724,15 @@ class GeoSeries(Series):
         """Simplify each geometry within `tolerance`.
 
         `ST_SimplifyPreserveTopology` by default, as in GeoPandas, or
-        `ST_Simplify` (Douglas-Peucker) with `preserve_topology=False`. An
-        empty geometry keeps its dimension, where GEOS' Douglas-Peucker turns
-        a 2D empty point or line into a 3D one (`POINT Z EMPTY`).
+        `ST_Simplify` (Douglas-Peucker) with `preserve_topology=False`.
+
+        Two differences with `preserve_topology=False`: when parts of a
+        multi-part geometry collapse, the result stays multi-part (a
+        `MultiPolygon` with one surviving part) where GeoPandas returns the
+        single part (a `Polygon`); and an empty 2D point or line stays 2D,
+        where GEOS' Douglas-Peucker returns a 3D empty (`POINT Z EMPTY`). A Z
+        or M empty input currently loses its Z/M dimension in this and other
+        GEOS-backed operations (apache/sedona-db#1384).
         """
         if preserve_topology:
             return self._geo(self._expr.geo.simplify_preserve_topology(tolerance))
@@ -760,13 +778,18 @@ class GeoSeries(Series):
             raise NotImplementedError("to_wkb(hex=True) is not supported")
         return Series(self._df, self._expr.geo.as_binary(), self._name)
 
-    def set_crs(self, crs, allow_override=False):
-        """Label each geometry with `crs` without transforming coordinates.
+    def set_crs(self, crs=None, epsg=None, inplace=False, allow_override=False):
+        """Label each geometry with a CRS without transforming coordinates.
 
-        As in GeoPandas, replacing a different existing CRS requires
-        `allow_override=True`; use `GeoDataFrame.to_crs` to reproject.
+        GeoPandas' signature and rules: `crs` takes precedence over `epsg`;
+        passing neither clears the CRS; replacing a different existing CRS
+        requires `allow_override=True` (use `GeoDataFrame.to_crs` to
+        reproject). With `inplace=True` this GeoSeries changes and is
+        returned, as in GeoPandas.
         """
         current = self.crs
+        if crs is None and epsg is not None:
+            crs = f"EPSG:{int(epsg)}"
         if crs is not None:
             crs = _normalize_crs(crs)
         if current is not None and not allow_override and not _same_crs(current, crs):
@@ -780,10 +803,15 @@ class GeoSeries(Series):
         if crs is None:
             # SRID 0 means "no CRS" and keeps the values; ST_SetCRS(NULL)
             # propagates the null and would erase every geometry.
-            if current is None:
-                return self._geo(self._expr)
-            return self._geo(self._expr.geo.set_srid(ctx.lit(0)))
-        return self._geo(self._expr.geo.set_crs(ctx.lit(crs)))
+            expr = (
+                self._expr if current is None else self._expr.geo.set_srid(ctx.lit(0))
+            )
+        else:
+            expr = self._expr.geo.set_crs(ctx.lit(crs))
+        if inplace:
+            self._expr = expr
+            return self
+        return self._geo(expr)
 
     @property
     def crs(self):

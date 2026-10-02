@@ -429,3 +429,68 @@ def test_geography_envelope_is_planar_and_empty_is_point_empty():
     assert values[1].geom_type == "Point" and values[1].is_empty
     assert values[2].geom_type == "Polygon"
     assert math.isclose(areas[2], 1.0, rel_tol=1e-9)
+
+
+@pytest.mark.parametrize(
+    "cap_style,join_style",
+    [
+        (shapely.BufferCapStyle.flat, shapely.BufferJoinStyle.mitre),
+        (2, 2),
+        ("square", "bevel"),
+        (shapely.BufferCapStyle.round, 3),
+    ],
+    ids=["enums", "integer-codes", "names", "mixed"],
+)
+def test_buffer_accepts_shapely_style_enums_and_codes(cap_style, join_style):
+    # GeoPandas documents Shapely's style enums (and their integer codes) as
+    # valid alongside the names.
+    gs = gpd.GeoSeries.from_wkt(["LINESTRING (0 0, 3 4, 5 1)"], crs="EPSG:3857")
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    got = g.buffer(0.5, cap_style=cap_style, join_style=join_style).to_pandas().tolist()
+    expected = gs.buffer(0.5, cap_style=cap_style, join_style=join_style).tolist()
+    assert _same(got[0], expected[0])
+
+
+def test_buffer_rejects_out_of_range_style_codes():
+    gs = gpd.GeoSeries.from_wkt(["POINT (0 0)"], crs="EPSG:3857")
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    with pytest.raises(ValueError, match="cap_style"):
+        g.buffer(1.0, cap_style=4)
+    with pytest.raises(ValueError, match="join_style"):
+        g.buffer(1.0, join_style=True)
+
+
+def test_simplify_without_topology_keeps_collapsed_multipart_geometries_multi():
+    # When one part of a multi-part geometry collapses under Douglas-Peucker,
+    # GeoPandas returns the surviving part as a single Polygon; the engine
+    # keeps a MultiPolygon with that one part. Same shape, different type.
+    gs = gpd.GeoSeries.from_wkt(
+        [
+            "MULTIPOLYGON (((0 0, 10 0, 10 10, 0 10, 0 0)), "
+            "((20 20, 20.1 20, 20.1 20.1, 20 20.1, 20 20)))"
+        ],
+        crs="EPSG:3857",
+    )
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    got = g.simplify(1.0, preserve_topology=False).to_pandas().tolist()[0]
+    expected = gs.simplify(1.0, preserve_topology=False).tolist()[0]
+    assert expected.geom_type == "Polygon"
+    assert got.geom_type == "MultiPolygon" and len(got.geoms) == 1
+    assert got.geoms[0].equals(expected)
+
+
+def test_set_crs_has_the_geopandas_signature():
+    # GeoPandas' set_crs(crs=None, epsg=None, inplace=False, allow_override=False):
+    # crs wins over epsg, and inplace changes and returns the series.
+    bare = gpd.GeoSeries.from_wkt(["POINT (1 2)"])
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=bare)).geometry
+    assert g.set_crs(epsg=32633).to_geopandas().crs == "EPSG:32633"
+    assert g.set_crs("EPSG:32634", epsg=32633).to_geopandas().crs == "EPSG:32634"
+    assert g.crs is None
+    assert g.set_crs(epsg=32633, inplace=True) is g
+    assert g.to_geopandas().crs == "EPSG:32633"
+    # Positional arguments follow GeoPandas' order.
+    gs = gpd.GeoSeries.from_wkt(["POINT (1 2)"], crs="EPSG:3857")
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    relabeled = g.set_crs("EPSG:32633", None, False, True)
+    assert relabeled.to_geopandas().crs == "EPSG:32633"
