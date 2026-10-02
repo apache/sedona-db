@@ -1,0 +1,496 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+"""GeoSeries properties, constructive methods, serialization, and CRS.
+
+Each case compares against GeoPandas on the same data, including empty and
+missing geometries, so a difference in null handling or naming shows up as a
+failure rather than going unnoticed.
+"""
+
+import math
+import warnings
+
+import geopandas as gpd
+import numpy as np
+import pandas as pd
+import pyproj
+import pytest
+import shapely
+
+import sedonadb_geopandas as sgpd
+
+CORPUS = [
+    "POINT (1 2)",
+    "POINT Z (1 2 3)",
+    "LINESTRING (0 0, 3 4)",
+    "POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 2 1, 2 2, 1 2, 1 1))",
+    "MULTIPOINT ((0 0), (1 1))",
+    "MULTILINESTRING ((0 0, 1 1), (2 2, 3 3))",
+    "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)), ((2 2, 3 2, 3 3, 2 3, 2 2)))",
+    "POINT EMPTY",
+    "POLYGON EMPTY",
+    "POLYGON ((0 0, 2 2, 2 0, 0 2, 0 0))",
+    "LINESTRING (0 0, 2 2, 2 0, 0 2)",
+    None,
+]
+
+
+def _same_z(got, expected):
+    """Whether two 3D geometries have the same Z values, vertex for vertex."""
+    a = shapely.get_coordinates(shapely.normalize(got), include_z=True)
+    b = shapely.get_coordinates(shapely.normalize(expected), include_z=True)
+    # An absolute tolerance only: NumPy's default relative one treats Z values
+    # of 1,000,000 and 1,000,001 as equal.
+    return a.shape == b.shape and np.allclose(
+        a[:, 2], b[:, 2], rtol=0, atol=1e-9, equal_nan=True
+    )
+
+
+def _same(got, expected):
+    if expected is None or (isinstance(expected, float) and math.isnan(expected)):
+        return got is None or (isinstance(got, float) and math.isnan(got))
+    if isinstance(expected, shapely.Geometry):
+        if not isinstance(got, shapely.Geometry):
+            return False
+        # The geometry type must match exactly, empties included: a POLYGON
+        # EMPTY is not a POINT EMPTY, and a line is not its multipoint boundary.
+        # The one allowance is a ring: WKB has no ring type, so a LinearRing
+        # comes back from the engine as a LineString.
+        rings = {"LinearRing": "LineString"}
+        if rings.get(got.geom_type, got.geom_type) != rings.get(
+            expected.geom_type, expected.geom_type
+        ):
+            return False
+        # Topological equality ignores Z, so dimensions are compared first,
+        # before the empty case (POINT EMPTY is not POINT Z EMPTY), and Z
+        # values separately below.
+        if got.has_z != expected.has_z:
+            return False
+        if expected.is_empty or got.is_empty:
+            return expected.is_empty and got.is_empty
+        if expected.has_z and not _same_z(got, expected):
+            return False
+        if expected.equals(got):
+            return True
+        # A tolerance for the last-digit floating point differences between
+        # the engine's GEOS build and Shapely's (curved output such as buffer
+        # arcs shows them): the same vertices in the same order, once
+        # normalized, each within 1e-9. A vertex-only Hausdorff distance is
+        # not enough, since it accepts the same vertices joined differently.
+        return shapely.equals_exact(
+            shapely.normalize(expected), shapely.normalize(got), tolerance=1e-9
+        )
+    if isinstance(expected, float):
+        return math.isclose(got, expected, rel_tol=1e-9, abs_tol=1e-12)
+    return got == expected
+
+
+@pytest.mark.parametrize(
+    "name", ["geom_type", "is_valid", "is_empty", "is_simple", "has_z"]
+)
+def test_properties_match_geopandas(name):
+    # Includes empty and missing geometries: GeoPandas answers False for a
+    # missing geometry's boolean properties and None for its type.
+    gs = gpd.GeoSeries.from_wkt(CORPUS, crs="EPSG:3857")
+    got = getattr(sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry, name)
+    assert got.to_pandas().tolist() == getattr(gs, name).tolist()
+
+
+def test_point_coordinates_match_geopandas():
+    gs = gpd.GeoSeries.from_wkt(
+        ["POINT Z (1 2 3)", "POINT (4 5)", "POINT EMPTY", None], crs="EPSG:3857"
+    )
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    for name in ("x", "y", "z"):
+        got = getattr(g, name).to_pandas().tolist()
+        assert all(_same(a, b) for a, b in zip(got, getattr(gs, name).tolist()))
+
+
+def test_coordinates_of_non_points_raise_when_computed():
+    # GeoPandas raises when the property is read; the frame is lazy, so this
+    # raises when the result is computed instead.
+    gs = gpd.GeoSeries.from_wkt(["LINESTRING (0 0, 1 1)"], crs="EPSG:3857")
+    x = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry.x
+    with pytest.raises(Exception):
+        x.to_pandas()
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        ("envelope", ()),
+        ("convex_hull", ()),
+        ("exterior", ()),
+        ("simplify", (0.5,)),
+        ("simplify", (0.5, False)),
+        ("normalize", ()),
+        ("make_valid", ()),
+        ("representative_point", ()),
+        ("buffer", (0.5,)),
+        ("centroid", ()),
+    ],
+    ids=lambda call: f"{call[0]}{list(call[1]) or ''}",
+)
+def test_constructive_methods_match_geopandas(call):
+    name, args = call
+    gs = gpd.GeoSeries.from_wkt(CORPUS, crs="EPSG:3857")
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    got = getattr(g, name)
+    expected = getattr(gs, name)
+    if args or callable(expected):
+        got, expected = got(*args), expected(*args)
+    assert isinstance(got, sgpd.GeoSeries)
+    assert got._name == "geometry"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        values = got.to_pandas().tolist()
+    for source, value, reference in zip(gs.tolist(), values, expected.tolist()):
+        if (
+            call == ("simplify", (0.5, False))
+            and reference is not None
+            and reference.is_empty
+            and reference.has_z
+            and not source.has_z
+        ):
+            # GEOS' Douglas-Peucker simplifier turns a 2D empty point or line
+            # into a 3D empty (POINT Z EMPTY); the engine keeps the input's
+            # dimension, which is what the topology-preserving mode does too.
+            reference = shapely.force_2d(reference)
+        assert _same(value, reference), (value, reference)
+
+
+def test_boundary_matches_geopandas_except_collections():
+    # GeoPandas gives None for a geometry collection's boundary (GEOS leaves
+    # it undefined); the engine returns the collection of the parts'
+    # boundaries. Everything else matches.
+    gs = gpd.GeoSeries.from_wkt(CORPUS, crs="EPSG:3857")
+    got = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry.boundary
+    for value, reference in zip(got.to_pandas().tolist(), gs.boundary.tolist()):
+        assert _same(value, reference), (value, reference)
+    gc = gpd.GeoSeries.from_wkt(
+        ["GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1))"], crs="EPSG:3857"
+    )
+    got = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gc)).geometry.boundary
+    assert got.to_pandas().tolist()[0] is not None
+
+
+def test_is_simple_of_a_collection_differs_from_geopandas():
+    # GEOS leaves simplicity undefined for collections and GeoPandas reports
+    # False; the engine reports whether the parts are simple.
+    gc = gpd.GeoSeries.from_wkt(
+        ["GEOMETRYCOLLECTION (POINT (5 5), LINESTRING (0 0, 1 1))"], crs="EPSG:3857"
+    )
+    got = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gc)).geometry.is_simple
+    assert got.to_pandas().tolist() == [True]
+    assert gc.is_simple.tolist() == [False]
+
+
+def test_make_valid_rejects_other_methods():
+    gs = gpd.GeoSeries.from_wkt(["POINT (0 0)"], crs="EPSG:3857")
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    with pytest.raises(NotImplementedError, match="linework"):
+        g.make_valid(method="structure")
+
+
+def test_bounds_is_a_lazy_frame_matching_geopandas():
+    gs = gpd.GeoSeries.from_wkt(CORPUS, crs="EPSG:3857")
+    bounds = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry.bounds
+    assert isinstance(bounds, sgpd.GeoDataFrame)
+    assert bounds.columns == ["minx", "miny", "maxx", "maxy"]
+    np.testing.assert_allclose(
+        bounds.to_geopandas().to_numpy(dtype=float),
+        gs.bounds.to_numpy(dtype=float),
+    )
+
+
+def test_total_bounds_matches_geopandas():
+    gs = gpd.GeoSeries.from_wkt(CORPUS, crs="EPSG:3857")
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    np.testing.assert_array_equal(g.total_bounds, gs.total_bounds)
+    # Nothing but empty and missing geometries: all NaN, as in GeoPandas.
+    gs = gpd.GeoSeries.from_wkt(["POINT EMPTY", None], crs="EPSG:3857")
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    assert np.isnan(g.total_bounds).all()
+    assert np.isnan(gs.total_bounds).all()
+
+
+def test_to_wkt_round_trips():
+    # Equivalent to GeoPandas' WKT but not character-identical (spacing).
+    gs = gpd.GeoSeries.from_wkt(CORPUS, crs="EPSG:3857")
+    got = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry.to_wkt()
+    for text, reference in zip(got.to_pandas().tolist(), gs.tolist()):
+        # pandas 3's string dtype marks a missing value as NaN, not None.
+        parsed = None if pd.isna(text) else shapely.from_wkt(text)
+        assert _same(parsed, reference), (text, reference)
+
+
+def test_to_wkb_matches_geopandas_iso_flavor():
+    gs = gpd.GeoSeries.from_wkt(CORPUS, crs="EPSG:3857")
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    assert g.to_wkb().to_pandas().tolist() == gs.to_wkb(flavor="iso").tolist()
+    with pytest.raises(NotImplementedError, match="hex"):
+        g.to_wkb(hex=True)
+
+
+def test_set_crs_follows_geopandas_override_rules():
+    gs = gpd.GeoSeries.from_wkt(["POINT (0 0)"], crs="EPSG:3857")
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    # Setting the CRS it already has is fine.
+    assert "3857" in str(g.set_crs("EPSG:3857").crs)
+    # Replacing a different one needs allow_override, as in GeoPandas.
+    with pytest.raises(ValueError, match="allow_override"):
+        g.set_crs("EPSG:32633")
+    relabeled = g.set_crs("EPSG:32633", allow_override=True)
+    assert relabeled.to_geopandas().crs == "EPSG:32633"
+    # The coordinates are relabeled, not transformed.
+    assert relabeled.to_geopandas().tolist() == [shapely.Point(0, 0)]
+
+
+def test_set_crs_on_crs_less_geometry():
+    gs = gpd.GeoSeries.from_wkt(["POINT (0 0)"])
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    assert g.crs is None
+    assert g.set_crs("EPSG:32633").to_geopandas().crs == "EPSG:32633"
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {},
+        {"resolution": 4},
+        {"cap_style": "flat"},
+        {"cap_style": "square"},
+        {"join_style": "mitre"},
+        {"join_style": "bevel"},
+        {"join_style": "mitre", "mitre_limit": 1.5},
+        {"single_sided": True},
+    ],
+    ids=lambda options: ",".join(f"{k}={v}" for k, v in options.items()) or "default",
+)
+@pytest.mark.parametrize("distance", [0.5, -0.3])
+def test_buffer_options_match_geopandas(options, distance):
+    # Without GeoPandas' resolution the engine approximates a quarter circle
+    # with 8 segments rather than 16, and buffered an invalid bowtie polygon
+    # to an empty geometry; with the parameters passed through, the results
+    # are identical.
+    wkts = [
+        "POINT (1 2)",
+        "LINESTRING (0 0, 3 4, 5 1)",
+        "POLYGON ((0 0, 2 2, 2 0, 0 2, 0 0))",
+        "POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))",
+    ]
+    gs = gpd.GeoSeries.from_wkt(wkts, crs="EPSG:3857")
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        got = g.buffer(distance, **options).to_pandas().tolist()
+        expected = gs.buffer(distance, **options).tolist()
+    for value, reference in zip(got, expected):
+        if value.is_empty or reference.is_empty:
+            assert value.is_empty and reference.is_empty
+        else:
+            assert value.symmetric_difference(reference).area < 1e-9
+
+
+def test_buffer_rejects_unknown_styles():
+    gs = gpd.GeoSeries.from_wkt(["POINT (0 0)"], crs="EPSG:3857")
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    with pytest.raises(ValueError, match="cap_style"):
+        g.buffer(1.0, cap_style="butt")
+    with pytest.raises(ValueError, match="join_style"):
+        g.buffer(1.0, join_style="miter")
+
+
+def test_set_crs_none_clears_the_crs_and_keeps_the_values():
+    # Clearing the CRS through ST_SetCRS(NULL) propagated the null and erased
+    # every geometry; GeoPandas keeps the coordinates.
+    gs = gpd.GeoSeries.from_wkt(["POINT (1 2)", None], crs="EPSG:3857")
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    cleared = g.set_crs(None, allow_override=True)
+    assert cleared.crs is None
+    assert cleared.to_pandas().tolist() == [shapely.Point(1, 2), None]
+
+
+def test_set_crs_accepts_what_geopandas_accepts_and_keeps_it():
+    # A user string was stamped as given, so the engine canonicalized
+    # "EPSG:4326" to OGC:CRS84, and the integer form was refused outright.
+    gs = gpd.GeoSeries.from_wkt(["POINT (1 2)"], crs="EPSG:4326")
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    assert g.set_crs("EPSG:4326").to_geopandas().crs == "EPSG:4326"
+    bare = gpd.GeoSeries.from_wkt(["POINT (1 2)"])
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=bare)).geometry
+    assert g.set_crs(4326).to_geopandas().crs == "EPSG:4326"
+    with pytest.raises(ValueError, match="Invalid CRS"):
+        g.set_crs("EPSG:not-a-code")
+
+
+def test_buffer_on_geography_keeps_working():
+    # Spherical buffering accepts only quad_segs and endcap, so passing the
+    # planar join parameters by default broke geography buffers.
+    gdf = sgpd.GeoDataFrame(
+        sgpd.default_context().sql("SELECT ST_GeogFromWKT('POINT (0 0)') AS g"),
+        geometry="g",
+    )
+    buffered = gdf.geometry.buffer(1000.0).to_pandas().tolist()
+    assert buffered[0].geom_type == "Polygon"
+    with pytest.raises(NotImplementedError, match="geography"):
+        gdf.geometry.buffer(1000.0, join_style="mitre")
+
+
+def test_geometry_comparison_catches_path_and_z_changes():
+    # The comparison helper itself: the same vertices joined differently are
+    # different geometries, and so are a 3D point and its 2D projection or a
+    # different Z value.
+    assert not _same(
+        shapely.from_wkt("LINESTRING (0 0, 1 0, 1 1)"),
+        shapely.from_wkt("LINESTRING (0 0, 1 1, 1 0)"),
+    )
+    assert not _same(
+        shapely.from_wkt("POINT Z (1 2 3)"), shapely.from_wkt("POINT (1 2)")
+    )
+    assert not _same(
+        shapely.from_wkt("POINT Z (1 2 3)"), shapely.from_wkt("POINT Z (1 2 4)")
+    )
+    assert not _same(
+        shapely.from_wkt("POINT Z (0 0 1000000)"),
+        shapely.from_wkt("POINT Z (0 0 1000001)"),
+    )
+    assert not _same(shapely.from_wkt("POINT EMPTY"), shapely.from_wkt("POINT Z EMPTY"))
+    # Still accepted: a different starting vertex, and last-digit noise.
+    assert _same(
+        shapely.from_wkt("POLYGON ((1 0, 1 1, 0 1, 0 0, 1 0))"),
+        shapely.from_wkt("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"),
+    )
+    assert _same(
+        shapely.from_wkt("LINESTRING (0 0, 1 0.30000000000000004)"),
+        shapely.from_wkt("LINESTRING (0 0, 1 0.3)"),
+    )
+
+
+def test_envelope_keeps_a_string_crs_from_sql():
+    # A CRS the engine reports as a plain string (from SQL) needs pyproj to
+    # serialize; it is a declared dependency, so this path always works.
+    gdf = sgpd.GeoDataFrame(
+        sgpd.default_context().sql(
+            "SELECT ST_SetSRID(ST_GeomFromText('POLYGON EMPTY'), 3857) AS g "
+            "UNION ALL SELECT ST_SetSRID(ST_Point(1.0, 2.0), 3857)"
+        ),
+        geometry="g",
+    )
+    envelope = gdf.geometry.envelope
+    assert "3857" in str(envelope.crs)
+    values = sorted(envelope.to_pandas().tolist(), key=lambda g: g.is_empty)
+    assert values == [shapely.Point(1, 2), shapely.from_wkt("POINT EMPTY")]
+
+
+def test_geography_envelope_is_planar_and_empty_is_point_empty():
+    # The engine's envelope of a geography is a planar longitude/latitude box
+    # (geometry, not geography): its area in degrees is about 1 for this line.
+    # Rebuilding it as geography reinterpreted the box as a spherical region
+    # of some 12 billion square meters. An empty input's envelope is POINT
+    # EMPTY, as in GeoPandas.
+    ctx = sgpd.default_context()
+    query = (
+        "SELECT 0 AS i, ST_GeogFromWKT('POLYGON EMPTY') AS g "
+        "UNION ALL SELECT 1, ST_GeogFromWKT('POINT EMPTY') "
+        "UNION ALL SELECT 2, ST_GeogFromWKT('LINESTRING (0 0, 1 1)')"
+    )
+    gdf = sgpd.GeoDataFrame(ctx.sql(query), geometry="g")
+    envelope = gdf.geometry.envelope
+    frame = gdf._df.select(
+        gdf._df["i"], envelope._expr.alias("e"), envelope.area._expr.alias("a")
+    )
+    raw = ctx.sql(query)
+    raw_type = raw.select(raw["g"].geo.envelope().alias("e")).schema.field("e").type
+    got_type = frame.schema.field("e").type
+    # Same spatial kind and CRS as the engine's envelope (the storage may be
+    # a WKB view rather than plain WKB).
+    assert "geography" not in str(got_type) and "geography" not in str(raw_type)
+    assert pyproj.CRS.from_user_input(
+        got_type.crs.to_json()
+    ) == pyproj.CRS.from_user_input(raw_type.crs.to_json())
+    rows = frame.to_pandas().sort_values("i")
+    values, areas = rows["e"].tolist(), rows["a"].tolist()
+    assert values[0].geom_type == "Point" and values[0].is_empty
+    assert values[1].geom_type == "Point" and values[1].is_empty
+    assert values[2].geom_type == "Polygon"
+    assert math.isclose(areas[2], 1.0, rel_tol=1e-9)
+
+
+@pytest.mark.parametrize(
+    "cap_style,join_style",
+    [
+        (shapely.BufferCapStyle.flat, shapely.BufferJoinStyle.mitre),
+        (2, 2),
+        ("square", "bevel"),
+        (shapely.BufferCapStyle.round, 3),
+    ],
+    ids=["enums", "integer-codes", "names", "mixed"],
+)
+def test_buffer_accepts_shapely_style_enums_and_codes(cap_style, join_style):
+    # GeoPandas documents Shapely's style enums (and their integer codes) as
+    # valid alongside the names.
+    gs = gpd.GeoSeries.from_wkt(["LINESTRING (0 0, 3 4, 5 1)"], crs="EPSG:3857")
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    got = g.buffer(0.5, cap_style=cap_style, join_style=join_style).to_pandas().tolist()
+    expected = gs.buffer(0.5, cap_style=cap_style, join_style=join_style).tolist()
+    assert _same(got[0], expected[0])
+
+
+def test_buffer_rejects_out_of_range_style_codes():
+    gs = gpd.GeoSeries.from_wkt(["POINT (0 0)"], crs="EPSG:3857")
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    with pytest.raises(ValueError, match="cap_style"):
+        g.buffer(1.0, cap_style=4)
+    with pytest.raises(ValueError, match="join_style"):
+        g.buffer(1.0, join_style=True)
+
+
+def test_simplify_without_topology_keeps_collapsed_multipart_geometries_multi():
+    # When one part of a multi-part geometry collapses under Douglas-Peucker,
+    # GeoPandas returns the surviving part as a single Polygon; the engine
+    # keeps a MultiPolygon with that one part. Same shape, different type.
+    gs = gpd.GeoSeries.from_wkt(
+        [
+            "MULTIPOLYGON (((0 0, 10 0, 10 10, 0 10, 0 0)), "
+            "((20 20, 20.1 20, 20.1 20.1, 20 20.1, 20 20)))"
+        ],
+        crs="EPSG:3857",
+    )
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    got = g.simplify(1.0, preserve_topology=False).to_pandas().tolist()[0]
+    expected = gs.simplify(1.0, preserve_topology=False).tolist()[0]
+    assert expected.geom_type == "Polygon"
+    assert got.geom_type == "MultiPolygon" and len(got.geoms) == 1
+    assert got.geoms[0].equals(expected)
+
+
+def test_set_crs_has_the_geopandas_signature():
+    # GeoPandas' set_crs(crs=None, epsg=None, inplace=False, allow_override=False):
+    # crs wins over epsg, and inplace changes and returns the series.
+    bare = gpd.GeoSeries.from_wkt(["POINT (1 2)"])
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=bare)).geometry
+    assert g.set_crs(epsg=32633).to_geopandas().crs == "EPSG:32633"
+    assert g.set_crs("EPSG:32634", epsg=32633).to_geopandas().crs == "EPSG:32634"
+    assert g.crs is None
+    assert g.set_crs(epsg=32633, inplace=True) is g
+    assert g.to_geopandas().crs == "EPSG:32633"
+    # Positional arguments follow GeoPandas' order.
+    gs = gpd.GeoSeries.from_wkt(["POINT (1 2)"], crs="EPSG:3857")
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    relabeled = g.set_crs("EPSG:32633", None, False, True)
+    assert relabeled.to_geopandas().crs == "EPSG:32633"

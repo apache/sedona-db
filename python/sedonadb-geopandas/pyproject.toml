@@ -38,6 +38,11 @@ dependencies = [
     # Shapely 2 dropped the sequence protocol on multipart geometries, which
     # is what lets a geometry be told apart from an array-like generically.
     "shapely>=2",
+    # CRS handling goes through pyproj: a user CRS is parsed to PROJJSON so the
+    # engine keeps it as given (it canonicalizes "EPSG:4326" to OGC:CRS84), and
+    # a CRS read back from the engine may need it to serialize. GeoPandas
+    # requires it as well.
+    "pyproj>=3.5",
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
