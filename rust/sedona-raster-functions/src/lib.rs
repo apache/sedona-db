@@ -17,6 +17,7 @@
 
 pub mod crs_utils;
 mod executor;
+mod grid_placement;
 pub use executor::RasterExecutor;
 pub mod footprint;
 mod pixel_scan;
@@ -35,6 +36,7 @@ pub mod rs_georeference;
 pub mod rs_geotransform;
 pub mod rs_isempty;
 pub mod rs_make_empty_raster;
+pub mod rs_make_raster;
 pub mod rs_minconvexhull;
 pub mod rs_numbands;
 pub mod rs_pixel_functions;
