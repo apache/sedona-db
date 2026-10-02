@@ -6195,6 +6195,7 @@ dependencies = [
  "sedona-common",
  "sedona-raster",
  "sedona-schema",
+ "sedona-testing",
  "serde",
  "serde_json",
  "tempfile",

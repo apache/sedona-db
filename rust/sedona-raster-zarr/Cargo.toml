@@ -53,6 +53,7 @@ zarrs_object_store = { workspace = true }
 [dev-dependencies]
 criterion = { workspace = true }
 object_store = { workspace = true, features = ["aws", "http"] }
+sedona-testing = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 # Test fixtures write Zarr groups to a temp dir; the loader itself
