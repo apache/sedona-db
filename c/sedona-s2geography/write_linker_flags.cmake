@@ -15,10 +15,13 @@
 # specific language governing permissions and limitations
 # under the License.
 
-.Rproj.user
-.Rhistory
-.Rdata
-.httr-oauth
-.DS_Store
-.quarto
-tools/vcpkg/
+# Invoked as: cmake -P write_linker_flags.cmake -- <output> <flags>...
+# One argument per line preserves link order and is whitespace-delimited for
+# build.rs, without interpreting quotes or backslashes through another shell.
+file(WRITE "${CMAKE_ARGV4}" "")
+math(EXPR LAST_ARG "${CMAKE_ARGC} - 1")
+if(LAST_ARG GREATER_EQUAL 5)
+  foreach(INDEX RANGE 5 ${LAST_ARG})
+    file(APPEND "${CMAKE_ARGV4}" "${CMAKE_ARGV${INDEX}}\n")
+  endforeach()
+endif()

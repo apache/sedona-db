@@ -151,8 +151,11 @@ if(NOT MSVC)
   set(CMAKE_ECHO_LINK_FLAGS ${CMAKE_CXX_LINK_FLAGS})
   set(CMAKE_ECHO_IMPLICIT_LINK_DIRECTORIES ${CMAKE_CXX_IMPLICIT_LINK_DIRECTORIES})
 
+  # Pass the resolved flags as arguments instead of embedding them in a quoted
+  # shell command. The extra sh -c quoting breaks under Windows/Rtools.
+  set(WRITE_LINKER_FLAGS "${CMAKE_CURRENT_SOURCE_DIR}/write_linker_flags.cmake")
   set(CMAKE_ECHO_LINK_EXECUTABLE
-      "sh -c \"echo <FLAGS> <LINK_FLAGS> <LINK_LIBRARIES> ${LINK_CXX_STANDARD_LIB} > <TARGET>\""
+      "\"${CMAKE_COMMAND}\" -P \"${WRITE_LINKER_FLAGS}\" -- <TARGET> <FLAGS> <LINK_FLAGS> <LINK_LIBRARIES> ${LINK_CXX_STANDARD_LIB}"
   )
 
   add_executable(linker_flags "CMakeLists.txt")
@@ -163,7 +166,10 @@ if(NOT MSVC)
                         ${S2_EXTRA_OPENSSL_LIBS}
                         ${ABSL_LIBRARIES})
 
-  set_target_properties(linker_flags PROPERTIES LINKER_LANGUAGE ECHO SUFFIX ".txt")
+  set_target_properties(linker_flags
+                        PROPERTIES LINKER_LANGUAGE ECHO
+                                   SUFFIX ".txt"
+                                   LINK_DEPENDS "${WRITE_LINKER_FLAGS}")
 
   install(TARGETS linker_flags DESTINATION "${CMAKE_INSTALL_LIBDIR}")
 

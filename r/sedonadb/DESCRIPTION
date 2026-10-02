@@ -8,7 +8,7 @@ Description: Provides bindings for Apache SedonaDB, a lightweight
 License: Apache License (>= 2)
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
-SystemRequirements: Cargo (Rust's package manager), rustc
+SystemRequirements: Cargo (Rust's package manager), rustc, CMake, Git
 Depends: R (>= 4.1.0)
 Suggests:
     adbcdrivermanager,

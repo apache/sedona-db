@@ -102,6 +102,12 @@ else
   PROFILE=release
 fi
 
+# Build spherical geography support by default. Setting SAVVY_FEATURES keeps
+# its existing role as an explicit feature override.
+if [ -z "${SAVVY_FEATURES+x}" ]; then
+  SAVVY_FEATURES="s2geography"
+fi
+
 # e.g. SAVVY_FEATURES="a b"  -->  "--features 'a b'"
 if [ -n "${SAVVY_FEATURES}" ]; then
   FEATURE_FLAGS="--features '${SAVVY_FEATURES}'"
@@ -133,11 +139,21 @@ S2_OPENSSL_ROOT_DIR=""
 SAVVY_FEATURE_WORDS="$(printf '%s' "${SAVVY_FEATURES}" | tr ',' ' ')"
 case " ${SAVVY_FEATURE_WORDS} " in
   *" s2geography "*)
+    case "${SEDONADB_USE_VCPKG:-true}" in
+      0|false|FALSE|no|NO|off|OFF) SEDONADB_SETUP_VCPKG=false ;;
+      *) SEDONADB_SETUP_VCPKG=true ;;
+    esac
+
+    if [ "${SEDONADB_SETUP_VCPKG}" = true ] && [ -z "${VCPKG_ROOT}" ]; then
+      VCPKG_ROOT="$(sh tools/setup-vcpkg.sh)" || exit 1
+    fi
+
     if [ -z "${VCPKG_ROOT}" ] || [ ! -x "${VCPKG_ROOT}/vcpkg.exe" ]; then
       echo "-------------- ERROR: CONFIGURATION FAILED --------------------"
       echo ""
       echo "Building with SAVVY_FEATURES=s2geography on Windows requires"
-      echo "VCPKG_ROOT to point to a bootstrapped vcpkg checkout."
+      echo "VCPKG_ROOT to point to a bootstrapped vcpkg checkout, or"
+      echo "automatic setup via SEDONADB_USE_VCPKG (the default)."
       echo ""
       echo "---------------------------------------------------------------"
       exit 1
