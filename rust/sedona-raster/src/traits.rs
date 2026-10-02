@@ -124,6 +124,12 @@ impl<'a> NdBuffer<'a> {
     }
 }
 
+/// Build the SedonaDB out-DB URI for 1-based band `band` of the raster at
+/// `path`: `<path>#band=<band>`. The inverse of [`split_outdb_band_fragment`].
+pub fn format_outdb_band_uri(path: &str, band: u32) -> String {
+    format!("{path}#band={band}")
+}
+
 /// Parse the SedonaDB `#band=N` fragment out of an out-DB URI into the base
 /// URL and 1-based source band index.
 ///
@@ -1361,6 +1367,16 @@ mod tests {
             .to_string();
         assert!(msg.contains("band=0"), "msg was: {msg}");
         assert!(msg.contains("positive integer"), "msg was: {msg}");
+    }
+
+    #[test]
+    fn format_outdb_band_uri_round_trips() {
+        let uri = format_outdb_band_uri("s3://bucket/file.tif", 7);
+        assert_eq!(uri, "s3://bucket/file.tif#band=7");
+        assert_eq!(
+            split_outdb_band_fragment(&uri).unwrap(),
+            ("s3://bucket/file.tif".to_string(), 7)
+        );
     }
 
     #[test]

@@ -54,6 +54,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::rs_georeference::rs_georeference_udf,
         crate::rs_isempty::rs_isempty_udf,
         crate::rs_make_empty_raster::rs_make_empty_raster_udf,
+        crate::rs_make_raster::rs_make_raster_udf,
         crate::rs_geotransform::rs_geotransform_udf,
         crate::rs_geotransform::rs_rotation_udf,
         crate::rs_geotransform::rs_scalex_udf,
