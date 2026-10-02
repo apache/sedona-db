@@ -22,7 +22,6 @@ use datafusion_common::Result;
 use datafusion_common_runtime::JoinSet;
 use datafusion_execution::{
     SendableRecordBatchStream, TaskContext,
-    disk_manager::RefCountedTempFile,
     memory_pool::{MemoryConsumer, MemoryReservation},
 };
 use datafusion_expr::JoinType;
@@ -52,6 +51,7 @@ use crate::{
     probe::partitioned_stream_provider::ProbeStreamOptions,
     spatial_predicate::SpatialPredicate,
     utils::bbox_sampler::BoundingBoxSamples,
+    utils::spill::SpillArtifact,
 };
 
 pub(crate) struct SpatialJoinComponents {
@@ -550,7 +550,7 @@ fn merge_spilled_partitions(
 
     let slots = first.slots();
     let total_slots = slots.total_slots();
-    let mut merged_spill_files: Vec<Vec<Arc<RefCountedTempFile>>> =
+    let mut merged_spill_files: Vec<Vec<SpillArtifact>> =
         (0..total_slots).map(|_| Vec::new()).collect();
     let mut partition_geo_stats: Vec<GeoStatistics> =
         (0..total_slots).map(|_| GeoStatistics::empty()).collect();
@@ -582,7 +582,11 @@ fn merge_spilled_partitions(
 mod tests {
     use super::*;
     use crate::partitioning::partition_slots::PartitionSlots;
+    use crate::utils::spill::RecordBatchSpillWriter;
+    use arrow_schema::Schema;
+    use datafusion::config::SpillCompression;
     use datafusion_execution::runtime_env::RuntimeEnv;
+    use datafusion_physical_plan::metrics::SpillMetrics;
     use sedona_geometry::interval::IntervalTrait;
 
     fn sample_geo_stats(bbox: (f64, f64, f64, f64), total_geometries: i64) -> GeoStatistics {
@@ -599,7 +603,17 @@ mod tests {
     ) -> Result<SpilledPartition> {
         let mut files = Vec::with_capacity(labels.len());
         for label in labels {
-            files.push(Arc::new(env.disk_manager.create_tmp_file(label)?));
+            files.push(
+                RecordBatchSpillWriter::try_new(
+                    Arc::clone(env),
+                    Arc::new(Schema::empty()),
+                    label,
+                    SpillCompression::Uncompressed,
+                    SpillMetrics::new(&ExecutionPlanMetricsSet::new(), 0),
+                    None,
+                )?
+                .finish()?,
+            );
         }
         Ok(SpilledPartition::new(
             files,

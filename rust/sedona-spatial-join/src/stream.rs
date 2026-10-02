@@ -1123,7 +1123,10 @@ impl SpatialJoinBatchIterator {
         res
     }
 
-    async fn next_batch_inner(&self, progress: &mut ProbeProgress) -> Result<Option<RecordBatch>> {
+    async fn next_batch_inner(
+        &mut self,
+        progress: &mut ProbeProgress,
+    ) -> Result<Option<RecordBatch>> {
         let num_rows = self.probe_evaluated_batch.num_rows();
         loop {
             // Check if we have produced results for the entire probe batch
@@ -1143,7 +1146,7 @@ impl SpatialJoinBatchIterator {
 
             // Produce result batch from accumulated results
             let joined_batch_opt = if progress.pos < progress.probe_indices.len() {
-                let joined_batch_opt = self.produce_result_batch(progress)?;
+                let joined_batch_opt = self.produce_result_batch(progress).await?;
                 if progress.probe_indices.len() - progress.pos < self.max_batch_size {
                     // Drain produced portion of probe_indices to make it shorter, so that we can
                     // probe more rows using self.probe() in the next iteration.
@@ -1152,7 +1155,7 @@ impl SpatialJoinBatchIterator {
                 joined_batch_opt
             } else {
                 // No more accumulated results even after probing, we must have reached the end
-                self.produce_last_result_batch(progress)?
+                self.produce_last_result_batch(progress).await?
             };
 
             if let Some(batch) = joined_batch_opt {
@@ -1161,7 +1164,7 @@ impl SpatialJoinBatchIterator {
         }
     }
 
-    async fn probe_range(&self, progress: &mut ProbeProgress) -> Result<()> {
+    async fn probe_range(&mut self, progress: &mut ProbeProgress) -> Result<()> {
         let num_rows = self.probe_evaluated_batch.num_rows();
         let range = progress.current_probe_idx..num_rows;
 
@@ -1266,7 +1269,10 @@ impl SpatialJoinBatchIterator {
         Ok(())
     }
 
-    fn produce_result_batch(&self, progress: &mut ProbeProgress) -> Result<Option<RecordBatch>> {
+    async fn produce_result_batch(
+        &mut self,
+        progress: &mut ProbeProgress,
+    ) -> Result<Option<RecordBatch>> {
         let need_merge_knn_results = progress.knn.is_some();
 
         let Some((build_indices, probe_indices, distances)) =
@@ -1308,19 +1314,21 @@ impl SpatialJoinBatchIterator {
         let batch_opt = if let Some(knn) = progress.knn.as_mut() {
             let probe_indices_slice = probe_indices_array.values().as_ref();
             let unfiltered_distances = unfiltered_distances.unwrap_or(Vec::new());
-            knn.knn_results_merger.ingest(
-                batch,
-                probe_indices_slice
-                    .iter()
-                    .map(|i| (*i as usize) + self.offset_in_partition)
-                    .collect(),
-                filtered_distances.unwrap_or(Vec::new()),
-                unfiltered_probe_indices
-                    .iter()
-                    .map(|i| (*i as usize) + self.offset_in_partition)
-                    .collect(),
-                unfiltered_distances,
-            )?
+            knn.knn_results_merger
+                .ingest(
+                    batch,
+                    probe_indices_slice
+                        .iter()
+                        .map(|i| (*i as usize) + self.offset_in_partition)
+                        .collect(),
+                    filtered_distances.unwrap_or(Vec::new()),
+                    unfiltered_probe_indices
+                        .iter()
+                        .map(|i| (*i as usize) + self.offset_in_partition)
+                        .collect(),
+                    unfiltered_distances,
+                )
+                .await?
         } else {
             Some(batch)
         };
@@ -1335,8 +1343,8 @@ impl SpatialJoinBatchIterator {
     /// There might be unmatched results at the tail of the probe row range that has not been produced,
     /// even after all matched build/probe row indices have been produced. This function produces
     /// those unmatched results as a final batch.
-    fn produce_last_result_batch(
-        &self,
+    async fn produce_last_result_batch(
+        &mut self,
         progress: &mut ProbeProgress,
     ) -> Result<Option<RecordBatch>> {
         // Ensure all probe rows have been probed, and all pending results have been produced
@@ -1350,7 +1358,8 @@ impl SpatialJoinBatchIterator {
             let end_offset_in_partition = self.offset_in_partition + num_rows;
             if let Some(batch) = knn
                 .knn_results_merger
-                .produce_batch_until(end_offset_in_partition)?
+                .produce_batch_until(end_offset_in_partition)
+                .await?
                 && batch.num_rows() > 0
             {
                 return Ok(Some(batch));

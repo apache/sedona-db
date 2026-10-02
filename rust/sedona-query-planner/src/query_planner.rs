@@ -23,8 +23,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
+use datafusion::catalog::Session;
 use datafusion::execution::context::QueryPlanner;
-use datafusion::execution::session_state::SessionState;
 use datafusion::physical_planner::{DefaultPhysicalPlanner, ExtensionPlanner, PhysicalPlanner};
 use datafusion_physical_plan::ExecutionPlan;
 
@@ -84,7 +84,7 @@ impl QueryPlanner for SedonaQueryPlanner {
     async fn create_physical_plan(
         &self,
         logical_plan: &LogicalPlan,
-        session_state: &SessionState,
+        session_state: &dyn Session,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         let physical_planner =
             DefaultPhysicalPlanner::with_extension_planners(self.extension_planners());

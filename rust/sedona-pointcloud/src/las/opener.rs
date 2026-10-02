@@ -23,7 +23,7 @@ use datafusion_datasource::{
     file_stream::{FileOpenFuture, FileOpener},
 };
 use datafusion_physical_expr::PhysicalExpr;
-use datafusion_pruning::PruningPredicate;
+use datafusion_pruning::PruningPredicateBuilder;
 use futures::StreamExt;
 
 use sedona_expr::spatial_filter::SpatialFilterFactory;
@@ -77,7 +77,10 @@ impl FileOpener for LasOpener {
             )?);
 
             let pruning_predicate = predicate.and_then(|physical_expr| {
-                PruningPredicate::try_new(physical_expr, schema.clone()).ok()
+                PruningPredicateBuilder::new()
+                    .with_file_schema(schema.clone())
+                    .try_build(physical_expr)
+                    .ok()
             });
 
             let factory = SpatialFilterFactory::default();

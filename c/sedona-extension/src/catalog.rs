@@ -482,10 +482,11 @@ mod tests {
     use super::*;
     use arrow_schema::Schema;
     use datafusion::{datasource::empty::EmptyTable, prelude::SessionContext};
+    use datafusion_common::tree_node::TreeNodeRecursion;
     use datafusion_execution::TaskContext;
     use datafusion_physical_plan::{
         empty::EmptyExec, placeholder_row::PlaceholderRowExec, DisplayAs, DisplayFormatType,
-        PlanProperties, SendableRecordBatchStream,
+        PhysicalExpr, PlanProperties, SendableRecordBatchStream,
     };
     use sedona_catalog::{CatalogObjectType, CreateMode};
     use std::sync::{
@@ -526,6 +527,13 @@ mod tests {
     }
 
     impl ExecutionPlan for MutationExec {
+        fn apply_expressions(
+            &self,
+            f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> Result<TreeNodeRecursion>,
+        ) -> Result<TreeNodeRecursion> {
+            self.inner.apply_expressions(f)
+        }
+
         fn name(&self) -> &str {
             "MutationExec"
         }

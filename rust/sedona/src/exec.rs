@@ -27,7 +27,7 @@ pub(crate) async fn create_plan_from_sql(
     ctx: &SedonaContext,
     statement: Statement,
 ) -> Result<LogicalPlan> {
-    let mut plan = crate::catalog_planner::statement_to_plan(ctx, statement).await?;
+    let plan = crate::catalog_planner::statement_to_plan(ctx, statement).await?;
     if let LogicalPlan::Ddl(DdlStatement::CreateExternalTable(cmd)) = &plan {
         let state = ctx.ctx.state();
         let defaults = &state.config_options().catalog;
@@ -41,11 +41,13 @@ pub(crate) async fn create_plan_from_sql(
             .await?
             .is_none()
         {
-            register_object_store_and_config_extensions(ctx, &cmd.location, &cmd.options).await?;
+            // Configure every location, leaving format options for the file format factory.
+            let locations = cmd.locations.iter().map(|s| s.as_ref()).collect::<Vec<_>>();
+            register_object_store_and_config_extensions(ctx, &locations, &cmd.options).await?;
         }
     }
-    if let LogicalPlan::Copy(copy_to) = &mut plan {
-        register_object_store_and_config_extensions(ctx, &copy_to.output_url, &copy_to.options)
+    if let LogicalPlan::Copy(copy_to) = &plan {
+        register_object_store_and_config_extensions(ctx, &[&copy_to.output_url], &copy_to.options)
             .await?;
     }
     Ok(plan)
@@ -296,10 +298,12 @@ mod tests {
         datasource::{empty::EmptyTable, listing::ListingTableUrl},
         sql::parser::DFParser,
     };
+    use datafusion_common::tree_node::TreeNodeRecursion;
     use datafusion_execution::TaskContext;
     use datafusion_expr::sqlparser::dialect::dialect_from_str;
     use datafusion_physical_plan::{
-        empty::EmptyExec, DisplayAs, DisplayFormatType, PlanProperties, SendableRecordBatchStream,
+        empty::EmptyExec, DisplayAs, DisplayFormatType, PhysicalExpr, PlanProperties,
+        SendableRecordBatchStream,
     };
     use sedona_catalog::{CatalogObject, SedonaCatalogList};
     use std::{collections::HashMap, fmt::Debug, sync::Mutex};
@@ -338,6 +342,13 @@ mod tests {
     }
 
     impl ExecutionPlan for DropTestExec {
+        fn apply_expressions(
+            &self,
+            f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> Result<TreeNodeRecursion>,
+        ) -> Result<TreeNodeRecursion> {
+            self.inner.apply_expressions(f)
+        }
+
         fn name(&self) -> &str {
             "DropTestExec"
         }
@@ -1023,7 +1034,8 @@ mod tests {
         let plan = ctx.ctx.state().create_logical_plan(sql).await?;
 
         if let LogicalPlan::Ddl(DdlStatement::CreateExternalTable(cmd)) = &plan {
-            register_object_store_and_config_extensions(&ctx, &cmd.location, &cmd.options).await?;
+            let locations = cmd.locations.iter().map(|s| s.as_ref()).collect::<Vec<_>>();
+            register_object_store_and_config_extensions(&ctx, &locations, &cmd.options).await?;
         } else {
             return plan_err!("LogicalPlan is not a CreateExternalTable");
         }
@@ -1043,7 +1055,7 @@ mod tests {
         let plan = ctx.ctx.state().create_logical_plan(sql).await?;
 
         if let LogicalPlan::Copy(cmd) = &plan {
-            register_object_store_and_config_extensions(&ctx, &cmd.output_url, &cmd.options)
+            register_object_store_and_config_extensions(&ctx, &[&cmd.output_url], &cmd.options)
                 .await?;
         } else {
             return plan_err!("LogicalPlan is not a CreateExternalTable");
@@ -1066,6 +1078,40 @@ mod tests {
 
         Ok(())
     }
+
+    #[cfg(feature = "aws")]
+    #[tokio::test]
+    async fn create_external_table_multiple_locations_with_format_options() -> Result<()> {
+        let ctx = SedonaContext::new();
+        let locations = [
+            "s3://first-bucket/file.parquet",
+            "s3://second-bucket/file.parquet",
+        ];
+        let sql = format!(
+            "CREATE EXTERNAL TABLE test STORED AS PARQUET
+             LOCATION ('{}', '{}')
+             OPTIONS ('aws.skip_signature' 'true', 'aws.region' 'us-east-1',
+                      'format.validate' 'false')",
+            locations[0], locations[1]
+        );
+        let statement = DFParser::parse_sql(&sql)?.pop_front().unwrap();
+        let plan = create_plan_from_sql(&ctx, statement).await?;
+
+        let LogicalPlan::Ddl(DdlStatement::CreateExternalTable(cmd)) = plan else {
+            return plan_err!("LogicalPlan is not a CreateExternalTable");
+        };
+        assert_eq!(cmd.locations, locations);
+        // GeoParquet options must survive storage setup for the selected factory.
+        assert_eq!(cmd.options.get("format.validate").unwrap(), "false");
+        for location in locations {
+            ctx.ctx
+                .runtime_env()
+                .object_store(ListingTableUrl::parse(location)?)?;
+        }
+
+        Ok(())
+    }
+
     #[tokio::test]
     async fn copy_to_external_object_store_test() -> Result<()> {
         let locations = vec![
