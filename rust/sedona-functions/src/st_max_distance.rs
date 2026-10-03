@@ -88,6 +88,18 @@ fn invoke_scalar(
     lhs_coords: &mut Vec<(f64, f64)>,
     rhs_coords: &mut Vec<(f64, f64)>,
 ) -> Option<f64> {
+    let (a, b) = farthest_coords(lhs, rhs, lhs_coords, rhs_coords)?;
+    let dx = a.0 - b.0;
+    let dy = a.1 - b.1;
+    Some((dx * dx + dy * dy).max(0.0).sqrt())
+}
+
+pub(crate) fn farthest_coords(
+    lhs: &Wkb,
+    rhs: &Wkb,
+    lhs_coords: &mut Vec<(f64, f64)>,
+    rhs_coords: &mut Vec<(f64, f64)>,
+) -> Option<((f64, f64), (f64, f64))> {
     lhs_coords.clear();
     rhs_coords.clear();
 
@@ -98,6 +110,7 @@ fn invoke_scalar(
         return None;
     }
 
+    let mut farthest = None;
     let mut max_dist_sq = f64::NEG_INFINITY;
     for a in lhs_coords {
         for b in &*rhs_coords {
@@ -106,11 +119,12 @@ fn invoke_scalar(
             let d2 = dx * dx + dy * dy;
             if d2 > max_dist_sq {
                 max_dist_sq = d2;
+                farthest = Some((*a, *b));
             }
         }
     }
 
-    Some(max_dist_sq.max(0.0).sqrt())
+    farthest
 }
 
 fn collect_coords(geom: &impl GeometryTrait<T = f64>, coords: &mut Vec<(f64, f64)>) {
