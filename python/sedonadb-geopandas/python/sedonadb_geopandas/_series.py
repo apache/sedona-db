@@ -688,9 +688,20 @@ def _pandas_missing(dtype, nan=False):
         return None
 
 
-def _is_null_marker(marker):
-    """None, or a null Arrow scalar: what Arrow reads as a null."""
-    return marker is None or (isinstance(marker, pa.Scalar) and not marker.is_valid)
+def _is_null_marker(marker, geometry):
+    """Whether `marker` matches a null when pandas does not decide.
+
+    For geometry, GeoPandas' answer: None and NumPy's NaT (datetime64 or
+    timedelta64), but not pandas' own sentinels or a null Arrow scalar.
+    Otherwise Arrow's: those plus a null Arrow scalar.
+    """
+    import numpy as np
+
+    if marker is None:
+        return True
+    if isinstance(marker, (np.datetime64, np.timedelta64)):
+        return bool(np.isnat(marker))
+    return not geometry and isinstance(marker, pa.Scalar) and not marker.is_valid
 
 
 def _is_nan_marker(marker):
@@ -704,12 +715,13 @@ def _missing_members(stored, dtype, markers):
     """Whether a null, and a NaN, of a column are members of `markers`.
 
     pandas decides when it can hold the column (`stored` is its type as
-    stored, `dtype` without encodings). Otherwise, without pandas or for
-    geometry, Arrow's own reading applies, which is also GeoPandas' for
-    geometry: None (or a null scalar) matches a null and a NaN a NaN, while
-    pandas' other markers (`pd.NA`, `NaT`) match neither.
+    stored, `dtype` without encodings). For geometry, which pandas holds as
+    an extension array, GeoPandas' own rule applies; without pandas, Arrow's
+    reading: a NaN matches a NaN, and `_is_null_marker` says which markers
+    match a null.
     """
     floating = pa.types.is_floating(dtype)
+    geometry = isinstance(stored, pa.ExtensionType)
     answers = []
     for nan in (False, True):
         if nan and not floating:
@@ -721,7 +733,7 @@ def _missing_members(stored, dtype, markers):
         elif nan:
             answers.append(any(_is_nan_marker(marker) for marker in markers))
         else:
-            answers.append(any(_is_null_marker(marker) for marker in markers))
+            answers.append(any(_is_null_marker(marker, geometry) for marker in markers))
     return tuple(answers)
 
 

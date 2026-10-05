@@ -389,8 +389,17 @@ def test_geometry_isin_missing_matches_geopandas():
     )
     ours = sgpd.from_geopandas(gdf)
     ours.to_geopandas()  # loads the GeoArrow extension types
-    # Only None matches a missing geometry in GeoPandas.
-    for values in ([None], [np.nan], [np.float32(np.nan)], [pd.NA], [pd.NaT]):
+    # GeoPandas matches a missing geometry with None and NumPy's NaT only.
+    for values in (
+        [None],
+        [np.nan],
+        [np.float32(np.nan)],
+        [pd.NA],
+        [pd.NaT],
+        [np.datetime64("NaT", "s")],
+        [np.timedelta64("NaT", "ns")],
+        [pa.scalar(None)],
+    ):
         assert (
             ours.geometry.isin(values).to_pandas().tolist()
             == gdf.geometry.isin(values).tolist()
@@ -413,6 +422,7 @@ def test_isin_and_astype_without_pandas(monkeypatch):
         "f_nan": ours["f"].isin([float("nan")]),
         "f_np_nan": ours["f"].isin([np.float32(np.nan)]),
         "f_null_scalar": ours["f"].isin([pa.scalar(None, pa.float64())]),
+        "f_nat": ours["f"].isin([np.datetime64("NaT", "ns")]),
         "s_none": ours["s"].isin([None]),
         "f_bool": ours["f"].astype(bool),
         "s_bool": ours["s"].astype(bool),
@@ -425,6 +435,7 @@ def test_isin_and_astype_without_pandas(monkeypatch):
         "f_nan": [False, False, True],
         "f_np_nan": [False, False, True],
         "f_null_scalar": [False, True, False],
+        "f_nat": [False, True, False],
         "s_none": [False, True, False],
         "f_bool": [True, False, True],
         "s_bool": [True, False, False],
