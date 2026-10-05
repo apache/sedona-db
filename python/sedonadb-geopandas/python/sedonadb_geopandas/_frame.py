@@ -29,6 +29,18 @@ from sedonadb_geopandas._temporal import sanitize_temporal
 # Rows to collect for the Jupyter rich-text (`_repr_html_`) preview.
 _REPR_HTML_ROWS = 10
 
+# GeoPandas' compression names, at pyarrow's default levels, in the writer's
+# spelling: it needs an explicit level, and calls pyarrow's "lz4" lz4_raw.
+_PARQUET_COMPRESSION = {
+    "snappy": "snappy",
+    "gzip": "gzip(9)",
+    "brotli": "brotli(8)",
+    "zstd": "zstd(1)",
+    "lz4": "lz4_raw",
+    "none": "uncompressed",
+    None: "uncompressed",
+}
+
 # Default for the `geometry` argument, distinguishing "not specified, apply the
 # heuristic" from an explicit `None` meaning "this frame has no active geometry".
 _DERIVE = object()
@@ -46,19 +58,6 @@ _SJOIN_PREDICATES = {
     "covers": "covers",
     "covered_by": "covered_by",
     "dwithin": "d_within",
-}
-
-
-# GeoPandas' compression names, at pyarrow's default levels, in the writer's
-# spelling: it needs an explicit level, and calls pyarrow's "lz4" lz4_raw.
-_PARQUET_COMPRESSION = {
-    "snappy": "snappy",
-    "gzip": "gzip(9)",
-    "brotli": "brotli(8)",
-    "zstd": "zstd(1)",
-    "lz4": "lz4_raw",
-    "none": "uncompressed",
-    None: "uncompressed",
 }
 
 
