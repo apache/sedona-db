@@ -150,11 +150,65 @@ def test_to_parquet_covering_bbox_filters_like_geopandas(tmp_path):
         assert sorted(got["name"]) == sorted(want["name"])
 
 
-@pytest.mark.parametrize("schema_version", ["1.0.0", "1.1.0"])
-def test_to_parquet_schema_version(tmp_path, schema_version):
+@pytest.mark.parametrize(
+    "schema_version, covering", [("1.0.0", False), ("1.1.0", True)]
+)
+def test_to_parquet_schema_version(tmp_path, schema_version, covering):
     path = tmp_path / "out.parquet"
-    sgpd.from_geopandas(_sample()).to_parquet(path, schema_version=schema_version)
-    assert _geo_metadata(path)["version"] == schema_version
+    sgpd.from_geopandas(_sample()).to_parquet(
+        path, schema_version=schema_version, write_covering_bbox=covering
+    )
+    metadata = _geo_metadata(path)
+    assert metadata["version"] == schema_version
+    assert ("covering" in metadata["columns"]["geometry"]) == covering
+
+
+def test_to_parquet_rewrites_a_covering_read_back(tmp_path):
+    # The reader keeps a covering as an ordinary column; writing a covering
+    # again recomputes it from the (here changed) geometry.
+    source, out = tmp_path / "source.parquet", tmp_path / "out.parquet"
+    _sample().to_parquet(source, write_covering_bbox=True)
+    gdf = sgpd.read_parquet(source)
+    assert "bbox" in gdf.columns
+    gdf["geometry"] = gdf.geometry.buffer(1.0)
+    gdf.to_parquet(out, write_covering_bbox=True)
+    written = gpd.read_parquet(out)
+    boxes = pq.read_table(out, columns=["bbox"]).column("bbox").to_pylist()
+    for box, bounds in zip(boxes, written.geometry.bounds.itertuples(index=False)):
+        if box is None:
+            assert pd.isna(bounds.minx)
+        else:
+            assert (
+                box["xmin"],
+                box["ymin"],
+                box["xmax"],
+                box["ymax"],
+            ) == pytest.approx(tuple(bounds))
+
+
+def test_to_parquet_covering_refuses_an_ordinary_bbox_column(tmp_path):
+    sample = _sample().assign(bbox="not a box")
+    with pytest.raises(ValueError, match="bbox"):
+        sample.to_parquet(tmp_path / "theirs.parquet", write_covering_bbox=True)
+    with pytest.raises(ValueError, match="bbox"):
+        sgpd.from_geopandas(sample).to_parquet(
+            tmp_path / "ours.parquet", write_covering_bbox=True
+        )
+    # Without a covering it is an ordinary column, as in GeoPandas.
+    sgpd.from_geopandas(sample).to_parquet(tmp_path / "plain.parquet")
+    assert (
+        list(gpd.read_parquet(tmp_path / "plain.parquet")["bbox"]) == ["not a box"] * 4
+    )
+
+
+def test_to_parquet_covers_every_geometry_column(tmp_path):
+    path = tmp_path / "out.parquet"
+    sample = _sample()
+    sample["other"] = sample.geometry.centroid
+    sgpd.from_geopandas(sample).to_parquet(path, write_covering_bbox=True)
+    columns = _geo_metadata(path)["columns"]
+    assert columns["geometry"]["covering"]["bbox"]["xmin"] == ["bbox", "xmin"]
+    assert columns["other"]["covering"]["bbox"]["xmin"] == ["other_bbox", "xmin"]
 
 
 def test_to_parquet_validation(tmp_path):
@@ -165,10 +219,12 @@ def test_to_parquet_validation(tmp_path):
         gdf.to_parquet(tmp_path / "out.parquet", geometry_encoding="geoarrow")
     with pytest.raises(NotImplementedError, match="schema_version"):
         gdf.to_parquet(tmp_path / "out.parquet", schema_version="0.4.0")
-    with pytest.raises(ValueError, match="covering"):
+    with pytest.raises(NotImplementedError, match="covering"):
         gdf.to_parquet(
             tmp_path / "out.parquet", write_covering_bbox=True, schema_version="1.0.0"
         )
+    with pytest.raises(NotImplementedError, match="write_covering_bbox"):
+        gdf.to_parquet(tmp_path / "out.parquet", schema_version="1.1.0")
     with pytest.raises(ValueError, match="compression"):
         gdf.to_parquet(tmp_path / "out.parquet", compression="lzo")
     with pytest.raises(NotImplementedError, match="row_group_size"):

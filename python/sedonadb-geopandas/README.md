@@ -121,7 +121,10 @@ differences that come from SedonaDB's readers and GeoParquet writer:
 - A file GeoPandas wrote without a CRS reads back as OGC:CRS84, and
   `to_parquet()` refuses a geometry column without a CRS. EPSG:4326 is written
   as OGC:CRS84.
-- Reading a GeoParquet 1.1 file keeps its covering bounding-box column.
+- Reading a GeoParquet 1.1 file keeps its covering bounding-box column, which
+  `to_parquet(write_covering_bbox=True)` recomputes. A covering is written for
+  every geometry column, not only the active one, and exactly with
+  `schema_version="1.1.0"`.
 - `read_file()` keeps the source's name for the geometry column (`geom` in a
   GeoPackage) where GeoPandas renames it to `geometry`.
 - `to_parquet()` writes one file and needs a file extension such as `.parquet`,

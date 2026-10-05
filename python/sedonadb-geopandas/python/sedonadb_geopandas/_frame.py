@@ -62,6 +62,15 @@ _PARQUET_COMPRESSION = {
 }
 
 
+def _is_bbox_struct(dtype):
+    """Whether `dtype` is a GeoParquet covering's bounding-box struct."""
+    return (
+        pa.types.is_struct(dtype)
+        and [field.name for field in dtype] == ["xmin", "ymin", "xmax", "ymax"]
+        and all(pa.types.is_floating(field.type) for field in dtype)
+    )
+
+
 def _geometry_column_names(df):
     names = df.schema.names
     return {names[i] for i in df.schema.geometry_column_indices}
@@ -877,10 +886,15 @@ class GeoDataFrame:
                 None for no compression, at pyarrow's default levels.
             geometry_encoding: Only `"WKB"` is supported.
             write_covering_bbox: Add a bounding-box column per geometry column
-                and declare it as the GeoParquet 1.1 covering, which readers can
-                use to skip row groups.
-            schema_version: The GeoParquet version, `"1.0.0"` or `"1.1.0"`.
-                Defaults to 1.0.0, or 1.1.0 with `write_covering_bbox`.
+                (`bbox` for `geometry`, `<name>_bbox` otherwise) and declare it
+                as the GeoParquet 1.1 covering, which readers can use to skip row
+                groups. An existing column of that name holding bounding boxes,
+                such as one read back from a file written this way, is
+                recomputed; any other column of that name raises.
+            schema_version: The GeoParquet version: `"1.0.0"` without a covering
+                bbox, `"1.1.0"` with one (SedonaDB writes a covering exactly
+                when writing 1.1.0). Defaults to the one that fits
+                `write_covering_bbox`.
 
         Every geometry column needs a CRS: SedonaDB's GeoParquet writer does not
         write an unknown one. The file's `primary_column` is chosen by SedonaDB's
@@ -905,19 +919,17 @@ class GeoDataFrame:
                 f"{sorted(c for c in _PARQUET_COMPRESSION if c)} or None, got "
                 f"{compression!r}"
             )
-        if schema_version is None:
-            version = "1.1" if write_covering_bbox else "1.0"
-        elif schema_version in ("1.0.0", "1.1.0"):
-            version = schema_version[:3]
-            if write_covering_bbox and version == "1.0":
-                raise ValueError(
-                    "to_parquet() writes a covering bbox with schema_version='1.1.0' "
-                    "only"
-                )
-        else:
+        version = "1.1" if write_covering_bbox else "1.0"
+        if schema_version not in (None, "1.0.0", "1.1.0"):
             raise NotImplementedError(
                 f"to_parquet() writes schema_version '1.0.0' or '1.1.0', got "
                 f"{schema_version!r}"
+            )
+        if schema_version is not None and schema_version[:3] != version:
+            raise NotImplementedError(
+                "to_parquet() writes a covering bbox exactly with GeoParquet 1.1.0: "
+                "pass write_covering_bbox=True with schema_version='1.1.0', or "
+                "neither"
             )
         if not os.path.splitext(os.fspath(path))[1]:
             raise ValueError(
@@ -932,11 +944,28 @@ class GeoDataFrame:
                     f"CRS: SedonaDB's GeoParquet writer does not write an unknown "
                     f"one. Assign one with set_crs() first."
                 )
+        overwrite = None
+        if write_covering_bbox:
+            schema = pa.schema(self._df.schema)
+            for name in _geometry_column_names(self._df):
+                covering = "bbox" if name == "geometry" else f"{name}_bbox"
+                if covering not in schema.names:
+                    continue
+                if not _is_bbox_struct(schema.field(covering).type):
+                    raise ValueError(
+                        f"to_parquet() cannot write a covering bbox: a column named "
+                        f"{covering!r} already exists. Rename it first."
+                    )
+                # Bounding boxes under the covering's name, such as a covering
+                # read back from a file (the reader keeps it as a column), are
+                # recomputed from the geometry rather than written stale.
+                overwrite = True
         self._df.to_parquet(
             path,
             single_file_output=True,
             geoparquet_version=version,
             compression=_PARQUET_COMPRESSION[codec],
+            overwrite_bbox_columns=overwrite,
         )
 
     def __len__(self):
