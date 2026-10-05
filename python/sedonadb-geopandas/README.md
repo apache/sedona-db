@@ -38,6 +38,7 @@ web = gdf.to_crs("EPSG:3857")              # reproject (CRS tracked through)
 
 joined = gdf.sjoin(regions, predicate="within")  # spatial join
 zones = joined.dissolve(by="region")              # group and union geometry
+parts = zones.explode()                           # one row per geometry part
 
 result = zones.to_geopandas()               # back to a real GeoDataFrame
 ```
@@ -93,6 +94,12 @@ column's CRS, or a `GeoSeries` from the same frame, matched row by row as with
 GeoPandas' `align=False`; there is no index to align on. `touches` inherits
 an engine issue with geometry collections that mix dimensions
 (apache/sedona-db#1383).
+
+`explode()` takes parts one level deep and drops rows whose geometry has no
+parts, as GeoPandas does. Without an index it cannot number the parts
+(`index_parts=True`), and it explodes the active geometry column only:
+GeoPandas explodes the active geometry even when `column=` names another
+geometry column, and explodes non-geometry columns as lists.
 
 `sjoin()` requires both geometry columns to share a CRS: GeoPandas warns on a
 mismatch and joins anyway, which is almost always a mistake, so this raises and

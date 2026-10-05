@@ -773,6 +773,27 @@ class GeoSeries(Series):
         """A point guaranteed to lie on each geometry (`ST_PointOnSurface`)."""
         return self._geo(self._expr.geo.point_on_surface())
 
+    def explode(self, ignore_index=False, index_parts=False):
+        """One element per part of each multi-part geometry, as in GeoPandas.
+
+        Parts are taken one level deep, and a geometry with no parts (or a
+        missing one) yields none; see `GeoDataFrame.explode`. The result has a
+        different number of rows, so it belongs to a new frame and cannot be
+        combined with columns of this one. `ignore_index` is accepted for
+        compatibility; `index_parts=True` is not supported, since there is no
+        index.
+        """
+        from sedonadb_geopandas._frame import _explode_parts
+
+        if index_parts:
+            raise NotImplementedError(
+                "explode() cannot number parts with index_parts=True: there is no index"
+            )
+        exploded = _explode_parts(
+            self._df.select(self._expr.alias(self._name)), self._name
+        )
+        return GeoSeries(exploded, exploded[self._name], self._name)
+
     # -- binary operations -----------------------------------------------
 
     def _other(self, other):

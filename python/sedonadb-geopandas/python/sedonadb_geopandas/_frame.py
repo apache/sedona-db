@@ -111,6 +111,43 @@ def _is_missing(value):
         return isinstance(value, float) and value != value
 
 
+def _explode_parts(df, column):
+    """`df` with one row per part of its geometry column `column`.
+
+    Parts are taken one level deep, as `shapely.get_parts` does: a nested
+    collection yields its members whole, where the engine's `ST_Dump` would
+    flatten them further. A single geometry is its own one part, even when
+    empty; a multi-geometry or collection with no parts, or a missing
+    geometry, yields no row. The exploded column moves to the end. All three
+    as in GeoPandas.
+    """
+    ctx = df._ctx
+    geometry = df[column]
+    kind = geometry.geo.geometry_type()
+    is_multi = kind.funcs.starts_with(lit("ST_Multi")) | (
+        kind == lit("ST_GeometryCollection")
+    )
+    # The engine counts no parts in an empty single geometry; greatest() lifts
+    # exactly those to one. A missing geometry counts none.
+    count = (
+        geometry.geo.num_geometries()
+        .cast(pa.int64())
+        .funcs.greatest((~is_multi).cast(pa.int64()))
+        .funcs.coalesce(lit(0))
+    )
+    others = [name for name in df.schema.names if name != column]
+    position = "__part"
+    while position in df.schema.names:
+        position = f"_{position}"
+    staged = df.select(
+        *[df[name] for name in others],
+        geometry.alias(column),
+        ctx.lit(1).funcs.range(count + lit(1)).alias(position),
+    ).unnest(position)
+    part = staged[column].geo.geometry_n(staged[position])
+    return staged.select(*[staged[name] for name in others], part.alias(column))
+
+
 class GeoDataFrame:
     """A lazy SedonaDB frame in the shape of a `geopandas.GeoDataFrame`.
 
@@ -805,6 +842,44 @@ class GeoDataFrame:
 
         unioned = collected.mutate(geometry_expr.alias(self._geometry_name))
         return GeoDataFrame(unioned, self._geometry_name)
+
+    def explode(self, column=None, ignore_index=False, index_parts=False):
+        """One row per part of each multi-part geometry, as in GeoPandas.
+
+        Parts are taken one level deep, as `shapely.get_parts` does: a
+        multi-geometry or collection yields its members, a single geometry
+        stays one row, and a row whose geometry has no parts (an empty
+        multi-geometry or collection, or a missing geometry) is dropped. The
+        other columns repeat for each part, and the exploded column moves to
+        the end, as in GeoPandas.
+
+        Args:
+            column: The column to explode: only the active geometry column
+                (the default) is supported. GeoPandas explodes the active
+                geometry even when `column` names another geometry column,
+                and explodes a non-geometry column as lists.
+            ignore_index: Accepted for compatibility; there is no index.
+            index_parts: Not supported, since there is no index to number the
+                parts in.
+
+        Returns:
+            A `GeoDataFrame` with the same active geometry column.
+        """
+        if column is None:
+            if self._geometry_name is None:
+                raise AttributeError("This GeoDataFrame has no active geometry column")
+            column = self._geometry_name
+        if column not in self.columns:
+            raise KeyError(column)
+        if column != self._geometry_name:
+            raise NotImplementedError(
+                f"explode() supports the active geometry column only, not {column!r}"
+            )
+        if index_parts:
+            raise NotImplementedError(
+                "explode() cannot number parts with index_parts=True: there is no index"
+            )
+        return GeoDataFrame(_explode_parts(self._df, column), self._geometry_name)
 
     def to_geopandas(self):
         """Execute and return a `geopandas.GeoDataFrame` (or plain DataFrame).
