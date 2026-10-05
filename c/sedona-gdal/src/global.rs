@@ -93,7 +93,7 @@ impl Drop for InFlightGuard {
 /// registered after GDAL is loaded (so after GDAL registered its C++ static
 /// destructors), so it runs first. Without it, threads still inside GDAL
 /// (e.g. a loader read whose query already failed or was abandoned) can call
-/// into GDAL after its statics are destroyed; on macOS locking the destroyed
+/// into GDAL after its static objects are destroyed; on macOS locking the destroyed
 /// `std::mutex` behind `/vsicurl/`'s file-property cache throws
 /// `std::system_error`, which unwinds into the Rust thread's `catch_unwind`
 /// and aborts with "Rust cannot catch foreign exceptions".
