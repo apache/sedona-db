@@ -16,6 +16,10 @@
 # under the License.
 """Reading GeoParquet and GDAL/OGR files into a `GeoDataFrame`."""
 
+import glob
+import json
+import os
+
 from sedonadb_geopandas._context import default_context
 from sedonadb_geopandas._frame import GeoDataFrame, _geometry_column_names
 
@@ -38,6 +42,43 @@ def _select(df, columns, function):
     return df.select(*[df[name] for name in columns])
 
 
+def _declared_coverings(path):
+    """The columns a local GeoParquet file's metadata declares as coverings.
+
+    Read from the footer of the first file (of a directory or glob), whatever
+    the covering's field order or dimensions. Remote paths, and anything that
+    cannot be read here, declare none: their metadata is not fetched.
+    """
+    import pyarrow.parquet as pq
+
+    if not isinstance(path, (str, os.PathLike)):
+        path = next(iter(path), None)
+        if path is None:
+            return set()
+    path = os.fspath(path)
+    if "://" in path and not path.startswith("file://"):
+        return set()
+    path = path.removeprefix("file://")
+    if os.path.isdir(path):
+        files = sorted(glob.glob(os.path.join(path, "**", "*.parquet"), recursive=True))
+    elif any(char in path for char in "*?["):
+        files = sorted(glob.glob(path))
+    else:
+        files = [path]
+    try:
+        metadata = pq.read_schema(files[0]).metadata or {}
+        geo = json.loads(metadata.get(b"geo", b"{}"))
+    except Exception:
+        return set()
+    declared = set()
+    for column in (geo.get("columns") or {}).values():
+        bbox = ((column or {}).get("covering") or {}).get("bbox") or {}
+        for field_path in bbox.values():
+            if isinstance(field_path, list) and field_path:
+                declared.add(field_path[0])
+    return declared
+
+
 def read_parquet(
     path,
     columns=None,
@@ -53,7 +94,9 @@ def read_parquet(
     **EXPERIMENTAL.** Nothing is read until the frame is computed. The active
     geometry column is chosen by SedonaDB's heuristic (a column named
     `geometry`, `geography`, `geom` or `geog`, else the first geometry
-    column) rather than the file's `primary_column`.
+    column) rather than the file's `primary_column`. As in GeoPandas, the
+    covering (bounding-box) columns the file's metadata declares are left out
+    unless `columns` names them; the metadata is read for local files only.
 
     Args:
         path: A path, URL, directory or glob of GeoParquet files.
@@ -76,7 +119,13 @@ def read_parquet(
         },
     )
     ctx = context or default_context()
-    df = _select(ctx.read_parquet(path), columns, "read_parquet")
+    df = ctx.read_parquet(path)
+    if columns is None:
+        hidden = (_declared_coverings(path) & set(df.schema.names)) - set(
+            _geometry_column_names(df)
+        )
+        columns = [name for name in df.schema.names if name not in hidden]
+    df = _select(df, columns, "read_parquet")
     if not _geometry_column_names(df):
         raise ValueError(
             "read_parquet() found no geometry column among the columns read; "

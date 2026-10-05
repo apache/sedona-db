@@ -122,10 +122,10 @@ differences that come from SedonaDB's readers and GeoParquet writer:
   a frame without one) reads back as OGC:CRS84, and `to_parquet()` refuses a
   geometry column without a CRS (apache/sedona-db#1404). EPSG:4326 is written as
   OGC:CRS84.
-- Reading a GeoParquet 1.1 file keeps its covering bounding-box column, which
-  `to_parquet(write_covering_bbox=True)` recomputes. A covering is written for
-  every geometry column, not only the active one, and exactly with
-  `schema_version="1.1.0"`.
+- The covering (bounding-box) columns a file's metadata declares are left out
+  on read, as in GeoPandas, for local files only: a remote file's metadata is
+  not read, so its coverings stay. A covering is written for every geometry
+  column, not only the active one, and exactly with `schema_version="1.1.0"`.
 - `read_file()` keeps the source's name for the geometry column (`geom` in a
   GeoPackage) where GeoPandas renames it to `geometry`: renaming it would break
   later column selections (apache/sedona-db#1405).

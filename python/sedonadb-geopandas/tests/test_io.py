@@ -20,6 +20,7 @@ import json
 
 import geopandas as gpd
 import pandas as pd
+import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
@@ -164,12 +165,13 @@ def test_to_parquet_schema_version(tmp_path, schema_version, covering):
 
 
 def test_to_parquet_rewrites_a_covering_read_back(tmp_path):
-    # The reader keeps a covering as an ordinary column; writing a covering
-    # again recomputes it from the (here changed) geometry.
+    # A file's covering is left out on read, as in GeoPandas, so writing a
+    # covering again computes it from the (here changed) geometry.
     source, out = tmp_path / "source.parquet", tmp_path / "out.parquet"
     _sample().to_parquet(source, write_covering_bbox=True)
     gdf = sgpd.read_parquet(source)
-    assert "bbox" in gdf.columns
+    assert gdf.columns == list(gpd.read_parquet(source).columns)
+    assert "bbox" not in gdf.columns
     gdf["geometry"] = gdf.geometry.buffer(1.0)
     gdf.to_parquet(out, write_covering_bbox=True)
     written = gpd.read_parquet(out)
@@ -184,6 +186,67 @@ def test_to_parquet_rewrites_a_covering_read_back(tmp_path):
                 box["xmax"],
                 box["ymax"],
             ) == pytest.approx(tuple(bounds))
+
+
+def _with_bbox(tmp_path, name, fields, declared):
+    """A GeoParquet file whose `bbox` struct has `fields`, declared as the
+    covering or not."""
+    source = tmp_path / "source.parquet"
+    _sample().to_parquet(source, write_covering_bbox=True)
+    table = pq.read_table(source)
+    geo = json.loads(table.schema.metadata[b"geo"])
+    boxes = pa.StructArray.from_arrays(
+        [pa.array([float(i)] * len(table)) for i in range(len(fields))], names=fields
+    )
+    table = table.set_column(table.schema.get_field_index("bbox"), "bbox", boxes)
+    if declared:
+        geo["columns"]["geometry"]["covering"] = {
+            "bbox": {field: ["bbox", field] for field in fields}
+        }
+    else:
+        geo["columns"]["geometry"].pop("covering")
+    metadata = {**table.schema.metadata, b"geo": json.dumps(geo).encode()}
+    path = tmp_path / name
+    pq.write_table(table.replace_schema_metadata(metadata), path)
+    return path
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        ["xmin", "xmax", "ymin", "ymax"],
+        ["xmin", "ymin", "zmin", "xmax", "ymax", "zmax"],
+    ],
+    ids=["reordered", "with-z"],
+)
+def test_read_parquet_leaves_out_any_declared_covering(tmp_path, fields):
+    # The covering is found by its metadata, whatever its field order or
+    # dimensions, so it is left out and the file can be rewritten with one.
+    path = _with_bbox(tmp_path, "covering.parquet", fields, declared=True)
+    gdf = sgpd.read_parquet(path)
+    assert gdf.columns == list(gpd.read_parquet(path).columns)
+    gdf.to_parquet(tmp_path / "out.parquet", write_covering_bbox=True)
+    # Named explicitly, it is read, as in GeoPandas.
+    assert "bbox" in sgpd.read_parquet(path, columns=["v", "geometry", "bbox"]).columns
+    # Also for a directory of such files.
+    (tmp_path / "parts").mkdir()
+    path.rename(tmp_path / "parts" / "a.parquet")
+    assert "bbox" not in sgpd.read_parquet(tmp_path / "parts").columns
+
+
+def test_to_parquet_never_overwrites_an_undeclared_bbox(tmp_path):
+    # A bounding-box struct that the metadata does not declare as a covering
+    # is ordinary data (a survey envelope, say): it is read like any column,
+    # and writing a covering over it raises rather than replacing it.
+    path = _with_bbox(
+        tmp_path, "survey.parquet", ["xmin", "ymin", "xmax", "ymax"], declared=False
+    )
+    gdf = sgpd.read_parquet(path)
+    assert gdf.columns == list(gpd.read_parquet(path).columns)
+    assert "bbox" in gdf.columns
+    with pytest.raises(ValueError, match="bbox"):
+        gdf.to_parquet(tmp_path / "out.parquet", write_covering_bbox=True)
+    assert not (tmp_path / "out.parquet").exists()
 
 
 def test_to_parquet_covering_refuses_an_ordinary_bbox_column(tmp_path):

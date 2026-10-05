@@ -62,15 +62,6 @@ _PARQUET_COMPRESSION = {
 }
 
 
-def _is_bbox_struct(dtype):
-    """Whether `dtype` is a GeoParquet covering's bounding-box struct."""
-    return (
-        pa.types.is_struct(dtype)
-        and [field.name for field in dtype] == ["xmin", "ymin", "xmax", "ymax"]
-        and all(pa.types.is_floating(field.type) for field in dtype)
-    )
-
-
 def _geometry_column_names(df):
     names = df.schema.names
     return {names[i] for i in df.schema.geometry_column_indices}
@@ -888,9 +879,9 @@ class GeoDataFrame:
             write_covering_bbox: Add a bounding-box column per geometry column
                 (`bbox` for `geometry`, `<name>_bbox` otherwise) and declare it
                 as the GeoParquet 1.1 covering, which readers can use to skip row
-                groups. An existing column of that name holding bounding boxes,
-                such as one read back from a file written this way, is
-                recomputed; any other column of that name raises.
+                groups. An existing column of that name raises, as in
+                GeoPandas: `read_parquet` leaves a file's coverings out, so
+                this is an ordinary column.
             schema_version: The GeoParquet version: `"1.0.0"` without a covering
                 bbox, `"1.1.0"` with one (SedonaDB writes a covering exactly
                 when writing 1.1.0). Defaults to the one that fits
@@ -944,28 +935,19 @@ class GeoDataFrame:
                     f"CRS: SedonaDB's GeoParquet writer does not write an unknown "
                     f"one. Assign one with set_crs() first."
                 )
-        overwrite = None
         if write_covering_bbox:
-            schema = pa.schema(self._df.schema)
             for name in _geometry_column_names(self._df):
                 covering = "bbox" if name == "geometry" else f"{name}_bbox"
-                if covering not in schema.names:
-                    continue
-                if not _is_bbox_struct(schema.field(covering).type):
+                if covering in self.columns:
                     raise ValueError(
                         f"to_parquet() cannot write a covering bbox: a column named "
-                        f"{covering!r} already exists. Rename it first."
+                        f"{covering!r} already exists. Rename or drop it first."
                     )
-                # Bounding boxes under the covering's name, such as a covering
-                # read back from a file (the reader keeps it as a column), are
-                # recomputed from the geometry rather than written stale.
-                overwrite = True
         self._df.to_parquet(
             path,
             single_file_output=True,
             geoparquet_version=version,
             compression=_PARQUET_COMPRESSION[codec],
-            overwrite_bbox_columns=overwrite,
         )
 
     def __len__(self):
