@@ -17,11 +17,13 @@
 """Frame bookkeeping (active geometry, CRS, columns, sorting) and Series
 missing-value, membership, and casting methods, compared against GeoPandas."""
 
+import sys
 import warnings
 
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 import pytest
 import shapely
 
@@ -194,6 +196,9 @@ def test_rename_matches_geopandas():
         ours.rename(columns={"v": "t", "s": "t"})
     with pytest.raises(ValueError, match="duplicate column name"):
         ours.rename(columns={"v": "s"})
+    # Any name works, including one that is a keyword argument elsewhere.
+    assert ours.rename(columns={"v": "self"}).columns == ["self", "s", "geometry"]
+    assert ours.rename_geometry("self").columns == ["v", "s", "self"]
 
 
 @pytest.mark.parametrize(
@@ -355,13 +360,70 @@ def test_isin_on_nullable_columns_matches_pandas_on_the_result(values):
     ours = sgpd.GeoDataFrame(
         sgpd.default_context().sql(
             "SELECT CAST(i AS BIGINT) AS i, CAST(b AS BOOLEAN) AS b, s, "
+            "arrow_cast(s, 'Dictionary(Int32, Utf8)') AS d, "
             "ST_Point(0, 0) AS geometry FROM (VALUES (1, true, 'a'), "
             "(NULL, NULL, NULL), (0, false, '')) AS t(i, b, s)"
         )
     )
-    for column in ("i", "b", "s"):
+    # d is dictionary-encoded, which pandas holds as a categorical.
+    for column in ("i", "b", "s", "d"):
         expected = ours[column].to_pandas().isin(values).tolist()
         assert ours[column].isin(values).to_pandas().tolist() == expected, column
+
+
+def test_isin_keeps_large_unsigned_values():
+    big = 2**63 + 5
+    ours = sgpd.GeoDataFrame(
+        sgpd.default_context().sql(
+            f"SELECT CAST(x AS BIGINT UNSIGNED) AS u, ST_Point(0, 0) AS geometry "
+            f"FROM (VALUES ({big}), (1)) AS t(x)"
+        )
+    )
+    for values in ([pa.scalar(big, pa.uint64())], [big], [big, 2**70]):
+        assert ours["u"].isin(values).to_pandas().tolist() == [True, False]
+
+
+def test_geometry_isin_missing_matches_geopandas():
+    gdf = gpd.GeoDataFrame(
+        {"v": [1, 2]}, geometry=gpd.GeoSeries.from_wkt(["POINT (0 0)", None])
+    )
+    ours = sgpd.from_geopandas(gdf)
+    ours.to_geopandas()  # loads the GeoArrow extension types
+    for values in ([None], [np.nan]):
+        assert (
+            ours.geometry.isin(values).to_pandas().tolist()
+            == gdf.geometry.isin(values).tolist()
+        )
+
+
+def test_isin_and_astype_without_pandas(monkeypatch):
+    # pandas is optional: without it, building the expressions still works and
+    # missing values read as Arrow reads them (None matches a null, NaN a NaN,
+    # and a null is falsy).
+    ours = sgpd.GeoDataFrame(
+        sgpd.default_context().sql(
+            "SELECT f, s, ST_Point(0, 0) AS geometry FROM (VALUES "
+            "(1.0, 'a'), (NULL, NULL), (CAST('NaN' AS DOUBLE), '')) AS t(f, s)"
+        )
+    )
+    monkeypatch.setitem(sys.modules, "pandas", None)
+    built = {
+        "f_none": ours["f"].isin([None]),
+        "f_nan": ours["f"].isin([float("nan")]),
+        "s_none": ours["s"].isin([None]),
+        "f_bool": ours["f"].astype(bool),
+        "s_bool": ours["s"].astype(bool),
+    }
+    table = ours._df.select(
+        *[series._expr.alias(name) for name, series in built.items()]
+    ).to_arrow_table()
+    assert table.to_pydict() == {
+        "f_none": [False, True, False],
+        "f_nan": [False, False, True],
+        "s_none": [False, True, False],
+        "f_bool": [True, False, True],
+        "s_bool": [True, False, False],
+    }
 
 
 def test_isin_rejects_non_list_like():

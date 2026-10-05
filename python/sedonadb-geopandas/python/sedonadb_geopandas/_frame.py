@@ -48,6 +48,17 @@ _SJOIN_PREDICATES = {
 }
 
 
+def _renamed(df, mapping):
+    """`df` with columns renamed old to new, in place and order.
+
+    A projection with aliases rather than `DataFrame.rename`, whose keyword
+    arguments cannot take a name such as "self".
+    """
+    return df.select(
+        *[df[name].alias(mapping.get(name, name)) for name in df.schema.names]
+    )
+
+
 def _geometry_column_names(df):
     names = df.schema.names
     return {names[i] for i in df.schema.geometry_column_indices}
@@ -712,7 +723,7 @@ class GeoDataFrame:
             raise ValueError(f"Column named {col} already exists")
         target = self if inplace else self._copy()
         old = target._geometry_name
-        target._rebind(target._df.rename(**{col: old}), renames_columns=True)
+        target._rebind(_renamed(target._df, {old: col}), renames_columns=True)
         target._geometry_name = col
         return None if inplace else target
 
@@ -796,7 +807,7 @@ class GeoDataFrame:
                 f"rename() would produce duplicate column name(s) {duplicates}, "
                 f"which a frame cannot hold"
             )
-        renamed = self._df.rename(**{new: old for old, new in mapping.items()})
+        renamed = _renamed(self._df, mapping)
         geometry = None if self._geometry_name in mapping else self._geometry_name
         return GeoDataFrame(renamed, geometry)
 

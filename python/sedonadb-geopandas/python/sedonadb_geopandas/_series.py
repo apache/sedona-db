@@ -409,10 +409,14 @@ class Series:
         column is integer for division purposes. Read from the projected
         schema, which is a plan build, not an execution.
         """
-        dtype = pa.schema(self._df.select(self._expr.alias("x")).schema).field("x").type
+        dtype = self._stored_dtype()
         while pa.types.is_dictionary(dtype) or pa.types.is_run_end_encoded(dtype):
             dtype = dtype.value_type
         return dtype
+
+    def _stored_dtype(self):
+        """This expression's Arrow type as stored, encodings included."""
+        return pa.schema(self._df.select(self._expr.alias("x")).schema).field("x").type
 
     def _is_duration(self):
         return pa.types.is_duration(self._dtype())
@@ -524,7 +528,12 @@ class Series:
         if present:
             expr = self._expr.isin(present).funcs.coalesce(lit(False))
         if markers:
-            matches_null, matches_nan = _missing_members(dtype, markers)
+            # The stored type, since an encoding can change the pandas dtype:
+            # a dictionary column becomes a categorical, whose missing value
+            # is NaN.
+            matches_null, matches_nan = _missing_members(
+                self._stored_dtype(), dtype, markers
+            )
             if matches_null:
                 expr = expr | self._expr.is_null()
             if matches_nan:
@@ -624,8 +633,9 @@ def _comparable(dtype, values):
         return values
     comparable = []
     for value in values:
+        plain = value
         if isinstance(value, pa.Scalar):
-            kind, value = _kind(value.type), value.as_py()
+            kind, plain = _kind(value.type), value.as_py()
         elif isinstance(value, bool):
             kind = "bool"
         elif isinstance(value, numbers.Number):
@@ -635,38 +645,76 @@ def _comparable(dtype, values):
         else:
             kind = "other"
         if kind == column:
+            # A typed scalar is kept as given: unwrapping a large unsigned
+            # value would leave an integer no literal can hold.
+            if (
+                isinstance(value, int)
+                and pa.types.is_integer(dtype)
+                and not -(2**63) <= value < 2**63
+            ):
+                try:
+                    value = pa.scalar(value, type=dtype)
+                except (pa.ArrowInvalid, OverflowError):
+                    # Out of the column's range, so it matches nothing.
+                    continue
             comparable.append(value)
         elif column == "number" and kind == "bool":
-            comparable.append(int(value))
-        elif column == "bool" and kind == "number" and value in (0, 1):
-            comparable.append(bool(value))
+            comparable.append(int(plain))
+        elif column == "bool" and kind == "number" and plain in (0, 1):
+            comparable.append(bool(plain))
     return comparable
 
 
 def _pandas_missing(dtype, nan=False):
     """A one-element pandas Series holding this type's missing value (or NaN),
-    converted as `to_pandas()` converts it, or None if it cannot be built.
+    converted as `to_pandas()` converts it, or None without pandas or for a
+    type pandas holds as an extension array (geometry).
 
     Which missing marker matches a missing value, and whether that value is
     truthy, depends on its pandas dtype: a float column holds NaN, a string
-    column None in pandas 2 and NaN in pandas 3. Asking the installed pandas
-    keeps the answers in step with what `to_pandas()` returns.
+    column None in pandas 2 and NaN in pandas 3, a dictionary column a
+    categorical's NaN. Asking the installed pandas keeps the answers in step
+    with what `to_pandas()` returns.
     """
+    if isinstance(dtype, pa.ExtensionType):
+        return None
+    try:
+        import pandas  # noqa: F401
+    except ImportError:
+        return None
     try:
         return pa.array([float("nan") if nan else None], type=dtype).to_pandas()
     except (pa.ArrowException, TypeError, ValueError):
         return None
 
 
-def _missing_members(dtype, markers):
-    """Whether a null, and a NaN, of `dtype` are members of `markers` for pandas."""
+def _is_nan_marker(marker):
+    if isinstance(marker, pa.Scalar):
+        marker = marker.as_py() if marker.is_valid else None
+    return isinstance(marker, float) and marker != marker
+
+
+def _missing_members(stored, dtype, markers):
+    """Whether a null, and a NaN, of a column are members of `markers`.
+
+    pandas decides when it can hold the column (`stored` is its type as
+    stored, `dtype` without encodings). Otherwise, without pandas or for
+    geometry, Arrow's own reading applies, which is also GeoPandas' for
+    geometry: None (or a null scalar) matches a null, and NaN a NaN.
+    """
+    floating = pa.types.is_floating(dtype)
     answers = []
     for nan in (False, True):
-        if nan and not pa.types.is_floating(dtype):
+        if nan and not floating:
             answers.append(False)
             continue
-        series = _pandas_missing(dtype, nan)
-        answers.append(series is not None and bool(series.isin(markers).iloc[0]))
+        series = _pandas_missing(stored, nan)
+        if series is not None:
+            answers.append(bool(series.isin(markers).iloc[0]))
+        elif nan:
+            answers.append(any(_is_nan_marker(marker) for marker in markers))
+        else:
+            answers.append(any(not _is_nan_marker(marker) for marker in markers))
     return tuple(answers)
 
 
@@ -683,6 +731,8 @@ def _truthiness(expr, dtype):
         truth = expr != lit("")
     else:
         return None
+    # A missing value is as truthy as pandas reads it; without pandas, as
+    # Python reads None.
     missing = _pandas_missing(dtype)
     return truth.funcs.coalesce(
         lit(bool(missing is not None and missing.astype(bool).iloc[0]))
