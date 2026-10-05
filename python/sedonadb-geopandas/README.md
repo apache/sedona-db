@@ -117,16 +117,18 @@ differences that come from SedonaDB's readers and GeoParquet writer:
   written to one, follow SedonaDB's heuristic (a column named `geometry`,
   `geography`, `geom` or `geog`, else the first geometry column) rather than the
   file's metadata or the frame's active geometry. This matters only for files
-  with several geometry columns.
-- A file GeoPandas wrote without a CRS reads back as OGC:CRS84, and
-  `to_parquet()` refuses a geometry column without a CRS. EPSG:4326 is written
-  as OGC:CRS84.
+  with several geometry columns (apache/sedona-db#1404).
+- A file that declares an unknown CRS (`"crs": null`, which GeoPandas writes for
+  a frame without one) reads back as OGC:CRS84, and `to_parquet()` refuses a
+  geometry column without a CRS (apache/sedona-db#1404). EPSG:4326 is written as
+  OGC:CRS84.
 - Reading a GeoParquet 1.1 file keeps its covering bounding-box column, which
   `to_parquet(write_covering_bbox=True)` recomputes. A covering is written for
   every geometry column, not only the active one, and exactly with
   `schema_version="1.1.0"`.
 - `read_file()` keeps the source's name for the geometry column (`geom` in a
-  GeoPackage) where GeoPandas renames it to `geometry`.
+  GeoPackage) where GeoPandas renames it to `geometry`: renaming it would break
+  later column selections (apache/sedona-db#1405).
 - `to_parquet()` writes one file and needs a file extension such as `.parquet`,
   since SedonaDB writes a directory of files to a path without one.
 
