@@ -110,5 +110,22 @@ categorical key do not produce empty groups the way GeoPandas' default
 `observed=False` does, because the category domain does not survive a relational
 aggregation.
 
+`read_parquet()`, `read_file()` and `to_parquet()` follow GeoPandas, with
+differences that come from SedonaDB's readers and GeoParquet writer:
+
+- The active geometry column of a file that is read, and the `primary_column`
+  written to one, follow SedonaDB's heuristic (a column named `geometry`,
+  `geography`, `geom` or `geog`, else the first geometry column) rather than the
+  file's metadata or the frame's active geometry. This matters only for files
+  with several geometry columns.
+- A file GeoPandas wrote without a CRS reads back as OGC:CRS84, and
+  `to_parquet()` refuses a geometry column without a CRS. EPSG:4326 is written
+  as OGC:CRS84.
+- Reading a GeoParquet 1.1 file keeps its covering bounding-box column.
+- `read_file()` keeps the source's name for the geometry column (`geom` in a
+  GeoPackage) where GeoPandas renames it to `geometry`.
+- `to_parquet()` writes one file and needs a file extension such as `.parquet`,
+  since SedonaDB writes a directory of files to a path without one.
+
 See the SedonaDB "Migrating from GeoPandas" guide for the relational model that
 underlies each method.
