@@ -75,7 +75,7 @@ use sedona_spatial_join_gpu::options::GpuOptions;
 
 use datafusion_execution::memory_pool::arrow::ArrowMemoryPool;
 use datafusion_execution::memory_pool::MemoryConsumer;
-use sedona_common::option::{DEFAULT_RASTER_CACHE_MAX_BYTES, DEFAULT_RASTER_IO_CONCURRENCY};
+use sedona_common::option::DEFAULT_RASTER_CACHE_MAX_BYTES;
 use sedona_query_planner::{
     optimizer::{
         register_ensure_loaded_optimizer, register_sedona_analyzer_rules,
@@ -350,26 +350,12 @@ impl SedonaContext {
         let raster_chunk_cache: Arc<dyn RasterChunkCache> =
             Arc::new(InMemoryChunkCache::new(cache_max_bytes).with_memory_pool(Arc::new(pool)));
 
-        // One I/O budget per session, handed to the GDAL loader below and to
-        // `RS_FromPath` through the `RasterLoaderConfig` extension, so pixel
-        // reads and header opens are capped together. Its limit is
-        // `sedona.raster.io_concurrency`, re-read at every call that uses it.
-        let raster_io_concurrency = ctx
-            .state()
-            .config()
-            .options()
-            .extensions
-            .get::<SedonaOptions>()
-            .map(|opts| opts.raster.io_concurrency)
-            .unwrap_or(DEFAULT_RASTER_IO_CONCURRENCY);
-        let raster_io_budget = RasterIoBudget::new(raster_io_concurrency);
-
         let mut out = Self {
             ctx,
             functions: RwLock::new(FunctionSet::new()),
             raster_loader_registry: Arc::new(RwLock::new(RasterLoaderRegistry::new())),
             raster_chunk_cache,
-            raster_io_budget,
+            raster_io_budget: RasterIoBudget::default(),
         };
 
         // Work around https://github.com/apache/datafusion/issues/24933:
@@ -423,6 +409,15 @@ impl SedonaContext {
         // mutates the Arc held in `out.raster_loader_registry`) are immediately
         // visible to UDF reads through this config extension because
         // both handles share the same `RwLock`.
+        //
+        // The same extension carries the session's I/O budget, which the GDAL
+        // loader registered below also draws on, so `RS_FromPath`'s header
+        // opens and the loader's pixel reads are capped together. Its limit
+        // starts at `sedona.raster.io_concurrency` and is re-read at every
+        // call that uses it, so `SET` applies live.
+        if let Some(opts) = extensions.get::<SedonaOptions>() {
+            out.raster_io_budget.set_limit(opts.raster.io_concurrency);
+        }
         extensions.insert(
             RasterLoaderConfig::from_handle(Arc::clone(&out.raster_loader_registry))
                 .with_cache(Arc::clone(&out.raster_chunk_cache))
@@ -2238,7 +2233,10 @@ mod tests {
     async fn raster_io_budget_is_shared_and_follows_the_session_setting() {
         let ctx = SedonaContext::new();
         let budget = ctx.raster_io_budget().clone();
-        assert_eq!(budget.limit(), DEFAULT_RASTER_IO_CONCURRENCY);
+        assert_eq!(
+            budget.limit(),
+            sedona_common::option::DEFAULT_RASTER_IO_CONCURRENCY
+        );
         let state = ctx.ctx.state();
         let extension = state
             .config()
