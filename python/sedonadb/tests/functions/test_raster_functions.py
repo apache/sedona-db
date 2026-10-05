@@ -932,6 +932,26 @@ def test_rs_summarystats_of_rs_frompath_many_rows(con, sedona_testing):
             assert got["m"].iloc[i] == means[path], i
 
 
+@pytest.mark.parametrize("io_concurrency", [1, 4])
+def test_rs_frompath_and_loads_under_a_small_io_budget(
+    con, sedona_testing, io_concurrency
+):
+    # RS_FromPath's opens and the pixel loads after them share the session's
+    # I/O budget. At a budget of 1 they take turns; the results must match
+    # the default budget's.
+    rows = _frompath_rows(sedona_testing)
+    _frompath_view(con, rows, "frompath_budget")
+    query = """
+        SELECT id, RS_Width(RS_FromPath(path)) AS w,
+               RS_SummaryStats(RS_FromPath(path), 'mean', 1) AS m
+        FROM frompath_budget ORDER BY id
+    """
+    expected = con.sql(query).to_pandas()
+    con.sql(f"SET sedona.raster.io_concurrency = {io_concurrency}").execute()
+    got = con.sql(query).to_pandas()
+    pd.testing.assert_frame_equal(got, expected)
+
+
 def test_rs_intersects_rs_frompath_in_join(con, sedona_testing):
     # RS_FromPath as the raster side of a spatial join predicate. Each point
     # is the centre of one file's footprint, so it matches that file (and

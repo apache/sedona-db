@@ -35,10 +35,12 @@
 //! one after another. A file named by several requests (one per band) is
 //! opened once and its bands are read in turn by the same task, since a
 //! GDAL dataset handle must not cross threads. Files read at once are
-//! bounded by the loader's I/O budget ([`GdalLoader::concurrency`]), which
-//! every concurrent `load` call on the loader and its clones shares:
-//! DataFusion runs one call per partition at once, and the budget is what
-//! the storage sees in total, not per partition.
+//! bounded by the loader's [`RasterIoBudget`], which every concurrent `load`
+//! call on the loader and its clones shares: DataFusion runs one call per
+//! partition at once, and the budget is what the storage sees in total, not
+//! per partition. A session gives its loader the session's budget, which
+//! `RS_FromPath`'s file opens draw on as well, so the cap is on pixel reads
+//! and header opens together (`sedona.raster.io_concurrency`).
 //!
 //! ## Cancellation
 //!
@@ -90,10 +92,10 @@ use datafusion_common::{DataFusionError, Result as DFResult};
 use futures::{StreamExt, TryStreamExt, stream};
 use sedona_gdal::dataset::Dataset;
 use sedona_gdal::raster::rasterband::RasterBand;
+use sedona_raster::io_budget::RasterIoBudget;
 use sedona_raster::raster_loader::{AsyncRasterLoader, RasterLoadRequest, RasterLoadResult};
 use sedona_raster::traits::{is_spatial_dim_pair, split_outdb_band_fragment};
 use sedona_schema::raster::BandDataType;
-use tokio::sync::Semaphore;
 
 use crate::gdal_common::{convert_gdal_err, gdal_to_band_data_type, open_gdal_dataset, with_gdal};
 
@@ -114,36 +116,16 @@ pub const GDAL_FORMAT: &str = "gdal";
 /// the override.
 pub const MAX_OUTDB_LOAD_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 
-/// Default I/O budget: files read at once across every concurrent `load`
-/// call on a loader (all partitions together), not per call.
-///
-/// Chosen from `benches/gdal_io_concurrency.rs` (64 COGs of 1024 × 1024
-/// uint8, one caller and eight callers sharing the budget, Apple M-series,
-/// 12 cores) and from 640 public 1113 × 1113 COGs read from S3 over a home
-/// connection. Against an HTTP store adding 10 ms to every request, time
-/// halves with every doubling of the budget (3.7 s at 1, 437 ms at 8, 112 ms
-/// at 32, 63 ms at 64, with one or eight callers alike); the bench has no
-/// knee of its own short of running every file at once. On S3 the knee is
-/// real: the load part of the query took 169 s at 1, 23 s at 8, 14 s at 16,
-/// 10 s at 32 and 9 s at 64 and 128, so past 32 the store, not the budget,
-/// is the limit. Against the page-cached local filesystem a larger budget
-/// never hurt (80 ms at 1, 12 ms at 8, 9.7 ms at 32, 8.7 ms at 64). With
-/// no measured gain past 32, the smaller budget was taken: each file in
-/// flight holds a blocking thread and an open dataset. Memory in flight
-/// does not grow with the budget: `EnsureLoadedExec` already bounds the
-/// bytes one call returns.
-pub const DEFAULT_LOAD_CONCURRENCY: usize = 32;
-
 /// GDAL-backed `AsyncRasterLoader`.
 ///
 /// The only state is the I/O budget, which clones share. Datasets are opened
 /// per read and closed when the read returns (see the module docs).
 #[derive(Debug, Clone)]
 pub struct GdalLoader {
-    concurrency: usize,
     /// The I/O budget: one permit per file read in flight, shared by every
-    /// concurrent `load` call on this loader and its clones.
-    permits: Arc<Semaphore>,
+    /// concurrent `load` call on this loader and its clones, and by whatever
+    /// else the budget was handed to.
+    budget: RasterIoBudget,
     io: Arc<IoCounters>,
 }
 
@@ -172,31 +154,38 @@ impl Default for GdalLoader {
 }
 
 impl GdalLoader {
+    /// A loader with a budget of its own, of
+    /// [`DEFAULT_RASTER_IO_CONCURRENCY`](sedona_raster::io_budget::DEFAULT_RASTER_IO_CONCURRENCY).
+    /// A session uses [`Self::with_budget`] instead.
     pub fn new() -> Self {
         Self {
-            concurrency: DEFAULT_LOAD_CONCURRENCY,
-            permits: Arc::new(Semaphore::new(DEFAULT_LOAD_CONCURRENCY)),
+            budget: RasterIoBudget::default(),
             io: Arc::new(IoCounters::default()),
         }
     }
 
-    /// The I/O budget: files read at once, counted across every concurrent
-    /// `load` call on this loader and its clones. Clamped to at least 1.
-    /// Starts a fresh budget, so configure before the loader is shared.
-    pub fn with_concurrency(mut self, concurrency: usize) -> Self {
-        debug_assert!(
-            Arc::strong_count(&self.permits) == 1,
-            "configure the I/O budget before sharing the loader"
-        );
-        self.concurrency = concurrency.max(1);
-        self.permits = Arc::new(Semaphore::new(self.concurrency));
+    /// Draw on `budget`, typically the session's, shared with the session's
+    /// other blocking raster I/O.
+    pub fn with_budget(mut self, budget: RasterIoBudget) -> Self {
+        self.budget = budget;
         self
     }
 
-    /// The configured I/O budget: the maximum number of files read at once
-    /// across all concurrent calls.
+    /// Draw on a fresh budget of `concurrency` files at once (clamped to at
+    /// least 1). For tests and benchmarks.
+    pub fn with_concurrency(self, concurrency: usize) -> Self {
+        self.with_budget(RasterIoBudget::new(concurrency))
+    }
+
+    /// The budget this loader draws on.
+    pub fn budget(&self) -> &RasterIoBudget {
+        &self.budget
+    }
+
+    /// The budget's current limit: the most files read at once across all
+    /// of the budget's users.
     pub fn concurrency(&self) -> usize {
-        self.concurrency
+        self.budget.limit()
     }
 
     /// The most file reads this loader has had in flight at once, over its
@@ -370,17 +359,12 @@ impl GdalLoader {
         // and drops the rest; files not yet started never start.
         let mut reads = Vec::with_capacity(files.len());
         for file_reqs in files {
-            let permits = Arc::clone(&self.permits);
+            let budget = self.budget.clone();
             let io = Arc::clone(&self.io);
             let cancel = Arc::clone(&cancel);
             reads.push(async move {
-                let permit = permits.acquire_owned().await.map_err(|_| {
-                    ArrowError::ExternalError(Box::new(
-                        sedona_common::sedona_internal_datafusion_err!(
-                            "GDAL loader: I/O budget closed"
-                        ),
-                    ))
-                })?;
+                // One permit per file; a task holds no other while it waits.
+                let permit = budget.acquire().await;
                 tokio::task::spawn_blocking(move || {
                     let _permit = permit;
                     io.enter();
@@ -399,7 +383,7 @@ impl GdalLoader {
             });
         }
         let read: Vec<Vec<(usize, Buffer)>> = stream::iter(reads)
-            .buffer_unordered(self.concurrency)
+            .buffer_unordered(self.budget.limit())
             .try_collect()
             .await?;
 
@@ -559,6 +543,7 @@ mod tests {
     use crate::gdal_common::with_gdal;
     use crate::gdal_dataset_provider::thread_local_cache;
     use sedona_gdal::raster::types::Buffer as GdalBuffer;
+    use sedona_raster::io_budget::DEFAULT_RASTER_IO_CONCURRENCY;
     use sedona_raster::view_entries::ViewEntries;
     use sedona_schema::raster::BandDataType;
     use tempfile::TempDir;
@@ -888,14 +873,14 @@ mod tests {
 
     #[test]
     fn with_concurrency_clamps_to_at_least_one() {
-        assert_eq!(GdalLoader::new().concurrency(), DEFAULT_LOAD_CONCURRENCY);
+        assert_eq!(
+            GdalLoader::new().concurrency(),
+            DEFAULT_RASTER_IO_CONCURRENCY
+        );
         assert_eq!(GdalLoader::new().with_concurrency(0).concurrency(), 1);
         assert_eq!(GdalLoader::new().with_concurrency(3).concurrency(), 3);
         assert_eq!(
-            GdalLoader::new()
-                .with_concurrency(3)
-                .permits
-                .available_permits(),
+            GdalLoader::new().with_concurrency(3).budget().available(),
             3
         );
     }
@@ -930,7 +915,7 @@ mod tests {
 
         // Serial and fanned-out must agree, and both must preserve request
         // order, including two bands of one file split around other files.
-        for concurrency in [1, DEFAULT_LOAD_CONCURRENCY] {
+        for concurrency in [1, DEFAULT_RASTER_IO_CONCURRENCY] {
             let loader = GdalLoader::new().with_concurrency(concurrency);
             let results = loader
                 .load(&[&req_c2, &req_a, &req_b, &req_c1, &req_a])
@@ -1001,7 +986,7 @@ mod tests {
 
         let peak = loader.peak_in_flight();
         assert!((1..=2).contains(&peak), "peak in flight {peak}");
-        assert_eq!(loader.permits.available_permits(), 2);
+        assert_eq!(loader.budget().available(), 2);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -1011,7 +996,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let mut uris = write_many_geotiffs(&tmp, 12);
         uris.insert(5, "/nonexistent/path/to/file.tif#band=1".to_string());
-        for concurrency in [1, 4, DEFAULT_LOAD_CONCURRENCY] {
+        for concurrency in [1, 4, DEFAULT_RASTER_IO_CONCURRENCY] {
             let loader = GdalLoader::new().with_concurrency(concurrency);
             let err = load_uris(&loader, &uris).await.unwrap_err();
             assert!(
@@ -1021,12 +1006,12 @@ mod tests {
             // Tasks still running when the call returned wind down and hand
             // their permits back.
             for _ in 0..200 {
-                if loader.permits.available_permits() == concurrency {
+                if loader.budget().available() == concurrency {
                     break;
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
-            assert_eq!(loader.permits.available_permits(), concurrency);
+            assert_eq!(loader.budget().available(), concurrency);
         }
     }
 
@@ -1038,7 +1023,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let uris = write_many_geotiffs(&tmp, 4);
         let loader = GdalLoader::new().with_concurrency(1);
-        let held = Arc::clone(&loader.permits).acquire_owned().await.unwrap();
+        let held = loader.budget().acquire().await;
 
         let timed_out = tokio::time::timeout(
             std::time::Duration::from_millis(50),
@@ -1049,8 +1034,99 @@ mod tests {
         assert_eq!(loader.peak_in_flight(), 0, "no file should have started");
 
         drop(held);
-        assert_eq!(loader.permits.available_permits(), 1);
+        assert_eq!(loader.budget().available(), 1);
         // The loader is still usable after the abandoned call.
         assert_eq!(load_uris(&loader, &uris).await.unwrap().len(), 4);
+    }
+
+    /// Pixel reads and `RS_FromPath` opens drawing on one session budget
+    /// never have more files in flight between them than the budget allows.
+    /// At a budget of 1 this also shows that neither waits for a permit while
+    /// it holds one, which would deadlock the two against each other.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn loader_reads_and_frompath_opens_share_one_budget() {
+        use crate::rs_frompath::RsFromPath;
+        use arrow_array::StringArray;
+        use arrow_schema::DataType;
+        use datafusion_common::config::ConfigOptions;
+        use datafusion_expr::ColumnarValue;
+        use sedona_common::option::SedonaOptions;
+        use sedona_expr::scalar_udf::SedonaScalarKernel;
+        use sedona_raster::raster_loader::{
+            RasterLoaderConfig, RasterLoaderRegistry, io_budget_from_config,
+        };
+        use sedona_schema::datatypes::SedonaType;
+        use std::sync::RwLock;
+
+        let tmp = TempDir::new().unwrap();
+        let uris = Arc::new(write_many_geotiffs(&tmp, 24));
+        let paths: Vec<String> = uris
+            .iter()
+            .map(|uri| uri.trim_end_matches("#band=1").to_string())
+            .collect();
+
+        for limit in [1, 3] {
+            // A session's wiring: one budget, handed to the loader and to
+            // the config extension `RS_FromPath` reads it from.
+            let budget = RasterIoBudget::default();
+            let loader = GdalLoader::new().with_budget(budget.clone());
+            let mut config = ConfigOptions::new();
+            config.extensions.insert(SedonaOptions::default());
+            config.extensions.insert(
+                RasterLoaderConfig::from_handle(Arc::new(RwLock::new(RasterLoaderRegistry::new())))
+                    .with_io_budget(budget.clone()),
+            );
+            config
+                .set("sedona.raster.io_concurrency", &limit.to_string())
+                .unwrap();
+            // What `RS_EnsureLoaded` does before it calls the loader.
+            io_budget_from_config(&config).unwrap();
+            let config = Arc::new(config);
+            let kernel = Arc::new(RsFromPath::default());
+
+            let mut tasks = Vec::new();
+            for _ in 0..4 {
+                let loader = loader.clone();
+                let uris = Arc::clone(&uris);
+                tasks.push(tokio::spawn(async move {
+                    load_uris(&loader, &uris).await.unwrap().len()
+                }));
+
+                let kernel = Arc::clone(&kernel);
+                let config = Arc::clone(&config);
+                let input = ColumnarValue::Array(Arc::new(StringArray::from(paths.clone())));
+                tasks.push(tokio::spawn(async move {
+                    match kernel
+                        .invoke_batch_from_args(
+                            &[],
+                            &[input],
+                            &SedonaType::Arrow(DataType::Null),
+                            0,
+                            Some(&config),
+                        )
+                        .unwrap()
+                    {
+                        ColumnarValue::Array(rasters) => rasters.len(),
+                        other => panic!("expected an array, got {other:?}"),
+                    }
+                }));
+            }
+            let done = tokio::time::timeout(
+                std::time::Duration::from_secs(60),
+                futures::future::join_all(tasks),
+            )
+            .await
+            .expect("pixel reads and header opens deadlocked on one budget");
+            for rows in done {
+                assert_eq!(rows.unwrap(), 24);
+            }
+
+            assert_eq!(budget.limit(), limit);
+            let peak = budget.peak_in_use();
+            assert!((1..=limit).contains(&peak), "budget {limit}: peak {peak}");
+            assert!(loader.peak_in_flight() <= limit);
+            assert_eq!(budget.in_use(), 0);
+            assert_eq!(budget.available(), limit);
+        }
     }
 }

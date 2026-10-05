@@ -6105,6 +6105,7 @@ dependencies = [
  "arrow-schema",
  "async-trait",
  "datafusion-common",
+ "futures",
  "lru 0.18.0",
  "sedona-common",
  "sedona-schema",

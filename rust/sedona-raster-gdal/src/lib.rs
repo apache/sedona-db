@@ -55,9 +55,7 @@ pub use rs_as_geotiff::rs_as_geotiff_udf;
 pub use rs_as_raster::rs_as_raster_udf;
 pub use rs_clip::rs_clip_udf;
 pub use rs_from_gdal_raster::rs_from_gdal_raster_udf;
-pub use rs_frompath::{
-    DEFAULT_FROMPATH_CONCURRENCY, rs_frompath_udf, rs_frompath_udf_with_concurrency,
-};
+pub use rs_frompath::rs_frompath_udf;
 pub use rs_metadata::rs_metadata_udf;
 pub use rs_polygonize::rs_polygonize_udf;
 pub use rs_reproject_match::rs_reproject_match_udf;

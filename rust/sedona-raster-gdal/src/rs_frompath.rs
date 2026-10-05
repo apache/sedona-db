@@ -20,10 +20,12 @@
 //! `RS_FromPath` opens each file to read its header (grid, CRS, band types and
 //! nodata); it reads no pixels. On object storage each open is a chain of
 //! round trips, so a batch's files are opened concurrently on short-lived
-//! threads, bounded by an [`OpenBudget`] shared by every call on the UDF
-//! instance (and so by every partition of a session). The result is built on
-//! the calling thread in row order, and a failing batch reports the error of
-//! its first failing row, exactly as when the files were opened one at a time.
+//! threads, each open holding a permit of the session's [`RasterIoBudget`]
+//! (`sedona.raster.io_concurrency`). The GDAL loader's pixel reads draw on the
+//! same budget, so the cap is on header opens and pixel reads together, across
+//! every partition of the session. The result is built on the calling thread
+//! in row order, and a failing batch reports the error of its first failing
+//! row, exactly as when the files were opened one at a time.
 //!
 //! The function stays a synchronous scalar UDF on purpose. An async UDF nests
 //! under the `RS_EnsureLoaded` call the planner injects around raster
@@ -35,7 +37,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use arrow_array::Array;
 use arrow_schema::DataType;
@@ -47,6 +49,8 @@ use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_functions::executor::WkbBytesExecutor;
 use sedona_raster::builder::RasterBuilder;
+use sedona_raster::io_budget::RasterIoBudget;
+use sedona_raster::raster_loader::io_budget_from_config;
 use sedona_schema::datatypes::{RASTER, SedonaType};
 use sedona_schema::matchers::ArgMatcher;
 
@@ -54,43 +58,26 @@ use crate::gdal_common::with_gdal;
 use crate::gdal_dataset_provider::configure_thread_local_options;
 use crate::utils::read_outdb_header;
 
-/// Default number of files `RS_FromPath` opens at once, across all of a
-/// session's calls. Header reads are latency-bound on object storage: on
-/// public COGs on S3, throughput stopped improving past 16 files in flight, so
-/// 32 leaves headroom without many idle threads (each file in flight holds a
-/// thread and an open dataset).
-pub const DEFAULT_FROMPATH_CONCURRENCY: usize = 32;
-
 pub fn rs_frompath_udf() -> SedonaScalarUDF {
-    rs_frompath_udf_with_concurrency(DEFAULT_FROMPATH_CONCURRENCY)
-}
-
-/// `RS_FromPath` opening at most `concurrency` files at once (clamped to at
-/// least 1) across every call on the returned UDF.
-pub fn rs_frompath_udf_with_concurrency(concurrency: usize) -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "rs_frompath",
-        vec![Arc::new(RsFromPath::with_concurrency(concurrency))],
+        vec![Arc::new(RsFromPath::default())],
         Volatility::Volatile,
     )
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(crate) struct RsFromPath {
-    budget: Arc<OpenBudget>,
+    /// The budget used when the session has none to offer (a call without
+    /// `ConfigOptions`, or a bare DataFusion context). A session's own
+    /// budget, shared with its GDAL loader, takes precedence.
+    budget: RasterIoBudget,
 }
 
 impl RsFromPath {
-    pub(crate) fn with_concurrency(concurrency: usize) -> Self {
-        Self {
-            budget: Arc::new(OpenBudget::new(concurrency)),
-        }
-    }
-}
-
-impl Default for RsFromPath {
-    fn default() -> Self {
-        Self::with_concurrency(DEFAULT_FROMPATH_CONCURRENCY)
+    #[cfg(test)]
+    pub(crate) fn with_budget(budget: RasterIoBudget) -> Self {
+        Self { budget }
     }
 }
 
@@ -138,11 +125,10 @@ impl SedonaScalarKernel for RsFromPath {
                 read_outdb_header(gdal, path)
             })
         };
-        let headers = if distinct.len() > 1 && self.budget.size() > 1 {
-            off_async_worker(|| read_concurrently(&distinct, &self.budget, open))?
-        } else {
-            read_concurrently(&distinct, &self.budget, open)?
-        };
+        let budget = config_options
+            .and_then(io_budget_from_config)
+            .unwrap_or_else(|| self.budget.clone());
+        let headers = open_all(&distinct, &budget, open)?;
 
         let mut builder = RasterBuilder::new(path_array.len());
         for row in rows {
@@ -165,84 +151,58 @@ impl SedonaScalarKernel for RsFromPath {
     }
 }
 
-/// Run blocking `f` from a scalar UDF without stalling the async runtime: on
-/// a multi-threaded tokio worker the worker's queued tasks move to another
-/// thread for the duration (`block_in_place`). Anywhere else (no runtime, a
-/// current-thread runtime, a blocking-pool thread) `f` just runs.
-fn off_async_worker<R>(f: impl FnOnce() -> R) -> R {
-    match tokio::runtime::Handle::try_current() {
-        Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
-            tokio::task::block_in_place(f)
+/// `open` every path under `budget` from wherever a scalar UDF is evaluated,
+/// without stalling an async runtime, and return the results in `paths`
+/// order. Error semantics are those of [`read_concurrently`].
+fn open_all<T, F>(paths: &[&str], budget: &RasterIoBudget, open: F) -> Result<Vec<T>>
+where
+    T: Send,
+    F: Fn(&str) -> Result<T> + Sync,
+{
+    // A lone path with a permit free opens right here, with nothing to wait
+    // for and no thread to hand off.
+    if let [path] = paths
+        && let Some(_permit) = budget.try_acquire()
+    {
+        return Ok(vec![open(path)?]);
+    }
+    match tokio::runtime::Handle::try_current().map(|handle| handle.runtime_flavor()) {
+        // On a multi-threaded worker, waiting for permits and threads would
+        // stall the worker's queued tasks: hand them to another thread for
+        // the duration.
+        Ok(tokio::runtime::RuntimeFlavor::MultiThread) => {
+            tokio::task::block_in_place(|| read_concurrently(paths, budget, open))
         }
-        _ => f(),
+        // No runtime: nothing on this thread can be stalled.
+        Err(_) => read_concurrently(paths, budget, open),
+        // A current-thread runtime (or a blocking thread of one).
+        Ok(_) => read_one_at_a_time(paths, budget, open),
     }
 }
 
-/// A counting semaphore bounding the files open at once. Blocking (not
-/// tokio's) because it is acquired on plain OS threads.
-#[derive(Debug)]
-pub(crate) struct OpenBudget {
-    size: usize,
-    available: Mutex<usize>,
-    released: Condvar,
+/// `open` each path in order on the calling thread, never waiting for the
+/// budget. For a current-thread runtime, whose only worker may be this
+/// thread: waiting there could deadlock, because the budget may hand a
+/// released permit to one of the runtime's own tasks (a loader read about to
+/// start), which cannot run until this call returns. An open holds a permit
+/// when one is free and goes ahead without one otherwise, so on such a
+/// runtime the cap can be exceeded by this one open.
+fn read_one_at_a_time<T, F>(paths: &[&str], budget: &RasterIoBudget, open: F) -> Result<Vec<T>>
+where
+    F: Fn(&str) -> Result<T>,
+{
+    paths
+        .iter()
+        .map(|path| {
+            let _permit = budget.try_acquire();
+            open(path)
+        })
+        .collect()
 }
 
-impl OpenBudget {
-    pub(crate) fn new(size: usize) -> Self {
-        let size = size.max(1);
-        Self {
-            size,
-            available: Mutex::new(size),
-            released: Condvar::new(),
-        }
-    }
-
-    pub(crate) fn size(&self) -> usize {
-        self.size
-    }
-
-    #[cfg(test)]
-    pub(crate) fn available(&self) -> usize {
-        *self
-            .available
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// Block until a slot is free and take it. The slot is returned when the
-    /// permit drops, including on unwind.
-    fn acquire(&self) -> OpenPermit<'_> {
-        let mut available = self
-            .available
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        while *available == 0 {
-            available = self
-                .released
-                .wait(available)
-                .unwrap_or_else(PoisonError::into_inner);
-        }
-        *available -= 1;
-        OpenPermit(self)
-    }
-}
-
-struct OpenPermit<'a>(&'a OpenBudget);
-
-impl Drop for OpenPermit<'_> {
-    fn drop(&mut self) {
-        let mut available = self
-            .0
-            .available
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        *available += 1;
-        self.0.released.notify_one();
-    }
-}
-
-/// `open` every path, at most `budget.size()` at once across all callers
-/// sharing `budget`, and return the results in `paths` order.
+/// `open` every path, at most `budget.limit()` at once across all users of
+/// `budget`, and return the results in `paths` order. Blocks for permits, so
+/// call it where blocking is allowed (see [`open_all`]).
 ///
 /// Error semantics match opening the paths one at a time in order: the error
 /// returned is that of the first failing path, and no path after it is
@@ -251,12 +211,13 @@ impl Drop for OpenPermit<'_> {
 /// failure has run. All threads are joined before returning, so no open
 /// outlives the call, whether it succeeds, fails or panics.
 ///
-/// The calling thread takes part in the work; up to `budget.size() - 1`
-/// helper threads join it. A helper that cannot be spawned only lowers the
-/// parallelism.
+/// The calling thread takes part in the work; up to `budget.limit() - 1`
+/// helper threads join it. Each thread holds at most one permit at a time,
+/// and none while it waits for the next. A helper that cannot be spawned only
+/// lowers the parallelism.
 pub(crate) fn read_concurrently<T, F>(
     paths: &[&str],
-    budget: &OpenBudget,
+    budget: &RasterIoBudget,
     open: F,
 ) -> Result<Vec<T>>
 where
@@ -274,7 +235,7 @@ where
             if idx >= n || idx > first_error.load(Ordering::SeqCst) {
                 return;
             }
-            let _permit = budget.acquire();
+            let _permit = budget.acquire_blocking();
             // A failure may have landed while this thread waited for budget.
             if idx > first_error.load(Ordering::SeqCst) {
                 return;
@@ -288,7 +249,7 @@ where
         }
     };
 
-    let helpers = budget.size().min(n).saturating_sub(1);
+    let helpers = budget.limit().min(n).saturating_sub(1);
     std::thread::scope(|scope| {
         for _ in 0..helpers {
             if std::thread::Builder::new()
@@ -326,6 +287,7 @@ mod tests {
     use datafusion_common::cast::as_struct_array;
     use datafusion_expr::ScalarUDFImpl;
     use sedona_raster::array::RasterStructArray;
+    use sedona_raster::io_budget::DEFAULT_RASTER_IO_CONCURRENCY;
     use sedona_raster::traits::RasterRef;
     use sedona_testing::data::test_raster;
 
@@ -525,8 +487,8 @@ mod tests {
     fn read_concurrently_keeps_input_order() {
         let owned = numbered_paths(40);
         let paths: Vec<&str> = owned.iter().map(String::as_str).collect();
-        for size in [1, 4, DEFAULT_FROMPATH_CONCURRENCY] {
-            let budget = OpenBudget::new(size);
+        for size in [1, 4, DEFAULT_RASTER_IO_CONCURRENCY] {
+            let budget = RasterIoBudget::new(size);
             // Early paths take longest, so they finish last.
             let out = read_concurrently(&paths, &budget, |p| {
                 let i: u64 = p.parse().unwrap();
@@ -541,7 +503,7 @@ mod tests {
 
     #[test]
     fn read_concurrently_empty_input() {
-        let budget = OpenBudget::new(8);
+        let budget = RasterIoBudget::new(8);
         let out: Vec<u8> = read_concurrently(&[], &budget, |_| unreachable!()).unwrap();
         assert!(out.is_empty());
         assert_eq!(budget.available(), 8);
@@ -551,7 +513,7 @@ mod tests {
     fn read_concurrently_is_bounded_by_budget() {
         let owned = numbered_paths(48);
         let paths: Vec<&str> = owned.iter().map(String::as_str).collect();
-        let budget = OpenBudget::new(8);
+        let budget = RasterIoBudget::new(8);
         let in_flight = InFlight::default();
         read_concurrently(&paths, &budget, |_| {
             in_flight.run(|| std::thread::sleep(Duration::from_millis(2)));
@@ -568,7 +530,7 @@ mod tests {
     fn concurrent_callers_share_one_budget() {
         let owned = numbered_paths(16);
         let paths: Vec<&str> = owned.iter().map(String::as_str).collect();
-        let budget = OpenBudget::new(2);
+        let budget = RasterIoBudget::new(2);
         let in_flight = InFlight::default();
         std::thread::scope(|scope| {
             for _ in 0..8 {
@@ -590,8 +552,8 @@ mod tests {
     fn read_concurrently_reports_the_first_failing_path() {
         let owned = numbered_paths(20);
         let paths: Vec<&str> = owned.iter().map(String::as_str).collect();
-        for size in [1, 3, DEFAULT_FROMPATH_CONCURRENCY] {
-            let budget = OpenBudget::new(size);
+        for size in [1, 3, DEFAULT_RASTER_IO_CONCURRENCY] {
+            let budget = RasterIoBudget::new(size);
             // Path 5 fails slowly and path 12 fails at once, so with any
             // parallelism 12's error is known first; 5's must still win.
             let err = read_concurrently(&paths, &budget, |p| match p {
@@ -618,7 +580,7 @@ mod tests {
 
         // One at a time this is exactly the serial behaviour: nothing after
         // the failing path is opened.
-        let budget = OpenBudget::new(1);
+        let budget = RasterIoBudget::new(1);
         let in_flight = InFlight::default();
         read_concurrently(&paths, &budget, |p| {
             in_flight.run(|| if p == "2" { exec_err!("boom") } else { Ok(()) })
@@ -627,7 +589,7 @@ mod tests {
         assert_eq!(in_flight.started.load(Ordering::SeqCst), 3);
 
         // With a budget, at most the paths already in flight finish.
-        let budget = OpenBudget::new(4);
+        let budget = RasterIoBudget::new(4);
         let in_flight = InFlight::default();
         read_concurrently(&paths, &budget, |p| {
             in_flight.run(|| {
@@ -648,7 +610,7 @@ mod tests {
     fn read_concurrently_returns_permits_when_an_open_panics() {
         let owned = numbered_paths(10);
         let paths: Vec<&str> = owned.iter().map(String::as_str).collect();
-        let budget = OpenBudget::new(3);
+        let budget = RasterIoBudget::new(3);
         let finished = AtomicBool::new(false);
         let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             read_concurrently(&paths, &budget, |p| {
@@ -666,13 +628,6 @@ mod tests {
         // still works.
         assert_eq!(budget.available(), 3);
         read_concurrently(&paths, &budget, |_| Ok(())).unwrap();
-    }
-
-    #[test]
-    fn budget_size_is_clamped_to_one() {
-        assert_eq!(OpenBudget::new(0).size(), 1);
-        assert_eq!(RsFromPath::with_concurrency(0).budget.size(), 1);
-        assert_eq!(rs_frompath_udf_with_concurrency(0).name(), "rs_frompath");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -723,9 +678,9 @@ mod tests {
         .unwrap();
         let serial: ArrayRef = Arc::new(serial.finish().unwrap());
 
-        for size in [1, 2, DEFAULT_FROMPATH_CONCURRENCY] {
+        for size in [1, 2, DEFAULT_RASTER_IO_CONCURRENCY] {
             let input = ColumnarValue::Array(Arc::new(StringArray::from(rows.clone())));
-            let ColumnarValue::Array(batch) = RsFromPath::with_concurrency(size)
+            let ColumnarValue::Array(batch) = RsFromPath::with_budget(RasterIoBudget::new(size))
                 .invoke_batch_from_args(&[], &[input], &SedonaType::Arrow(DataType::Null), 0, None)
                 .unwrap()
             else {
@@ -782,8 +737,8 @@ mod tests {
             Some(good.as_str()),
             Some("/definitely/missing/second.tif"),
         ];
-        for size in [1, DEFAULT_FROMPATH_CONCURRENCY] {
-            let kernel = RsFromPath::with_concurrency(size);
+        for size in [1, DEFAULT_RASTER_IO_CONCURRENCY] {
+            let kernel = RsFromPath::with_budget(RasterIoBudget::new(size));
             let input = ColumnarValue::Array(Arc::new(StringArray::from(rows.clone())));
             let err = kernel
                 .invoke_batch_from_args(&[], &[input], &SedonaType::Arrow(DataType::Null), 0, None)
@@ -795,5 +750,83 @@ mod tests {
             );
             assert_eq!(kernel.budget.available(), size);
         }
+    }
+
+    /// With a session budget in the config, the call draws on it (resized
+    /// to `sedona.raster.io_concurrency`) rather than the UDF's own.
+    #[test]
+    fn invoke_draws_on_the_session_budget() {
+        use sedona_common::option::SedonaOptions;
+        use sedona_raster::raster_loader::{RasterLoaderConfig, RasterLoaderRegistry};
+        use std::sync::RwLock;
+
+        let session = RasterIoBudget::default();
+        let mut config = ConfigOptions::new();
+        config.extensions.insert(SedonaOptions::default());
+        config.extensions.insert(
+            RasterLoaderConfig::from_handle(Arc::new(RwLock::new(RasterLoaderRegistry::new())))
+                .with_io_budget(session.clone()),
+        );
+        config.set("sedona.raster.io_concurrency", "3").unwrap();
+
+        let kernel = RsFromPath::default();
+        let files: Vec<String> = ["test1.tiff", "test4.tiff", "test5.tiff"]
+            .iter()
+            .map(|f| test_raster(f).unwrap())
+            .collect();
+        let input = ColumnarValue::Array(Arc::new(StringArray::from(files.clone())));
+        kernel
+            .invoke_batch_from_args(
+                &[],
+                &[input],
+                &SedonaType::Arrow(DataType::Null),
+                0,
+                Some(&config),
+            )
+            .unwrap();
+
+        assert_eq!(session.limit(), 3);
+        assert!(session.peak_in_use() >= 1);
+        assert_eq!(session.in_use(), 0);
+        assert_eq!(kernel.budget.peak_in_use(), 0);
+    }
+
+    /// On a current-thread runtime the call never waits for the budget: a
+    /// released permit could be handed to a task of that same runtime, which
+    /// cannot run while the call blocks its only worker. With the whole
+    /// budget held elsewhere the batch still opens, one file at a time.
+    #[test]
+    fn current_thread_runtime_never_waits_for_the_budget() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let budget = RasterIoBudget::new(1);
+        let kernel = RsFromPath::with_budget(budget.clone());
+        let files: Vec<String> = ["test1.tiff", "test4.tiff", "test5.tiff"]
+            .iter()
+            .map(|f| test_raster(f).unwrap())
+            .collect();
+        runtime.block_on(async {
+            for hold_the_budget in [false, true] {
+                let held = hold_the_budget.then(|| budget.try_acquire().unwrap());
+                let input = ColumnarValue::Array(Arc::new(StringArray::from(files.clone())));
+                let ColumnarValue::Array(rasters) = kernel
+                    .invoke_batch_from_args(
+                        &[],
+                        &[input],
+                        &SedonaType::Arrow(DataType::Null),
+                        0,
+                        None,
+                    )
+                    .unwrap()
+                else {
+                    panic!("expected an array");
+                };
+                assert_eq!(rasters.len(), 3);
+                drop(held);
+            }
+        });
+        assert_eq!(budget.available(), 1);
+        assert_eq!(budget.in_use(), 0);
     }
 }
