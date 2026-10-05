@@ -133,6 +133,19 @@ def test_frame_set_crs_matches_geopandas():
     assert target.to_geopandas().crs == "EPSG:32633"
 
 
+def test_frame_set_crs_none_clears_the_crs():
+    # Assignment gives a CRS-less geometry the column's CRS; clearing must not.
+    gdf = gpd.GeoDataFrame(geometry=gpd.GeoSeries.from_wkt(["POINT (1 2)"], crs=3857))
+    expected = gdf.set_crs(None, allow_override=True)
+    cleared = sgpd.from_geopandas(gdf).set_crs(None, allow_override=True)
+    assert cleared.crs is None and expected.crs is None
+    assert cleared.to_geopandas().crs is None
+    assert cleared.to_geopandas().geometry.tolist() == [shapely.Point(1, 2)]
+    target = sgpd.from_geopandas(gdf)
+    target.set_crs(None, allow_override=True, inplace=True)
+    assert target.crs is None
+
+
 def test_drop_matches_geopandas():
     gdf = gpd.GeoDataFrame(
         {"v": [1.0], "s": ["a"]},
@@ -175,6 +188,12 @@ def test_rename_matches_geopandas():
     assert ours.rename(columns={"nope": "x"}).columns == list(gdf.columns)
     with pytest.raises(KeyError):
         ours.rename(columns={"nope": "x"}, errors="raise")
+    # pandas allows duplicate names; a frame cannot hold them, so this raises
+    # rather than dropping one of the mappings.
+    with pytest.raises(ValueError, match="duplicate column name"):
+        ours.rename(columns={"v": "t", "s": "t"})
+    with pytest.raises(ValueError, match="duplicate column name"):
+        ours.rename(columns={"v": "s"})
 
 
 @pytest.mark.parametrize(
@@ -291,8 +310,28 @@ def test_geoseries_fillna_keeps_geography():
         ("n", [2, 3]),
         ("n", np.array([1])),
         ("v", []),
+        ("n", ["1"]),
+        ("s", [1]),
+        ("n", [True]),
+        ("v", [None]),
+        ("v", [pd.NA]),
+        ("s", [np.nan]),
     ],
-    ids=["nan-member", "float", "none-member", "string", "int", "ndarray", "empty"],
+    ids=[
+        "nan-member",
+        "float",
+        "none-member",
+        "string",
+        "int",
+        "ndarray",
+        "empty",
+        "int-vs-string",
+        "string-vs-int",
+        "int-vs-bool",
+        "float-none",
+        "float-pd-na",
+        "string-nan",
+    ],
 )
 def test_isin_matches_geopandas(column, values):
     # A missing value is a member only when the list contains a missing
@@ -302,6 +341,27 @@ def test_isin_matches_geopandas(column, values):
         ours[column].isin(values).to_pandas().tolist()
         == gdf[column].isin(values).tolist()
     )
+
+
+@pytest.mark.parametrize(
+    "values",
+    [[1], [True], [0.0], [None], [np.nan], [pd.NA], ["1"]],
+    ids=["int", "bool", "float", "none", "nan", "pd-na", "string"],
+)
+def test_isin_on_nullable_columns_matches_pandas_on_the_result(values):
+    # Which missing marker matches a missing value depends on the column's
+    # pandas dtype (and for strings on the pandas version), so the reference
+    # is pandas applied to the column as to_pandas() returns it.
+    ours = sgpd.GeoDataFrame(
+        sgpd.default_context().sql(
+            "SELECT CAST(i AS BIGINT) AS i, CAST(b AS BOOLEAN) AS b, s, "
+            "ST_Point(0, 0) AS geometry FROM (VALUES (1, true, 'a'), "
+            "(NULL, NULL, NULL), (0, false, '')) AS t(i, b, s)"
+        )
+    )
+    for column in ("i", "b", "s"):
+        expected = ours[column].to_pandas().isin(values).tolist()
+        assert ours[column].isin(values).to_pandas().tolist() == expected, column
 
 
 def test_isin_rejects_non_list_like():
@@ -337,6 +397,44 @@ def test_astype_to_integer_raises_for_missing_values():
         gdf["v"].astype("int64")
     with pytest.raises(Exception, match="non-finite"):
         ours["v"].astype("int64").to_pandas()
+    # An integer column with a missing value too, as for pandas' Int64.
+    nullable = sgpd.GeoDataFrame(
+        sgpd.default_context().sql(
+            "SELECT CAST(x AS BIGINT) AS n, ST_Point(0, 0) AS geometry "
+            "FROM (VALUES (1), (NULL)) AS t(x)"
+        )
+    )
+    with pytest.raises(ValueError):
+        pd.Series([1, None], dtype="Int64").astype("int64")
+    with pytest.raises(Exception, match="non-finite"):
+        nullable["n"].astype("int64").to_pandas()
     assert ours["v"].fillna(0).astype("int64").to_pandas().tolist() == [3, 0, 1]
     with pytest.raises(TypeError, match="dtype"):
         ours["v"].astype("category")
+
+
+def test_astype_bool_follows_truthiness():
+    # A number is True unless zero (NaN included), a string unless empty; a
+    # missing value as pandas reads the missing value of the column's dtype.
+    # The engine's own cast would parse "false" as False and reject "a".
+    ours = sgpd.GeoDataFrame(
+        sgpd.default_context().sql(
+            "SELECT s, f, CAST(i AS BIGINT) AS i, CAST(b AS BOOLEAN) AS b, "
+            "ST_Point(0, 0) AS geometry FROM (VALUES "
+            "('a', 0.0, 0, true), ('', 1.5, 2, false), ('false', 'NaN', NULL, NULL), "
+            "(NULL, NULL, 5, true)) AS t(s, f, i, b)"
+        )
+    )
+    for column in ("s", "f", "i", "b"):
+        expected = ours[column].to_pandas().astype(bool).tolist()
+        assert ours[column].astype(bool).to_pandas().tolist() == expected, column
+
+
+@pytest.mark.parametrize("dtype", ["object", object, "O"])
+def test_astype_object_keeps_the_values(dtype):
+    gdf, ours = _series_case()
+    for column in ("n", "v", "s"):
+        _same_values(
+            ours[column].astype(dtype).to_pandas().tolist(),
+            gdf[column].astype(dtype).tolist(),
+        )

@@ -492,8 +492,11 @@ class Series:
     def isin(self, values):
         """Whether each value is one of `values`.
 
-        As in pandas, a missing value is a member only when `values` itself
-        contains a missing marker (None, NaN, or `pandas.NA`).
+        As in pandas, values compare without coercion across kinds (a number
+        never matches a string, while True matches 1 and 1 matches 1.0), and a
+        missing value is a member only when `values` holds a missing marker
+        that pandas matches for this column's type: NaN but not None in a float
+        column, for instance.
         """
         if isinstance(values, (str, bytes)) or not hasattr(values, "__iter__"):
             raise TypeError(
@@ -506,34 +509,54 @@ class Series:
             )
         from sedonadb_geopandas._frame import _is_missing
 
-        present, want_missing = [], False
+        present, markers = [], []
         for value in values:
-            value = normalize_scalar(value)
-            if _is_missing(value):
-                want_missing = True
+            normalized = normalize_scalar(value)
+            if _is_missing(normalized):
+                # As given: normalizing turns pd.NA into None, which pandas
+                # matches differently.
+                markers.append(value)
             else:
-                present.append(value)
+                present.append(normalized)
+        dtype = self._dtype()
+        present = _comparable(dtype, present)
         expr = lit(False)
         if present:
             expr = self._expr.isin(present).funcs.coalesce(lit(False))
-        if want_missing:
-            expr = expr | self._missing()
+        if markers:
+            matches_null, matches_nan = _missing_members(dtype, markers)
+            if matches_null:
+                expr = expr | self._expr.is_null()
+            if matches_nan:
+                expr = expr | self._expr.funcs.isnan().funcs.coalesce(lit(False))
         return Series(self._df, expr, self._name)
 
     def astype(self, dtype):
         """Cast to `dtype` (a NumPy/pandas dtype name, Python type, or Arrow type).
 
         As in pandas, casting a missing value to an integer type raises, and a
-        float's fractional part is truncated. Casting to a string keeps missing
-        values missing (pandas' `"string"` dtype, not `str`, which writes the
-        text "nan"), and a float's text is Arrow's formatting ("1" and "NaN"
-        rather than "1.0" and "nan").
+        float's fractional part is truncated. Casting to `bool` follows
+        truthiness: a number is True unless it is zero (NaN is True), a string
+        unless it is empty, and a missing value as pandas treats the missing
+        value of this column's type. Casting to a string keeps missing values
+        missing (pandas' `"string"` dtype, not `str`, which writes the text
+        "nan"), and a float's text is Arrow's formatting ("1" and "NaN" rather
+        than "1.0" and "nan"). Casting to `object` leaves the values as they
+        are: an Arrow-backed column has no object type.
         """
+        if _is_object_dtype(dtype):
+            return Series(self._df, self._expr, self._name)
         target = _arrow_type(dtype)
+        source = self._dtype()
+        if pa.types.is_boolean(target):
+            truth = _truthiness(self._expr, source)
+            if truth is not None:
+                return Series(self._df, truth, self._name)
         expr = self._expr.cast(target)
-        if pa.types.is_integer(target) and not pa.types.is_integer(self._dtype()):
+        if pa.types.is_integer(target):
             # The engine casts a null to a null silently (and NaN with its own
-            # message); pandas raises for any missing value.
+            # message); pandas raises for any missing value, an integer
+            # column's included.
             expr = expr + _fail_where(
                 self._missing(),
                 "Cannot convert non-finite values (NA or inf) to integer",
@@ -568,11 +591,118 @@ def _buffer_style(style, names, argument):
     raise ValueError(f"{argument} must be one of {list(names)}, got {style!r}")
 
 
+def _kind(arrow_type):
+    """ "number", "bool", "string", or "other", for comparing kinds."""
+    if pa.types.is_boolean(arrow_type):
+        return "bool"
+    if (
+        pa.types.is_integer(arrow_type)
+        or pa.types.is_floating(arrow_type)
+        or pa.types.is_decimal(arrow_type)
+    ):
+        return "number"
+    if (
+        pa.types.is_string(arrow_type)
+        or pa.types.is_large_string(arrow_type)
+        or pa.types.is_string_view(arrow_type)
+    ):
+        return "string"
+    return "other"
+
+
+def _comparable(dtype, values):
+    """The `values` an `isin` on a column of `dtype` can match, in its terms.
+
+    pandas matches by value without coercing across kinds: a number never
+    equals a string, while True equals 1 and 1 equals 1.0. SQL would coerce a
+    string to a number (or fail to), and refuses to compare a boolean with a
+    number, so values of another kind are dropped and booleans and numbers
+    are converted to the column's kind. Other column types take every value.
+    """
+    column = _kind(dtype)
+    if column == "other":
+        return values
+    comparable = []
+    for value in values:
+        if isinstance(value, pa.Scalar):
+            kind, value = _kind(value.type), value.as_py()
+        elif isinstance(value, bool):
+            kind = "bool"
+        elif isinstance(value, numbers.Number):
+            kind = "number"
+        elif isinstance(value, str):
+            kind = "string"
+        else:
+            kind = "other"
+        if kind == column:
+            comparable.append(value)
+        elif column == "number" and kind == "bool":
+            comparable.append(int(value))
+        elif column == "bool" and kind == "number" and value in (0, 1):
+            comparable.append(bool(value))
+    return comparable
+
+
+def _pandas_missing(dtype, nan=False):
+    """A one-element pandas Series holding this type's missing value (or NaN),
+    converted as `to_pandas()` converts it, or None if it cannot be built.
+
+    Which missing marker matches a missing value, and whether that value is
+    truthy, depends on its pandas dtype: a float column holds NaN, a string
+    column None in pandas 2 and NaN in pandas 3. Asking the installed pandas
+    keeps the answers in step with what `to_pandas()` returns.
+    """
+    try:
+        return pa.array([float("nan") if nan else None], type=dtype).to_pandas()
+    except (pa.ArrowException, TypeError, ValueError):
+        return None
+
+
+def _missing_members(dtype, markers):
+    """Whether a null, and a NaN, of `dtype` are members of `markers` for pandas."""
+    answers = []
+    for nan in (False, True):
+        if nan and not pa.types.is_floating(dtype):
+            answers.append(False)
+            continue
+        series = _pandas_missing(dtype, nan)
+        answers.append(series is not None and bool(series.isin(markers).iloc[0]))
+    return tuple(answers)
+
+
+def _truthiness(expr, dtype):
+    """`expr` as a boolean the way Python's `bool()` reads it, or None if this
+    type has no truthiness here (the engine's cast then applies).
+    """
+    kind = _kind(dtype)
+    if kind == "bool":
+        truth = expr
+    elif kind == "number":
+        truth = expr != lit(0)
+    elif kind == "string":
+        truth = expr != lit("")
+    else:
+        return None
+    missing = _pandas_missing(dtype)
+    return truth.funcs.coalesce(
+        lit(bool(missing is not None and missing.astype(bool).iloc[0]))
+    )
+
+
+def _is_object_dtype(dtype):
+    import numpy as np
+
+    try:
+        return np.dtype(dtype) == np.dtype(object)
+    except TypeError:
+        return False
+
+
 def _arrow_type(dtype):
     """The Arrow type for a pandas-style `astype` target."""
     if isinstance(dtype, pa.DataType):
         return dtype
-    if dtype in (str, "str", "string", "object"):
+    if dtype in (str, "str", "string"):
         return pa.string()
     import numpy as np
 

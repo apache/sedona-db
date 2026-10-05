@@ -287,7 +287,11 @@ class GeoDataFrame:
             )
         else:
             expr = self._scalar_expr(key, value)
+        self._assign(key, expr)
 
+    def _assign(self, key, expr):
+        """Rebind this frame with `expr` as column `key`, keeping lineage and
+        the active geometry in step."""
         geometry_before = _geometry_column_names(self._df)
         if key in self._df.schema.names:
             # Replacing a column: an earlier Series may reference it and
@@ -725,7 +729,9 @@ class GeoDataFrame:
             crs = int(epsg)
         relabeled = self.geometry.set_crs(crs, allow_override=allow_override)
         target = self if inplace else self._copy()
-        target[target._geometry_name] = relabeled
+        # Not through assignment, which gives a CRS-less geometry the column's
+        # current CRS and so would undo clearing it.
+        target._assign(target._geometry_name, relabeled._expr)
         return target
 
     # -- columns and rows ---------------------------------------------------
@@ -783,6 +789,13 @@ class GeoDataFrame:
         }
         if not mapping:
             return self._copy()
+        final = [mapping.get(name, name) for name in self.columns]
+        duplicates = sorted({name for name in final if final.count(name) > 1})
+        if duplicates:
+            raise ValueError(
+                f"rename() would produce duplicate column name(s) {duplicates}, "
+                f"which a frame cannot hold"
+            )
         renamed = self._df.rename(**{new: old for old, new in mapping.items()})
         geometry = None if self._geometry_name in mapping else self._geometry_name
         return GeoDataFrame(renamed, geometry)
