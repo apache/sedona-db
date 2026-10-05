@@ -96,7 +96,9 @@ mod tests {
     use geos::{Geom, Geometry};
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
-    use sedona_schema::datatypes::{WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY_ITEM_CRS};
+    use sedona_schema::datatypes::{
+        WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY,
+    };
     use sedona_testing::testers::ScalarUdfTester;
 
     use super::*;
@@ -173,8 +175,7 @@ mod tests {
 
     #[rstest]
     fn udf_empty_simple_geometry_dimensions(
-        #[values(WKB_GEOMETRY, sedona_schema::datatypes::WKB_VIEW_GEOMETRY)]
-        sedona_type: SedonaType,
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
         #[values("POINT", "LINESTRING", "POLYGON")] geometry_type: &str,
         #[values("", " Z", " M", " ZM")] dimension: &str,
     ) {

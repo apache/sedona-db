@@ -3228,6 +3228,15 @@ def test_st_reduceprecision(eng, geom, grid_size, expected):
 @pytest.mark.parametrize(
     ("geom", "expected"),
     [
+        ("POINT Z EMPTY", "POINT Z EMPTY"),
+        ("POINT M EMPTY", "POINT M EMPTY"),
+        ("POINT ZM EMPTY", "POINT ZM EMPTY"),
+        ("LINESTRING Z EMPTY", "LINESTRING Z EMPTY"),
+        ("LINESTRING M EMPTY", "LINESTRING M EMPTY"),
+        ("LINESTRING ZM EMPTY", "LINESTRING ZM EMPTY"),
+        ("POLYGON Z EMPTY", "POLYGON Z EMPTY"),
+        ("POLYGON M EMPTY", "POLYGON M EMPTY"),
+        ("POLYGON ZM EMPTY", "POLYGON ZM EMPTY"),
         (None, None),
         ("POINT EMPTY", "POINT EMPTY"),
         ("LINESTRING EMPTY", "LINESTRING EMPTY"),
@@ -3284,6 +3293,9 @@ def test_st_reduceprecision(eng, geom, grid_size, expected):
 def test_st_normalize(eng, geom, expected):
     eng = eng.create_or_skip()
     if isinstance(eng, PostGIS):
+        # PostGIS drops dimensional flags on empty simple geometries.
+        if geom is not None and geom.endswith(" EMPTY"):
+            expected = f"{geom.split()[0]} EMPTY"
         # PostGIS drops M during ST_Normalize for these cases in our test environment.
         if geom == "POLYGON M ((1 1 7, 1 0 7, 0 0 7, 0 1 7, 1 1 7))":
             expected = "POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))"
@@ -3626,6 +3638,9 @@ def test_st_pointn(eng, geometry, n, expected):
 @pytest.mark.parametrize(
     ("geom", "expected"),
     [
+        ("POINT Z EMPTY", "POINT Z EMPTY"),
+        ("LINESTRING Z EMPTY", "POINT Z EMPTY"),
+        ("POLYGON Z EMPTY", "POINT Z EMPTY"),
         (None, None),
         ("POINT EMPTY", "POINT EMPTY"),
         ("LINESTRING EMPTY", "POINT EMPTY"),
@@ -4134,6 +4149,18 @@ def test_st_mmax(eng, geom, expected):
 @pytest.mark.parametrize(
     ("geom", "expected"),
     [
+        ("POINT EMPTY", "POINT EMPTY"),
+        ("LINESTRING EMPTY", "LINESTRING EMPTY"),
+        (None, None),
+        ("POINT Z EMPTY", "POINT Z EMPTY"),
+        ("POINT M EMPTY", "POINT M EMPTY"),
+        ("POINT ZM EMPTY", "POINT ZM EMPTY"),
+        ("LINESTRING Z EMPTY", "LINESTRING Z EMPTY"),
+        ("LINESTRING M EMPTY", "LINESTRING M EMPTY"),
+        ("LINESTRING ZM EMPTY", "LINESTRING ZM EMPTY"),
+        ("POLYGON Z EMPTY", "POLYGON Z EMPTY"),
+        ("POLYGON M EMPTY", "POLYGON M EMPTY"),
+        ("POLYGON ZM EMPTY", "POLYGON ZM EMPTY"),
         # Already valid polygon should remain unchanged
         (
             "POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))",
@@ -4193,6 +4220,9 @@ def test_st_mmax(eng, geom, expected):
 )
 def test_st_makevalid(eng, geom, expected):
     eng = eng.create_or_skip()
+    # PostGIS drops dimensional flags on empty simple geometries.
+    if isinstance(eng, PostGIS) and geom is not None and geom.endswith(" EMPTY"):
+        expected = f"{geom.split()[0]} EMPTY"
     eng.assert_query_result(
         f"SELECT ST_MakeValid({geom_or_null(geom)})",
         expected,
@@ -4357,6 +4387,15 @@ def test_st_isvalidreason(eng, geom, expected):
 @pytest.mark.parametrize(
     ("geom", "tolerance", "expected"),
     [
+        ("POINT Z EMPTY", 1, "POINT Z EMPTY"),
+        ("POINT M EMPTY", 1, "POINT M EMPTY"),
+        ("POINT ZM EMPTY", 1, "POINT ZM EMPTY"),
+        ("LINESTRING Z EMPTY", 1, "LINESTRING Z EMPTY"),
+        ("LINESTRING M EMPTY", 1, "LINESTRING M EMPTY"),
+        ("LINESTRING ZM EMPTY", 1, "LINESTRING ZM EMPTY"),
+        ("POLYGON Z EMPTY", 1, "POLYGON Z EMPTY"),
+        ("POLYGON M EMPTY", 1, "POLYGON M EMPTY"),
+        ("POLYGON ZM EMPTY", 1, "POLYGON ZM EMPTY"),
         # TODO: PostGIS fails without explicit ::GEOMETRY type cast, but casting
         # doesn't work on SedonaDB yet.
         # (None, 2, None),
@@ -4486,6 +4525,15 @@ def test_st_simplify(eng, geom, tolerance, expected):
 @pytest.mark.parametrize(
     ("geom", "tolerance", "expected"),
     [
+        ("POINT Z EMPTY", 1, "POINT Z EMPTY"),
+        ("POINT M EMPTY", 1, "POINT M EMPTY"),
+        ("POINT ZM EMPTY", 1, "POINT ZM EMPTY"),
+        ("LINESTRING Z EMPTY", 1, "LINESTRING Z EMPTY"),
+        ("LINESTRING M EMPTY", 1, "LINESTRING M EMPTY"),
+        ("LINESTRING ZM EMPTY", 1, "LINESTRING ZM EMPTY"),
+        ("POLYGON Z EMPTY", 1, "POLYGON Z EMPTY"),
+        ("POLYGON M EMPTY", 1, "POLYGON M EMPTY"),
+        ("POLYGON ZM EMPTY", 1, "POLYGON ZM EMPTY"),
         # removes intermediate point
         (
             "LINESTRING (0 0, 0 10, 0 51, 50 20, 30 20, 7 32)",
