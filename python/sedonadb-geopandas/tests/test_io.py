@@ -234,6 +234,26 @@ def test_read_parquet_leaves_out_any_declared_covering(tmp_path, fields):
     assert "bbox" not in sgpd.read_parquet(tmp_path / "parts").columns
 
 
+@pytest.mark.parametrize(
+    "spell",
+    [
+        lambda path: path.as_uri(),
+        lambda path: (p for p in [path]),
+        lambda path: [str(path)],
+    ],
+    ids=["file-uri", "generator", "list"],
+)
+def test_read_parquet_finds_coverings_however_the_path_is_given(tmp_path, spell):
+    # A percent-encoded file URI (the space below) and a one-shot iterable
+    # both reach the file's metadata, so the covering is left out.
+    source = tmp_path / "with covering.parquet"
+    _sample().to_parquet(source, write_covering_bbox=True)
+    gdf = sgpd.read_parquet(spell(source))
+    assert "bbox" not in gdf.columns
+    assert len(gdf.to_geopandas()) == 4
+    gdf.to_parquet(tmp_path / "out.parquet", write_covering_bbox=True)
+
+
 def test_to_parquet_never_overwrites_an_undeclared_bbox(tmp_path):
     # A bounding-box struct that the metadata does not declare as a covering
     # is ordinary data (a survey envelope, say): it is read like any column,

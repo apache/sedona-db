@@ -56,9 +56,17 @@ def _declared_coverings(path):
         if path is None:
             return set()
     path = os.fspath(path)
-    if "://" in path and not path.startswith("file://"):
+    if path.startswith("file:"):
+        # A file URI is percent-encoded (Path.as_uri() writes a space as %20).
+        from urllib.parse import urlparse
+        from urllib.request import url2pathname
+
+        parsed = urlparse(path)
+        if parsed.netloc not in ("", "localhost"):
+            return set()
+        path = url2pathname(parsed.path)
+    elif "://" in path:
         return set()
-    path = path.removeprefix("file://")
     if os.path.isdir(path):
         files = sorted(glob.glob(os.path.join(path, "**", "*.parquet"), recursive=True))
     elif any(char in path for char in "*?["):
@@ -118,6 +126,10 @@ def read_parquet(
             **kwargs,
         },
     )
+    if not isinstance(path, (str, os.PathLike)):
+        # Read twice (by the engine, then for the footer), so a one-shot
+        # iterable such as a generator is collected first.
+        path = list(path)
     ctx = context or default_context()
     df = ctx.read_parquet(path)
     if columns is None:
