@@ -29,7 +29,7 @@ use datafusion_physical_plan::metrics::{ExecutionPlanMetricsSet, SpillMetrics};
 use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
 use sedona_spatial_join::evaluated_batch::EvaluatedBatch;
 use sedona_spatial_join::evaluated_batch::spill::{
-    EvaluatedBatchSpillReader, EvaluatedBatchSpillWriter,
+    EvaluatedBatchSpillReader, EvaluatedBatchSpillWriter, SpillArtifact,
 };
 use sedona_spatial_join::operand_evaluator::EvaluatedGeometryArray;
 use sedona_testing::create::create_array_storage;
@@ -73,7 +73,7 @@ fn write_spill_file(
     sedona_type: &SedonaType,
     compression: SpillCompression,
     evaluated_batch: &EvaluatedBatch,
-) -> Arc<datafusion_execution::disk_manager::RefCountedTempFile> {
+) -> SpillArtifact {
     let metrics = SpillMetrics::new(metrics_set, 0);
     let mut writer = EvaluatedBatchSpillWriter::try_new(
         env,
@@ -92,13 +92,16 @@ fn write_spill_file(
             .expect("failed to append batch in benchmark");
     }
 
-    Arc::new(writer.finish().expect("failed to finish spill writer"))
+    writer.finish().expect("failed to finish spill writer")
 }
 
 fn bench_spill_writer_and_reader(c: &mut Criterion) {
     let env = Arc::new(RuntimeEnv::default());
     let schema = make_schema();
     let metrics_set = ExecutionPlanMetricsSet::new();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("failed to create tokio runtime");
 
     let compressions = [
         ("uncompressed", SpillCompression::Uncompressed),
@@ -161,18 +164,19 @@ fn bench_spill_writer_and_reader(c: &mut Criterion) {
                 &spill_file,
                 |b, file| {
                     b.iter(|| {
-                        let mut reader =
-                            EvaluatedBatchSpillReader::try_new(black_box(file.as_ref()))
+                        runtime.block_on(async {
+                            let mut reader = EvaluatedBatchSpillReader::try_new(black_box(file))
                                 .expect("failed to create spill reader");
-                        let mut rows = 0usize;
+                            let mut rows = 0usize;
 
-                        while let Some(batch) = reader.next_batch() {
-                            let batch = batch.expect("failed to read evaluated batch");
-                            rows += batch.num_rows();
-                            black_box(batch);
-                        }
+                            while let Some(batch) = reader.next_batch().await {
+                                let batch = batch.expect("failed to read evaluated batch");
+                                rows += batch.num_rows();
+                                black_box(batch);
+                            }
 
-                        black_box(rows);
+                            black_box(rows);
+                        })
                     })
                 },
             );
@@ -185,18 +189,19 @@ fn bench_spill_writer_and_reader(c: &mut Criterion) {
                 &spill_file,
                 |b, file| {
                     b.iter(|| {
-                        let mut reader =
-                            EvaluatedBatchSpillReader::try_new(black_box(file.as_ref()))
+                        runtime.block_on(async {
+                            let mut reader = EvaluatedBatchSpillReader::try_new(black_box(file))
                                 .expect("failed to create spill reader");
-                        let mut rows = 0usize;
+                            let mut rows = 0usize;
 
-                        while let Some(batch) = reader.next_raw_batch() {
-                            let batch = batch.expect("failed to read record batch");
-                            rows += batch.num_rows();
-                            black_box(batch);
-                        }
+                            while let Some(batch) = reader.next_raw_batch().await {
+                                let batch = batch.expect("failed to read record batch");
+                                rows += batch.num_rows();
+                                black_box(batch);
+                            }
 
-                        black_box(rows);
+                            black_box(rows);
+                        })
                     })
                 },
             );

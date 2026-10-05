@@ -35,7 +35,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use datafusion_common::config::ConfigOptions;
-use datafusion_common::{Result, Statistics, internal_err, plan_err};
+use datafusion_common::{Result, Statistics, internal_err, plan_err, tree_node::TreeNodeRecursion};
 use datafusion_execution::{SendableRecordBatchStream, TaskContext};
 use datafusion_physical_expr::PhysicalExpr;
 use datafusion_physical_plan::execution_plan::CardinalityEffect;
@@ -46,8 +46,8 @@ use datafusion_physical_plan::metrics::MetricsSet;
 use datafusion_physical_plan::projection::ProjectionExec;
 use datafusion_physical_plan::repartition::RepartitionExec;
 use datafusion_physical_plan::{
-    DisplayAs, DisplayFormatType, ExecutionPlan, ExecutionPlanProperties, Partitioning,
-    PlanProperties,
+    ChildStats, DisplayAs, DisplayFormatType, ExecutionPlan, ExecutionPlanProperties, Partitioning,
+    PlanProperties, StatisticsArgs,
 };
 
 /// A round-robin repartitioning node that is invisible to DataFusion's
@@ -115,6 +115,13 @@ impl DisplayAs for ProbeShuffleExec {
 }
 
 impl ExecutionPlan for ProbeShuffleExec {
+    fn apply_expressions(
+        &self,
+        _f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> Result<TreeNodeRecursion>,
+    ) -> Result<TreeNodeRecursion> {
+        Ok(TreeNodeRecursion::Continue)
+    }
+
     fn name(&self) -> &str {
         "ProbeShuffleExec"
     }
@@ -165,8 +172,17 @@ impl ExecutionPlan for ProbeShuffleExec {
         self.inner_repartition.metrics()
     }
 
-    fn partition_statistics(&self, partition: Option<usize>) -> Result<Arc<Statistics>> {
-        self.inner_repartition.partition_statistics(partition)
+    fn child_stats_requests(&self, partition: Option<usize>) -> Vec<ChildStats> {
+        self.inner_repartition.child_stats_requests(partition)
+    }
+
+    fn statistics_from_inputs(
+        &self,
+        input_stats: &[Arc<Statistics>],
+        args: &StatisticsArgs,
+    ) -> Result<Arc<Statistics>> {
+        self.inner_repartition
+            .statistics_from_inputs(input_stats, args)
     }
 
     fn try_swapping_with_projection(

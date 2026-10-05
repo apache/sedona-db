@@ -17,9 +17,10 @@
 use std::{fmt::Formatter, sync::Arc};
 
 use arrow_schema::SchemaRef;
-use datafusion_common::{JoinSide, Result, project_schema};
+use datafusion_common::{JoinSide, Result, project_schema, tree_node::TreeNodeRecursion};
 use datafusion_execution::{SendableRecordBatchStream, TaskContext};
 use datafusion_expr::JoinType;
+use datafusion_physical_expr::PhysicalExpr;
 use datafusion_physical_expr::equivalence::{ProjectionMapping, join_equivalence_properties};
 use datafusion_physical_plan::{
     DisplayAs, DisplayFormatType, ExecutionPlan, ExecutionPlanProperties, PlanProperties,
@@ -360,6 +361,35 @@ impl DisplayAs for SpatialJoinExec {
 }
 
 impl ExecutionPlan for SpatialJoinExec {
+    fn apply_expressions(
+        &self,
+        f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> Result<TreeNodeRecursion>,
+    ) -> Result<TreeNodeRecursion> {
+        let (left, right, distance) = match &self.on {
+            SpatialPredicate::Distance(predicate) => {
+                (&predicate.left, &predicate.right, Some(&predicate.distance))
+            }
+            SpatialPredicate::Relation(predicate) => (&predicate.left, &predicate.right, None),
+            SpatialPredicate::KNearestNeighbors(predicate) => {
+                (&predicate.left, &predicate.right, None)
+            }
+        };
+        for expr in [
+            Some(left),
+            Some(right),
+            distance,
+            self.filter.as_ref().map(JoinFilter::expression),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if f(expr)? == TreeNodeRecursion::Stop {
+                return Ok(TreeNodeRecursion::Stop);
+            }
+        }
+        Ok(TreeNodeRecursion::Continue)
+    }
+
     fn name(&self) -> &str {
         "SpatialJoinExec"
     }

@@ -33,12 +33,13 @@ use crate::{
     partitioning::{
         PartitionedSide, SpatialPartition, SpatialPartitioner, partition_slots::PartitionSlots,
     },
+    utils::spill::SpillArtifact,
 };
 use arrow::compute::interleave_record_batch;
 use arrow_array::RecordBatch;
 use datafusion::config::SpillCompression;
 use datafusion_common::Result;
-use datafusion_execution::{disk_manager::RefCountedTempFile, runtime_env::RuntimeEnv};
+use datafusion_execution::runtime_env::RuntimeEnv;
 use datafusion_physical_plan::metrics::SpillMetrics;
 use futures::StreamExt;
 use sedona_common::sedona_internal_err;
@@ -66,7 +67,7 @@ pub struct SpilledPartitions {
 #[derive(Debug, Clone)]
 pub struct SpilledPartition {
     /// Temporary spill files containing the rows assigned to this partition.
-    spill_files: Vec<Arc<RefCountedTempFile>>,
+    spill_files: Vec<SpillArtifact>,
     /// Aggregated geospatial statistics computed over all rows in this partition.
     geo_statistics: GeoStatistics,
     /// Total number of rows that were written into `spill_files`.
@@ -76,7 +77,7 @@ pub struct SpilledPartition {
 impl SpilledPartition {
     /// Construct a spilled partition from finalized spill files and aggregated statistics.
     pub fn new(
-        spill_files: Vec<Arc<RefCountedTempFile>>,
+        spill_files: Vec<SpillArtifact>,
         geo_statistics: GeoStatistics,
         num_rows: usize,
     ) -> Self {
@@ -93,7 +94,7 @@ impl SpilledPartition {
     }
 
     /// Spill files produced for this partition.
-    pub fn spill_files(&self) -> &[Arc<RefCountedTempFile>] {
+    pub fn spill_files(&self) -> &[SpillArtifact] {
         &self.spill_files
     }
 
@@ -113,12 +114,12 @@ impl SpilledPartition {
     }
 
     /// Consume this value and return only the spill files.
-    pub fn into_spill_files(self) -> Vec<Arc<RefCountedTempFile>> {
+    pub fn into_spill_files(self) -> Vec<SpillArtifact> {
         self.spill_files
     }
 
     /// Consume this value and return `(spill_files, geo_statistics, num_rows)`.
-    pub fn into_inner(self) -> (Vec<Arc<RefCountedTempFile>>, GeoStatistics, usize) {
+    pub fn into_inner(self) -> (Vec<SpillArtifact>, GeoStatistics, usize) {
         (self.spill_files, self.geo_statistics, self.num_rows)
     }
 }
@@ -252,13 +253,7 @@ impl SpilledPartitions {
                 let spill_files = spilled_partition.spill_files();
                 let spill_file_sizes = spill_files
                     .iter()
-                    .map(|sp| {
-                        sp.inner()
-                            .as_file()
-                            .metadata()
-                            .map(|m| m.len())
-                            .unwrap_or(0)
-                    })
+                    .map(|sp| sp.size().unwrap_or(0))
                     .collect::<Vec<_>>();
                 writeln!(
                     f,
@@ -557,7 +552,7 @@ impl StreamRepartitioner {
             .zip(self.num_rows)
         {
             let spilled_partition = if let Some(writer) = writer_opt {
-                let spill_files = vec![Arc::new(writer.finish()?)];
+                let spill_files = vec![writer.finish()?];
                 let geo_statistics = accumulator.finish();
                 SpilledPartition::new(spill_files, geo_statistics, num_rows)
             } else {
@@ -697,10 +692,10 @@ mod tests {
         })
     }
 
-    fn read_ids(file: &RefCountedTempFile) -> Result<Vec<i32>> {
+    async fn read_ids(file: &SpillArtifact) -> Result<Vec<i32>> {
         let mut reader = EvaluatedBatchSpillReader::try_new(file)?;
         let mut ids = Vec::new();
-        while let Some(batch) = reader.next_batch() {
+        while let Some(batch) = reader.next_batch().await {
             let batch = batch?;
             let array = batch
                 .batch
@@ -715,10 +710,10 @@ mod tests {
         Ok(ids)
     }
 
-    fn read_batch_row_counts(file: &RefCountedTempFile) -> Result<Vec<usize>> {
+    async fn read_batch_row_counts(file: &SpillArtifact) -> Result<Vec<usize>> {
         let mut reader = EvaluatedBatchSpillReader::try_new(file)?;
         let mut counts = Vec::new();
-        while let Some(batch) = reader.next_batch() {
+        while let Some(batch) = reader.next_batch().await {
             let batch = batch?;
             counts.push(batch.batch.num_rows());
         }
@@ -769,7 +764,8 @@ mod tests {
                 &result
                     .spilled_partition(SpatialPartition::Regular(0))?
                     .spill_files()[0]
-            )?,
+            )
+            .await?,
             vec![0]
         );
         assert_eq!(
@@ -777,7 +773,8 @@ mod tests {
                 &result
                     .spilled_partition(SpatialPartition::Regular(1))?
                     .spill_files()[0]
-            )?,
+            )
+            .await?,
             vec![1]
         );
         assert_eq!(
@@ -785,7 +782,8 @@ mod tests {
                 &result
                     .spilled_partition(SpatialPartition::None)?
                     .spill_files()[0]
-            )?,
+            )
+            .await?,
             vec![2]
         );
 
@@ -855,7 +853,8 @@ mod tests {
                 &result
                     .spilled_partition(SpatialPartition::Multi)?
                     .spill_files()[0]
-            )?,
+            )
+            .await?,
             vec![0]
         );
         assert_eq!(
@@ -863,7 +862,8 @@ mod tests {
                 &result
                     .spilled_partition(SpatialPartition::None)?
                     .spill_files()[0]
-            )?,
+            )
+            .await?,
             vec![1]
         );
         assert_eq!(
@@ -884,8 +884,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn streaming_repartitioner_finishes_partitions() -> Result<()> {
+    #[tokio::test]
+    async fn streaming_repartitioner_finishes_partitions() -> Result<()> {
         let wkbs = vec![
             Some(wkb_point((10.0, 10.0)).unwrap()),
             Some(wkb_point((60.0, 10.0)).unwrap()),
@@ -923,7 +923,8 @@ mod tests {
                 &result
                     .spilled_partition(SpatialPartition::Regular(0))?
                     .spill_files()[0]
-            )?,
+            )
+            .await?,
             vec![0]
         );
         assert_eq!(
@@ -931,14 +932,15 @@ mod tests {
                 &result
                     .spilled_partition(SpatialPartition::Regular(1))?
                     .spill_files()[0]
-            )?,
+            )
+            .await?,
             vec![1]
         );
         Ok(())
     }
 
-    #[test]
-    fn streaming_repartitioner_buffers_until_threshold() -> Result<()> {
+    #[tokio::test]
+    async fn streaming_repartitioner_buffers_until_threshold() -> Result<()> {
         let batch_a = sample_batch(&[0], vec![Some(wkb_point((10.0, 10.0)).unwrap())])?;
         let batch_b = sample_batch(&[1], vec![Some(wkb_point((20.0, 10.0)).unwrap())])?;
         let partitions = vec![BoundingBox::xy((0.0, 50.0), (0.0, 50.0))];
@@ -965,14 +967,15 @@ mod tests {
                 &result
                     .spilled_partition(SpatialPartition::Regular(0))?
                     .spill_files()[0]
-            )?,
+            )
+            .await?,
             vec![0, 1]
         );
         Ok(())
     }
 
-    #[test]
-    fn streaming_repartitioner_respects_target_batch_size() -> Result<()> {
+    #[tokio::test]
+    async fn streaming_repartitioner_respects_target_batch_size() -> Result<()> {
         let batch_a = sample_batch(&[0], vec![Some(wkb_point((10.0, 10.0)).unwrap())])?;
         let batch_b = sample_batch(&[1], vec![Some(wkb_point((20.0, 10.0)).unwrap())])?;
         let partitions = vec![BoundingBox::xy((0.0, 50.0), (0.0, 50.0))];
@@ -998,7 +1001,8 @@ mod tests {
             &result
                 .spilled_partition(SpatialPartition::Regular(0))?
                 .spill_files()[0],
-        )?;
+        )
+        .await?;
         assert_eq!(counts, vec![1, 1]);
         Ok(())
     }
