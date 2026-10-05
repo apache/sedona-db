@@ -88,18 +88,26 @@ def test_explode_repeats_other_geometry_columns():
 
 
 def test_explode_keeps_geography():
+    # A multi-geometry and a nested collection take different routes to their
+    # parts; both keep the geography type and CRS.
     gdf = sgpd.GeoDataFrame(
         sgpd.default_context().sql(
-            "SELECT 1 AS id, ST_GeogFromWKT('MULTIPOINT ((0 0), (1 1))') AS g"
+            "SELECT id, ST_GeogFromWKT(w) AS g FROM (VALUES "
+            "(1, 'MULTIPOINT ((0 0), (1 1))'), "
+            "(2, 'GEOMETRYCOLLECTION (MULTIPOINT ((5 5), (6 6)), POINT (7 7))')"
+            ") AS t(id, w)"
         ),
         geometry="g",
     )
     exploded = gdf.explode()
     assert "geography" in str(exploded._df.schema.field("g").type)
     assert exploded.crs == gdf.crs
-    assert [g.wkt for g in exploded.to_geopandas()["g"]] == [
+    result = exploded.to_geopandas().sort_values("id", kind="stable")
+    assert [g.wkt for g in result["g"]] == [
         "POINT (0 0)",
         "POINT (1 1)",
+        "MULTIPOINT ((5 5), (6 6))",
+        "POINT (7 7)",
     ]
 
 
@@ -113,14 +121,21 @@ def test_explode_of_an_empty_frame():
     assert len(exploded.to_geopandas()) == 0
 
 
-def test_explode_with_a_column_named_like_its_part_counter():
+def test_explode_with_columns_named_like_its_working_columns():
     source = gpd.GeoDataFrame(
-        {"__part": ["kept"]},
-        geometry=gpd.GeoSeries.from_wkt(["MULTIPOINT ((0 0), (1 1))"]),
+        {"__dump": ["a", "b"], "__member": [1, 2], "__collection": [True, False]},
+        geometry=gpd.GeoSeries.from_wkt(
+            [
+                "MULTIPOINT ((0 0), (1 1))",
+                "GEOMETRYCOLLECTION (MULTIPOINT ((0 0), (1 1)), POINT (2 2))",
+            ]
+        ),
     )
     ours = sgpd.from_geopandas(source).explode().to_geopandas()
-    assert list(ours.columns) == ["__part", "geometry"]
-    assert list(ours["__part"]) == ["kept", "kept"]
+    expected = source.explode()
+    assert list(ours.columns) == list(expected.columns)
+    assert list(ours["__dump"]) == list(expected["__dump"])
+    assert _geometries(ours.geometry) == _geometries(expected.geometry)
 
 
 def test_geoseries_explode_matches_geopandas():

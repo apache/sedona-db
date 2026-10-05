@@ -114,38 +114,71 @@ def _is_missing(value):
 def _explode_parts(df, column):
     """`df` with one row per part of its geometry column `column`.
 
-    Parts are taken one level deep, as `shapely.get_parts` does: a nested
-    collection yields its members whole, where the engine's `ST_Dump` would
-    flatten them further. A single geometry is its own one part, even when
-    empty; a multi-geometry or collection with no parts, or a missing
-    geometry, yields no row. The exploded column moves to the end. All three
-    as in GeoPandas.
+    Parts are taken one level deep, as `shapely.get_parts` does. A single
+    geometry is its own one part, even when empty; a multi-geometry or
+    collection with no parts, or a missing geometry, yields no row. The
+    exploded column moves to the end. All three as in GeoPandas.
+
+    `ST_Dump` lists the parts before they are unnested, so each part is
+    stored once rather than the whole geometry being repeated per part. It
+    flattens nested collections, though, so a geometry collection's members
+    are read one level deep with `ST_GeometryN` instead, which repeats the
+    collection (only) once per member while it is exploded.
     """
     ctx = df._ctx
+    column_type = df.schema.field(column).type
+    crs = column_type.crs
+    spherical = "SPHERICAL" in str(getattr(column_type, "edge_type", "")).upper()
+    df = df.filter(df[column].is_not_null())
     geometry = df[column]
-    kind = geometry.geo.geometry_type()
-    is_multi = kind.funcs.starts_with(lit("ST_Multi")) | (
-        kind == lit("ST_GeometryCollection")
-    )
-    # The engine counts no parts in an empty single geometry; greatest() lifts
-    # exactly those to one. A missing geometry counts none.
-    count = (
-        geometry.geo.num_geometries()
-        .cast(pa.int64())
-        .funcs.greatest((~is_multi).cast(pa.int64()))
-        .funcs.coalesce(lit(0))
-    )
+    is_collection = geometry.geo.geometry_type() == lit("ST_GeometryCollection")
+    # nvl2 needs its condition in the same type as its values, hence the
+    # binary flag (non-null on collections only), as in GeoSeries.envelope.
+    collection_flag = _binary_flag(is_collection)
+    carried = collection_flag.funcs.nvl2(geometry.geo.as_binary(), lit(None))
+    members = (
+        geometry.geo.num_geometries().cast(pa.int64()) * is_collection.cast(pa.int64())
+    ).funcs.coalesce(lit(0))
     others = [name for name in df.schema.names if name != column]
-    position = "__part"
-    while position in df.schema.names:
-        position = f"_{position}"
+    dump, position, carry = (
+        _unused_name(df, "__dump"),
+        _unused_name(df, "__member"),
+        _unused_name(df, "__collection"),
+    )
     staged = df.select(
         *[df[name] for name in others],
-        geometry.alias(column),
-        ctx.lit(1).funcs.range(count + lit(1)).alias(position),
-    ).unnest(position)
-    part = staged[column].geo.geometry_n(staged[position])
+        geometry.geo.dump().alias(dump),
+        ctx.lit(1).funcs.range(members + lit(1)).alias(position),
+        carried.alias(carry),
+    ).unnest(dump, position)
+    # Unnested in parallel, a collection yields as many rows as the longer of
+    # its dumped leaves and its member positions; only the positions count.
+    staged = staged.filter(staged[carry].is_null() | staged[position].is_not_null())
+
+    def from_wkb(wkb):
+        return wkb.funcs.st_geogfromwkb() if spherical else wkb.funcs.st_geomfromwkb()
+
+    member = from_wkb(staged[carry]).geo.geometry_n(staged[position]).geo.as_binary()
+    wkb = _binary_flag(staged[position].is_not_null()).funcs.nvl2(
+        member, staged[dump]["geom"].cast(pa.binary())
+    )
+    # WKB carries neither the spatial kind nor the CRS: both are restored.
+    part = from_wkb(wkb)
+    if crs is not None:
+        part = part.funcs.st_setcrs(ctx.lit(crs.to_json()))
     return staged.select(*[staged[name] for name in others], part.alias(column))
+
+
+def _binary_flag(condition):
+    """A binary value that is non-null exactly where `condition` is true."""
+    return condition.funcs.nullif(lit(False)).cast(pa.string()).cast(pa.binary())
+
+
+def _unused_name(df, name):
+    """`name`, prefixed with underscores until no column of `df` has it."""
+    while name in df.schema.names:
+        name = f"_{name}"
+    return name
 
 
 class GeoDataFrame:
