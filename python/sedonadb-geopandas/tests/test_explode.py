@@ -111,6 +111,24 @@ def test_explode_keeps_geography():
     ]
 
 
+def test_explode_keeps_geography_without_a_crs():
+    # Parts are rebuilt as geography, whose constructor assigns OGC:CRS84; a
+    # column without a CRS stays without one.
+    gdf = sgpd.GeoDataFrame(
+        sgpd.default_context().sql(
+            "SELECT 1 AS id, ST_SetSRID(ST_GeogFromWKT("
+            "'GEOMETRYCOLLECTION (MULTIPOINT ((0 0), (1 1)), POINT (2 2))'), 0) AS g "
+            "UNION ALL SELECT 2, ST_SetSRID(ST_GeogFromWKT('MULTIPOINT ((5 5), (6 6))'), 0)"
+        ),
+        geometry="g",
+    )
+    assert gdf.crs is None
+    exploded = gdf.explode()
+    assert exploded.crs is None
+    assert "geography" in str(exploded._df.schema.field("g").type)
+    assert len(exploded.to_geopandas()) == 4
+
+
 def test_explode_of_an_empty_frame():
     source = gpd.GeoDataFrame(
         {"a": [1]}, geometry=gpd.GeoSeries.from_wkt(["MULTIPOINT ((0 0), (1 1))"])

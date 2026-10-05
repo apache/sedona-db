@@ -139,6 +139,14 @@ def _explode_parts(df, column):
     members = (
         geometry.geo.num_geometries().cast(pa.int64()) * is_collection.cast(pa.int64())
     ).funcs.coalesce(lit(0))
+    # A collection's parts come from its member positions, so its dumped
+    # leaves are dropped before unnesting: unnested in parallel with the
+    # positions, each leaf would carry the whole collection.
+    leaves = geometry.geo.dump()
+    leaves = leaves.funcs.array_slice(
+        lit(1),
+        leaves.funcs.cardinality().cast(pa.int64()) * (~is_collection).cast(pa.int64()),
+    )
     others = [name for name in df.schema.names if name != column]
     dump, position, carry = (
         _unused_name(df, "__dump"),
@@ -147,13 +155,10 @@ def _explode_parts(df, column):
     )
     staged = df.select(
         *[df[name] for name in others],
-        geometry.geo.dump().alias(dump),
+        leaves.alias(dump),
         ctx.lit(1).funcs.range(members + lit(1)).alias(position),
         carried.alias(carry),
     ).unnest(dump, position)
-    # Unnested in parallel, a collection yields as many rows as the longer of
-    # its dumped leaves and its member positions; only the positions count.
-    staged = staged.filter(staged[carry].is_null() | staged[position].is_not_null())
 
     def from_wkb(wkb):
         return wkb.funcs.st_geogfromwkb() if spherical else wkb.funcs.st_geomfromwkb()
@@ -166,6 +171,10 @@ def _explode_parts(df, column):
     part = from_wkb(wkb)
     if crs is not None:
         part = part.funcs.st_setcrs(ctx.lit(crs.to_json()))
+    elif spherical:
+        # The geography constructor assigns OGC:CRS84; SRID 0 clears it, as
+        # the column had no CRS.
+        part = part.geo.set_srid(ctx.lit(0))
     return staged.select(*[staged[name] for name in others], part.alias(column))
 
 
