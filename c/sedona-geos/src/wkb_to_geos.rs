@@ -71,7 +71,9 @@ fn geometry_to_geos(scratch: &mut Vec<f64>, wkb: &Wkb) -> GResult<geos::Geometry
 
 fn point_to_geos(scratch: &mut Vec<f64>, p: &Point) -> GResult<geos::Geometry> {
     if p.is_empty() {
-        geos::Geometry::create_empty_point()
+        let coord_seq =
+            create_coord_sequence_from_raw_parts(&[], p.dimension(), p.byte_order(), 0, scratch)?;
+        geos::Geometry::create_point(coord_seq)
     } else {
         let coord_seq = create_coord_sequence_from_raw_parts(
             p.coord_slice(),
@@ -87,18 +89,14 @@ fn point_to_geos(scratch: &mut Vec<f64>, p: &Point) -> GResult<geos::Geometry> {
 
 fn line_string_to_geos(scratch: &mut Vec<f64>, ls: &LineString) -> GResult<geos::Geometry> {
     let num_points = ls.num_coords();
-    if num_points == 0 {
-        geos::Geometry::create_empty_line_string()
-    } else {
-        let coord_seq = create_coord_sequence_from_raw_parts(
-            ls.coords_slice(),
-            ls.dimension(),
-            ls.byte_order(),
-            num_points,
-            scratch,
-        )?;
-        geos::Geometry::create_line_string(coord_seq)
-    }
+    let coord_seq = create_coord_sequence_from_raw_parts(
+        ls.coords_slice(),
+        ls.dimension(),
+        ls.byte_order(),
+        num_points,
+        scratch,
+    )?;
+    geos::Geometry::create_line_string(coord_seq)
 }
 
 fn polygon_to_geos(scratch: &mut Vec<f64>, poly: &Polygon) -> GResult<geos::Geometry> {
@@ -113,7 +111,14 @@ fn polygon_to_geos(scratch: &mut Vec<f64>, poly: &Polygon) -> GResult<geos::Geom
         )?;
         geos::Geometry::create_linear_ring(coord_seq)?
     } else {
-        return geos::Geometry::create_empty_polygon();
+        let coord_seq = create_coord_sequence_from_raw_parts(
+            &[],
+            poly.dimension(),
+            NATIVE_ENDIANNESS,
+            0,
+            scratch,
+        )?;
+        geos::Geometry::create_linear_ring(coord_seq)?
     };
 
     // Create interior rings
@@ -221,6 +226,11 @@ fn create_coord_sequence_from_raw_parts(
         Dimension::Xym => (CoordType::XYM, 3),
         Dimension::Xyzm => (CoordType::XYZM, 4),
     };
+    // The dimensionless empty constructors lose Z/M before GEOS runs. An empty
+    // coordinate sequence retains these flags, including M on GEOS 3.12.
+    if num_coords == 0 {
+        return geos::CoordSeq::new_from_buffer(&[], 0, coord_type);
+    }
     let num_ordinates = dim_size * num_coords;
 
     // If the byte order matches native endianness, we can potentially use zero-copy
@@ -1315,6 +1325,81 @@ mod test {
                 wkt_string: "GEOMETRYCOLLECTION ZM (POINT ZM (30 10 40 300))".to_string(),
             },
         ]
+    }
+
+    #[rstest::rstest]
+    fn test_empty_simple_geometry_dimensions(
+        #[values(1u32, 2, 3)] geometry_type: u32,
+        #[values(0u32, 1, 2, 3)] dimension: u32,
+        #[values(Endianness::LittleEndian, Endianness::BigEndian)] endianness: Endianness,
+    ) {
+        let mut buf = vec![match endianness {
+            Endianness::LittleEndian => 1,
+            Endianness::BigEndian => 0,
+        }];
+        let wkb_type = geometry_type + dimension * 1000;
+        buf.extend_from_slice(&match endianness {
+            Endianness::LittleEndian => wkb_type.to_le_bytes(),
+            Endianness::BigEndian => wkb_type.to_be_bytes(),
+        });
+        if geometry_type == 1 {
+            let num_ordinates = match dimension {
+                0 => 2,
+                1 | 2 => 3,
+                _ => 4,
+            };
+            for _ in 0..num_ordinates {
+                buf.extend_from_slice(&match endianness {
+                    Endianness::LittleEndian => f64::NAN.to_le_bytes(),
+                    Endianness::BigEndian => f64::NAN.to_be_bytes(),
+                });
+            }
+        } else {
+            buf.extend_from_slice(&0u32.to_le_bytes());
+        }
+
+        let wkb = read_wkb(&buf).unwrap();
+        let geom = GEOSWkbFactory::new().create(&wkb).unwrap();
+        assert!(geom.is_empty().unwrap());
+        assert_eq!(geom.has_z().unwrap(), matches!(dimension, 1 | 3));
+        assert_eq!(geom.has_m().unwrap(), matches!(dimension, 2 | 3));
+
+        let mut output = Vec::new();
+        crate::geos_to_wkb::write_geos_geometry(&geom, &mut output).unwrap();
+        let roundtrip = read_wkb(&output).unwrap();
+        assert_eq!(roundtrip.dimension(), wkb.dimension());
+        assert_eq!(roundtrip.geometry_type(), wkb.geometry_type());
+    }
+
+    #[rstest::rstest]
+    fn test_empty_collection_members_preserve_dimensions(
+        #[values(4u32, 5, 6, 7)] geometry_type: u32,
+        #[values(1u32, 2, 3)] dimension: u32,
+    ) {
+        let mut input = vec![1];
+        input.extend_from_slice(&(geometry_type + dimension * 1000).to_le_bytes());
+        let members: &[&str] = match geometry_type {
+            4 => &["POINT"],
+            5 => &["LINESTRING"],
+            6 => &["POLYGON"],
+            _ => &["POINT", "LINESTRING", "POLYGON"],
+        };
+        input.extend_from_slice(&(members.len() as u32).to_le_bytes());
+        let dimension_suffix = match dimension {
+            1 => "Z",
+            2 => "M",
+            _ => "ZM",
+        };
+        for member in members {
+            input.extend_from_slice(&sedona_testing::create::make_wkb(&format!(
+                "{member} {dimension_suffix} EMPTY"
+            )));
+        }
+        let wkb = read_wkb(&input).unwrap();
+        let geom = GEOSWkbFactory::new().create(&wkb).unwrap();
+        let mut output = Vec::new();
+        crate::geos_to_wkb::write_geos_geometry(&geom, &mut output).unwrap();
+        assert_eq!(output, input);
     }
 
     #[test]
