@@ -688,10 +688,16 @@ def _pandas_missing(dtype, nan=False):
         return None
 
 
+def _is_null_marker(marker):
+    """None, or a null Arrow scalar: what Arrow reads as a null."""
+    return marker is None or (isinstance(marker, pa.Scalar) and not marker.is_valid)
+
+
 def _is_nan_marker(marker):
+    """A floating-point NaN, NumPy's included (np.float32 is not a float)."""
     if isinstance(marker, pa.Scalar):
         marker = marker.as_py() if marker.is_valid else None
-    return isinstance(marker, float) and marker != marker
+    return isinstance(marker, numbers.Real) and marker != marker
 
 
 def _missing_members(stored, dtype, markers):
@@ -700,7 +706,8 @@ def _missing_members(stored, dtype, markers):
     pandas decides when it can hold the column (`stored` is its type as
     stored, `dtype` without encodings). Otherwise, without pandas or for
     geometry, Arrow's own reading applies, which is also GeoPandas' for
-    geometry: None (or a null scalar) matches a null, and NaN a NaN.
+    geometry: None (or a null scalar) matches a null and a NaN a NaN, while
+    pandas' other markers (`pd.NA`, `NaT`) match neither.
     """
     floating = pa.types.is_floating(dtype)
     answers = []
@@ -714,7 +721,7 @@ def _missing_members(stored, dtype, markers):
         elif nan:
             answers.append(any(_is_nan_marker(marker) for marker in markers))
         else:
-            answers.append(any(not _is_nan_marker(marker) for marker in markers))
+            answers.append(any(_is_null_marker(marker) for marker in markers))
     return tuple(answers)
 
 
