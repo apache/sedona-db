@@ -87,6 +87,7 @@ impl SpatialJoinPhysicalPlanner for GeographySpatialJoinPhysicalPlanner {
                 args.physical_right.clone(),
                 args.spatial_predicate,
                 should_swap,
+                None,
             )?
         } else {
             (args.physical_left.clone(), args.physical_right.clone())

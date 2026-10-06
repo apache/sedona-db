@@ -59,6 +59,29 @@ impl Default for RasterSpatialJoinPhysicalPlanner {
     }
 }
 
+/// Minimum rows per slice when the raster probe side is split before its
+/// round-robin shuffle.
+///
+/// The probe side of a raster join is usually a raster catalog: a few thousand
+/// small rows (an out-of-db raster row is a path plus georeferencing metadata)
+/// that a Parquet scan returns as one or two batches. Dealt as whole batches, they
+/// reach only one or two partitions, and every operator after the join (raster
+/// loading, pixel functions) then runs on those partitions alone, although each
+/// raster row fans out to many matches and is expensive to process. Splitting each
+/// batch (zero-copy) into up to one slice per partition spreads that work over all
+/// partitions. Unlike lowering `batch_size`, which shrinks every batch in the
+/// plan, this only changes how the probe input is cut; the join still emits
+/// output batches of up to `batch_size` rows.
+///
+/// The floor keeps batches that are already small from being shredded into
+/// slices so small that fixed per-batch costs (a channel hop, and one pass
+/// through the join probe and every downstream operator) dominate the per-row
+/// work. Since a batch never yields more slices than there are partitions, the
+/// floor only matters for small batches: any batch of at least
+/// `64 * num_partitions` rows (768 at 12 partitions) is still spread over every
+/// partition.
+const RASTER_PROBE_SPLIT_MIN_ROWS: usize = 64;
+
 impl SpatialJoinPhysicalPlanner for RasterSpatialJoinPhysicalPlanner {
     fn plan_spatial_join(
         &self,
@@ -112,12 +135,16 @@ impl SpatialJoinPhysicalPlanner for RasterSpatialJoinPhysicalPlanner {
         // The raster operand ends up on the probe side, so `swap_raster_to_probe`
         // doubles as the swap decision `repartition_probe_side` uses to target the
         // pre-swap input that becomes the probe.
+        //
+        // Unlike the default planner, the probe batches are also split before the
+        // round-robin (see `RASTER_PROBE_SPLIT_MIN_ROWS`).
         let (physical_left, physical_right) = if args.join_options.repartition_probe_side {
             repartition_probe_side(
                 args.physical_left.clone(),
                 args.physical_right.clone(),
                 args.spatial_predicate,
                 swap_raster_to_probe,
+                Some(RASTER_PROBE_SPLIT_MIN_ROWS),
             )?
         } else {
             (args.physical_left.clone(), args.physical_right.clone())

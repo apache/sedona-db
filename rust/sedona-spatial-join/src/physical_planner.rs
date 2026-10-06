@@ -87,6 +87,7 @@ impl SpatialJoinPhysicalPlanner for DefaultSpatialJoinPhysicalPlanner {
                 args.physical_right.clone(),
                 args.spatial_predicate,
                 should_swap,
+                None,
             )?
         } else {
             (args.physical_left.clone(), args.physical_right.clone())
@@ -168,11 +169,15 @@ pub fn should_swap_join_order(
 ///   the current `left` will become `right` (probe) after swap, so we repartition `left`.
 /// - For KNN predicates: `should_swap` is always false, and the probe side is determined by
 ///   `KNNPredicate::probe_side`.
+///
+/// `batch_split_min_rows` is forwarded to [`ProbeShuffleExec::try_new_with_batch_split`]
+/// when set; `None` deals whole probe batches.
 pub fn repartition_probe_side(
     mut physical_left: Arc<dyn ExecutionPlan>,
     mut physical_right: Arc<dyn ExecutionPlan>,
     spatial_predicate: &SpatialPredicate,
     should_swap: bool,
+    batch_split_min_rows: Option<usize>,
 ) -> Result<(Arc<dyn ExecutionPlan>, Arc<dyn ExecutionPlan>)> {
     let probe_plan = match spatial_predicate {
         SpatialPredicate::KNearestNeighbors(knn) => match knn.probe_side {
@@ -196,7 +201,11 @@ pub fn repartition_probe_side(
         }
     };
 
-    *probe_plan = Arc::new(ProbeShuffleExec::try_new(Arc::clone(probe_plan))?);
+    let input = Arc::clone(probe_plan);
+    *probe_plan = Arc::new(match batch_split_min_rows {
+        Some(min_rows) => ProbeShuffleExec::try_new_with_batch_split(input, min_rows)?,
+        None => ProbeShuffleExec::try_new(input)?,
+    });
 
     Ok((physical_left, physical_right))
 }

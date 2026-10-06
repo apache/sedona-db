@@ -2057,7 +2057,9 @@ fn subtree_contains_filter_exec(plan: &Arc<dyn ExecutionPlan>) -> bool {
 fn subtree_contains_probe_shuffle_exec(plan: &Arc<dyn ExecutionPlan>) -> bool {
     let mut found = false;
     plan.apply(|node| {
-        if node.downcast_ref::<ProbeShuffleExec>().is_some() {
+        if let Some(probe_shuffle) = node.downcast_ref::<ProbeShuffleExec>() {
+            // Only the raster join splits probe batches; vector joins deal whole batches.
+            assert_eq!(probe_shuffle.batch_split_min_rows(), None);
             found = true;
             return Ok(TreeNodeRecursion::Stop);
         }

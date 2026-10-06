@@ -63,7 +63,7 @@ use sedona_raster_functions::footprint::{FOOTPRINT_POINTS_PER_EDGE, densify_foot
 use sedona_schema::crs::lnglat;
 use sedona_schema::datatypes::{RASTER, SedonaType};
 use sedona_schema::raster::BandDataType;
-use sedona_spatial_join::SpatialJoinExec;
+use sedona_spatial_join::{ProbeShuffleExec, SpatialJoinExec};
 use sedona_spatial_join_raster::physical_planner::RasterSpatialJoinPhysicalPlanner;
 use sedona_testing::create::create_array;
 use sedona_testing::raster_spec::RasterSpec;
@@ -314,6 +314,28 @@ async fn raster_pinned_to_probe_side(#[case] sql: &str) -> Result<()> {
     assert!(
         !build_has_raster,
         "raster must not be on the build (left) side, got:\n{physical_str}"
+    );
+
+    // The raster probe side is shuffled with batch splitting on, so a raster
+    // catalog read as a few batches still reaches every partition.
+    let mut probe_split_min_rows = None;
+    plan.apply(|node| {
+        if let Some(sj) = node.downcast_ref::<SpatialJoinExec>() {
+            sj.right.apply(|probe_node| {
+                if let Some(shuffle) = probe_node.downcast_ref::<ProbeShuffleExec>() {
+                    probe_split_min_rows = shuffle.batch_split_min_rows();
+                    return Ok(TreeNodeRecursion::Stop);
+                }
+                Ok(TreeNodeRecursion::Continue)
+            })?;
+            return Ok(TreeNodeRecursion::Stop);
+        }
+        Ok(TreeNodeRecursion::Continue)
+    })?;
+    assert_eq!(
+        probe_split_min_rows,
+        Some(64),
+        "raster probe side must split batches, got:\n{physical_str}"
     );
 
     let batches = df.collect().await?;

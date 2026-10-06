@@ -439,3 +439,43 @@ def test_spatial_join_with_pandas_metadata(con):
 
     res = con.sql(query).to_pandas()
     pd.testing.assert_frame_equal(res, pd.DataFrame({"idx": [304, 342, 490, 705]}))
+
+
+def test_raster_join_splits_probe_batches():
+    # A raster catalog is usually a few thousand small rows that arrive as one
+    # or two batches. The raster join slices probe batches before its round-robin
+    # shuffle so they reach every partition; the results must not change.
+    import sedonadb
+
+    con = sedonadb.connect()
+    con.sql("SET datafusion.execution.target_partitions TO 4").execute()
+    # Raster `id` covers x in [10 * id, 10 * id + 10], y in [0, 10].
+    con.sql(
+        """
+        SELECT id, RS_MakeEmptyRaster(1, 'B', 10, 10, id * 10.0, 10.0, 1.0) AS raster
+        FROM generate_series(0, 999) AS t(id)
+        """
+    ).to_view("probe_split_rasters")
+    # Point `gid` lies inside raster `gid / 2`.
+    con.sql(
+        """
+        SELECT gid, ST_Point(gid * 5.0 + 0.5, 5.0) AS geom
+        FROM generate_series(0, 1999) AS t(gid)
+        """
+    ).to_view("probe_split_points")
+    sql = """
+        SELECT r.id, p.gid
+        FROM probe_split_rasters AS r
+        JOIN probe_split_points AS p ON RS_Intersects(r.raster, p.geom)
+    """
+
+    plan_text = _plan_text(con.sql(f"EXPLAIN {sql}"))
+    assert "SpatialJoinExec" in plan_text, plan_text
+    assert (
+        "ProbeShuffleExec: partitioning=RoundRobinBatch(4), split_batches_min_rows=64"
+        in plan_text
+    ), plan_text
+
+    result = con.sql(sql).to_pandas().sort_values(["id", "gid"])
+    assert result["id"].tolist() == [gid // 2 for gid in range(2000)]
+    assert result["gid"].tolist() == list(range(2000))
