@@ -32,6 +32,7 @@ members = [
     "rust/sedona-datasource",
     "rust/sedona-expr",
     "rust/sedona-functions",
+    "rust/sedona-flatgeobuf",
     "rust/sedona-geo-generic-alg",
     "rust/sedona-geo-traits-ext",
     "rust/sedona-geo",
