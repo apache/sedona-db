@@ -26,8 +26,10 @@ It does not change the Python connection's existing Pyogrio registrations.
 ## Read contract
 
 - Header-defined attributes precede the nullable `geometry` column, encoded as ISO WKB with
-  GeoArrow metadata. Preserve Z/M dimensions and header CRS. JSON and DateTime
-  properties remain UTF-8 strings; no timezone or JSON reinterpretation.
+  GeoArrow metadata. Preserve Z/M dimensions and header CRS. JSON uses Utf8 with
+  the `arrow.json` extension; RFC3339 DateTime strings are parsed to UTC
+  microsecond timestamps (sub-microsecond precision is truncated). Invalid dates
+  return an error.
 - Produce only requested columns in bounded batches, including zero-column
   batches for count scans. Missing attributes remain null.
 - Indexed files may be divided into arbitrary byte ranges. A feature belongs
@@ -38,10 +40,14 @@ It does not change the Python connection's existing Pyogrio registrations.
   decoding; do not advertise parallel payload reads for these files.
 - Only local `file:` URLs are supported. Curves and temporal T/TM dimensions,
   remote object stores, spatial pruning and writing are outside this draft.
-  Feature-local column overrides are rejected explicitly.
+  Feature-local column overrides and absent header column schemas are rejected explicitly.
 - Reject invalid framing, unsupported schema types and inconsistent requested
   schemas. A bounded metadata cache is invalidated when local file size or
   modification time changes. Inputs must remain unchanged during a scan.
+
+The `geometry_column_name` format option renames the geometry field (default
+`geometry`). Header conversion preserves duplicate names; DataFusion handles
+name validation when the schema is registered.
 
 ## Verification
 

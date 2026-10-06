@@ -303,9 +303,11 @@ fn raw_geometry_file(
     let (dir, mut obj) = fixture(false, 0);
     let path = dir.path().join("points.fgb");
     let mut b = flatbuffers::FlatBufferBuilder::new();
+    let columns = b.create_vector::<flatbuffers::WIPOffset<flatgeobuf::Column>>(&[]);
     let h = flatgeobuf::Header::create(
         &mut b,
         &flatgeobuf::HeaderArgs {
+            columns: Some(columns),
             geometry_type: GeometryType::Point,
             has_z,
             has_m,
@@ -545,6 +547,10 @@ async fn all_attribute_types_preserve_values_and_missing_nulls() {
         .next()
         .unwrap()
         .unwrap();
+    assert_eq!(
+        b.schema().field(12).metadata()["ARROW:extension:name"],
+        "arrow.json"
+    );
     let expected = [
         ScalarValue::Int8(Some(-2)),
         ScalarValue::UInt8(Some(3)),
@@ -559,7 +565,7 @@ async fn all_attribute_types_preserve_values_and_missing_nulls() {
         ScalarValue::Float64(Some(2.5)),
         ScalarValue::Utf8(Some("hi".into())),
         ScalarValue::Utf8(Some("{}".into())),
-        ScalarValue::Utf8(Some("2026-10-06T00:00:00Z".into())),
+        ScalarValue::TimestampMicrosecond(Some(1791244800000000), Some("UTC".into())),
         ScalarValue::Binary(Some(vec![0, 255])),
     ];
     for (i, v) in expected.into_iter().enumerate() {
@@ -719,4 +725,145 @@ async fn feature_local_schema_is_explicitly_unsupported() {
         .await
         .unwrap();
     assert!(r.next().unwrap().is_err());
+}
+
+#[tokio::test]
+async fn configurable_geometry_column_preserves_projected_schema() {
+    let (_dir, obj) = fixture(true, 3);
+    let spec = FlatGeobufFormatSpec::default()
+        .with_options(&[("geometry_column_name".into(), "shape".into())].into())
+        .unwrap();
+    let schema = spec.infer_schema(&obj).await.unwrap();
+    assert_eq!(schema.field(2).name(), "shape");
+    let b = spec
+        .open_reader(&args(obj, Some(vec![2])))
+        .await
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap();
+    assert_eq!(b.schema().field(0).name(), "shape");
+    assert_eq!(b.num_rows(), 3);
+}
+
+#[tokio::test]
+async fn datetime_offsets_nulls_and_invalid_values() {
+    for (text, expected) in [
+        (
+            "2026-10-06T05:30:00.123456+05:30",
+            Some(1791244800123456_i64),
+        ),
+        ("not-a-date", None),
+    ] {
+        let (dir, mut obj) = fixture(false, 0);
+        let mut writer = FgbWriter::create_with_options(
+            "dates",
+            GeometryType::Point,
+            FgbWriterOptions {
+                write_index: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        writer.add_column("when", ColumnType::DateTime, |_, _| {});
+        writer
+            .add_feature_geom(Point(0.), |f| {
+                f.property(0, "when", &ColumnValue::DateTime(text)).unwrap();
+            })
+            .unwrap();
+        writer.add_feature_geom(Point(1.), |_| {}).unwrap();
+        let path = dir.path().join("points.fgb");
+        writer.write(File::create(&path).unwrap()).unwrap();
+        obj.meta.as_mut().unwrap().size = std::fs::metadata(path).unwrap().len();
+        let mut reader = FlatGeobufFormatSpec::default()
+            .open_reader(&args(obj, Some(vec![0])))
+            .await
+            .unwrap();
+        let result = reader.next().unwrap();
+        if let Some(expected) = expected {
+            let batch = result.unwrap();
+            assert_eq!(
+                datafusion_common::ScalarValue::try_from_array(batch.column(0), 0).unwrap(),
+                datafusion_common::ScalarValue::TimestampMicrosecond(
+                    Some(expected),
+                    Some("UTC".into())
+                )
+            );
+            assert!(batch.column(0).is_null(1));
+        } else {
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Invalid FlatGeobuf DateTime")
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn missing_header_schema_is_explicitly_unsupported() {
+    let (dir, obj) = fixture(false, 0);
+    let mut builder = flatbuffers::FlatBufferBuilder::new();
+    let header = flatgeobuf::Header::create(
+        &mut builder,
+        &flatgeobuf::HeaderArgs {
+            index_node_size: 0,
+            ..Default::default()
+        },
+    );
+    builder.finish_size_prefixed(header, None);
+    let mut bytes = b"fgb\x03fgb\0".to_vec();
+    bytes.extend_from_slice(builder.finished_data());
+    std::fs::write(dir.path().join("points.fgb"), bytes).unwrap();
+    let err = FlatGeobufFormatSpec::default()
+        .infer_schema(&obj)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("missing header columns"));
+}
+
+#[tokio::test]
+async fn metadata_allows_duplicate_names_and_geometry_collisions() {
+    let (dir, obj) = fixture(false, 0);
+    let mut b = flatbuffers::FlatBufferBuilder::new();
+    let name = b.create_string("geometry");
+    let col = flatgeobuf::Column::create(
+        &mut b,
+        &flatgeobuf::ColumnArgs {
+            name: Some(name),
+            type_: ColumnType::Int,
+            ..Default::default()
+        },
+    );
+    let columns = b.create_vector(&[col, col]);
+    let header = flatgeobuf::Header::create(
+        &mut b,
+        &flatgeobuf::HeaderArgs {
+            columns: Some(columns),
+            index_node_size: 0,
+            ..Default::default()
+        },
+    );
+    b.finish_size_prefixed(header, None);
+    let mut bytes = b"fgb\x03fgb\0".to_vec();
+    bytes.extend_from_slice(b.finished_data());
+    std::fs::write(dir.path().join("points.fgb"), bytes).unwrap();
+    let spec = FlatGeobufFormatSpec::default();
+    let schema = spec.infer_schema(&obj).await.unwrap();
+    assert_eq!(
+        schema
+            .fields()
+            .iter()
+            .map(|f| f.name().as_str())
+            .collect::<Vec<_>>(),
+        ["geometry", "geometry", "geometry"]
+    );
+    let renamed = spec
+        .with_options(&[("geometry_column_name".into(), "shape".into())].into())
+        .unwrap();
+    assert_eq!(
+        renamed.infer_schema(&obj).await.unwrap().field(2).name(),
+        "shape"
+    );
 }

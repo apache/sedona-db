@@ -5863,6 +5863,7 @@ dependencies = [
  "arrow-array",
  "arrow-schema",
  "async-trait",
+ "chrono",
  "datafusion",
  "datafusion-common",
  "datafusion-execution",

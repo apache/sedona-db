@@ -59,27 +59,7 @@ pub(crate) fn open(
         .clone()
         .unwrap_or_else(|| (0..meta.schema.fields().len()).collect());
     let schema = Arc::new(meta.schema.project(&projection)?);
-    let count = meta.offsets.len() - 1;
-    let (lo, hi) = if let Some(r) = &args.src.range {
-        if r.start < 0 || r.end < r.start {
-            return exec_err!("Invalid FlatGeobuf byte range");
-        }
-        if !meta.indexed {
-            if r.start == 0 && r.end > 0 {
-                (0, count)
-            } else {
-                (0, 0)
-            }
-        } else {
-            let starts = &meta.offsets[..count];
-            (
-                starts.partition_point(|p| *p < r.start as u64),
-                starts.partition_point(|p| *p < r.end as u64),
-            )
-        }
-    } else {
-        (0, count)
-    };
+    let (lo, hi) = feature_bounds(&meta, args)?;
     let mut f = File::open(&meta.path)?;
     if file_stamp(&meta.path)? != meta.stamp {
         return exec_err!("FlatGeobuf file changed before opening reader");
@@ -116,6 +96,32 @@ pub(crate) fn open(
         remaining: hi - lo,
         failed: false,
     }))
+}
+/// Assign features by their size-prefix start so byte cuts never split ownership.
+/// The unindexed fallback assigns all rows only to the partition owning byte zero.
+fn feature_bounds(meta: &FileMetadata, args: &OpenReaderArgs) -> Result<(usize, usize)> {
+    let count = meta.offsets.len() - 1;
+    let bounds = if let Some(r) = &args.src.range {
+        if r.start < 0 || r.end < r.start {
+            return exec_err!("Invalid FlatGeobuf byte range");
+        }
+        if !meta.indexed {
+            if r.start == 0 && r.end > 0 {
+                (0, count)
+            } else {
+                (0, 0)
+            }
+        } else {
+            let starts = &meta.offsets[..count];
+            (
+                starts.partition_point(|p| *p < r.start as u64),
+                starts.partition_point(|p| *p < r.end as u64),
+            )
+        }
+    } else {
+        (0, count)
+    };
+    Ok(bounds)
 }
 impl RecordBatchReader for Reader {
     fn schema(&self) -> SchemaRef {
@@ -247,11 +253,19 @@ fn decode_properties(
                 if t == ColumnType::Binary {
                     ScalarValue::Binary(Some(data.to_vec()))
                 } else {
-                    ScalarValue::Utf8(Some(
-                        std::str::from_utf8(data)
-                            .map_err(|e| exec_datafusion_err!("Invalid FlatGeobuf UTF-8: {e}"))?
-                            .into(),
-                    ))
+                    let text = std::str::from_utf8(data)
+                        .map_err(|e| exec_datafusion_err!("Invalid FlatGeobuf UTF-8: {e}"))?;
+                    if t == ColumnType::DateTime {
+                        let datetime = chrono::DateTime::parse_from_rfc3339(text).map_err(|e| {
+                            exec_datafusion_err!("Invalid FlatGeobuf DateTime: {e}")
+                        })?;
+                        ScalarValue::TimestampMicrosecond(
+                            Some(datetime.timestamp_micros()),
+                            Some("UTC".into()),
+                        )
+                    } else {
+                        ScalarValue::Utf8(Some(text.into()))
+                    }
                 }
             }
             _ => {

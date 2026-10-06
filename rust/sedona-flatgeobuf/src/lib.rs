@@ -58,9 +58,18 @@ use std::{
 ///
 /// Clones share a bounded metadata cache. Each open reader owns an independent
 /// file stream. Files must remain unchanged for the duration of a scan.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct FlatGeobufFormatSpec {
+    geometry_column_name: String,
     cache: Arc<Mutex<HashMap<std::path::PathBuf, Arc<FileMetadata>>>>,
+}
+impl Default for FlatGeobufFormatSpec {
+    fn default() -> Self {
+        Self {
+            geometry_column_name: "geometry".into(),
+            cache: Default::default(),
+        }
+    }
 }
 impl FlatGeobufFormatSpec {
     async fn metadata(&self, object: &Object) -> Result<Arc<FileMetadata>> {
@@ -76,7 +85,11 @@ impl FlatGeobufFormatSpec {
             {
                 return Ok(meta.clone());
             }
-            let meta = Arc::new(FileMetadata::read(&path, stamp)?);
+            let meta = Arc::new(FileMetadata::read(
+                &path,
+                stamp,
+                &this.geometry_column_name,
+            )?);
             // Bound retained metadata. Readers keep their own Arc when evicted.
             if cache.len() >= 16 {
                 cache.clear();
@@ -111,10 +124,18 @@ impl ExternalFormatSpec for FlatGeobufFormatSpec {
         &self,
         options: &HashMap<String, String>,
     ) -> Result<Arc<dyn ExternalFormatSpec>> {
-        if !options.is_empty() {
-            return exec_err!("FlatGeobuf does not support format options: {options:?}");
+        let mut format = self.clone();
+        for (name, value) in options {
+            match name.as_str() {
+                "geometry_column_name" if !value.is_empty() => {
+                    format.geometry_column_name = value.clone();
+                    // Cached schemas depend on options; keep configurations isolated.
+                    format.cache = Default::default();
+                }
+                _ => return exec_err!("Unknown or invalid FlatGeobuf option: {name}"),
+            }
         }
-        Ok(Arc::new(self.clone()))
+        Ok(Arc::new(format))
     }
     fn extension(&self) -> &str {
         "fgb"

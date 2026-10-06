@@ -15,10 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use arrow_schema::{DataType, Field, Schema, SchemaRef};
+use arrow_schema::{DataType, Field, FieldRef, Schema, SchemaRef, TimeUnit};
 use datafusion_common::{Result, exec_datafusion_err, exec_err};
 use flatgeobuf::{
-    ColumnType, FgbReader, GeometryType,
+    Column, ColumnType, FgbReader, GeometryType, Header,
     packed_r_tree::{NodeItem, PackedRTree},
 };
 use sedona_datasource::spec::Object;
@@ -70,17 +70,12 @@ pub(crate) struct FileMetadata {
     pub offsets: Vec<u64>,
 }
 impl FileMetadata {
-    pub fn read(path: &Path, stamp: FileStamp) -> Result<Self> {
+    pub fn read(path: &Path, stamp: FileStamp, geometry_column_name: &str) -> Result<Self> {
         let mut file = File::open(path)?;
         let fgb = FgbReader::open(&mut file)
             .map_err(|e| exec_datafusion_err!("Invalid FlatGeobuf header: {e}"))?;
         let h = fgb.header();
-        if h.has_t() || h.has_tm() {
-            return exec_err!("FlatGeobuf T/TM dimensions are not supported");
-        }
-        if h.geometry_type().0 > GeometryType::GeometryCollection.0 {
-            return exec_err!("FlatGeobuf curved geometry types are not supported");
-        }
+        let geometry_field = geometry_type(&h)?.to_storage_field(geometry_column_name, true)?;
         let geometry_type = h.geometry_type();
         let has_z = h.has_z();
         let has_m = h.has_m();
@@ -90,87 +85,16 @@ impl FileMetadata {
         let indexed = node_size > 0 && count > 0;
         let mut fields = vec![];
         let mut types = vec![];
-        if let Some(columns) = h.columns() {
-            for col in columns {
-                if col.name() == "geometry" || fields.iter().any(|f: &Field| f.name() == col.name())
-                {
-                    return exec_err!("Duplicate FlatGeobuf column name: {}", col.name());
-                }
-                let dt = column_type(col.type_())?;
-                fields.push(Field::new(col.name(), dt, col.nullable()));
-                types.push(col.type_());
-            }
+        let columns = h.columns().ok_or_else(||
+            exec_datafusion_err!("FlatGeobuf missing header columns / feature-local schema inference is not supported"))?;
+        for col in columns {
+            fields.push(column_field(col)?);
+            types.push(col.type_());
         }
-        let crs = if let Some(c) = h.crs() {
-            if let Some(wkt) = c.wkt().filter(|v| !v.is_empty()) {
-                deserialize_crs(wkt)?
-            } else if let Some(code) = c.code_string().filter(|v| !v.is_empty()) {
-                deserialize_crs(&format!("{}:{code}", c.org().unwrap_or("EPSG")))?
-            } else if c.code() != 0 {
-                deserialize_crs(&format!("{}:{}", c.org().unwrap_or("EPSG"), c.code()))?
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-        fields.push(SedonaType::Wkb(Edges::Planar, crs).to_storage_field("geometry", true)?);
+        fields.push(Arc::new(geometry_field));
         drop(fgb);
         let index_begin = file.stream_position()?;
-        let mut offsets = vec![];
-        if indexed {
-            if node_size < 2 || count > usize::MAX / 80 {
-                return exec_err!("Invalid FlatGeobuf index dimensions");
-            }
-            // Reject impossible counts before index_size or vector allocation.
-            if count as u64 > stamp.size / 40 {
-                return exec_err!("FlatGeobuf index count exceeds file size");
-            }
-            let index_size = PackedRTree::index_size(count, node_size) as u64;
-            let begin = index_begin
-                .checked_add(index_size)
-                .filter(|b| *b <= stamp.size)
-                .ok_or_else(|| exec_datafusion_err!("FlatGeobuf index extends beyond file"))?;
-            let leaf_begin = begin
-                .checked_sub(count as u64 * 40)
-                .ok_or_else(|| exec_datafusion_err!("Invalid FlatGeobuf index layout"))?;
-            file.seek(SeekFrom::Start(leaf_begin))?;
-            for _ in 0..count {
-                let node = NodeItem::from_reader(&mut file)
-                    .map_err(|e| exec_datafusion_err!("Invalid FlatGeobuf leaf: {e}"))?;
-                let start = begin
-                    .checked_add(node.offset)
-                    .filter(|p| *p < stamp.size)
-                    .ok_or_else(|| {
-                        exec_datafusion_err!("FlatGeobuf feature offset outside file")
-                    })?;
-                if offsets.last().is_some_and(|p| *p >= start) {
-                    return exec_err!("FlatGeobuf feature offsets are not increasing");
-                }
-                offsets.push(start);
-            }
-            if offsets.first().copied() != Some(begin) {
-                return exec_err!("First FlatGeobuf feature offset is not zero");
-            }
-            offsets.push(stamp.size);
-            for pair in offsets.windows(2) {
-                validate_frame(&mut file, pair[0], pair[1])?;
-            }
-        } else {
-            let mut pos = index_begin;
-            while pos < stamp.size {
-                offsets.push(pos);
-                let end = frame_end(&mut file, pos)?;
-                if end > stamp.size {
-                    return exec_err!("Truncated FlatGeobuf feature payload");
-                }
-                pos = end;
-            }
-            if count != 0 && count != offsets.len() {
-                return exec_err!("FlatGeobuf feature count does not match file");
-            }
-            offsets.push(stamp.size);
-        }
+        let offsets = feature_offsets(&mut file, index_begin, stamp.size, count, node_size)?;
         if file_stamp(path)? != stamp {
             return exec_err!("FlatGeobuf file changed while reading metadata");
         }
@@ -186,6 +110,72 @@ impl FileMetadata {
             offsets,
         })
     }
+}
+/// Read feature boundaries once. Indexed files store relative feature starts in
+/// the packed RTree's final (leaf) level; convert those to absolute offsets and
+/// validate the framing. Without an RTree, scan size prefixes and seek past
+/// payloads. Unindexed payload reading remains serial until planning changes.
+fn feature_offsets(
+    file: &mut File,
+    index_begin: u64,
+    file_size: u64,
+    count: usize,
+    node_size: u16,
+) -> Result<Vec<u64>> {
+    let indexed = node_size > 0 && count > 0;
+    let mut offsets = vec![];
+    if indexed {
+        if node_size < 2 || count > usize::MAX / 80 {
+            return exec_err!("Invalid FlatGeobuf index dimensions");
+        }
+        // Reject impossible counts before index_size or vector allocation.
+        if count as u64 > file_size / 40 {
+            return exec_err!("FlatGeobuf index count exceeds file size");
+        }
+        let index_size = PackedRTree::index_size(count, node_size) as u64;
+        let begin = index_begin
+            .checked_add(index_size)
+            .filter(|b| *b <= file_size)
+            .ok_or_else(|| exec_datafusion_err!("FlatGeobuf index extends beyond file"))?;
+        let leaf_begin = begin
+            .checked_sub(count as u64 * 40)
+            .ok_or_else(|| exec_datafusion_err!("Invalid FlatGeobuf index layout"))?;
+        file.seek(SeekFrom::Start(leaf_begin))?;
+        for _ in 0..count {
+            let node = NodeItem::from_reader(&mut *file)
+                .map_err(|e| exec_datafusion_err!("Invalid FlatGeobuf leaf: {e}"))?;
+            let start = begin
+                .checked_add(node.offset)
+                .filter(|p| *p < file_size)
+                .ok_or_else(|| exec_datafusion_err!("FlatGeobuf feature offset outside file"))?;
+            if offsets.last().is_some_and(|p| *p >= start) {
+                return exec_err!("FlatGeobuf feature offsets are not increasing");
+            }
+            offsets.push(start);
+        }
+        if offsets.first().copied() != Some(begin) {
+            return exec_err!("First FlatGeobuf feature offset is not zero");
+        }
+        offsets.push(file_size);
+        for pair in offsets.windows(2) {
+            validate_frame(file, pair[0], pair[1])?;
+        }
+    } else {
+        let mut pos = index_begin;
+        while pos < file_size {
+            offsets.push(pos);
+            let end = frame_end(file, pos)?;
+            if end > file_size {
+                return exec_err!("Truncated FlatGeobuf feature payload");
+            }
+            pos = end;
+        }
+        if count != 0 && count != offsets.len() {
+            return exec_err!("FlatGeobuf feature count does not match file");
+        }
+        offsets.push(file_size);
+    }
+    Ok(offsets)
 }
 fn frame_end(file: &mut File, start: u64) -> Result<u64> {
     file.seek(SeekFrom::Start(start))?;
@@ -218,8 +208,52 @@ pub(crate) fn column_type(t: ColumnType) -> Result<DataType> {
         ColumnType::ULong => DataType::UInt64,
         ColumnType::Float => DataType::Float32,
         ColumnType::Double => DataType::Float64,
-        ColumnType::String | ColumnType::Json | ColumnType::DateTime => DataType::Utf8,
+        ColumnType::String | ColumnType::Json => DataType::Utf8,
+        ColumnType::DateTime => DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
         ColumnType::Binary => DataType::Binary,
         _ => return exec_err!("Unsupported FlatGeobuf column type: {t:?}"),
     })
+}
+
+/// Convert a header column independently of DataFusion's column-name validation.
+fn column_field(column: Column<'_>) -> Result<FieldRef> {
+    let mut field = Field::new(
+        column.name(),
+        column_type(column.type_())?,
+        column.nullable(),
+    );
+    if column.type_() == ColumnType::Json {
+        field = field.with_metadata(
+            [
+                ("ARROW:extension:name".into(), "arrow.json".into()),
+                ("ARROW:extension:metadata".into(), "".into()),
+            ]
+            .into(),
+        );
+    }
+    Ok(Arc::new(field))
+}
+
+/// Validate supported dimensions and preserve the header's planar CRS.
+fn geometry_type(header: &Header<'_>) -> Result<SedonaType> {
+    if header.has_t() || header.has_tm() {
+        return exec_err!("FlatGeobuf T/TM dimensions are not supported");
+    }
+    if header.geometry_type().0 > GeometryType::GeometryCollection.0 {
+        return exec_err!("FlatGeobuf curved geometry types are not supported");
+    }
+    let crs = if let Some(c) = header.crs() {
+        if let Some(wkt) = c.wkt().filter(|v| !v.is_empty()) {
+            deserialize_crs(wkt)?
+        } else if let Some(code) = c.code_string().filter(|v| !v.is_empty()) {
+            deserialize_crs(&format!("{}:{code}", c.org().unwrap_or("EPSG")))?
+        } else if c.code() != 0 {
+            deserialize_crs(&format!("{}:{}", c.org().unwrap_or("EPSG"), c.code()))?
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    Ok(SedonaType::Wkb(Edges::Planar, crs))
 }
