@@ -77,10 +77,11 @@ impl Default for RasterSpatialJoinPhysicalPlanner {
 /// slices so small that fixed per-batch costs (a channel hop, and one pass
 /// through the join probe and every downstream operator) dominate the per-row
 /// work. Since a batch never yields more slices than there are partitions, the
-/// floor only matters for small batches: any batch of at least
-/// `64 * num_partitions` rows (768 at 12 partitions) is still spread over every
-/// partition.
-const RASTER_PROBE_SPLIT_MIN_ROWS: usize = 64;
+/// floor only matters for small batches. It is kept low because filtered
+/// catalogs are small: a single-timeslice filter on a 10k-row catalog leaves
+/// batches of 1024 and 250 rows, and at 16 rows even the 250-row batch still
+/// reaches every one of 12 partitions.
+const RASTER_PROBE_SPLIT_MIN_ROWS: usize = 16;
 
 impl SpatialJoinPhysicalPlanner for RasterSpatialJoinPhysicalPlanner {
     fn plan_spatial_join(

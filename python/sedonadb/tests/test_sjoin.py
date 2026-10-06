@@ -472,7 +472,7 @@ def test_raster_join_splits_probe_batches():
     plan_text = _plan_text(con.sql(f"EXPLAIN {sql}"))
     assert "SpatialJoinExec" in plan_text, plan_text
     assert (
-        "ProbeShuffleExec: partitioning=RoundRobinBatch(4), split_batches_min_rows=64"
+        "ProbeShuffleExec: partitioning=RoundRobinBatch(4), split_batches_min_rows=16"
         in plan_text
     ), plan_text
 

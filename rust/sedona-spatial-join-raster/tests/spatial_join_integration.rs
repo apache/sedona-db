@@ -334,7 +334,7 @@ async fn raster_pinned_to_probe_side(#[case] sql: &str) -> Result<()> {
     })?;
     assert_eq!(
         probe_split_min_rows,
-        Some(64),
+        Some(16),
         "raster probe side must split batches, got:\n{physical_str}"
     );
 
