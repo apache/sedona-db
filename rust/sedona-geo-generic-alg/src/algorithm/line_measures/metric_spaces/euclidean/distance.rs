@@ -19,7 +19,7 @@
 //! Ported (and contains copied code) from `geo::algorithm::line_measures::metric_spaces::euclidean::distance`:
 //! <https://github.com/georust/geo/blob/5d667f844716a3d0a17aa60bc0a58528cb5808c3/geo/src/algorithm/line_measures/metric_spaces/euclidean/distance.rs>.
 //! Original code is dual-licensed under Apache-2.0 or MIT; used here under Apache-2.0.
-use crate::{CoordFloat, GeoFloat, Point};
+use crate::{CoordFloat, GeoFloat, HasDimensions, Point};
 use num_traits::{Bounded, Float};
 use std::borrow::Borrow;
 
@@ -778,6 +778,18 @@ impl_cross_type_array!(symmetric_single_to_multi: TriangleTraitExt, TriangleTag 
     (MultiPolygonTraitExt, MultiPolygonTag)
 ]);
 
+/// The minimum distance over the non-empty members of a collection. Empty members, such
+/// as the `POINT EMPTY` in `GEOMETRYCOLLECTION (POINT EMPTY, POINT (10 0))`, are skipped
+/// because they have no distance to anything. If every member is empty, the distance is
+/// zero, as for other empty operands.
+fn non_empty_min_distance<F: GeoFloat>(min_distance: F) -> F {
+    if min_distance == <F as Bounded>::max_value() {
+        F::zero()
+    } else {
+        min_distance
+    }
+}
+
 // ┌────────────────────────────────────────────────────────────┐
 // │ Implementation for GeometryCollection (generic traits)     │
 // └────────────────────────────────────────────────────────────┘
@@ -797,9 +809,12 @@ macro_rules! impl_distance_geometry_collection_from_geometry {
                 // Use distance_ext which will route through the appropriate implementations
                 // The key insight is that this works for all geometry types except GeometryCollection,
                 // where we need special handling to avoid infinite recursion
-                self.geometries_ext()
+                let min_distance: F = self
+                    .geometries_ext()
+                    .filter(|geom| !geom.is_empty())
                     .map(|geom| geom.distance_ext(rhs))
-                    .fold(Bounded::max_value(), |acc, dist| acc.min(dist))
+                    .fold(Bounded::max_value(), |acc, dist: F| acc.min(dist));
+                non_empty_min_distance(min_distance)
             }
         }
     };
@@ -823,8 +838,8 @@ where
 {
     fn generic_distance_trait(&self, rhs: &RHS) -> F {
         let mut min_distance = <F as Bounded>::max_value();
-        for lhs_geom in self.geometries_ext() {
-            for rhs_geom in rhs.geometries_ext() {
+        for lhs_geom in self.geometries_ext().filter(|geom| !geom.is_empty()) {
+            for rhs_geom in rhs.geometries_ext().filter(|geom| !geom.is_empty()) {
                 let distance = lhs_geom.distance_ext(&rhs_geom);
                 min_distance = min_distance.min(distance);
 
@@ -835,7 +850,7 @@ where
             }
         }
 
-        min_distance
+        non_empty_min_distance(min_distance)
     }
 }
 
@@ -921,6 +936,9 @@ macro_rules! impl_distance_geometry_to_type {
                     let mut min_distance = <F as Bounded>::max_value();
                     for lhs_geom in self.geometries_ext() {
                         let lhs_geom = lhs_geom.borrow();
+                        if lhs_geom.is_empty() {
+                            continue;
+                        }
                         let distance = lhs_geom.generic_distance_trait(rhs);
                         min_distance = min_distance.min(distance);
 
@@ -929,7 +947,7 @@ macro_rules! impl_distance_geometry_to_type {
                             return F::zero();
                         }
                     }
-                    min_distance
+                    non_empty_min_distance(min_distance)
                 } else {
                     match self.as_type_ext() {
                         sedona_geo_traits_ext::GeometryTypeExt::Point(g) => {
@@ -1059,6 +1077,9 @@ where
             let mut min_distance = <F as Bounded>::max_value();
             for lhs_geom in self.geometries_ext() {
                 let lhs_geom = lhs_geom.borrow();
+                if lhs_geom.is_empty() {
+                    continue;
+                }
                 let distance = lhs_geom.generic_distance_trait(rhs);
                 min_distance = min_distance.min(distance);
 
@@ -1067,7 +1088,7 @@ where
                     return F::zero();
                 }
             }
-            min_distance
+            non_empty_min_distance(min_distance)
         } else {
             match self.as_type_ext() {
                 sedona_geo_traits_ext::GeometryTypeExt::Point(g) => g.generic_distance_trait(rhs),

@@ -244,4 +244,68 @@ mod tests {
 
         assert_eq!(result, ScalarValue::Float64(Some(0.0)));
     }
+
+    #[test]
+    fn nonempty_collection_with_empty_point() {
+        let point = create_scalar(Some("POINT (0 0)"), &WKB_GEOMETRY);
+        let mixed = create_scalar(
+            Some("GEOMETRYCOLLECTION (POINT EMPTY, POINT (10 0))"),
+            &WKB_GEOMETRY,
+        );
+        let distance = ScalarUdfTester::new(
+            SedonaScalarUDF::from_impl("st_distance", st_distance_impl()).into(),
+            vec![WKB_GEOMETRY, WKB_GEOMETRY],
+        )
+        .invoke_scalar_scalar(point.clone(), mixed.clone())
+        .unwrap();
+        let dwithin = ScalarUdfTester::new(
+            SedonaScalarUDF::from_impl("st_dwithin", crate::st_dwithin::st_dwithin_impl()).into(),
+            vec![
+                WKB_GEOMETRY,
+                WKB_GEOMETRY,
+                SedonaType::Arrow(DataType::Float64),
+            ],
+        )
+        .invoke_scalar_scalar_scalar(point, mixed, ScalarValue::Float64(Some(1.0)))
+        .unwrap();
+        assert_eq!(
+            (distance, dwithin),
+            (
+                ScalarValue::Float64(Some(10.0)),
+                ScalarValue::Boolean(Some(false))
+            )
+        );
+    }
+
+    #[rstest]
+    #[case("POINT (0 0)", "GEOMETRYCOLLECTION (POINT EMPTY, POINT (10 0))", 10.0)]
+    #[case("GEOMETRYCOLLECTION (POINT EMPTY, POINT (10 0))", "POINT (0 0)", 10.0)]
+    #[case(
+        "GEOMETRYCOLLECTION (POINT EMPTY, POINT (0 3))",
+        "GEOMETRYCOLLECTION (LINESTRING EMPTY, POINT (4 0))",
+        5.0
+    )]
+    #[case(
+        "LINESTRING (0 0, 0 1)",
+        "GEOMETRYCOLLECTION (POLYGON EMPTY, POINT (3 1))",
+        3.0
+    )]
+    #[case(
+        "POINT (0 0)",
+        "GEOMETRYCOLLECTION (GEOMETRYCOLLECTION (POINT EMPTY), POINT (10 0))",
+        10.0
+    )]
+    fn collection_with_empty_members(#[case] lhs: &str, #[case] rhs: &str, #[case] expected: f64) {
+        let tester = ScalarUdfTester::new(
+            SedonaScalarUDF::from_impl("st_distance", st_distance_impl()).into(),
+            vec![WKB_GEOMETRY, WKB_GEOMETRY],
+        );
+        let result = tester
+            .invoke_scalar_scalar(
+                create_scalar(Some(lhs), &WKB_GEOMETRY),
+                create_scalar(Some(rhs), &WKB_GEOMETRY),
+            )
+            .unwrap();
+        assert_eq!(result, ScalarValue::Float64(Some(expected)));
+    }
 }
