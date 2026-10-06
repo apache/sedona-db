@@ -308,4 +308,37 @@ mod tests {
             .unwrap();
         assert_eq!(result, ScalarValue::Float64(Some(expected)));
     }
+
+    #[test]
+    fn collection_member_at_the_largest_distance() {
+        // f64::MAX is a real distance, not a marker for a collection without members
+        let point = create_scalar(Some("POINT (0 0)"), &WKB_GEOMETRY);
+        let far = create_scalar(
+            Some("GEOMETRYCOLLECTION (POINT EMPTY, POINT (1.7976931348623157e308 0))"),
+            &WKB_GEOMETRY,
+        );
+        let distance = ScalarUdfTester::new(
+            SedonaScalarUDF::from_impl("st_distance", st_distance_impl()).into(),
+            vec![WKB_GEOMETRY, WKB_GEOMETRY],
+        )
+        .invoke_scalar_scalar(point.clone(), far.clone())
+        .unwrap();
+        let dwithin = ScalarUdfTester::new(
+            SedonaScalarUDF::from_impl("st_dwithin", crate::st_dwithin::st_dwithin_impl()).into(),
+            vec![
+                WKB_GEOMETRY,
+                WKB_GEOMETRY,
+                SedonaType::Arrow(DataType::Float64),
+            ],
+        )
+        .invoke_scalar_scalar_scalar(point, far, ScalarValue::Float64(Some(1.0)))
+        .unwrap();
+        assert_eq!(
+            (distance, dwithin),
+            (
+                ScalarValue::Float64(Some(f64::MAX)),
+                ScalarValue::Boolean(Some(false))
+            )
+        );
+    }
 }
