@@ -16,7 +16,7 @@
 // under the License.
 use crate::{context::SedonaContext, object_storage::register_object_store_and_config_extensions};
 use datafusion::{error::Result, sql::parser::Statement};
-use datafusion_common::{exec_err, SchemaReference, TableReference};
+use datafusion_common::{exec_err, DataFusionError, SchemaReference, TableReference};
 use datafusion_expr::{DdlStatement, LogicalPlan};
 use datafusion_physical_plan::ExecutionPlan;
 use sedona_catalog::{CatalogObjectType, CreateMode, CreateObjectOptions, DropObjectOptions};
@@ -195,15 +195,29 @@ pub(crate) async fn resolve_sedona_catalog_ddl(
     }
     let registry = ctx.catalog_registry();
     let owner = registry.foreign_catalog(&identifier[0]).await?;
-    let owner = if matches!(ddl, DdlStatement::CreateCatalog(_)) && owner.is_none() {
+    if matches!(ddl, DdlStatement::CreateCatalog(_)) && owner.is_none() {
         // Existing built-in catalogs remain owned by DataFusion.
         if state.catalog_list().catalog(&identifier[0]).is_some() {
             return Ok(None);
         }
-        registry.latest_foreign()
-    } else {
-        owner
-    };
+        // A new catalog goes to the newest registration that supports creating
+        // one. A catalog list that does not returns a NotImplemented error, and the
+        // next older registration is tried, then DataFusion's built-in list.
+        reject_unsupported_create_metadata(ddl)?;
+        let identifier: Vec<&str> = identifier.iter().map(String::as_str).collect();
+        for candidate in registry.foreign_newest_first() {
+            match candidate
+                .create_object(&state, &identifier, &create, None)
+                .await
+            {
+                Err(err) if matches!(err.find_root(), DataFusionError::NotImplemented(_)) => {
+                    continue
+                }
+                result => return result.map(Some),
+            }
+        }
+        return Ok(None);
+    }
     let Some(owner) = owner else {
         return Ok(None);
     };
@@ -383,6 +397,11 @@ mod tests {
         drops: Mutex<Vec<(Vec<String>, DropObjectOptions)>>,
         ddl_output: Option<Arc<dyn ExecutionPlan>>,
         fail: bool,
+        /// Refuse to create catalogs with NotImplemented, as a catalog list
+        /// without top-level catalog creation would.
+        no_catalogs: bool,
+        /// Fail to create catalogs with an ordinary error.
+        catalog_error: bool,
     }
 
     fn owned(parts: &[&str]) -> Vec<String> {
@@ -443,6 +462,14 @@ mod tests {
             input: Option<Arc<dyn ExecutionPlan>>,
         ) -> Result<Arc<dyn ExecutionPlan>> {
             tokio::task::yield_now().await;
+            if options.object_type == CatalogObjectType::Catalog {
+                if self.no_catalogs {
+                    return datafusion_common::not_impl_err!("test catalog cannot create catalogs");
+                }
+                if self.catalog_error {
+                    return exec_err!("catalog creation failed");
+                }
+            }
             let identifier = owned(identifier);
             self.creates.lock().unwrap().push((
                 identifier.clone(),
@@ -515,6 +542,74 @@ mod tests {
         let ctx = SedonaContext::new();
         ctx.register_catalog_list(catalog.clone());
         (ctx, catalog)
+    }
+
+    #[tokio::test]
+    async fn create_database_skips_catalog_lists_that_cannot_create_one() -> Result<()> {
+        let (ctx, older) = test_context();
+        let newer = Arc::new(TestCatalog {
+            no_catalogs: true,
+            ..Default::default()
+        });
+        ctx.register_catalog_list(newer.clone());
+
+        ctx.sql("CREATE DATABASE new_catalog")
+            .await?
+            .collect()
+            .await?;
+        assert_eq!(
+            older.objects.lock().unwrap().get(&owned(&["new_catalog"])),
+            Some(&CatalogObjectType::Catalog)
+        );
+        assert!(newer.objects.lock().unwrap().is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn create_database_falls_back_to_builtin_when_no_catalog_list_can() -> Result<()> {
+        let ctx = SedonaContext::new();
+        let catalog = Arc::new(TestCatalog {
+            no_catalogs: true,
+            ..Default::default()
+        });
+        ctx.register_catalog_list(catalog.clone());
+
+        ctx.sql("CREATE DATABASE new_catalog")
+            .await?
+            .collect()
+            .await?;
+        assert!(ctx.ctx.catalog("new_catalog").is_some());
+        assert!(catalog.objects.lock().unwrap().is_empty());
+        ctx.sql("CREATE SCHEMA new_catalog.s")
+            .await?
+            .collect()
+            .await?;
+        assert!(ctx
+            .ctx
+            .catalog("new_catalog")
+            .unwrap()
+            .schema("s")
+            .is_some());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn create_database_does_not_fall_back_on_other_errors() -> Result<()> {
+        let (ctx, older) = test_context();
+        ctx.register_catalog_list(Arc::new(TestCatalog {
+            catalog_error: true,
+            ..Default::default()
+        }));
+
+        let err = ctx.sql("CREATE DATABASE new_catalog").await.unwrap_err();
+        assert!(err.to_string().contains("catalog creation failed"), "{err}");
+        assert!(!older
+            .objects
+            .lock()
+            .unwrap()
+            .contains_key(&owned(&["new_catalog"])));
+        assert!(ctx.ctx.catalog("new_catalog").is_none());
+        Ok(())
     }
 
     #[tokio::test]

@@ -81,9 +81,15 @@ impl SedonaCatalogRegistry {
         Ok(None)
     }
 
-    /// Destination for new top-level catalogs.
+    /// The most recently registered foreign catalog list.
     pub fn latest_foreign(&self) -> Option<Arc<dyn SedonaCatalogList>> {
         self.foreign.read().last().cloned()
+    }
+
+    /// Foreign catalog lists in the order they are offered a new top-level
+    /// catalog: newest registration first.
+    pub fn foreign_newest_first(&self) -> Vec<Arc<dyn SedonaCatalogList>> {
+        self.foreign.read().iter().rev().cloned().collect()
     }
 }
 
