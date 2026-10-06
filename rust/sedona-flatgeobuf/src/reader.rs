@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::metadata::{FileMetadata, MAGIC, column_type, file_stamp};
+use crate::metadata::{FileMetadata, MAGIC, Metadata, column_type, file_stamp};
 use arrow_array::{ArrayRef, RecordBatch, RecordBatchOptions, RecordBatchReader};
 use arrow_schema::{ArrowError, SchemaRef};
 use datafusion_common::{Result, ScalarValue, exec_datafusion_err, exec_err};
@@ -25,14 +25,14 @@ use flatgeobuf::{
 use sedona_datasource::spec::OpenReaderArgs;
 use std::{
     fs::File,
-    io::{Chain, Cursor, Read, Seek, SeekFrom, Take},
+    io::{Cursor, Read, Seek, SeekFrom},
     sync::Arc,
 };
 
-type Stream = Chain<Cursor<Vec<u8>>, Take<File>>;
+type Stream = Box<dyn Read + Send>;
 struct Reader {
     iter: FeatureIter<Stream, NotSeekable>,
-    meta: Arc<FileMetadata>,
+    meta: Arc<Metadata>,
     projection: Vec<usize>,
     schema: SchemaRef,
     batch_size: usize,
@@ -58,13 +58,33 @@ pub(crate) fn open(
         .file_projection
         .clone()
         .unwrap_or_else(|| (0..meta.schema.fields().len()).collect());
-    let schema = Arc::new(meta.schema.project(&projection)?);
+    meta.schema.project(&projection)?;
     let (lo, hi) = feature_bounds(&meta, args)?;
     let mut f = File::open(&meta.path)?;
     if file_stamp(&meta.path)? != meta.stamp {
         return exec_err!("FlatGeobuf file changed before opening reader");
     }
     f.seek(SeekFrom::Start(meta.offsets[lo]))?;
+    decode(
+        Arc::new(meta.data.clone()),
+        Box::new(f.take(meta.offsets[hi] - meta.offsets[lo])),
+        hi - lo,
+        projection,
+        batch_size,
+    )
+}
+
+pub(crate) fn decode(
+    meta: Arc<Metadata>,
+    payload: Stream,
+    count: usize,
+    projection: Vec<usize>,
+    batch_size: usize,
+) -> Result<Box<dyn RecordBatchReader + Send>> {
+    if batch_size == 0 {
+        return exec_err!("FlatGeobuf batch size must be positive");
+    }
+    let schema = Arc::new(meta.schema.project(&projection)?);
     // A normalized unindexed header plus a bounded feature slice allows the
     // released crate's verified decoder to read a partition without a fork.
     let mut builder = flatbuffers::FlatBufferBuilder::new();
@@ -74,7 +94,7 @@ pub(crate) fn open(
             geometry_type: meta.geometry_type,
             has_z: meta.has_z,
             has_m: meta.has_m,
-            features_count: (hi - lo) as u64,
+            features_count: count as u64,
             index_node_size: 0,
             ..Default::default()
         },
@@ -82,7 +102,7 @@ pub(crate) fn open(
     builder.finish_size_prefixed(h, None);
     let mut header = MAGIC.to_vec();
     header.extend_from_slice(builder.finished_data());
-    let stream = Cursor::new(header).chain(f.take(meta.offsets[hi] - meta.offsets[lo]));
+    let stream: Stream = Box::new(Cursor::new(header).chain(payload));
     let iter = FgbReader::open(stream)
         .map_err(|e| exec_datafusion_err!("Invalid FlatGeobuf partition header: {e}"))?
         .select_all_seq()
@@ -93,7 +113,7 @@ pub(crate) fn open(
         projection,
         schema,
         batch_size,
-        remaining: hi - lo,
+        remaining: count,
         failed: false,
     }))
 }
@@ -211,7 +231,7 @@ fn take<'a>(bytes: &mut &'a [u8], n: usize) -> Result<&'a [u8]> {
 }
 fn decode_properties(
     mut bytes: &[u8],
-    meta: &FileMetadata,
+    meta: &Metadata,
     projection: &[usize],
     row: &mut [ScalarValue],
 ) -> Result<()> {

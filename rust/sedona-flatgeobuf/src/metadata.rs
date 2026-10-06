@@ -60,6 +60,16 @@ pub(crate) fn local_path(object: &Object) -> Result<PathBuf> {
 pub(crate) struct FileMetadata {
     pub path: PathBuf,
     pub stamp: FileStamp,
+    pub data: Metadata,
+}
+impl std::ops::Deref for FileMetadata {
+    type Target = Metadata;
+    fn deref(&self) -> &Metadata {
+        &self.data
+    }
+}
+#[derive(Debug, Clone)]
+pub(crate) struct Metadata {
     pub schema: SchemaRef,
     pub types: Vec<ColumnType>,
     pub geometry_type: GeometryType,
@@ -74,8 +84,28 @@ impl FileMetadata {
         let mut file = File::open(path)?;
         let fgb = FgbReader::open(&mut file)
             .map_err(|e| exec_datafusion_err!("Invalid FlatGeobuf header: {e}"))?;
-        let h = fgb.header();
-        let geometry_field = geometry_type(&h)?.to_storage_field(geometry_column_name, true)?;
+        let (mut data, count, node_size) =
+            Metadata::from_header(&fgb.header(), geometry_column_name)?;
+        drop(fgb);
+        let index_begin = file.stream_position()?;
+        let offsets = feature_offsets(&mut file, index_begin, stamp.size, count, node_size)?;
+        if file_stamp(path)? != stamp {
+            return exec_err!("FlatGeobuf file changed while reading metadata");
+        }
+        data.offsets = offsets;
+        Ok(Self {
+            path: path.into(),
+            stamp,
+            data,
+        })
+    }
+}
+impl Metadata {
+    pub(crate) fn from_header(
+        h: &Header<'_>,
+        geometry_column_name: &str,
+    ) -> Result<(Self, usize, u16)> {
+        let geometry_field = geometry_type(h)?.to_storage_field(geometry_column_name, true)?;
         let geometry_type = h.geometry_type();
         let has_z = h.has_z();
         let has_m = h.has_m();
@@ -92,23 +122,19 @@ impl FileMetadata {
             types.push(col.type_());
         }
         fields.push(Arc::new(geometry_field));
-        drop(fgb);
-        let index_begin = file.stream_position()?;
-        let offsets = feature_offsets(&mut file, index_begin, stamp.size, count, node_size)?;
-        if file_stamp(path)? != stamp {
-            return exec_err!("FlatGeobuf file changed while reading metadata");
-        }
-        Ok(Self {
-            path: path.into(),
-            stamp,
-            schema: Arc::new(Schema::new(fields)),
-            types,
-            geometry_type,
-            has_z,
-            has_m,
-            indexed,
-            offsets,
-        })
+        Ok((
+            Self {
+                schema: Arc::new(Schema::new(fields)),
+                types,
+                geometry_type,
+                has_z,
+                has_m,
+                indexed,
+                offsets: vec![],
+            },
+            count,
+            node_size,
+        ))
     }
 }
 /// Read feature boundaries once. Indexed files store relative feature starts in

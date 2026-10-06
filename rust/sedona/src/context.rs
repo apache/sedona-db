@@ -291,6 +291,9 @@ impl SedonaContext {
 
         let mut state = state_builder.build();
 
+        #[cfg(feature = "fgb")]
+        state.register_file_format(Arc::new(sedona_flatgeobuf::FlatGeobufFormatFactory), false)?;
+
         // Register GeoParquet file format
         state.register_file_format(Arc::new(GeoParquetFormatFactory::new()), true)?;
 

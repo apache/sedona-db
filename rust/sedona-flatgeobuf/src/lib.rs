@@ -15,32 +15,36 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! Native local FlatGeobuf reading through SedonaDB's external datasource API.
+//! Native FlatGeobuf FileFormat with generic ObjectStore range reads.
+//!
+//! Enable Sedona's `fgb` feature for SQL file queries; Python enables it by default.
+//! The local external datasource adapter below is also available.
 //!
 //! See the crate README for the partitioning contract and draft limitations.
 //!
-//! Register explicitly in a DataFusion/SedonaDB session:
+//! Register explicitly in a DataFusion session:
 //!
 //! ```no_run
 //! use std::sync::Arc;
-//! use datafusion::{prelude::SessionContext, datasource::listing::ListingTableUrl};
-//! use sedona_datasource::provider::external_table;
-//! use sedona_flatgeobuf::FlatGeobufFormatSpec;
+//! use datafusion::{execution::SessionStateBuilder, prelude::SessionContext};
+//! use sedona_flatgeobuf::FlatGeobufFormatFactory;
 //! # async fn example() -> datafusion_common::Result<()> {
-//! let context = SessionContext::new();
-//! let table = external_table(
-//!     Arc::new(FlatGeobufFormatSpec::default()),
-//!     &context,
-//!     vec![ListingTableUrl::parse("file:///data/roads.fgb")?],
-//!     true,
-//!     Some(vec![]),
-//! ).await?;
-//! context.register_table("roads", table)?;
+//! let mut state = SessionStateBuilder::new().with_default_features().build();
+//! state.register_file_format(Arc::new(FlatGeobufFormatFactory), false)?;
+//! let context = SessionContext::new_with_state(state).enable_url_table();
+//! let batches = context.sql("SELECT * FROM 'file:///data/roads.fgb'").await?
+//!     .collect().await?;
 //! # Ok(())
 //! # }
 //! ```
+mod format;
 mod geometry;
 mod metadata;
+mod object_io;
+mod opener;
+mod source;
+mod store_metadata;
+pub use format::{FlatGeobufFormat, FlatGeobufFormatFactory};
 mod reader;
 
 use arrow_array::RecordBatchReader;

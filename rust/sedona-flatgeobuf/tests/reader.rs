@@ -867,3 +867,122 @@ async fn metadata_allows_duplicate_names_and_geometry_collisions() {
         "shape"
     );
 }
+
+#[tokio::test]
+async fn native_format_reads_generic_object_store() {
+    for indexed in [false, true] {
+        use datafusion::execution::SessionStateBuilder;
+        use object_store::ObjectStoreExt;
+        let (dir, _) = fixture(indexed, 31);
+        let store = Arc::new(object_store::memory::InMemory::new());
+        store
+            .put(
+                &Path::from("points.fgb"),
+                std::fs::read(dir.path().join("points.fgb")).unwrap().into(),
+            )
+            .await
+            .unwrap();
+        store
+            .put(
+                &Path::from("second.fgb"),
+                std::fs::read(dir.path().join("points.fgb")).unwrap().into(),
+            )
+            .await
+            .unwrap();
+        let mut config = datafusion::execution::context::SessionConfig::new()
+            .with_target_partitions(8)
+            .with_batch_size(3);
+        config.options_mut().optimizer.repartition_file_min_size = 0;
+        let mut state = SessionStateBuilder::new()
+            .with_config(config)
+            .with_default_features()
+            .build();
+        state
+            .register_file_format(Arc::new(sedona_flatgeobuf::FlatGeobufFormatFactory), true)
+            .unwrap();
+        let ctx = SessionContext::new_with_state(state).enable_url_table();
+        ctx.register_object_store(&url::Url::parse("memory://fgb").unwrap(), store);
+        let scan = ctx
+            .sql("SELECT id FROM 'memory://fgb/points.fgb'")
+            .await
+            .unwrap()
+            .create_physical_plan()
+            .await
+            .unwrap();
+        fn scan_partitions(plan: &Arc<dyn datafusion_physical_plan::ExecutionPlan>) -> usize {
+            use datafusion_physical_plan::ExecutionPlanProperties;
+            if plan
+                .downcast_ref::<datafusion_catalog::memory::DataSourceExec>()
+                .is_some()
+            {
+                return plan.output_partitioning().partition_count();
+            }
+            plan.children().iter().map(|p| scan_partitions(p)).sum()
+        }
+        assert_eq!(scan_partitions(&scan), if indexed { 8 } else { 1 });
+        let result = ctx
+            .sql("SELECT id, label FROM 'memory://fgb/points.fgb' WHERE id >= 3 ORDER BY id")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        assert_eq!(result.iter().map(|b| b.num_rows()).sum::<usize>(), 28);
+        let ids = result
+            .iter()
+            .flat_map(|b| {
+                b.column(0)
+                    .as_any()
+                    .downcast_ref::<Int32Array>()
+                    .unwrap()
+                    .values()
+                    .to_vec()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(ids, (3..31).collect::<Vec<_>>());
+        let count = ctx
+            .sql("SELECT count(*) FROM 'memory://fgb/points.fgb'")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        assert_eq!(
+            count[0]
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow_array::Int64Array>()
+                .unwrap()
+                .value(0),
+            31
+        );
+        ctx.register_listing_table(
+            "multi_fgb",
+            "memory://fgb/",
+            datafusion::datasource::listing::ListingOptions::new(Arc::new(
+                sedona_flatgeobuf::FlatGeobufFormat::default(),
+            ))
+            .with_file_extension(".fgb"),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let multi = ctx
+            .sql("SELECT count(*) FROM multi_fgb")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        assert_eq!(
+            multi[0]
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow_array::Int64Array>()
+                .unwrap()
+                .value(0),
+            62
+        );
+    }
+}

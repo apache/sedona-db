@@ -70,6 +70,36 @@ def test_read_ogr_projection(con):
         )
 
 
+@pytest.mark.parametrize("reader", ["native", "pyogrio"])
+@pytest.mark.parametrize("spatial_index", [False, True])
+def test_fgb_native_and_gdal_projection(con, tmp_path, reader, spatial_index):
+    expected = geopandas.GeoDataFrame(
+        {
+            "idx": list(range(31)),
+            "geometry": geopandas.GeoSeries.from_xy(
+                list(range(31)), list(range(1, 32)), crs="EPSG:3857"
+            ),
+        }
+    )
+    path = tmp_path / "points.fgb"
+    expected.to_file(path, driver="FlatGeobuf", SPATIAL_INDEX=spatial_index)
+    if reader == "native":
+        frame = con.sql(f"SELECT * FROM '{path.as_uri()}'")
+    else:
+        frame = con.read_pyogrio(path)
+    frame.to_view("fgb_comparison", overwrite=True)
+    pd.testing.assert_frame_equal(
+        con.sql("SELECT idx FROM fgb_comparison ORDER BY idx").to_pandas(),
+        expected[["idx"]],
+        check_dtype=False,
+    )
+    assert con.sql("SELECT count(*) AS n FROM fgb_comparison").to_pandas()["n"][0] == 31
+    actual = con.sql("SELECT * FROM fgb_comparison ORDER BY idx").to_pandas()
+    if actual.geometry.name != "geometry":
+        actual = actual.rename_geometry("geometry")
+    geopandas.testing.assert_geodataframe_equal(actual, expected, check_dtype=False)
+
+
 def test_read_ogr_multi_file(con):
     n = 1024 * 16
     partitions = [f"part_{c}" for c in "abcdefghijklmnop"]
@@ -649,13 +679,12 @@ def test_independent_reader_progress_while_first_reader_is_paused(extension):
     assert result["row_counts"] == [len(values) for values in expected_values]
 
 
-# The geometry-column name is GDAL's OGR reader's, not ours: fgb/geojson/shp
-# store no named geometry field, so GDAL falls back to `wkb_geometry`, whereas
-# GeoPackage persists a named geometry column (GDAL defaults it to `geom`).
+# The native FlatGeobuf reader defaults to geometry. Other formats use GDAL
+# names: GeoJSON/Shapefile fall back to wkb_geometry; GeoPackage persists geom.
 @pytest.mark.parametrize(
     ("extension", "geometry_column"),
     [
-        ("fgb", "wkb_geometry"),
+        ("fgb", "geometry"),
         ("gpkg", "geom"),
         ("geojson", "wkb_geometry"),
         ("shp", "wkb_geometry"),

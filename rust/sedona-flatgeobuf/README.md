@@ -19,9 +19,11 @@
 
 # Native FlatGeobuf reader (draft)
 
-`FlatGeobufFormatSpec` implements SedonaDB's `ExternalFormatSpec` for local
-FlatGeobuf files. Register it explicitly with `sedona_datasource::provider::external_table`.
-It does not change the Python connection's existing Pyogrio registrations.
+`FlatGeobufFormatFactory` implements DataFusion's native `FileFormat` API,
+using generic `ObjectStore` range reads and DataFusion's file metadata cache.
+Enable Sedona's `fgb` feature for automatic registration; Python enables it by
+default. Explicit `read_pyogrio()` remains available for GDAL reads.
+`FlatGeobufFormatSpec` retains the earlier local external datasource adapter.
 
 ## Read contract
 
@@ -38,12 +40,18 @@ It does not change the Python connection's existing Pyogrio registrations.
 - Unindexed files use a serial fallback: the partition owning byte zero reads
   the entire file; other partitions yield no rows. Validate framing once before
   decoding; do not advertise parallel payload reads for these files.
-- Only local `file:` URLs are supported. Curves and temporal T/TM dimensions,
-  remote object stores, spatial pruning and writing are outside this draft.
+- Any registered ObjectStore can provide range reads. Curves and temporal T/TM
+  dimensions, spatial pruning, writing and morselized scans are outside this draft.
   Feature-local column overrides and absent header column schemas are rejected explicitly.
 - Reject invalid framing, unsupported schema types and inconsistent requested
-  schemas. A bounded metadata cache is invalidated when local file size or
-  modification time changes. Inputs must remain unchanged during a scan.
+  schemas. Native metadata cache entries are validated against ObjectMeta and
+  store identity, and isolated by geometry column option. Inputs must remain
+  unchanged during a scan. Multi-file reads require consistent schemas and CRS.
+
+The `metadata_size_hint` option controls the initial header prefix read (default
+65536 bytes); incomplete headers are refetched before verified decoding.
+Feature payload requests coalesce adjacent records up to an 8 MiB target; a
+single indivisible feature may exceed this target.
 
 The `geometry_column_name` format option renames the geometry field (default
 `geometry`). Header conversion preserves duplicate names; DataFusion handles
@@ -59,25 +67,22 @@ will be recorded in the draft PR after these checks complete.
 
 ```rust
 use std::sync::Arc;
-use datafusion::{prelude::SessionContext, datasource::listing::ListingTableUrl};
-use sedona_datasource::provider::external_table;
-use sedona_flatgeobuf::FlatGeobufFormatSpec;
+use datafusion::{execution::SessionStateBuilder, prelude::SessionContext};
+use sedona_flatgeobuf::FlatGeobufFormatFactory;
 
 // In an async function:
-let context = SessionContext::new();
-let table = external_table(
-    Arc::new(FlatGeobufFormatSpec::default()),
-    &context,
-    vec![ListingTableUrl::parse("file:///data/roads.fgb")?],
-    true,
-    Some(vec![]),
-).await?;
-context.register_table("roads", table)?;
+let mut state = SessionStateBuilder::new().with_default_features().build();
+state.register_file_format(Arc::new(FlatGeobufFormatFactory), false)?;
+let context = SessionContext::new_with_state(state).enable_url_table();
+let batches = context.sql("SELECT * FROM 'file:///data/roads.fgb'").await?
+    .collect().await?;
 ```
 
 The crate documentation compiles this registration example. The reader uses the
 released FlatGeobuf crate to verify and decode each feature buffer, followed by
 bounds-checked ISO WKB encoding. It does not require the earlier research fork.
 Batch size bounds rows per batch; it is not a byte-memory limit or a zero-copy
-claim. Index metadata uses one offset per feature, retained for at most 16 files.
+claim. Index metadata uses one offset per feature and fetches only RTree leaves.
+The native cache uses DataFusion's configured memory limit; the local adapter
+retains metadata for at most 16 files.
 This draft validates correctness, not a throughput improvement.
