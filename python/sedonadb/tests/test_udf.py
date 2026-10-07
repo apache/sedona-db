@@ -337,9 +337,10 @@ def test_native_scalar_udf_register_appends_overload(con):
 
 def test_raster_udf_over_loaded_raster_as_pixel_argument(con, tmp_path):
     """A Python raster UDF over RS_EnsureLoaded(..), passed as the raster of
-    a function that reads pixels, used to fail with 'async functions should
-    not be called directly'. The planner wrapped the UDF call in another async
-    RS_EnsureLoaded, nesting async calls the physical planner cannot hoist."""
+    functions that read pixels. The planner loads the UDF's output too, which
+    nests one async loader in another; it must split them into two
+    projections rather than fail with 'async functions should not be called
+    directly'. Two calls over the same expression exercise the CSE path."""
     pytest.importorskip("rasterio")
     np = pytest.importorskip("numpy")
     from sedonadb.raster import Raster
@@ -358,13 +359,15 @@ def test_raster_udf_over_loaded_raster_as_pixel_argument(con, tmp_path):
             r = item.as_py()
             doubled = Raster.from_numpy(r.to_numpy()[0] * 2, transform=r.transform)
             out.append(pa.array(doubled))
-        return pa.chunked_array(out).combine_chunks()
+        return pa.chunked_array(out, type=raster_type).combine_chunks()
 
     con.register(double_pixels)
 
+    doubled = "double_pixels(RS_EnsureLoaded(RS_FromPath($1)))"
     got = con.sql(
-        "SELECT RS_SummaryStats("
-        "double_pixels(RS_EnsureLoaded(RS_FromPath($1))), 'mean', 1) AS v",
+        f"SELECT RS_SummaryStats({doubled}, 'mean', 1) AS mean, "
+        f"RS_Value({doubled}, 2, 1, 1) AS v",
         params=(str(path),),
     ).to_arrow_table()
-    assert got["v"].to_pylist() == [7.0]
+    assert got["mean"].to_pylist() == [7.0]
+    assert got["v"].to_pylist() == [4.0]

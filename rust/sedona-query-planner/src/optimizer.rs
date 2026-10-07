@@ -22,6 +22,7 @@ use crate::push_down_leaf_projections::PushDownLeafProjections;
 use crate::spatial_expr_utils::{
     KNNJoinQuerySide, collect_spatial_predicate_names, find_knn_query_side,
 };
+use crate::unnest_async_udf::UnnestAsyncUdfRule;
 use crate::wrap_async_udf::WrapAsyncUdfRule;
 use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion_common::config::ConfigOptions;
@@ -167,7 +168,10 @@ pub fn register_spatial_join_logical_optimizer(
 /// before DataFusion's `common_sub_expression_eliminate` so that, in the same
 /// optimizer pass, CSE can dedupe the `RS_EnsureLoaded(col)` wraps and the
 /// `sd_restore_metadata(...)` wrappers this rule injects.
-/// Falls back to appending if CSE isn't present.
+/// Falls back to appending if CSE isn't present. Appends
+/// [`UnnestAsyncUdfRule`], which moves an async call nested in another
+/// async call's arguments (e.g. a loader around a user UDF over a loader)
+/// into a projection below.
 pub fn register_ensure_loaded_optimizer(
     mut session_state_builder: SessionStateBuilder,
 ) -> Result<SessionStateBuilder> {
@@ -197,6 +201,9 @@ pub fn register_ensure_loaded_optimizer(
             optimizer.rules.push(wrap_async_rule);
         }
     }
+    // Last, after `OptimizeProjections`, which would merge the projection it
+    // adds back into its parent (see `unnest_async_udf`).
+    optimizer.rules.push(Arc::new(UnnestAsyncUdfRule));
 
     Ok(session_state_builder)
 }
