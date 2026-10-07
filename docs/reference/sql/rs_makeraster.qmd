@@ -28,7 +28,9 @@ kernels:
     - name: path
       type: string
       description: >
-        Path or URL of the raster file, in any form RS_FromPath accepts.
+        Path or URL of the raster file, in any form RS_FromPath accepts. This is
+        the bare file location: select the band with the band argument, not a
+        `#band=` fragment (a path containing one is an error).
     - name: band_data_type
       type: string
       description: >
@@ -47,7 +49,9 @@ kernels:
       description: >
         The raster covers this geometry's envelope with north-up pixels, and its
         CRS is the geometry's. Only correct when the file's grid is north-up and
-        in the geometry's CRS.
+        in the geometry's CRS. A geography is accepted too, in which case the
+        envelope follows spherical edges and comes from the session's geography
+        bounder, as for RS_MakeEmptyRaster.
   - returns: raster
     args:
     - name: path
@@ -177,15 +181,24 @@ kernels:
 
 ## Description
 
-`RS_MakeRaster` builds the out-of-database raster that
-[`RS_FromPath`](rs_frompath.qmd) would return for one band of a file, but from
-its arguments instead of the file's header. The result has a single band with
-no nodata value that references band `band` of `path`; its grid is either:
+`RS_MakeRaster` builds an out-of-database raster with the grid, CRS and pixel
+type that [`RS_FromPath`](rs_frompath.qmd) would read for one band of a file,
+but from its arguments instead of the file's header. The result has a single
+band that references band `band` of `path`; its grid is either:
 
 - **the envelope of an extent geometry**, covered by `width` x `height`
   north-up pixels, with the geometry's CRS; or
 - **a full affine transform and CRS**, given as the six geotransform
-  parameters and an EPSG code or CRS string.
+  parameters and an EPSG code or CRS string. The transform must be finite and
+  invertible (`scale_x * scale_y - skew_x * skew_y` not zero).
+
+`RS_MakeRaster` records no nodata value, even when the file has one. Until
+[`RS_SetBandNoDataValue`](rs_setbandnodatavalue.qmd) sets it, pixel functions
+treat nodata differently from a raster from `RS_FromPath`: the file's nodata
+pixels count as ordinary values, so statistics such as `RS_SummaryStats`
+include them. Set it from the catalog (e.g. STAC's `raster:bands[].nodata`) to
+get the same results as `RS_FromPath`; like `RS_MakeRaster` itself,
+`RS_SetBandNoDataValue` only changes metadata and does not read the file.
 
 `RS_FromPath` opens every file to read its header, which on object storage
 costs at least one request per file. Raster catalogs such as
@@ -199,9 +212,16 @@ them from `path` when they run, exactly as for a raster from `RS_FromPath`.
 
 ::: callout-warning
 `RS_MakeRaster` trusts its arguments. Nothing is checked against the file,
-not even that it exists, so wrong metadata gives wrong results rather than an
-error: a wrong grid places the pixels in the wrong location, and a wrong
-`band_data_type` misreads them.
+not even that it exists, until a function loads its pixels. Wrong metadata is
+then caught only in part:
+
+- a wrong `band_data_type` makes the pixel load fail with an error naming the
+  file's actual type;
+- a `width` or `height` larger than the file's makes the pixel load fail with
+  an out-of-bounds read error, while a smaller one silently reads only the
+  upper-left `width` x `height` window of the file;
+- a wrong grid or CRS is never detected: the pixels are read correctly but
+  placed in the wrong location.
 :::
 
 The extent form is only correct when the file's grid is north-up and its CRS
@@ -209,10 +229,6 @@ is the extent geometry's CRS. A STAC item's `geometry` is always in
 longitude/latitude (CRS84), so it describes the grid only for files that are
 themselves in longitude/latitude; for anything else, such as an item in a UTM
 zone, use the affine form with the item's `proj:transform` and `proj:code`.
-
-Use [`RS_SetBandNoDataValue`](rs_setbandnodatavalue.qmd) to attach a nodata
-value; like `RS_MakeRaster` itself it only changes metadata and does not read
-the file.
 
 Null arguments yield a null raster.
 
@@ -263,7 +279,8 @@ SELECT RS_Envelope(
 ```
 
 Reading pixels loads them from the file, so for a file whose metadata matches
-the arguments the result is the same as with `RS_FromPath`:
+the arguments (and that has no nodata value, or once `RS_SetBandNoDataValue`
+has set it) the result is the same as with `RS_FromPath`:
 
 ```sql
 SELECT
