@@ -64,7 +64,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use arrow_buffer::Buffer;
 use arrow_schema::ArrowError;
 use async_trait::async_trait;
-use datafusion_common::{DataFusionError, Result as DFResult};
+use datafusion_common::{DataFusionError, Result as DFResult, exec_err};
 use sedona_gdal::raster::rasterband::RasterBand;
 use sedona_raster::raster_loader::{AsyncRasterLoader, RasterLoadRequest, RasterLoadResult};
 use sedona_raster::traits::{is_spatial_dim_pair, split_outdb_band_fragment};
@@ -261,11 +261,15 @@ impl GdalLoader {
                         // a mismatch would produce a 2x-or-N/2 byte count and the
                         // size check in `RS_EnsureLoaded` would mis-blame the
                         // loader for size rather than naming the dtype mismatch.
-                        // Catch it cleanly here.
+                        // Catch it cleanly here. The band metadata can come
+                        // from the user (e.g. RS_MakeRaster's band_data_type),
+                        // so this is a user error, not an internal one.
                         let file_dtype = gdal_to_band_data_type(band.band_type())?;
                         if file_dtype != req.expected_dtype {
-                            return sedona_common::sedona_internal_err!(
-                                "GDAL OutDb band metadata claims {:?} but file {} band {} is {:?}",
+                            return exec_err!(
+                                "GDAL OutDb band metadata claims {:?} but file {} band {} is \
+                                 {:?}; the declared band data type (e.g. RS_MakeRaster's \
+                                 band_data_type) does not match the file",
                                 req.expected_dtype,
                                 req.uri,
                                 band_num,
@@ -535,6 +539,11 @@ mod tests {
         assert!(
             msg.contains("metadata claims") && (msg.contains("UInt8") || msg.contains("Int16")),
             "expected dtype-mismatch diagnostic, got: {msg}"
+        );
+        // A wrong declared type is a user error, not a SedonaDB bug.
+        assert!(
+            msg.contains("declared band data type") && !msg.contains("internal error"),
+            "expected a plain execution error, got: {msg}"
         );
     }
 
