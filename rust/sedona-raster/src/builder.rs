@@ -459,9 +459,10 @@ impl RasterBuilder {
         data_type: BandDataType,
         nodata: Option<&[u8]>,
     ) -> Result<(), RasterError> {
-        if self.current_width == 0 && self.current_height == 0 {
+        if self.current_width == 0 || self.current_height == 0 {
             return Err(RasterError::Invalid(
-                "append_outdb_band_2d requires prior start_raster_2d (width and height are 0)"
+                "append_outdb_band_2d requires prior start_raster_2d with a non-zero width and \
+                 height"
                     .into(),
             ));
         }
@@ -1165,6 +1166,22 @@ mod tests {
             .append_outdb_band_2d("/a.tif", 1, BandDataType::UInt8, None)
             .unwrap_err();
         assert!(err.to_string().contains("requires prior start_raster_2d"));
+
+        // A zero width or height alone is enough to have no 2-D grid to
+        // reference.
+        for (width, height) in [(0, 3), (4, 0)] {
+            let mut builder = RasterBuilder::new(1);
+            builder
+                .start_raster_2d(width, height, 0.0, 3.0, 1.0, -1.0, 0.0, 0.0, None)
+                .unwrap();
+            let err = builder
+                .append_outdb_band_2d("/a.tif", 1, BandDataType::UInt8, None)
+                .unwrap_err();
+            assert!(
+                err.to_string().contains("requires prior start_raster_2d"),
+                "{width} x {height}: {err}"
+            );
+        }
     }
 
     #[test]
