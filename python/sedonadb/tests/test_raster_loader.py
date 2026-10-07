@@ -117,6 +117,54 @@ def test_py_raster_loader_registration():
     assert req.data_type.name == "uint8"
 
 
+def test_rs_ensureloaded_input_is_partitioned_by_raster_source():
+    """A small catalog's rows are hash-partitioned by raster source below
+    rs_ensureloaded, so loading is not confined to the partitions a
+    whole-batch round-robin reaches, rows of one raster stay together (each
+    raster loaded once), and results match a single-partition run."""
+    # 32 rows reading 8 rasters: one batch, which a round-robin would deal
+    # to a single partition.
+    rasters = [
+        Raster.lazy(
+            uri=f"test://mock/r{i % 8}.tif#band=1",
+            shape=(4, 4),
+            dtype="UInt8",
+            format="test_format",
+        )
+        for i in range(32)
+    ]
+    table = pa.table(
+        {
+            "id": pa.array(range(32), pa.int32()),
+            "raster": pa.concat_arrays([r._array for r in rasters]),
+        }
+    )
+    sql = "SELECT id, RS_EnsureLoaded(raster) AS raster FROM catalog"
+
+    results = {}
+    for target_partitions in (1, 4):
+        loader = MockRasterLoader(name="mock_loader", supported_formats=["test_format"])
+        sd = sedonadb.connect()
+        sd.register(loader)
+        sd.sql(
+            f"SET datafusion.execution.target_partitions TO {target_partitions}"
+        ).execute()
+        sd.create_data_frame(table).to_view("catalog")
+
+        plan = "\n".join(
+            sd.sql(f"EXPLAIN {sql}").to_pandas().iloc[:, 1].astype(str).tolist()
+        )
+        spread = f"partitioning=Hash([raster_source(raster@1)], {target_partitions})"
+        assert (spread in plan) == (target_partitions > 1), plan
+
+        rows = sd.sql(sql).to_arrow_table().to_pylist()
+        results[target_partitions] = sorted(rows, key=lambda row: row["id"])
+        uris = [req.uri for requests in loader._load_calls for req in requests]
+        assert sorted(uris) == sorted(f"test://mock/r{i}.tif#band=1" for i in range(8))
+
+    assert results[4] == results[1]
+
+
 def test_raster_loader_sedonadb_raster_loader_method():
     """Test that the __sedonadb_raster_loader__ method works correctly."""
     loader = MockRasterLoader(name="test_loader", supported_formats=["zarr"])
