@@ -205,7 +205,7 @@ pub(crate) async fn resolve_sedona_catalog_ddl(
         // next older registration is tried, then DataFusion's built-in list.
         reject_unsupported_create_metadata(ddl)?;
         let identifier: Vec<&str> = identifier.iter().map(String::as_str).collect();
-        for candidate in registry.foreign_newest_first() {
+        for candidate in registry.foreign_lists().iter().rev() {
             match candidate
                 .create_object(&state, &identifier, &create, None)
                 .await
