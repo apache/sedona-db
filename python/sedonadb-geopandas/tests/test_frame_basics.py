@@ -350,8 +350,30 @@ def test_isin_matches_geopandas(column, values):
 
 @pytest.mark.parametrize(
     "values",
-    [[1], [True], [0.0], [None], [np.nan], [pd.NA], ["1"]],
-    ids=["int", "bool", "float", "none", "nan", "pd-na", "string"],
+    [
+        [1],
+        [True],
+        [0.0],
+        [None],
+        [np.nan],
+        [pd.NA],
+        ["1"],
+        [None, np.nan],
+        [1, np.nan],
+        ["a", None],
+    ],
+    ids=[
+        "int",
+        "bool",
+        "float",
+        "none",
+        "nan",
+        "pd-na",
+        "string",
+        "none-and-nan",
+        "int-and-nan",
+        "string-and-none",
+    ],
 )
 def test_isin_on_nullable_columns_matches_pandas_on_the_result(values):
     # Which missing marker matches a missing value depends on the column's
@@ -389,16 +411,24 @@ def test_geometry_isin_missing_matches_geopandas():
     )
     ours = sgpd.from_geopandas(gdf)
     ours.to_geopandas()  # loads the GeoArrow extension types
-    # GeoPandas matches a missing geometry with None and NumPy's NaT only.
+    # GeoPandas' answer depends on the whole list: NumPy's NaT matches a
+    # missing geometry on its own, but not alongside anything else.
+    nat = np.datetime64("NaT", "s")
     for values in (
         [None],
         [np.nan],
         [np.float32(np.nan)],
         [pd.NA],
         [pd.NaT],
-        [np.datetime64("NaT", "s")],
+        [nat],
         [np.timedelta64("NaT", "ns")],
         [pa.scalar(None)],
+        [pd.NA, nat],
+        [nat, pd.NA],
+        [np.nan, nat],
+        [shapely.Point(5, 5), nat],
+        [None, pd.NA],
+        [shapely.Point(5, 5), None],
     ):
         assert (
             ours.geometry.isin(values).to_pandas().tolist()

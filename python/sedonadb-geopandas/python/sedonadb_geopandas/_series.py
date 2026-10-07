@@ -513,13 +513,12 @@ class Series:
             )
         from sedonadb_geopandas._frame import _is_missing
 
-        present, markers = [], []
-        for value in values:
+        given = list(values)
+        present, any_missing = [], False
+        for value in given:
             normalized = normalize_scalar(value)
             if _is_missing(normalized):
-                # As given: normalizing turns pd.NA into None, which pandas
-                # matches differently.
-                markers.append(value)
+                any_missing = True
             else:
                 present.append(normalized)
         dtype = self._dtype()
@@ -527,12 +526,14 @@ class Series:
         expr = lit(False)
         if present:
             expr = self._expr.isin(present).funcs.coalesce(lit(False))
-        if markers:
+        if any_missing:
             # The stored type, since an encoding can change the pandas dtype:
             # a dictionary column becomes a categorical, whose missing value
-            # is NaN.
+            # is NaN. The values as given, all of them: pandas' answer for a
+            # missing value can depend on the whole list (NumPy's NaT matches
+            # a missing geometry only on its own).
             matches_null, matches_nan = _missing_members(
-                self._stored_dtype(), dtype, markers
+                self._stored_dtype(), dtype, given
             )
             if matches_null:
                 expr = expr | self._expr.is_null()
@@ -667,17 +668,23 @@ def _comparable(dtype, values):
 
 def _pandas_missing(dtype, nan=False):
     """A one-element pandas Series holding this type's missing value (or NaN),
-    converted as `to_pandas()` converts it, or None without pandas or for a
-    type pandas holds as an extension array (geometry).
+    converted as `to_pandas()` converts it, or None without pandas.
 
     Which missing marker matches a missing value, and whether that value is
     truthy, depends on its pandas dtype: a float column holds NaN, a string
     column None in pandas 2 and NaN in pandas 3, a dictionary column a
     categorical's NaN. Asking the installed pandas keeps the answers in step
-    with what `to_pandas()` returns.
+    with what `to_pandas()` returns. Geometry (an extension type here) is a
+    missing GeoSeries element, so GeoPandas answers for it.
     """
     if isinstance(dtype, pa.ExtensionType):
-        return None
+        if nan:
+            return None
+        try:
+            import geopandas
+        except ImportError:
+            return None
+        return geopandas.GeoSeries([None])
     try:
         import pandas  # noqa: F401
     except ImportError:
@@ -688,20 +695,16 @@ def _pandas_missing(dtype, nan=False):
         return None
 
 
-def _is_null_marker(marker, geometry):
-    """Whether `marker` matches a null when pandas does not decide.
-
-    For geometry, GeoPandas' answer: None and NumPy's NaT (datetime64 or
-    timedelta64), but not pandas' own sentinels or a null Arrow scalar.
-    Otherwise Arrow's: those plus a null Arrow scalar.
-    """
+def _is_null_marker(marker):
+    """Whether Arrow reads `marker` as a null: None, NumPy's NaT, or a null
+    Arrow scalar."""
     import numpy as np
 
     if marker is None:
         return True
     if isinstance(marker, (np.datetime64, np.timedelta64)):
         return bool(np.isnat(marker))
-    return not geometry and isinstance(marker, pa.Scalar) and not marker.is_valid
+    return isinstance(marker, pa.Scalar) and not marker.is_valid
 
 
 def _is_nan_marker(marker):
@@ -711,17 +714,15 @@ def _is_nan_marker(marker):
     return isinstance(marker, numbers.Real) and marker != marker
 
 
-def _missing_members(stored, dtype, markers):
-    """Whether a null, and a NaN, of a column are members of `markers`.
+def _missing_members(stored, dtype, values):
+    """Whether a null, and a NaN, of a column are members of `values`.
 
-    pandas decides when it can hold the column (`stored` is its type as
-    stored, `dtype` without encodings). For geometry, which pandas holds as
-    an extension array, GeoPandas' own rule applies; without pandas, Arrow's
-    reading: a NaN matches a NaN, and `_is_null_marker` says which markers
-    match a null.
+    pandas (GeoPandas, for geometry) decides when it is installed, given the
+    whole list as passed to `isin`: `stored` is the column's type as stored,
+    `dtype` without encodings. Without it, Arrow's reading applies: a null
+    is matched by what Arrow reads as a null, and a NaN by a NaN.
     """
     floating = pa.types.is_floating(dtype)
-    geometry = isinstance(stored, pa.ExtensionType)
     answers = []
     for nan in (False, True):
         if nan and not floating:
@@ -729,11 +730,11 @@ def _missing_members(stored, dtype, markers):
             continue
         series = _pandas_missing(stored, nan)
         if series is not None:
-            answers.append(bool(series.isin(markers).iloc[0]))
+            answers.append(bool(series.isin(values).iloc[0]))
         elif nan:
-            answers.append(any(_is_nan_marker(marker) for marker in markers))
+            answers.append(any(_is_nan_marker(value) for value in values))
         else:
-            answers.append(any(_is_null_marker(marker, geometry) for marker in markers))
+            answers.append(any(_is_null_marker(value) for value in values))
     return tuple(answers)
 
 
