@@ -230,13 +230,32 @@ impl Placement {
                 {
                     return Ok(None);
                 }
+                let (upper_left_x, upper_left_y) =
+                    (cols.upper_left_x.value(i), cols.upper_left_y.value(i));
+                let (scale_x, scale_y) = (cols.scale_x.value(i), cols.scale_y.value(i));
+                let (skew_x, skew_y) = (cols.skew_x.value(i), cols.skew_y.value(i));
+                let transform = [upper_left_x, upper_left_y, scale_x, scale_y, skew_x, skew_y];
+                if !transform.iter().all(|v| v.is_finite()) {
+                    return exec_err!(
+                        "{name}: geotransform must be finite, got upper_left=({upper_left_x}, \
+                         {upper_left_y}) scale=({scale_x}, {scale_y}) skew=({skew_x}, {skew_y})"
+                    );
+                }
+                // A zero determinant collapses the grid onto a line or point,
+                // so pixels have no area and the transform has no inverse.
+                if scale_x * scale_y - skew_x * skew_y == 0.0 {
+                    return exec_err!(
+                        "{name}: geotransform must be invertible, got scale=({scale_x}, \
+                         {scale_y}) skew=({skew_x}, {skew_y}) with a zero determinant"
+                    );
+                }
                 Ok(Some(GridGeometry {
-                    upper_left_x: cols.upper_left_x.value(i),
-                    upper_left_y: cols.upper_left_y.value(i),
-                    scale_x: cols.scale_x.value(i),
-                    scale_y: cols.scale_y.value(i),
-                    skew_x: cols.skew_x.value(i),
-                    skew_y: cols.skew_y.value(i),
+                    upper_left_x,
+                    upper_left_y,
+                    scale_x,
+                    scale_y,
+                    skew_x,
+                    skew_y,
                     crs: cols.crs.crs(name, i)?,
                 }))
             }

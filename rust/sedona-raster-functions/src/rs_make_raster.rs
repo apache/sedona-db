@@ -25,10 +25,16 @@
 //!   scale_x, scale_y, skew_x, skew_y, crs[, band])` — the full affine form;
 //!   `crs` is an integer SRID or a CRS string.
 //!
-//! The result is the raster `RS_FromPath(path)` would produce for that band,
-//! but nothing is read from `path`: the grid, CRS and pixel type are taken on
-//! trust, and the pixels are loaded lazily by the out-db loader when a function
-//! needs them.
+//! The result is an out-db raster with the same grid, CRS and pixel type as
+//! `RS_FromPath(path)` gives for that band, but nothing is read from `path`:
+//! they are taken on trust, and the pixels are loaded lazily by the out-db
+//! loader when a function needs them. `path` is the bare file location; the
+//! band is the `band` argument.
+//!
+//! Unlike `RS_FromPath`, RS_MakeRaster records no nodata value, so pixel
+//! functions treat the file's nodata pixels as ordinary values until
+//! `RS_SetBandNoDataValue` sets one (e.g. from a STAC catalog's
+//! `raster:bands[].nodata`).
 
 use std::sync::Arc;
 
@@ -79,18 +85,25 @@ enum Grid {
     Crs,
 }
 
+impl Grid {
+    /// Number of grid-placement arguments, starting at [`GRID_ARG`].
+    fn num_args(self) -> usize {
+        match self {
+            Grid::Extent => 1,
+            Grid::Srid | Grid::Crs => 7,
+        }
+    }
+}
+
 #[derive(Debug)]
 struct RsMakeRaster {
     grid: Grid,
 }
 
 impl RsMakeRaster {
-    /// Index of the optional trailing `band` argument.
+    /// Index of the optional trailing `band` argument, right after the grid.
     fn band_arg_index(&self) -> usize {
-        match self.grid {
-            Grid::Extent => GRID_ARG + 1,
-            Grid::Srid | Grid::Crs => GRID_ARG + 7,
-        }
+        GRID_ARG + self.grid.num_args()
     }
 }
 
@@ -123,6 +136,7 @@ impl SedonaScalarKernel for RsMakeRaster {
                 matchers.push(ArgMatcher::is_string());
             }
         }
+        debug_assert_eq!(matchers.len(), self.band_arg_index());
         matchers.push(ArgMatcher::optional(ArgMatcher::is_integer())); // band
 
         ArgMatcher::new(matchers, SedonaType::Raster).match_args(&arg_types)
@@ -176,13 +190,25 @@ impl RsMakeRaster {
 
         let mut builder = RasterBuilder::new(n);
         for i in 0..n {
-            // Validate the type name before looking at the other arguments so
-            // a bad literal errors even on rows whose other arguments are null.
+            // Validate each scalar argument right after its own null check and
+            // before resolving the grid, so a bad literal errors even on rows
+            // whose other arguments (path, grid) are null.
             if data_type.is_null(i) {
                 builder.append_null()?;
                 continue;
             }
             let band_type = parse_pixel_type(data_type.value(i))?;
+
+            if width.is_null(i) || height.is_null(i) {
+                builder.append_null()?;
+                continue;
+            }
+            let (width, height) = (width.value(i), height.value(i));
+            if width <= 0 || height <= 0 {
+                return exec_err!(
+                    "{NAME}: width and height must be positive, got {width} x {height}"
+                );
+            }
 
             let band = match &band {
                 Some(band) if band.is_null(i) => {
@@ -192,26 +218,31 @@ impl RsMakeRaster {
                 Some(band) => band.value(i),
                 None => 1,
             };
-            if path.is_null(i) || width.is_null(i) || height.is_null(i) {
-                builder.append_null()?;
-                continue;
-            }
-            let (width, height) = (width.value(i), height.value(i));
-            let Some(geom) = placement.geometry(NAME, i, width, height)? else {
-                builder.append_null()?;
-                continue;
-            };
-
-            if width <= 0 || height <= 0 {
-                return exec_err!(
-                    "{NAME}: width and height must be positive, got {width} x {height}"
-                );
-            }
             let Some(band) = u32::try_from(band).ok().filter(|&b| b >= 1) else {
                 return exec_err!(
                     "{NAME}: band must be a 1-based band index between 1 and {}, got {band}",
                     u32::MAX
                 );
+            };
+
+            if path.is_null(i) {
+                builder.append_null()?;
+                continue;
+            }
+            let path = path.value(i);
+            // The band is recorded as a `#band=N` fragment on the path; a path
+            // that already has one would yield `...#band=2#band=1`, which reads
+            // back as the wrong file.
+            if path.contains("#band=") {
+                return exec_err!(
+                    "{NAME}: path must be the bare file location without a '#band=' \
+                     fragment; pass the band number as the band argument instead, got '{path}'"
+                );
+            }
+
+            let Some(geom) = placement.geometry(NAME, i, width, height)? else {
+                builder.append_null()?;
+                continue;
             };
 
             builder.start_raster_2d(
@@ -225,7 +256,7 @@ impl RsMakeRaster {
                 geom.skew_y,
                 geom.crs.as_deref(),
             )?;
-            builder.append_outdb_band_2d(path.value(i), band, band_type, None)?;
+            builder.append_outdb_band_2d(path, band, band_type, None)?;
             builder.finish_raster()?;
         }
 
@@ -641,30 +672,81 @@ mod tests {
                 SedonaType::Arrow(DataType::Int64),
             ],
         );
-        let extent_err = |band_type: &str, width: i64, height: i64, band: i64| {
-            tester
-                .invoke_scalars(vec![
-                    lit("/a.tif"),
-                    lit(band_type),
-                    lit(width),
-                    lit(height),
-                    lit("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))"),
-                    lit(band),
-                ])
-                .unwrap_err()
-                .to_string()
-        };
-
-        let err = extent_err("uint8", 0, 2, 1);
+        let err = tester
+            .invoke_scalars(vec![
+                lit("/a.tif"),
+                lit("uint8"),
+                lit(0),
+                lit(2),
+                lit("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))"),
+                lit(1),
+            ])
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("width and height must be positive"), "{err}");
-        let err = extent_err("uint8", 2, -1, 1);
+        let err = tester
+            .invoke_scalars(vec![
+                lit("/a.tif"),
+                lit("uint8"),
+                lit(2),
+                lit(-1),
+                lit("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))"),
+                lit(1),
+            ])
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("width and height must be positive"), "{err}");
-        let err = extent_err("complex128", 2, 2, 1);
+        let err = tester
+            .invoke_scalars(vec![
+                lit("/a.tif"),
+                lit("complex128"),
+                lit(2),
+                lit(2),
+                lit("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))"),
+                lit(1),
+            ])
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("Unsupported pixelType"), "{err}");
-        let err = extent_err("uint8", 2, 2, 0);
+        let err = tester
+            .invoke_scalars(vec![
+                lit("/a.tif"),
+                lit("uint8"),
+                lit(2),
+                lit(2),
+                lit("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))"),
+                lit(0),
+            ])
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("band must be a 1-based band index"), "{err}");
-        let err = extent_err("uint8", 2, 2, 1 << 32);
+        let err = tester
+            .invoke_scalars(vec![
+                lit("/a.tif"),
+                lit("uint8"),
+                lit(2),
+                lit(2),
+                lit("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))"),
+                lit(1i64 << 32),
+            ])
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("band must be a 1-based band index"), "{err}");
+        let err = tester
+            .invoke_scalars(vec![
+                lit("/a.tif#band=2"),
+                lit("uint8"),
+                lit(2),
+                lit(2),
+                lit("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))"),
+                lit(1),
+            ])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("RS_MakeRaster: path must be the bare file location without a '#band='"),
+            "{err}"
+        );
 
         let err = tester
             .invoke_scalars(vec![
@@ -681,5 +763,140 @@ mod tests {
             err.contains("RS_MakeRaster: extent must span a positive width and height"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn scalar_arguments_are_validated_before_null_path_or_grid() {
+        // RS_MakeRaster(path, bandType, width, height, extent, band): a bad
+        // width or band errors even when path or extent is null on that row.
+        let tester = ScalarUdfTester::new(
+            rs_make_raster_udf().into(),
+            vec![
+                SedonaType::Arrow(DataType::Utf8),
+                SedonaType::Arrow(DataType::Utf8),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                WKB_GEOMETRY,
+                SedonaType::Arrow(DataType::Int64),
+            ],
+        );
+        let err = tester
+            .invoke_scalars(vec![
+                lit(ScalarValue::Utf8(None)),
+                lit("uint8"),
+                lit(2),
+                lit(2),
+                lit("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))"),
+                lit(0),
+            ])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("band must be a 1-based band index"), "{err}");
+
+        let err = tester
+            .invoke_scalars(vec![
+                lit(ScalarValue::Utf8(None)),
+                lit("uint8"),
+                lit(0),
+                lit(2),
+                lit("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))"),
+                lit(1),
+            ])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("width and height must be positive"), "{err}");
+
+        let err = tester
+            .invoke_scalars(vec![
+                lit("/a.tif"),
+                lit("uint8"),
+                lit(2),
+                lit(-3),
+                lit(ScalarValue::Null),
+                lit(1),
+            ])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("width and height must be positive"), "{err}");
+
+        let err = tester
+            .invoke_scalars(vec![
+                lit("/a.tif#band=1"),
+                lit("uint8"),
+                lit(2),
+                lit(2),
+                lit(ScalarValue::Null),
+                lit(1),
+            ])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("path must be the bare file location"), "{err}");
+    }
+
+    #[test]
+    fn degenerate_geotransform_is_an_error() {
+        // RS_MakeRaster(path, bandType, width, height, upperLeftX, upperLeftY,
+        // scaleX, scaleY, skewX, skewY, srid)
+        let mut arg_types = vec![
+            SedonaType::Arrow(DataType::Utf8),
+            SedonaType::Arrow(DataType::Utf8),
+            SedonaType::Arrow(DataType::Int64),
+            SedonaType::Arrow(DataType::Int64),
+        ];
+        arg_types.extend((0..6).map(|_| SedonaType::Arrow(DataType::Float64)));
+        arg_types.push(SedonaType::Arrow(DataType::Int64));
+        let tester = ScalarUdfTester::new(rs_make_raster_udf().into(), arg_types);
+
+        // (scaleX, scaleY, skewX, skewY) with scaleX * scaleY == skewX * skewY:
+        // a zero scale, and a skew that folds the grid onto a line.
+        for (scale_x, scale_y, skew_x, skew_y) in [
+            (0.0, -1.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0, 0.0),
+            (1.0, 1.0, 1.0, 1.0),
+        ] {
+            let err = tester
+                .invoke_scalars(vec![
+                    lit("/a.tif"),
+                    lit("uint8"),
+                    lit(2),
+                    lit(2),
+                    lit(0.0),
+                    lit(2.0),
+                    lit(scale_x),
+                    lit(scale_y),
+                    lit(skew_x),
+                    lit(skew_y),
+                    lit(0),
+                ])
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("RS_MakeRaster: geotransform must be invertible"),
+                "{err}"
+            );
+        }
+
+        for (upper_left_x, scale_x) in [(f64::NAN, 1.0), (0.0, f64::INFINITY)] {
+            let err = tester
+                .invoke_scalars(vec![
+                    lit("/a.tif"),
+                    lit("uint8"),
+                    lit(2),
+                    lit(2),
+                    lit(upper_left_x),
+                    lit(2.0),
+                    lit(scale_x),
+                    lit(-1.0),
+                    lit(0.0),
+                    lit(0.0),
+                    lit(0),
+                ])
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("RS_MakeRaster: geotransform must be finite"),
+                "{err}"
+            );
+        }
     }
 }

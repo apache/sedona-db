@@ -538,6 +538,69 @@ mod tests {
     }
 
     #[test]
+    fn degenerate_affine_transform_is_an_error() {
+        // RS_MakeEmptyRaster(numBands, width, height, upperLeftX, upperLeftY,
+        // scaleX, scaleY, skewX, skewY, srid)
+        let tester = ScalarUdfTester::new(
+            rs_make_empty_raster_udf().into(),
+            vec![
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Int64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Float64),
+                SedonaType::Arrow(DataType::Int64),
+            ],
+        );
+        // A zero scale, and a skew with scaleX * scaleY == skewX * skewY.
+        for (scale_x, scale_y, skew_x, skew_y) in [(0.0, -1.0, 0.0, 0.0), (2.0, 3.0, 1.0, 6.0)] {
+            let err = tester
+                .invoke_scalars(vec![
+                    lit(1),
+                    lit(2),
+                    lit(2),
+                    lit(0.0),
+                    lit(0.0),
+                    lit(scale_x),
+                    lit(scale_y),
+                    lit(skew_x),
+                    lit(skew_y),
+                    lit(0),
+                ])
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("RS_MakeEmptyRaster: geotransform must be invertible"),
+                "{err}"
+            );
+        }
+
+        let err = tester
+            .invoke_scalars(vec![
+                lit(1),
+                lit(2),
+                lit(2),
+                lit(0.0),
+                lit(f64::INFINITY),
+                lit(1.0),
+                lit(-1.0),
+                lit(0.0),
+                lit(0.0),
+                lit(0),
+            ])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("RS_MakeEmptyRaster: geotransform must be finite"),
+            "{err}"
+        );
+    }
+
+    #[test]
     fn extent_form_takes_envelope_and_crs_from_geometry() {
         // RS_MakeEmptyRaster(numBands, bandType, width, height, extent)
         let geom_type = SedonaType::Wkb(Edges::Planar, deserialize_crs("EPSG:3857").unwrap());

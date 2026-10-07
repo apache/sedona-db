@@ -20,10 +20,12 @@
 The Rust unit tests pin the exact output (transform, CRS, out-db URI) per
 kernel; these tests check the raster against RS_FromPath of the same file,
 including lazy pixel loading through the out-db loader, and that building and
-inspecting one never touches the file.
+inspecting one never touches the file. RS_MakeRaster records no nodata value,
+so it matches RS_FromPath only once RS_SetBandNoDataValue applies the file's.
 """
 
 import pytest
+import sedonadb
 
 METADATA = """
     RS_Width({r}) AS width,
@@ -31,14 +33,16 @@ METADATA = """
     RS_GeoReference({r}) AS georeference,
     RS_SRID({r}) AS srid,
     RS_NumBands({r}) AS num_bands,
-    RS_BandPixelType({r}, 1) AS pixel_type
+    RS_BandPixelType({r}, 1) AS pixel_type,
+    RS_BandNoDataValue({r}, 1) AS nodata
 """
 
 
-def _affine_args(path, band=None):
+def _affine_args(path, band=None, crs=None):
     """RS_MakeRaster's affine-form arguments for `path`, read with rasterio the
     way a catalog records them (STAC `proj:shape`, `proj:transform`,
-    `proj:code` and `data_type`)."""
+    `proj:code` and `data_type`). `crs` is the SQL for the crs argument,
+    defaulting to the file's EPSG code."""
     rasterio = pytest.importorskip("rasterio")
     with rasterio.open(path) as src:
         t = src.transform
@@ -54,7 +58,7 @@ def _affine_args(path, band=None):
             repr(t.e),
             repr(t.b),
             repr(t.d),
-            str(src.crs.to_epsg()),
+            str(src.crs.to_epsg()) if crs is None else crs,
         ]
     if band is not None:
         args.append(str(band))
@@ -70,13 +74,33 @@ def _row(con, sql):
     return con.sql(sql).to_arrow_table().to_pylist()[0]
 
 
-@pytest.mark.parametrize("name", ["test1.tiff", "test4.tiff", "sentinel2.tif"])
-def test_matches_rs_frompath(con, sedona_testing, name):
-    """A raster built from a file's metadata is the raster RS_FromPath reads
-    from its header, and functions that need pixels load the same values
-    through the out-db loader."""
+def _file_nodata(path):
+    """The file's nodata value, as a catalog records it in STAC's
+    `raster:bands[].nodata`."""
+    rasterio = pytest.importorskip("rasterio")
+    with rasterio.open(path) as src:
+        return src.nodata
+
+
+@pytest.mark.parametrize(
+    ("name", "nodata"),
+    [
+        ("test1.tiff", None),
+        ("test4.tiff", None),
+        ("sentinel2.tif", 0.0),
+        ("labels.tif", 255.0),
+    ],
+)
+def test_matches_rs_frompath(con, sedona_testing, name, nodata):
+    """A raster built from a file's metadata, with the file's nodata value set
+    by RS_SetBandNoDataValue, is the raster RS_FromPath reads from its header,
+    and functions that need pixels load the same values through the out-db
+    loader."""
     path = sedona_testing / "data/raster" / name
+    assert _file_nodata(path) == nodata
     made = f"RS_MakeRaster({_affine_args(path)})"
+    if nodata is not None:
+        made = f"RS_SetBandNoDataValue({made}, 1, {nodata})"
     read = f"RS_FromPath('{path}')"
 
     assert _row(con, f"SELECT {METADATA.format(r=made)}") == _row(
@@ -100,17 +124,50 @@ def test_matches_rs_frompath(con, sedona_testing, name):
         f"ST_GeomFromText('POINT ({center['cx']} {center['cy']})', "
         f"'EPSG:{center['srid']}')"
     )
+    # Default exclude_nodata, so the nodata value takes part.
     pixels = """
-        RS_SummaryStats({r}, 'sum', 1, false) AS sum,
-        RS_SummaryStats({r}, 'mean', 1, false) AS mean,
-        RS_SummaryStats({r}, 'max', 1, false) AS max,
+        RS_SummaryStats({r}, 'count', 1) AS count,
+        RS_SummaryStats({r}, 'sum', 1) AS sum,
+        RS_SummaryStats({r}, 'mean', 1) AS mean,
+        RS_SummaryStats({r}, 'max', 1) AS max,
         RS_Value({r}, {point}) AS value
     """
     made_pixels = _row(con, "SELECT " + pixels.format(r=made, point=point))
     read_pixels = _row(con, "SELECT " + pixels.format(r=read, point=point))
     assert made_pixels == read_pixels
-    assert made_pixels["value"] is not None
+    # labels.tif's probe pixel is nodata, so both read NULL there; that agrees
+    # only because RS_SetBandNoDataValue applied the file's nodata value.
+    assert (made_pixels["value"] is None) == (name == "labels.tif")
     assert made_pixels["max"] > 0
+
+
+def test_records_no_nodata(con, sedona_testing):
+    """RS_MakeRaster takes no nodata argument: the bare raster has none, so for
+    labels.tif (file nodata 255, mostly nodata pixels) pixel functions count
+    the nodata pixels that RS_FromPath excludes."""
+    rasterio = pytest.importorskip("rasterio")
+    path = sedona_testing / "data/raster/labels.tif"
+    with rasterio.open(path) as src:
+        assert src.nodata == 255.0
+        pixels = src.read(1)
+    all_pixels = int(pixels.size)
+    valid_pixels = int((pixels != 255).sum())
+    assert 0 < valid_pixels < all_pixels
+
+    made = f"RS_MakeRaster({_affine_args(path)})"
+    read = f"RS_FromPath('{path}')"
+    probe = """
+        RS_BandNoDataValue({r}, 1) AS nodata,
+        RS_SummaryStats({r}, 'count', 1) AS count
+    """
+    assert _row(con, "SELECT " + probe.format(r=made)) == {
+        "nodata": None,
+        "count": all_pixels,
+    }
+    assert _row(con, "SELECT " + probe.format(r=read)) == {
+        "nodata": 255.0,
+        "count": valid_pixels,
+    }
 
 
 def test_extent_form_matches_rs_frompath(con, sedona_testing):
@@ -130,11 +187,28 @@ def test_extent_form_matches_rs_frompath(con, sedona_testing):
     )
 
 
+def test_geography_extent(con):
+    """A geography extent places the grid as it does for RS_MakeEmptyRaster:
+    its envelope follows spherical edges via the session's geography
+    bounder."""
+    if "s2geography" not in sedonadb.__features__:
+        pytest.skip("Geography bounds require a build with feature s2geography")
+
+    geog = "ST_GeogFromText('POLYGON ((0 0, 90 0, 90 60, 0 60, 0 0))')"
+    made = f"RS_MakeRaster('/a.tif', 'uint8', 4, 2, {geog})"
+    empty = f"RS_MakeEmptyRaster(0, 4, 2, {geog})"
+    probe = "RS_GeoReference({r}) AS georeference, RS_UpperLeftY({r}) AS uly"
+    made_row = _row(con, "SELECT " + probe.format(r=made))
+    assert made_row == _row(con, "SELECT " + probe.format(r=empty))
+    # The geodesic upper edge bows north of the 60-degree vertices.
+    assert made_row["uly"] > 60.0
+
+
 def test_crs_string_and_srid_forms_agree(con, sedona_testing):
     path = sedona_testing / "data/raster/sentinel2.tif"
-    srid_form = f"RS_MakeRaster({_affine_args(path)})"
-    crs_form = srid_form.replace(", 32614)", ", 'EPSG:32614')")
-    assert crs_form != srid_form
+    srid_form = f"RS_MakeRaster({_affine_args(path, crs='32614')})"
+    crs_args = _affine_args(path, crs="'EPSG:32614'")
+    crs_form = f"RS_MakeRaster({crs_args})"
 
     probe = f"""
         {METADATA.format(r="{r}")},
@@ -149,7 +223,7 @@ def test_crs_string_and_srid_forms_agree(con, sedona_testing):
     # A PROJJSON CRS is accepted too, and resolves to the same SRID.
     projjson = _row(con, f"SELECT RS_CRS(RS_FromPath('{path}')) AS crs")["crs"]
     assert projjson.startswith("{")
-    projjson_form = srid_form.replace(", 32614)", ", $1)")
+    projjson_form = f"RS_MakeRaster({_affine_args(path, crs='$1')})"
     got = (
         con.sql(f"SELECT RS_SRID({projjson_form}) AS srid", params=(projjson,))
         .to_arrow_table()
@@ -219,6 +293,31 @@ def test_null_arguments_yield_null(con):
         (
             "'/a.tif', 'uint8', 2, 2, ST_GeomFromText('POINT (1 1)')",
             "positive width and height",
+        ),
+        # Scalar arguments are checked before a null path or grid nulls the row.
+        (
+            "CAST(NULL AS VARCHAR), 'uint8', 2, 2, ST_MakeEnvelope(0, 0, 2, 2), 0",
+            "band must be a 1-based band index",
+        ),
+        (
+            "'/a.tif', 'uint8', 0, 2, ST_GeomFromText(NULL)",
+            "width and height must be positive",
+        ),
+        (
+            "'/a.tif#band=2', 'uint8', 2, 2, ST_MakeEnvelope(0, 0, 2, 2)",
+            "path must be the bare file location without a '#band='",
+        ),
+        (
+            "'/a.tif', 'uint8', 2, 2, 0.0, 2.0, 0.0, -1.0, 0.0, 0.0, 4326",
+            "geotransform must be invertible",
+        ),
+        (
+            "'/a.tif', 'uint8', 2, 2, 0.0, 2.0, 1.0, 1.0, 1.0, 1.0, 'EPSG:4326'",
+            "geotransform must be invertible",
+        ),
+        (
+            "'/a.tif', 'uint8', 2, 2, 0.0, 2.0, 'Infinity'::double, -1.0, 0.0, 0.0, 0",
+            "geotransform must be finite",
         ),
     ],
 )
