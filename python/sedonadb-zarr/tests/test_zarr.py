@@ -414,6 +414,43 @@ def test_rs_ensure_loaded_with_zarr(tmp_path, numpy_dtype):
     assert total_pixels == width * height
 
 
+def test_sharded_array_reads_one_row_per_inner_chunk(tmp_path):
+    """A sharded array yields one row per inner chunk, not one per shard.
+
+    Shape (3, 5) with 2x2 inner chunks in 4x4 shards: a 2x3 inner-chunk
+    grid inside a 1x2 shard grid. The reader must emit the six 2x2 rows
+    with the pixels of each inner chunk (fill value past the array edge),
+    in row-major order over the inner-chunk grid. Reading per shard would
+    give two 4x4 rows instead.
+    """
+    values = np.arange(15, dtype=np.uint8).reshape(3, 5) + 1
+    root = zarr.open_group(str(tmp_path), mode="w")
+    arr = root.create_array(
+        "temperature",
+        shape=values.shape,
+        chunks=(2, 2),
+        shards=(4, 4),
+        dtype="uint8",
+        dimension_names=["y", "x"],
+    )
+    arr[:] = values
+
+    sd = sedonadb.connect()
+    sd.register(sedonadb_zarr.ZarrExtension())
+    t = sd.read(f"file://{tmp_path}", format="zarr")
+    tab = t.select(raster=t.raster.funcs.rs_ensureloaded()).to_arrow_table()
+    assert tab.num_rows == 6
+
+    padded = np.zeros((4, 6), dtype=np.uint8)
+    padded[:3, :5] = values
+    for i, (cy, cx) in enumerate([(0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (1, 2)]):
+        band = tab["raster"][i].as_py().bands[0]
+        chunk = band.to_numpy()
+        assert chunk.shape == (2, 2)
+        expected = padded[2 * cy : 2 * cy + 2, 2 * cx : 2 * cx + 2]
+        np.testing.assert_array_equal(chunk, expected)
+
+
 # Each numpy dtype below maps to a different `BandDataType` arm in
 # `rust/sedona-raster-zarr/src/dtype.rs::zarr_to_band_data_type`.
 @pytest.mark.parametrize(

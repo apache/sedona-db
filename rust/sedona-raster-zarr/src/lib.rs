@@ -19,7 +19,9 @@
 //!
 //! [`ZarrChunkReader`] is a `RecordBatchReader` that walks a Zarr
 //! group's chunk grid lazily, emitting one raster row per chunk
-//! position with one band per array. Each row carries a chunk-anchor
+//! position with one band per array. A sharded array's grid is its
+//! inner-chunk grid, so its rows are inner chunks, never whole shards.
+//! Each row carries a chunk-anchor
 //! URI in `outdb_uri`; the `data` column stays empty. Metadata-only
 //! operations (`count(*)`, `RS_Envelope`, `RS_Width`, …) work directly
 //! against these rows; byte-consuming kernels need an async resolver
