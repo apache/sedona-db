@@ -787,6 +787,37 @@ fn min_member_distance<F: GeoFloat>(min_distance: Option<F>, distance: F) -> Opt
     Some(min_distance.map_or(distance, |min| min.min(distance)))
 }
 
+/// Distance from `geom` to `rhs`, or `None` when `geom` is empty, including a collection
+/// whose members are all empty. Collections recurse here instead of calling `is_empty()` on
+/// each member: `is_empty()` walks a collection's members, so checking it at every level of a
+/// nested collection would walk the inner levels again and again.
+fn non_empty_geometry_distance<F, RhsTag, G, RHS>(geom: &G, rhs: &RHS) -> Option<F>
+where
+    F: GeoFloat,
+    RhsTag: GeoTypeTag,
+    G: GeometryTraitExt<T = F> + GenericDistanceTrait<F, GeometryTag, RhsTag, RHS>,
+{
+    if geom.is_collection() {
+        let mut min_distance = None;
+        for member in geom.geometries_ext() {
+            let member: &G = member.borrow();
+            if let Some(distance) = non_empty_geometry_distance::<F, RhsTag, G, RHS>(member, rhs) {
+                min_distance = min_member_distance(min_distance, distance);
+
+                // Early exit optimization
+                if distance == F::zero() {
+                    break;
+                }
+            }
+        }
+        min_distance
+    } else if geom.is_empty() {
+        None
+    } else {
+        Some(geom.generic_distance_trait(rhs))
+    }
+}
+
 // ┌────────────────────────────────────────────────────────────┐
 // │ Implementation for GeometryCollection (generic traits)     │
 // └────────────────────────────────────────────────────────────┘
@@ -806,8 +837,9 @@ macro_rules! impl_distance_geometry_collection_from_geometry {
                 // where we need special handling to avoid infinite recursion
                 // A collection whose members are all empty is zero, as for other empty operands.
                 self.geometries_ext()
-                    .filter(|geom| !geom.is_empty())
-                    .map(|geom| geom.distance_ext(rhs))
+                    .filter_map(|geom| {
+                        non_empty_geometry_distance::<F, $rhs_tag, _, RHS>(&geom, rhs)
+                    })
                     .fold(None, min_member_distance)
                     .unwrap_or_else(F::zero)
             }
@@ -928,21 +960,8 @@ macro_rules! impl_distance_geometry_to_type {
         {
             fn generic_distance_trait(&self, rhs: &RHS) -> F {
                 if self.is_collection() {
-                    let mut min_distance = None;
-                    for lhs_geom in self.geometries_ext() {
-                        let lhs_geom = lhs_geom.borrow();
-                        if lhs_geom.is_empty() {
-                            continue;
-                        }
-                        let distance = lhs_geom.generic_distance_trait(rhs);
-                        min_distance = min_member_distance(min_distance, distance);
-
-                        // Early exit optimization
-                        if distance == F::zero() {
-                            return F::zero();
-                        }
-                    }
-                    min_distance.unwrap_or_else(F::zero)
+                    non_empty_geometry_distance::<F, $rhs_tag, _, RHS>(self, rhs)
+                        .unwrap_or_else(F::zero)
                 } else {
                     match self.as_type_ext() {
                         sedona_geo_traits_ext::GeometryTypeExt::Point(g) => {
@@ -1069,21 +1088,7 @@ where
 {
     fn generic_distance_trait(&self, rhs: &RHS) -> F {
         if self.is_collection() {
-            let mut min_distance = None;
-            for lhs_geom in self.geometries_ext() {
-                let lhs_geom = lhs_geom.borrow();
-                if lhs_geom.is_empty() {
-                    continue;
-                }
-                let distance = lhs_geom.generic_distance_trait(rhs);
-                min_distance = min_member_distance(min_distance, distance);
-
-                // Early exit optimization
-                if distance == F::zero() {
-                    return F::zero();
-                }
-            }
-            min_distance.unwrap_or_else(F::zero)
+            non_empty_geometry_distance::<F, GeometryTag, _, RHS>(self, rhs).unwrap_or_else(F::zero)
         } else {
             match self.as_type_ext() {
                 sedona_geo_traits_ext::GeometryTypeExt::Point(g) => g.generic_distance_trait(rhs),
