@@ -140,8 +140,8 @@ fn gdal_version() -> Result<Option<String>, PySedonaError> {
     }
 }
 
-/// Signal that GDAL is shutting down so datasets are left open during
-/// interpreter/library teardown. Registered as a Python `atexit` callback to
+/// Signal that GDAL is shutting down so GDAL objects (e.g. datasets) are left
+/// unfreed during interpreter/library teardown; GDAL calls keep working. Registered as a Python `atexit` callback to
 /// avoid a Windows process-exit abort (`0xC0000409`) when a GDAL dataset is
 /// closed while the library is being unloaded.
 #[pyfunction]

@@ -334,7 +334,7 @@ fn read_band_blockwise(
     let mut y_start: usize = 0;
     while y_start < height {
         // Also stop at process exit, which waits for in-flight GDAL calls.
-        if cancel.load(Ordering::Acquire) || sedona_gdal::global::is_gdal_shutting_down() {
+        if cancel.load(Ordering::Acquire) || sedona_gdal::global::is_gdal_exiting() {
             return Err(cancelled_err(y_start, height));
         }
         let chunk_h = (height - y_start).min(block_h);

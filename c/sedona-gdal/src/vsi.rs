@@ -26,6 +26,7 @@ use std::ops::Deref;
 
 use crate::errors::{GdalError, Result};
 use crate::gdal_api::{call_gdal_api, GdalApi};
+use crate::global::free_gdal_object;
 
 /// An owned GDAL-allocated VSI memory buffer.
 #[derive(Debug)]
@@ -76,7 +77,9 @@ impl Deref for VSIBuffer {
 impl Drop for VSIBuffer {
     fn drop(&mut self) {
         if !self.ptr.is_null() {
-            unsafe { call_gdal_api!(self.api, VSIFree, self.ptr.cast::<std::ffi::c_void>()) };
+            free_gdal_object(|| unsafe {
+                call_gdal_api!(self.api, VSIFree, self.ptr.cast::<std::ffi::c_void>())
+            });
         }
     }
 }

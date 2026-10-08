@@ -25,6 +25,7 @@ use std::marker::PhantomData;
 use crate::errors::{GdalError, Result};
 use crate::gdal_api::{call_gdal_api, GdalApi};
 use crate::gdal_dyn_bindgen::*;
+use crate::global::free_gdal_object;
 use crate::vector::geometry::Envelope;
 
 /// An OGR feature.
@@ -37,7 +38,7 @@ pub struct Feature<'a> {
 impl Drop for Feature<'_> {
     fn drop(&mut self) {
         if !self.c_feature.is_null() {
-            unsafe { call_gdal_api!(self.api, OGR_F_Destroy, self.c_feature) };
+            free_gdal_object(|| unsafe { call_gdal_api!(self.api, OGR_F_Destroy, self.c_feature) });
         }
     }
 }
@@ -189,7 +190,9 @@ pub struct FieldDefn {
 impl Drop for FieldDefn {
     fn drop(&mut self) {
         if !self.c_field_defn.is_null() {
-            unsafe { call_gdal_api!(self.api, OGR_Fld_Destroy, self.c_field_defn) };
+            free_gdal_object(|| unsafe {
+                call_gdal_api!(self.api, OGR_Fld_Destroy, self.c_field_defn)
+            });
         }
     }
 }

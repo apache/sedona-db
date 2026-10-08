@@ -21,23 +21,41 @@ use crate::gdal_api::GdalApi;
 use std::cell::Cell;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Mutex, Once, OnceLock};
+use std::sync::{Mutex, OnceLock};
+#[cfg(unix)]
 use std::time::{Duration, Instant};
 
-/// Set once the process is shutting down so GDAL datasets are left open during
-/// teardown instead of being closed.
+// Two shutdown flags, set by different hooks at different points of teardown:
+//
+// - `GDAL_SHUTTING_DOWN` ([`begin_gdal_shutdown`]) is set by an embedder's own
+//   shutdown hook (the Python package's `atexit` callback). It only stops
+//   `Drop` impls from freeing GDAL objects; GDAL calls keep working.
+// - `GDAL_EXITING` is set by the C `atexit` handler [`drain_gdal_calls_at_exit`]
+//   (Unix only) just before it waits for running GDAL closures, so it is the
+//   point after which GDAL may no longer be entered at all: new closures fail,
+//   `Drop` impls skip their frees, and long-running readers should stop.
+//
+// A `Drop` impl leaves its object alone if either flag is set: both mean "a
+// free now could run during or after GDAL's teardown", and leaking at process
+// exit is harmless since the OS reclaims the memory and handles.
+
+/// Set once the embedder signals shutdown; GDAL objects dropped afterwards are
+/// leaked instead of freed.
 ///
 /// On Windows, running `GDALClose` from a (thread-local) dataset cache's
 /// destructor while the GDAL shared library is being unloaded corrupts the
 /// teardown and aborts the process (`0xC0000409`). Leaking the handles at
 /// process exit is harmless — the OS reclaims them — so once shutdown begins
-/// [`crate::dataset::Dataset`]'s `Drop` skips `GDALClose`.
+/// the `Drop` impls of GDAL-owning wrappers (e.g. [`crate::dataset::Dataset`])
+/// skip their free calls. GDAL calls inside [`with_global_gdal`] closures are
+/// unaffected.
 static GDAL_SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
 
 /// Signal that the process is shutting down; see [`GDAL_SHUTTING_DOWN`].
 ///
 /// Intended to run on the interpreter thread during finalization (e.g. a Python
-/// `atexit` callback), before GDAL's library is unloaded.
+/// `atexit` callback), before GDAL's library is unloaded. It does not refuse
+/// later GDAL calls: other `atexit` callbacks may still legitimately use GDAL.
 pub fn begin_gdal_shutdown() {
     GDAL_SHUTTING_DOWN.store(true, Ordering::SeqCst);
 }
@@ -47,8 +65,22 @@ pub fn is_gdal_shutting_down() -> bool {
     GDAL_SHUTTING_DOWN.load(Ordering::SeqCst)
 }
 
-/// Number of [`with_global_gdal`] / [`with_global_gdal_api`] closures
-/// currently running, across all threads.
+/// Set by the C `atexit` handler [`drain_gdal_calls_at_exit`]: `exit()` is
+/// about to run GDAL's static destructors, so no new GDAL call may start.
+/// Never set on Windows, which has no exit barrier.
+static GDAL_EXITING: AtomicBool = AtomicBool::new(false);
+
+/// Whether the process has entered `exit()` and GDAL may no longer be called.
+///
+/// Once true, [`with_global_gdal`] / [`with_global_gdal_api`] return an error.
+/// Long-running readers should poll this between chunks of I/O and stop, so the
+/// exit barrier waits for at most one chunk.
+pub fn is_gdal_exiting() -> bool {
+    GDAL_EXITING.load(Ordering::SeqCst)
+}
+
+/// Number of [`with_global_gdal`] / [`with_global_gdal_api`] closures (and
+/// GDAL frees from `Drop`) currently running, across all threads.
 static GDAL_CALLS_IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
 
 thread_local! {
@@ -56,23 +88,24 @@ thread_local! {
     static GDAL_CALL_DEPTH: Cell<usize> = const { Cell::new(0) };
 }
 
-/// Counts one running GDAL closure for the exit barrier.
-struct InFlightGuard;
+/// Counts one running GDAL call for the exit barrier.
+pub(crate) struct InFlightGuard;
 
 impl InFlightGuard {
-    /// Enter a GDAL closure, or refuse once the process is shutting down.
+    /// Enter a GDAL call, or refuse once the process is exiting.
     ///
     /// Incrementing before checking the flag (both `SeqCst`) pairs with
     /// [`drain_gdal_calls_at_exit`] storing the flag before reading the count:
     /// either the exit handler sees this call and waits for it, or this call
-    /// sees the flag and backs out without touching GDAL.
-    fn enter() -> Result<Self, GdalInitLibraryError> {
+    /// sees the flag and backs out without touching GDAL. Nesting on one
+    /// thread is fine: each level increments the count and this thread's depth.
+    pub(crate) fn enter() -> Result<Self, GdalInitLibraryError> {
         GDAL_CALLS_IN_FLIGHT.fetch_add(1, Ordering::SeqCst);
         GDAL_CALL_DEPTH.with(|d| d.set(d.get() + 1));
         let guard = InFlightGuard;
-        if is_gdal_shutting_down() {
+        if is_gdal_exiting() {
             return Err(GdalInitLibraryError::Invalid(
-                "GDAL is unavailable: the process is shutting down".to_string(),
+                "GDAL is unavailable: the process is exiting".to_string(),
             ));
         }
         Ok(guard)
@@ -86,8 +119,25 @@ impl Drop for InFlightGuard {
     }
 }
 
-/// C `atexit` handler: stop new GDAL work and wait for running GDAL closures
-/// to return before GDAL's own static destructors run.
+/// Run `free` (a GDAL free/close/destroy call) from a `Drop` impl, unless GDAL
+/// must not be called now.
+///
+/// `Drop` can run outside any [`with_global_gdal`] closure, e.g. a dataset in a
+/// thread-local cache dropped by a TLS destructor while a blocking thread idles
+/// out at exit, so the free is counted by the exit barrier like a closure. It
+/// is skipped (the object is leaked) once [`begin_gdal_shutdown`] was called or
+/// the process is exiting; see the comment on the two flags above.
+pub(crate) fn free_gdal_object<R>(free: impl FnOnce() -> R) {
+    if is_gdal_shutting_down() {
+        return;
+    }
+    if let Ok(_in_flight) = InFlightGuard::enter() {
+        let _ = free();
+    }
+}
+
+/// C `atexit` handler: stop new GDAL work and wait for running GDAL calls to
+/// return before GDAL's own static destructors run.
 ///
 /// `exit()` runs handlers in reverse registration order, and this one is
 /// registered after GDAL is loaded (so after GDAL registered its C++ static
@@ -98,13 +148,29 @@ impl Drop for InFlightGuard {
 /// `std::system_error`, which unwinds into the Rust thread's `catch_unwind`
 /// and aborts with "Rust cannot catch foreign exceptions".
 ///
-/// Long-running readers should poll [`is_gdal_shutting_down`] between chunks
-/// so this wait is bounded by one chunk of I/O. The wait gives up after
+/// Only destructors GDAL registers while it loads are guaranteed to run after
+/// this handler. A function-local static constructed lazily on first use, or a
+/// plugin driver loaded later, registers its destructor after this handler and
+/// so runs before it; such objects are not protected. (The `/vsicurl/` mutex
+/// above is a file-scope static, registered at load.)
+///
+/// Long-running readers should poll [`is_gdal_exiting`] between chunks so this
+/// wait is bounded by one chunk of I/O. The wait gives up after
 /// [`EXIT_BARRIER_TIMEOUT`] so a GDAL call stuck without a network timeout
 /// can't hang exit; past that, exit proceeds as it would without the barrier.
-extern "C" fn drain_gdal_calls_at_exit() {
-    GDAL_SHUTTING_DOWN.store(true, Ordering::SeqCst);
-    // Don't wait on ourselves if `exit()` is called from inside a GDAL closure.
+///
+/// Unix only. On Windows `exit()` terminates the other threads before DLLs are
+/// detached, so a running closure would never return and this would always
+/// wait out the timeout; and libgdal's DLL detach does not reliably come after
+/// this module's `atexit` handlers, so the ordering argument above doesn't
+/// hold. Windows relies on [`begin_gdal_shutdown`] alone.
+#[cfg(unix)]
+pub(crate) extern "C" fn drain_gdal_calls_at_exit() {
+    GDAL_EXITING.store(true, Ordering::SeqCst);
+    // `exit()` runs handlers on the thread that called it, which need not be
+    // the main thread and may itself be inside a GDAL closure (e.g. exit() from
+    // a callback). Exclude that thread's own calls: they can't return until
+    // this handler does, so waiting on them would always hit the timeout.
     let own = GDAL_CALL_DEPTH.try_with(Cell::get).unwrap_or(0);
     let deadline = Instant::now() + EXIT_BARRIER_TIMEOUT;
     while GDAL_CALLS_IN_FLIGHT.load(Ordering::SeqCst) > own && Instant::now() < deadline {
@@ -112,14 +178,44 @@ extern "C" fn drain_gdal_calls_at_exit() {
     }
 }
 
-/// Longest [`drain_gdal_calls_at_exit`] waits for running GDAL closures.
-const EXIT_BARRIER_TIMEOUT: Duration = Duration::from_secs(30);
-
-unsafe extern "C" {
-    fn atexit(cb: extern "C" fn()) -> std::os::raw::c_int;
+/// `pthread_atfork` child handler: only the forking thread survives `fork()`,
+/// so drop the other threads' calls from the inherited in-flight count.
+/// Otherwise a forked child that calls `exit()` (rather than `_exit()`) while
+/// the parent had GDAL calls running would wait out the full timeout for
+/// threads that don't exist in the child.
+#[cfg(unix)]
+extern "C" fn reset_gdal_calls_in_fork_child() {
+    let own = GDAL_CALL_DEPTH.try_with(Cell::get).unwrap_or(0);
+    GDAL_CALLS_IN_FLIGHT.store(own, Ordering::SeqCst);
 }
 
-static REGISTER_EXIT_BARRIER: Once = Once::new();
+/// Longest [`drain_gdal_calls_at_exit`] waits for running GDAL calls.
+#[cfg(unix)]
+const EXIT_BARRIER_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[cfg(unix)]
+unsafe extern "C" {
+    fn atexit(cb: extern "C" fn()) -> std::os::raw::c_int;
+    fn pthread_atfork(
+        prepare: Option<extern "C" fn()>,
+        parent: Option<extern "C" fn()>,
+        child: Option<extern "C" fn()>,
+    ) -> std::os::raw::c_int;
+}
+
+/// Register the exit barrier and its fork handler. Called exactly once, right
+/// after GDAL is loaded; see [`drain_gdal_calls_at_exit`].
+#[cfg(unix)]
+fn register_exit_barrier() {
+    // SAFETY: both functions only store a function pointer; the handlers are
+    // `extern "C"` functions with 'static lifetime that don't unwind.
+    unsafe {
+        let rc = pthread_atfork(None, None, Some(reset_gdal_calls_in_fork_child));
+        debug_assert_eq!(rc, 0, "pthread_atfork failed");
+        let rc = atexit(drain_gdal_calls_at_exit);
+        debug_assert_eq!(rc, 0, "atexit failed");
+    }
+}
 
 /// Minimum GDAL version required by sedona-gdal.
 const MIN_GDAL_VERSION_MAJOR: i32 = 3;
@@ -246,12 +342,14 @@ fn get_global_gdal_api() -> Result<&'static GdalApi, GdalInitLibraryError> {
         gdal_all_register();
     }
 
-    let _ = GDAL_API.set(api);
-    // Registered after GDAL is loaded and initialized so it runs before
-    // GDAL's static destructors at exit; see `drain_gdal_calls_at_exit`.
-    REGISTER_EXIT_BARRIER.call_once(|| unsafe {
-        atexit(drain_gdal_calls_at_exit);
-    });
+    // We hold the builder lock and `GDAL_API` was unset under it, so this
+    // `set` succeeds and the code below runs once per process.
+    if GDAL_API.set(api).is_ok() {
+        // Registered after GDAL is loaded and initialized so it runs before
+        // GDAL's static destructors at exit; see `drain_gdal_calls_at_exit`.
+        #[cfg(unix)]
+        register_exit_barrier();
+    }
     Ok(GDAL_API.get().expect("GDAL API should be set"))
 }
 
@@ -305,8 +403,9 @@ pub fn with_global_gdal_api<F, R>(func: F) -> Result<R, GdalInitLibraryError>
 where
     F: FnOnce(&'static GdalApi) -> R,
 {
-    let api = get_global_gdal_api()?;
+    // Enter before resolving the API, so an exiting process never loads GDAL.
     let _in_flight = InFlightGuard::enter()?;
+    let api = get_global_gdal_api()?;
     Ok(func(api))
 }
 
@@ -316,8 +415,9 @@ pub fn with_global_gdal<F, R>(func: F) -> Result<R, GdalInitLibraryError>
 where
     F: FnOnce(&Gdal) -> R,
 {
-    let api = get_global_gdal_api()?;
+    // Enter before resolving the API, so an exiting process never loads GDAL.
     let _in_flight = InFlightGuard::enter()?;
+    let api = get_global_gdal_api()?;
     Ok(func(&Gdal::new(api)))
 }
 
