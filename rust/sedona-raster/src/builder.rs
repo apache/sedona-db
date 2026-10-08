@@ -27,7 +27,7 @@ use sedona_schema::raster::{BandDataType, RasterSchema};
 
 use crate::band_builder::{BandArrayBuilder, BandWriter};
 use crate::error::RasterError;
-use crate::traits::{BandOverrides, BandRef, Override, RasterRef};
+use crate::traits::{BandOverrides, BandRef, Override, RasterRef, format_outdb_band_uri};
 use crate::view_entries::ViewEntries;
 
 /// Raster-level metadata overrides for [`RasterBuilder::start_raster_from`] and
@@ -442,6 +442,42 @@ impl RasterBuilder {
                 data_type,
             )
         })
+    }
+
+    /// Convenience: append a complete 2-D out-db band that references 1-based
+    /// band `band` of the raster at `path`, with `dim_names=["y","x"]`,
+    /// `shape=[height, width]` and an empty data buffer. The pixels are read
+    /// lazily from `path` (see [`crate::traits::format_outdb_band_uri`] for the
+    /// stored URI) when a function needs them.
+    ///
+    /// Must be called after `start_raster_2d`, which sets the current
+    /// width/height.
+    pub fn append_outdb_band_2d(
+        &mut self,
+        path: &str,
+        band: u32,
+        data_type: BandDataType,
+        nodata: Option<&[u8]>,
+    ) -> Result<(), RasterError> {
+        if self.current_width == 0 || self.current_height == 0 {
+            return Err(RasterError::Invalid(
+                "append_outdb_band_2d requires prior start_raster_2d with a non-zero width and \
+                 height"
+                    .into(),
+            ));
+        }
+        let outdb_uri = format_outdb_band_uri(path, band);
+        self.start_band(StartBandArgs {
+            nodata,
+            outdb_uri: Some(&outdb_uri),
+            ..StartBandArgs::new(
+                &["y", "x"],
+                &[self.current_height, self.current_width],
+                data_type,
+            )
+        })?;
+        self.band_data_writer().append_value([]);
+        self.finish_band()
     }
 
     /// Get direct access to the BinaryViewBuilder for writing the current band's data.
@@ -1097,6 +1133,55 @@ mod tests {
             outdb_band.outdb_uri().unwrap(),
             "s3://mybucket/satellite_image.tif#band=2"
         );
+    }
+
+    #[test]
+    fn append_outdb_band_2d_references_the_source_band() {
+        let mut builder = RasterBuilder::new(1);
+        builder
+            .start_raster_2d(4, 3, 0.0, 3.0, 1.0, -1.0, 0.0, 0.0, None)
+            .unwrap();
+        builder
+            .append_outdb_band_2d("s3://bucket/image.tif", 2, BandDataType::Int16, None)
+            .unwrap();
+        builder.finish_raster().unwrap();
+        let raster_array = builder.finish().unwrap();
+
+        let rasters = RasterStructArray::try_new(&raster_array).unwrap();
+        let raster = rasters.get(0).unwrap();
+        let band = raster.band(0).unwrap();
+        assert!(!band.is_indb());
+        assert_eq!(band.data_type(), BandDataType::Int16);
+        assert_eq!(band.dim_names(), vec!["y", "x"]);
+        assert_eq!(band.shape(), &[3, 4]);
+        assert_eq!(band.nodata(), None);
+        assert_eq!(band.outdb_uri(), Some("s3://bucket/image.tif#band=2"));
+        assert_eq!(band.outdb_format(), None);
+    }
+
+    #[test]
+    fn append_outdb_band_2d_requires_a_started_raster() {
+        let mut builder = RasterBuilder::new(1);
+        let err = builder
+            .append_outdb_band_2d("/a.tif", 1, BandDataType::UInt8, None)
+            .unwrap_err();
+        assert!(err.to_string().contains("requires prior start_raster_2d"));
+
+        // A zero width or height alone is enough to have no 2-D grid to
+        // reference.
+        for (width, height) in [(0, 3), (4, 0)] {
+            let mut builder = RasterBuilder::new(1);
+            builder
+                .start_raster_2d(width, height, 0.0, 3.0, 1.0, -1.0, 0.0, 0.0, None)
+                .unwrap();
+            let err = builder
+                .append_outdb_band_2d("/a.tif", 1, BandDataType::UInt8, None)
+                .unwrap_err();
+            assert!(
+                err.to_string().contains("requires prior start_raster_2d"),
+                "{width} x {height}: {err}"
+            );
+        }
     }
 
     #[test]

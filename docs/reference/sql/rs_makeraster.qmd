@@ -1,0 +1,305 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: RS_MakeRaster
+description: >
+  Creates a one-band out-of-database raster that references a band of a raster
+  file, from a path, pixel type and grid definition alone. Nothing is read from
+  the file: the result is built without any I/O, and the pixels are loaded
+  lazily when a function needs them.
+kernels:
+  - returns: raster
+    args:
+    - name: path
+      type: string
+      description: >
+        Path or URL of the raster file, in any form RS_FromPath accepts. This is
+        the bare file location: select the band with the band argument, not a
+        `#band=` fragment (a path containing one is an error).
+    - name: band_data_type
+      type: string
+      description: >
+        Pixel type of the band in the file: int8, uint8, int16, uint16, int32,
+        uint32, int64, uint64, float32 or float64; Sedona Spark's letter codes
+        (D, F, I, UI, S, US, B); or an RS_BandPixelType name such as
+        UNSIGNED_8BITS.
+    - name: width
+      type: integer
+      description: Raster width in pixels.
+    - name: height
+      type: integer
+      description: Raster height in pixels.
+    - name: extent
+      type: geometry
+      description: >
+        The raster covers this geometry's envelope with north-up pixels, and its
+        CRS is the geometry's. Only correct when the file's grid is north-up and
+        in the geometry's CRS. A geography is accepted too, in which case the
+        envelope follows spherical edges and comes from the session's geography
+        bounder, as for RS_MakeEmptyRaster.
+  - returns: raster
+    args:
+    - name: path
+      type: string
+    - name: band_data_type
+      type: string
+    - name: width
+      type: integer
+    - name: height
+      type: integer
+    - name: extent
+      type: geometry
+    - name: band
+      type: integer
+      description: >
+        1-based index of the band in the file to reference. Defaults to 1.
+  - returns: raster
+    args:
+    - name: path
+      type: string
+    - name: band_data_type
+      type: string
+    - name: width
+      type: integer
+    - name: height
+      type: integer
+    - name: upper_left_x
+      type: double
+      description: X coordinate of the upper-left corner of the upper-left pixel.
+    - name: upper_left_y
+      type: double
+      description: Y coordinate of the upper-left corner of the upper-left pixel.
+    - name: scale_x
+      type: double
+      description: Pixel width.
+    - name: scale_y
+      type: double
+      description: Pixel height; negative for a north-up raster.
+    - name: skew_x
+      type: double
+      description: Rotation/shear term of the x coordinate.
+    - name: skew_y
+      type: double
+      description: Rotation/shear term of the y coordinate.
+    - name: crs
+      type: integer
+      description: >
+        The raster's CRS: an integer EPSG code (0 for no CRS), or a CRS string
+        such as 'EPSG:32627', PROJJSON or WKT, as accepted by RS_SetCRS.
+  - returns: raster
+    args:
+    - name: path
+      type: string
+    - name: band_data_type
+      type: string
+    - name: width
+      type: integer
+    - name: height
+      type: integer
+    - name: upper_left_x
+      type: double
+    - name: upper_left_y
+      type: double
+    - name: scale_x
+      type: double
+    - name: scale_y
+      type: double
+    - name: skew_x
+      type: double
+    - name: skew_y
+      type: double
+    - name: crs
+      type: string
+  - returns: raster
+    args:
+    - name: path
+      type: string
+    - name: band_data_type
+      type: string
+    - name: width
+      type: integer
+    - name: height
+      type: integer
+    - name: upper_left_x
+      type: double
+    - name: upper_left_y
+      type: double
+    - name: scale_x
+      type: double
+    - name: scale_y
+      type: double
+    - name: skew_x
+      type: double
+    - name: skew_y
+      type: double
+    - name: crs
+      type: integer
+    - name: band
+      type: integer
+  - returns: raster
+    args:
+    - name: path
+      type: string
+    - name: band_data_type
+      type: string
+    - name: width
+      type: integer
+    - name: height
+      type: integer
+    - name: upper_left_x
+      type: double
+    - name: upper_left_y
+      type: double
+    - name: scale_x
+      type: double
+    - name: scale_y
+      type: double
+    - name: skew_x
+      type: double
+    - name: skew_y
+      type: double
+    - name: crs
+      type: string
+    - name: band
+      type: integer
+---
+
+## Description
+
+`RS_MakeRaster` builds an out-of-database raster with the grid, CRS and pixel
+type that [`RS_FromPath`](rs_frompath.qmd) would read for one band of a file,
+but from its arguments instead of the file's header. The result has a single
+band that references band `band` of `path`; its grid is either:
+
+- **the envelope of an extent geometry**, covered by `width` x `height`
+  north-up pixels, with the geometry's CRS; or
+- **a full affine transform and CRS**, given as the six geotransform
+  parameters and an EPSG code or CRS string. The transform must be finite and
+  invertible (`scale_x * scale_y - skew_x * skew_y` not zero).
+
+`RS_MakeRaster` records no nodata value, even when the file has one. Until
+[`RS_SetBandNoDataValue`](rs_setbandnodatavalue.qmd) sets it, pixel functions
+treat nodata differently from a raster from `RS_FromPath`: the file's nodata
+pixels count as ordinary values, so statistics such as `RS_SummaryStats`
+include them. Set it from the catalog (e.g. STAC's `raster:bands[].nodata`) to
+get the same results as `RS_FromPath`; like `RS_MakeRaster` itself,
+`RS_SetBandNoDataValue` only changes metadata and does not read the file.
+
+`RS_FromPath` opens every file to read its header, which on object storage
+costs at least one request per file. Raster catalogs such as
+[stac-geoparquet](https://github.com/stac-utils/stac-geoparquet) already
+record each file's grid (the STAC projection extension's `proj:shape`,
+`proj:transform` and `proj:code`) and pixel type (`data_type`), so
+`RS_MakeRaster` can build the same raster from those columns with no I/O at
+all. Functions that only use raster metadata (`RS_Width`, `RS_Envelope`,
+`RS_Intersects`, ...) never touch the file; functions that need pixels load
+them from `path` when they run, exactly as for a raster from `RS_FromPath`.
+
+::: callout-warning
+`RS_MakeRaster` trusts its arguments. Nothing is checked against the file,
+not even that it exists, until a function loads its pixels. Wrong metadata is
+then caught only in part:
+
+- a wrong `band_data_type` makes the pixel load fail with an error naming the
+  file's actual type;
+- a `width` or `height` larger than the file's makes the pixel load fail with
+  an out-of-bounds read error, while a smaller one silently reads only the
+  upper-left `width` x `height` window of the file;
+- a wrong grid or CRS is never detected: the pixels are read correctly but
+  placed in the wrong location.
+:::
+
+The extent form is only correct when the file's grid is north-up and its CRS
+is the extent geometry's CRS. A STAC item's `geometry` is always in
+longitude/latitude (CRS84), so it describes the grid only for files that are
+themselves in longitude/latitude; for anything else, such as an item in a UTM
+zone, use the affine form with the item's `proj:transform` and `proj:code`.
+
+Null arguments yield a null raster.
+
+## Examples
+
+Build a raster from stac-geoparquet columns with the affine form. STAC's
+`proj:transform` is in affine order `[a, b, c, d, e, f]`, that is
+`[scale_x, skew_x, upper_left_x, skew_y, scale_y, upper_left_y]`, and
+`proj:shape` is `[height, width]`:
+
+```sql
+WITH items AS (
+  SELECT
+    named_struct(
+      'red', named_struct('href', 's3://bucket/scene/B04.tif', 'data_type', 'uint16')
+    ) AS assets,
+    [10980, 10980] AS "proj:shape",
+    [10.0, 0.0, 399960.0, 0.0, -10.0, 4800000.0] AS "proj:transform",
+    'EPSG:32627' AS "proj:code"
+)
+SELECT
+  RS_Width(r) AS width, RS_Height(r) AS height,
+  RS_UpperLeftX(r) AS ulx, RS_UpperLeftY(r) AS uly, RS_ScaleY(r) AS scale_y,
+  RS_CRS(r) AS crs
+FROM (
+  SELECT RS_MakeRaster(
+    assets['red']['href'],
+    assets['red']['data_type'],
+    "proj:shape"[2], "proj:shape"[1],
+    "proj:transform"[3], "proj:transform"[6],
+    "proj:transform"[1], "proj:transform"[5],
+    "proj:transform"[2], "proj:transform"[4],
+    "proj:code"
+  ) AS r
+  FROM items
+);
+```
+
+A 400 x 400 grid over a longitude/latitude bounding box, referencing band 2:
+
+```sql
+SELECT RS_Envelope(
+  RS_MakeRaster(
+    's3://bucket/image.tif', 'uint8', 400, 400,
+    ST_MakeEnvelope(-120, 30, -110, 40, 4326), 2
+  )
+);
+```
+
+Reading pixels loads them from the file, so for a file whose metadata matches
+the arguments (and that has no nodata value, or once `RS_SetBandNoDataValue`
+has set it) the result is the same as with `RS_FromPath`:
+
+```sql
+SELECT
+  RS_Value(
+    RS_MakeRaster(
+      '../../../submodules/sedona-testing/data/raster/test4.tiff', 'uint8',
+      10, 10, ST_MakeEnvelope(0, 0, 10, 10, 4326)
+    ),
+    ST_Point(5.5, 4.5, 4326)
+  ) AS made,
+  RS_Value(
+    RS_FromPath('../../../submodules/sedona-testing/data/raster/test4.tiff'),
+    ST_Point(5.5, 4.5, 4326)
+  ) AS read;
+```
+
+::: callout-note
+Sedona Spark has an `RS_MakeRaster(raster, type, data)` that builds an
+in-database raster from a reference raster and an array of pixel values.
+SedonaDB's `RS_MakeRaster` shares the name but not the arguments: its forms
+start with a path string, so they cannot be confused with that form.
+:::
