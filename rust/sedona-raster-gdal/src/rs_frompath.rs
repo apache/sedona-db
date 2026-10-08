@@ -31,9 +31,15 @@
 //! under the `RS_EnsureLoaded` call the planner injects around raster
 //! arguments of pixel-reading functions (`RS_SummaryStats(RS_FromPath(p))`),
 //! which DataFusion cannot hoist (apache/datafusion#20031), and it cannot be
-//! evaluated inside a spatial join's predicate. Instead, a call that fans out
+//! evaluated inside a spatial join's predicate. Instead the call blocks its
+//! thread while its files are opened. On a multi-threaded runtime it first
 //! hands its async worker over to the runtime with
-//! `tokio::task::block_in_place` while it waits, so other tasks keep running.
+//! `tokio::task::block_in_place`, so the worker's other tasks keep running.
+//! On a current-thread runtime (or with no runtime) it simply blocks: that
+//! stalls the runtime's other tasks for the duration, as opening the files
+//! one after another on that thread always did, but it cannot deadlock,
+//! because every waiter on the budget is a thread and every permit holder
+//! needs only its own thread to finish (see `sedona_raster::io_budget`).
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -152,52 +158,24 @@ impl SedonaScalarKernel for RsFromPath {
 }
 
 /// `open` every path under `budget` from wherever a scalar UDF is evaluated,
-/// without stalling an async runtime, and return the results in `paths`
-/// order. Error semantics are those of [`read_concurrently`].
+/// and return the results in `paths` order. Error semantics are those of
+/// [`read_concurrently`].
 fn open_all<T, F>(paths: &[&str], budget: &RasterIoBudget, open: F) -> Result<Vec<T>>
 where
     T: Send,
     F: Fn(&str) -> Result<T> + Sync,
 {
-    // A lone path with a permit free opens right here, with nothing to wait
-    // for and no thread to hand off.
-    if let [path] = paths
-        && let Some(_permit) = budget.try_acquire()
-    {
-        return Ok(vec![open(path)?]);
-    }
     match tokio::runtime::Handle::try_current().map(|handle| handle.runtime_flavor()) {
-        // On a multi-threaded worker, waiting for permits and threads would
+        // On a multi-threaded worker, waiting for permits and opens would
         // stall the worker's queued tasks: hand them to another thread for
-        // the duration.
+        // the duration. (From a blocking thread this just runs the closure.)
         Ok(tokio::runtime::RuntimeFlavor::MultiThread) => {
             tokio::task::block_in_place(|| read_concurrently(paths, budget, open))
         }
-        // No runtime: nothing on this thread can be stalled.
-        Err(_) => read_concurrently(paths, budget, open),
-        // A current-thread runtime (or a blocking thread of one).
-        Ok(_) => read_one_at_a_time(paths, budget, open),
+        // No runtime, or a current-thread runtime, where `block_in_place`
+        // is not available. Blocking here is safe (see the module docs).
+        _ => read_concurrently(paths, budget, open),
     }
-}
-
-/// `open` each path in order on the calling thread, never waiting for the
-/// budget. For a current-thread runtime, whose only worker may be this
-/// thread: waiting there could deadlock, because the budget may hand a
-/// released permit to one of the runtime's own tasks (a loader read about to
-/// start), which cannot run until this call returns. An open holds a permit
-/// when one is free and goes ahead without one otherwise, so on such a
-/// runtime the cap can be exceeded by this one open.
-fn read_one_at_a_time<T, F>(paths: &[&str], budget: &RasterIoBudget, open: F) -> Result<Vec<T>>
-where
-    F: Fn(&str) -> Result<T>,
-{
-    paths
-        .iter()
-        .map(|path| {
-            let _permit = budget.try_acquire();
-            open(path)
-        })
-        .collect()
 }
 
 /// `open` every path, at most `budget.limit()` at once across all users of
@@ -211,10 +189,15 @@ where
 /// failure has run. All threads are joined before returning, so no open
 /// outlives the call, whether it succeeds, fails or panics.
 ///
-/// The calling thread takes part in the work; up to `budget.limit() - 1`
-/// helper threads join it. Each thread holds at most one permit at a time,
-/// and none while it waits for the next. A helper that cannot be spawned only
-/// lowers the parallelism.
+/// The calling thread takes part in the work, and helper threads join it as
+/// the budget allows, up to `min(budget.limit(), paths.len())` threads in
+/// all. A thread that has just got a permit starts one more helper if
+/// another permit is free at that moment, so the call ramps up to the
+/// budget's free capacity, and a budget kept busy by other users (other
+/// partitions, the loader's reads) does not make it spawn threads that would
+/// only wait. Each thread holds at most one permit at a time, and none while
+/// it waits for the next. A helper that cannot be spawned only lowers the
+/// parallelism.
 pub(crate) fn read_concurrently<T, F>(
     paths: &[&str],
     budget: &RasterIoBudget,
@@ -225,46 +208,20 @@ where
     F: Fn(&str) -> Result<T> + Sync,
 {
     let n = paths.len();
-    let next = AtomicUsize::new(0);
-    let first_error = AtomicUsize::new(usize::MAX);
-    let slots: Vec<Mutex<Option<Result<T>>>> = (0..n).map(|_| Mutex::new(None)).collect();
-
-    let work = || {
-        loop {
-            let idx = next.fetch_add(1, Ordering::SeqCst);
-            if idx >= n || idx > first_error.load(Ordering::SeqCst) {
-                return;
-            }
-            let _permit = budget.acquire_blocking();
-            // A failure may have landed while this thread waited for budget.
-            if idx > first_error.load(Ordering::SeqCst) {
-                return;
-            }
-            let result = open(paths[idx]);
-            if result.is_err() {
-                first_error.fetch_min(idx, Ordering::SeqCst);
-            }
-            // Each index is claimed by exactly one thread.
-            *slots[idx].lock().unwrap_or_else(PoisonError::into_inner) = Some(result);
-        }
+    let opener = Opener {
+        paths,
+        budget,
+        open,
+        next: AtomicUsize::new(0),
+        first_error: AtomicUsize::new(usize::MAX),
+        slots: (0..n).map(|_| Mutex::new(None)).collect(),
+        helpers: AtomicUsize::new(0),
+        max_helpers: budget.limit().min(n).saturating_sub(1),
     };
-
-    let helpers = budget.limit().min(n).saturating_sub(1);
-    std::thread::scope(|scope| {
-        for _ in 0..helpers {
-            if std::thread::Builder::new()
-                .name("rs_frompath".to_string())
-                .spawn_scoped(scope, work)
-                .is_err()
-            {
-                break;
-            }
-        }
-        work();
-    });
+    std::thread::scope(|scope| opener.work(scope));
 
     let mut out = Vec::with_capacity(n);
-    for (idx, slot) in slots.into_iter().enumerate() {
+    for (idx, slot) in opener.slots.into_iter().enumerate() {
         match slot.into_inner().unwrap_or_else(PoisonError::into_inner) {
             Some(result) => out.push(result?),
             // Unreachable: every index before the first error ran, and the
@@ -277,6 +234,67 @@ where
         }
     }
     Ok(out)
+}
+
+/// The state [`read_concurrently`]'s threads share.
+struct Opener<'a, T, F> {
+    paths: &'a [&'a str],
+    budget: &'a RasterIoBudget,
+    open: F,
+    /// The next path index to claim.
+    next: AtomicUsize,
+    /// The lowest index whose open failed, or `usize::MAX`.
+    first_error: AtomicUsize,
+    slots: Vec<Mutex<Option<Result<T>>>>,
+    helpers: AtomicUsize,
+    max_helpers: usize,
+}
+
+impl<T, F> Opener<'_, T, F>
+where
+    T: Send,
+    F: Fn(&str) -> Result<T> + Sync,
+{
+    fn work<'scope, 'env>(&'env self, scope: &'scope std::thread::Scope<'scope, 'env>) {
+        let n = self.paths.len();
+        loop {
+            let idx = self.next.fetch_add(1, Ordering::SeqCst);
+            if idx >= n || idx > self.first_error.load(Ordering::SeqCst) {
+                return;
+            }
+            let _permit = self.budget.acquire_blocking();
+            // A failure may have landed while this thread waited for budget.
+            if idx > self.first_error.load(Ordering::SeqCst) {
+                return;
+            }
+            // Start one more helper when paths remain unclaimed and a permit
+            // is free for it right now. A helper that would only queue for the
+            // budget behind other users adds nothing, so a busy budget does
+            // not make this call spawn threads; they come as permits free up.
+            if self.next.load(Ordering::SeqCst) < n
+                && self.budget.available() > 0
+                && self
+                    .helpers
+                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |h| {
+                        (h < self.max_helpers).then_some(h + 1)
+                    })
+                    .is_ok()
+            {
+                // A helper that cannot be spawned only lowers the parallelism.
+                let _ = std::thread::Builder::new()
+                    .name("rs_frompath".to_string())
+                    .spawn_scoped(scope, move || self.work(scope));
+            }
+            let result = (self.open)(self.paths[idx]);
+            if result.is_err() {
+                self.first_error.fetch_min(idx, Ordering::SeqCst);
+            }
+            // Each index is claimed by exactly one thread.
+            *self.slots[idx]
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner) = Some(result);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -515,14 +533,25 @@ mod tests {
         let paths: Vec<&str> = owned.iter().map(String::as_str).collect();
         let budget = RasterIoBudget::new(8);
         let in_flight = InFlight::default();
+        // The first two opens wait for each other, so the call must have
+        // two in flight at once however its threads are scheduled.
+        let arrivals = AtomicUsize::new(0);
+        let first_two = std::sync::Barrier::new(2);
         read_concurrently(&paths, &budget, |_| {
-            in_flight.run(|| std::thread::sleep(Duration::from_millis(2)));
+            in_flight.run(|| {
+                if arrivals.fetch_add(1, Ordering::SeqCst) < 2 {
+                    first_two.wait();
+                }
+                std::thread::sleep(Duration::from_millis(2))
+            });
             Ok(())
         })
         .unwrap();
         let max = in_flight.max.load(Ordering::SeqCst);
-        assert!(max <= 8, "{max} opens in flight with a budget of 8");
-        assert!(max > 1, "opens never overlapped");
+        assert!(
+            (2..=8).contains(&max),
+            "{max} opens in flight with a budget of 8"
+        );
         assert_eq!(budget.available(), 8);
     }
 
@@ -633,21 +662,31 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn invoke_on_a_multi_thread_runtime_worker() {
         // The fan-out moves off the async worker with `block_in_place`,
-        // which needs a multi-threaded runtime; check the call works there.
+        // which needs a multi-threaded runtime's worker; a test body runs on
+        // the runtime's `block_on` thread instead, so spawn the call.
         let a = test_raster("test4.tiff").unwrap();
         let b = test_raster("test1.tiff").unwrap();
-        let input = ColumnarValue::Array(Arc::new(StringArray::from(vec![
-            a.as_str(),
-            b.as_str(),
-            a.as_str(),
-        ])));
-        let result = RsFromPath::default()
-            .invoke_batch_from_args(&[], &[input], &SedonaType::Arrow(DataType::Null), 0, None)
+        for paths in [vec![a.clone()], vec![a.clone(), b, a]] {
+            let rows = tokio::spawn(async move {
+                let input = ColumnarValue::Array(Arc::new(StringArray::from(paths)));
+                let result = RsFromPath::default()
+                    .invoke_batch_from_args(
+                        &[],
+                        &[input],
+                        &SedonaType::Arrow(DataType::Null),
+                        0,
+                        None,
+                    )
+                    .unwrap();
+                let ColumnarValue::Array(arr) = result else {
+                    panic!("expected an array");
+                };
+                arr.len()
+            })
+            .await
             .unwrap();
-        let ColumnarValue::Array(arr) = result else {
-            panic!("expected an array");
-        };
-        assert_eq!(arr.len(), 3);
+            assert!(rows == 1 || rows == 3);
+        }
     }
 
     /// The batch result matches appending each row on its own, one file at
@@ -791,12 +830,12 @@ mod tests {
         assert_eq!(kernel.budget.peak_in_use(), 0);
     }
 
-    /// On a current-thread runtime the call never waits for the budget: a
-    /// released permit could be handed to a task of that same runtime, which
-    /// cannot run while the call blocks its only worker. With the whole
-    /// budget held elsewhere the batch still opens, one file at a time.
+    /// On a current-thread runtime the call blocks the runtime's only worker
+    /// while it waits for the budget. That is safe because every waiter on the
+    /// budget is a thread: a permit released elsewhere reaches this call, and
+    /// the cap holds.
     #[test]
-    fn current_thread_runtime_never_waits_for_the_budget() {
+    fn current_thread_runtime_waits_for_the_budget() {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();
@@ -809,6 +848,10 @@ mod tests {
         runtime.block_on(async {
             for hold_the_budget in [false, true] {
                 let held = hold_the_budget.then(|| budget.try_acquire().unwrap());
+                let release = std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(20));
+                    drop(held);
+                });
                 let input = ColumnarValue::Array(Arc::new(StringArray::from(files.clone())));
                 let ColumnarValue::Array(rasters) = kernel
                     .invoke_batch_from_args(
@@ -823,9 +866,10 @@ mod tests {
                     panic!("expected an array");
                 };
                 assert_eq!(rasters.len(), 3);
-                drop(held);
+                release.join().unwrap();
             }
         });
+        assert_eq!(budget.peak_in_use(), 1);
         assert_eq!(budget.available(), 1);
         assert_eq!(budget.in_use(), 0);
     }

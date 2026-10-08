@@ -20,17 +20,33 @@
 //! [`RasterIoBudget`] bounds how many blocking file operations (an open, a
 //! header read, a pixel read) are in flight at once across everything that
 //! shares it. A session holds one and hands it to every user: the GDAL pixel
-//! loader takes a permit per file it reads from async code, and `RS_FromPath`
-//! takes one per file it opens from plain threads. Both kinds of permit come
-//! from one `tokio::sync::Semaphore`, which works with or without a runtime,
-//! so the cap is on their total.
+//! loader takes a permit per file it reads, and `RS_FromPath` takes one per
+//! file it opens. Both kinds of permit come from one
+//! `tokio::sync::Semaphore`, which works with or without a runtime, so the
+//! cap is on their total.
 //!
 //! The budget's size is `sedona.raster.io_concurrency`; it can change while
 //! permits are out (see [`RasterIoBudget::set_limit`]).
 //!
-//! A user must never wait for a permit while it holds another: two such
-//! users could each hold part of the budget and wait forever for the rest.
-//! [`RasterIoBudget::acquire_blocking`] checks this in debug builds.
+//! ## Every waiter is a thread
+//!
+//! A permit is waited for only by [`RasterIoBudget::acquire_blocking`], on
+//! the thread that will do the I/O, and held only by that thread. There is
+//! deliberately no async `acquire`. Tokio's semaphore hands a released
+//! permit to the first queued waiter at release time, whether or not that
+//! waiter's future is ever polled again. A future queued as a waiter inside
+//! a task that then blocks its thread (for example a task that polls a
+//! pending load and then evaluates `RS_FromPath` on the same thread) would
+//! receive the permit and never run to use or return it, and every later
+//! waiter would queue behind it forever. A waiting thread makes progress on
+//! its own, and a holder needs nothing but its own thread to finish, so a
+//! permit released anywhere always reaches a thread that will use it and
+//! give it back. That is what makes `acquire_blocking` safe to call from any
+//! thread.
+//!
+//! A user must also never wait for a permit while it holds another: two
+//! such users could each hold part of the budget and wait forever for the
+//! rest. [`RasterIoBudget::acquire_blocking`] checks this in debug builds.
 
 use std::cell::Cell;
 use std::marker::PhantomData;
@@ -42,9 +58,8 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 /// A counting budget of blocking raster I/O operations, shared by clones.
 ///
-/// Permits are owned values: they can move into a `spawn_blocking` closure
-/// or another thread, and give their slot back when dropped, including
-/// during unwinding and when the future that took them is dropped.
+/// Permits are owned values that give their slot back when dropped,
+/// including during unwinding.
 #[derive(Debug, Clone)]
 pub struct RasterIoBudget {
     inner: Arc<Inner>,
@@ -131,17 +146,9 @@ impl RasterIoBudget {
         Arc::ptr_eq(&self.inner, &other.inner)
     }
 
-    /// Wait for a permit from async code. Cancel-safe: dropping the future
-    /// before it completes takes nothing from the budget.
-    pub async fn acquire(&self) -> IoPermit {
-        let permit = Arc::clone(&self.inner.semaphore)
-            .acquire_owned()
-            .await
-            .expect("the I/O budget's semaphore is never closed");
-        self.issue(permit)
-    }
-
-    /// Take a permit if one is free, without waiting.
+    /// Take a permit if one is free, without waiting. The permit can move to
+    /// the thread that does the I/O; like any permit, it must not be held
+    /// while waiting for another.
     pub fn try_acquire(&self) -> Option<IoPermit> {
         Arc::clone(&self.inner.semaphore)
             .try_acquire_owned()
@@ -151,13 +158,12 @@ impl RasterIoBudget {
 
     /// Block the calling thread until a permit is free.
     ///
-    /// Works with no runtime and on any tokio runtime, since the semaphore
-    /// does not depend on one. It must not be called on an async worker
-    /// thread, except inside `tokio::task::block_in_place` on a
-    /// multi-threaded runtime: a blocked worker stalls its tasks, and the
-    /// tasks the budget hands a released permit to may be among them, so on
-    /// a current-thread runtime the wait can deadlock. Plain threads and
-    /// `spawn_blocking` threads may call it freely.
+    /// Callable from any thread: with no runtime, from a `spawn_blocking`
+    /// thread, and from an async worker of either runtime flavor, since every
+    /// waiter on the budget is a thread (see the module docs). On an async
+    /// worker it stalls that worker's other tasks while it waits, so on a
+    /// multi-threaded runtime wrap the wait (and the I/O) in
+    /// `tokio::task::block_in_place`.
     ///
     /// The permit stays on the thread that took it. In debug builds this
     /// panics if the thread already holds a permit from this method, since
@@ -300,7 +306,7 @@ mod tests {
             .unwrap();
         let budget = RasterIoBudget::new(1);
         runtime.block_on(async {
-            let held = budget.acquire().await;
+            let held = budget.try_acquire().unwrap();
             let release = tokio::task::spawn_blocking(move || {
                 std::thread::sleep(Duration::from_millis(20));
                 drop(held);
@@ -316,7 +322,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn acquire_blocking_in_block_in_place() {
         let budget = RasterIoBudget::new(1);
-        let held = budget.acquire().await;
+        let held = budget.try_acquire().unwrap();
         let releaser = tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(20)).await;
             drop(held);
@@ -331,37 +337,39 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn async_and_blocking_users_share_the_cap() {
+    async fn blocking_pool_and_plain_thread_users_share_the_cap() {
         let budget = RasterIoBudget::new(3);
         let in_flight = Arc::new(AtomicUsize::new(0));
         let peak = Arc::new(AtomicUsize::new(0));
+        // The first two operations to start wait for each other, so two are
+        // certainly in flight at once however the threads are scheduled.
+        let arrivals = Arc::new(AtomicUsize::new(0));
+        let first_two = Arc::new(std::sync::Barrier::new(2));
         let work = {
             let in_flight = Arc::clone(&in_flight);
             let peak = Arc::clone(&peak);
             move || {
                 let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
                 peak.fetch_max(now, Ordering::SeqCst);
+                if arrivals.fetch_add(1, Ordering::SeqCst) < 2 {
+                    first_two.wait();
+                }
                 std::thread::sleep(Duration::from_millis(2));
                 in_flight.fetch_sub(1, Ordering::SeqCst);
             }
         };
 
-        // Async users: the permit moves into the blocking closure.
+        // Users on the runtime's blocking pool, as the GDAL loader's reads.
         let mut tasks = Vec::new();
         for _ in 0..24 {
             let budget = budget.clone();
             let work = work.clone();
-            tasks.push(tokio::spawn(async move {
-                let permit = budget.acquire().await;
-                tokio::task::spawn_blocking(move || {
-                    let _permit = permit;
-                    work();
-                })
-                .await
-                .unwrap();
+            tasks.push(tokio::task::spawn_blocking(move || {
+                let _permit = budget.acquire_blocking();
+                work();
             }));
         }
-        // Blocking users on plain threads, at the same time.
+        // Users on plain threads, as `RS_FromPath`'s, at the same time.
         let threads: Vec<_> = (0..4)
             .map(|_| {
                 let budget = budget.clone();
@@ -387,17 +395,6 @@ mod tests {
         assert!((2..=3).contains(&peak), "peak in flight {peak}");
         assert!(budget.peak_in_use() <= 3);
         assert_eq!(budget.available(), 3);
-        assert_eq!(budget.in_use(), 0);
-    }
-
-    #[tokio::test]
-    async fn dropping_a_waiting_acquire_takes_nothing() {
-        let budget = RasterIoBudget::new(1);
-        let held = budget.acquire().await;
-        let waited = tokio::time::timeout(Duration::from_millis(10), budget.acquire()).await;
-        assert!(waited.is_err());
-        drop(held);
-        assert_eq!(budget.available(), 1);
         assert_eq!(budget.in_use(), 0);
     }
 
