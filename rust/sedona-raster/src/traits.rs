@@ -143,9 +143,7 @@ impl<'a> NdBuffer<'a> {
 /// This is the shared convention consumers use to recover the source path and
 /// band from a band's `outdb_uri()`.
 pub fn split_outdb_band_fragment(uri: &str) -> Result<(String, u32), RasterError> {
-    if let Some((prefix, fragment)) = uri.rsplit_once('#')
-        && let Some(band_str) = fragment.strip_prefix("band=")
-    {
+    if let Some((prefix, band_str)) = band_fragment(uri) {
         return match band_str.parse::<u32>() {
             Ok(band) if band >= 1 => Ok((prefix.to_string(), band)),
             _ => Err(RasterError::Invalid(format!(
@@ -154,6 +152,27 @@ pub fn split_outdb_band_fragment(uri: &str) -> Result<(String, u32), RasterError
         };
     }
     Ok((uri.to_string(), 1))
+}
+
+/// The source an out-DB band reads from: `uri` without a trailing
+/// `#band=...` fragment, borrowed from `uri`.
+///
+/// Every band of one file shares this value, so it is the key to group rows
+/// by when they should be loaded together. Only the fragment
+/// [`split_outdb_band_fragment`] consumes is stripped: an earlier `#anchor`
+/// and any other fragment stay, so `x.zarr#var=a` and `x.zarr#var=b` remain
+/// distinct sources and `p#anchor#band=1` is `p#anchor`. The band value is
+/// not validated here; loading the band reports a malformed one.
+pub fn outdb_source(uri: &str) -> &str {
+    band_fragment(uri).map_or(uri, |(prefix, _)| prefix)
+}
+
+/// `(prefix, value)` when `uri` ends in a `#band=value` fragment. The one
+/// place the band-fragment convention is parsed, shared by
+/// [`split_outdb_band_fragment`] and [`outdb_source`] so they cannot drift.
+fn band_fragment(uri: &str) -> Option<(&str, &str)> {
+    let (prefix, fragment) = uri.rsplit_once('#')?;
+    Some((prefix, fragment.strip_prefix("band=")?))
 }
 
 /// Trait for accessing an N-dimensional raster (top level).
@@ -940,6 +959,21 @@ mod tests {
         assert_eq!(val, 42.0);
         let val = nodata_bytes_to_f64_lossless(&[0xFE], &BandDataType::Int8).unwrap();
         assert_eq!(val, -2.0);
+    }
+
+    #[test]
+    fn test_outdb_source_strips_only_a_trailing_band_fragment() {
+        assert_eq!(outdb_source("s3://b/a.tif#band=2"), "s3://b/a.tif");
+        assert_eq!(outdb_source("s3://b/a.tif"), "s3://b/a.tif");
+        assert_eq!(outdb_source("p#anchor#band=1"), "p#anchor");
+        // A non-band fragment names a different source and is kept.
+        assert_eq!(outdb_source("x.zarr#var=a"), "x.zarr#var=a");
+        assert_ne!(outdb_source("x.zarr#var=a"), outdb_source("x.zarr#var=b"));
+        assert_eq!(outdb_source("x.zarr#var=a#band=3"), "x.zarr#var=a");
+        // Agrees with the parser on every well-formed URI.
+        for uri in ["s3://b/a.tif#band=7", "p#anchor#band=1", "x.zarr#var=a"] {
+            assert_eq!(split_outdb_band_fragment(uri).unwrap().0, outdb_source(uri));
+        }
     }
 
     #[test]
