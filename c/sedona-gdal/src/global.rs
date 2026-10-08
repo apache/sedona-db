@@ -528,4 +528,149 @@ mod test {
             .expect("with_global_gdal_api should succeed");
         assert!(!name.is_empty(), "API name should not be empty");
     }
+
+    /// Environment variable naming the exit-barrier scenario a re-invoked test
+    /// binary should run; see [`run_in_subprocess`].
+    #[cfg(unix)]
+    const EXIT_BARRIER_CHILD_ENV: &str = "SEDONA_GDAL_EXIT_BARRIER_CHILD";
+
+    /// Run the test `name` (in this module) in a fresh copy of the test binary.
+    ///
+    /// The exit barrier's flag is sticky process-global state, so each
+    /// scenario gets its own process. Returns `None` in the child, where the
+    /// caller should run the scenario, and the child's output in the parent.
+    #[cfg(unix)]
+    fn run_in_subprocess(name: &str) -> Option<(std::process::Output, Duration)> {
+        if std::env::var(EXIT_BARRIER_CHILD_ENV).as_deref() == Ok(name) {
+            return None;
+        }
+        let module = module_path!().split_once("::").unwrap().1;
+        let start = Instant::now();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", &format!("{module}::{name}"), "--nocapture"])
+            .env(EXIT_BARRIER_CHILD_ENV, name)
+            .output()
+            .expect("failed to re-run the test binary");
+        Some((output, start.elapsed()))
+    }
+
+    #[cfg(unix)]
+    fn assert_child_passed(name: &str, output: &std::process::Output) {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "{name} child failed: {:?}\nstdout:\n{stdout}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    /// The exit handler waits for a closure running on another thread, and
+    /// later closures are refused.
+    #[cfg(unix)]
+    #[test]
+    fn exit_barrier_waits_for_running_closure() {
+        const NAME: &str = "exit_barrier_waits_for_running_closure";
+        if let Some((output, _)) = run_in_subprocess(NAME) {
+            assert_child_passed(NAME, &output);
+            return;
+        }
+
+        use std::sync::{Arc, Barrier};
+        let barrier = Arc::new(Barrier::new(2));
+        let worker = {
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                with_global_gdal_api(|_| {
+                    barrier.wait();
+                    std::thread::sleep(Duration::from_millis(200));
+                    Instant::now()
+                })
+                .unwrap()
+            })
+        };
+        barrier.wait();
+        let start = Instant::now();
+        drain_gdal_calls_at_exit();
+        let returned = Instant::now();
+        let closure_ended = worker.join().unwrap();
+
+        assert!(
+            closure_ended <= returned,
+            "exit handler returned before the running closure ended"
+        );
+        assert!(returned - start >= Duration::from_millis(150));
+        assert_eq!(GDAL_CALLS_IN_FLIGHT.load(Ordering::SeqCst), 0);
+        assert!(is_gdal_exiting());
+        // `begin_gdal_shutdown` was never called: the two flags are independent.
+        assert!(!is_gdal_shutting_down());
+        assert!(with_global_gdal_api(|_| ()).is_err());
+        assert!(with_global_gdal(|_| ()).is_err());
+    }
+
+    /// The exit handler called from inside a GDAL closure (e.g. `exit()` from
+    /// a callback) doesn't wait on that thread's own closures.
+    #[cfg(unix)]
+    #[test]
+    fn exit_barrier_skips_own_closures() {
+        const NAME: &str = "exit_barrier_skips_own_closures";
+        if let Some((output, _)) = run_in_subprocess(NAME) {
+            assert_child_passed(NAME, &output);
+            return;
+        }
+
+        let elapsed = with_global_gdal_api(|_| {
+            with_global_gdal_api(|_| {
+                let start = Instant::now();
+                drain_gdal_calls_at_exit();
+                start.elapsed()
+            })
+            .unwrap()
+        })
+        .unwrap();
+        assert!(elapsed < Duration::from_secs(5), "waited {elapsed:?}");
+        assert_eq!(GDAL_CALLS_IN_FLIGHT.load(Ordering::SeqCst), 0);
+    }
+
+    /// End to end through `exit()`: a thread polling [`is_gdal_exiting`]
+    /// inside a GDAL closure (as the raster loader does between strips) is
+    /// waited for, and still calls GDAL safely before the process exits.
+    #[cfg(unix)]
+    #[test]
+    fn exit_barrier_runs_at_process_exit() {
+        const NAME: &str = "exit_barrier_runs_at_process_exit";
+        const MARKER: &str = "closure finished during exit";
+        if let Some((output, elapsed)) = run_in_subprocess(NAME) {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success(),
+                "child failed: {:?}\nstdout:\n{stdout}\nstderr:\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(stdout.contains(MARKER), "exit didn't wait:\n{stdout}");
+            assert!(elapsed < Duration::from_secs(5), "exit took {elapsed:?}");
+            return;
+        }
+
+        use std::io::Write;
+        use std::sync::mpsc;
+        let (entered_tx, entered_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            with_global_gdal_api(|api| {
+                entered_tx.send(()).unwrap();
+                while !is_gdal_exiting() {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                std::thread::sleep(Duration::from_millis(100));
+                let version = api.version_info("RELEASE_NAME");
+                let mut stdout = std::io::stdout().lock();
+                writeln!(stdout, "{MARKER} (GDAL {version})").unwrap();
+                stdout.flush().unwrap();
+            })
+            .unwrap();
+        });
+        entered_rx.recv().unwrap();
+        std::process::exit(0);
+    }
 }
