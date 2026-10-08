@@ -25,6 +25,7 @@ use std::ptr;
 use crate::errors::{GdalError, Result};
 use crate::gdal_api::{call_gdal_api, GdalApi};
 use crate::gdal_dyn_bindgen::*;
+use crate::global::free_gdal_object;
 
 pub type Envelope = OGREnvelope;
 
@@ -43,7 +44,9 @@ unsafe impl Send for Geometry {}
 impl Drop for Geometry {
     fn drop(&mut self) {
         if !self.c_geom.is_null() {
-            unsafe { call_gdal_api!(self.api, OGR_G_DestroyGeometry, self.c_geom) };
+            free_gdal_object(|| unsafe {
+                call_gdal_api!(self.api, OGR_G_DestroyGeometry, self.c_geom)
+            });
         }
     }
 }

@@ -26,6 +26,7 @@ use crate::errors::{GdalError, Result};
 use crate::gdal_api::{call_gdal_api, GdalApi};
 use crate::gdal_dyn_bindgen::OGRERR_NONE;
 use crate::gdal_dyn_bindgen::*;
+use crate::global::free_gdal_object;
 
 /// An OGR spatial reference system.
 pub struct SpatialRef {
@@ -42,7 +43,7 @@ unsafe impl Send for SpatialRef {}
 impl Drop for SpatialRef {
     fn drop(&mut self) {
         if !self.c_srs.is_null() {
-            unsafe { call_gdal_api!(self.api, OSRRelease, self.c_srs) };
+            free_gdal_object(|| unsafe { call_gdal_api!(self.api, OSRRelease, self.c_srs) });
         }
     }
 }

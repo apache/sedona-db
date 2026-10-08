@@ -27,6 +27,7 @@ use crate::driver::Driver;
 use crate::errors::Result;
 use crate::gdal_api::{call_gdal_api, GdalApi};
 use crate::gdal_dyn_bindgen::*;
+use crate::global::free_gdal_object;
 use crate::raster::rasterband::RasterBand;
 use crate::raster::types::{DatasetOptions, GdalDataType as RustGdalDataType};
 use crate::spatial_ref::SpatialRef;
@@ -46,12 +47,13 @@ unsafe impl Send for Dataset {}
 
 impl Drop for Dataset {
     fn drop(&mut self) {
-        // Once the process is shutting down, leave the handle open. On Windows,
-        // closing a dataset while GDAL's shared library is being unloaded
-        // corrupts teardown and aborts the process (0xC0000409); leaking the
-        // handle at process exit is harmless since the OS reclaims it.
-        if !self.c_dataset.is_null() && !crate::global::is_gdal_shutting_down() {
-            unsafe { call_gdal_api!(self.api, GDALClose, self.c_dataset) };
+        // Once the process is shutting down, the handle is left open (see
+        // `free_gdal_object`). On Windows, closing a dataset while GDAL's shared
+        // library is being unloaded corrupts teardown and aborts the process
+        // (0xC0000409); leaking the handle at process exit is harmless since
+        // the OS reclaims it.
+        if !self.c_dataset.is_null() {
+            free_gdal_object(|| unsafe { call_gdal_api!(self.api, GDALClose, self.c_dataset) });
         }
     }
 }
