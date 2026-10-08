@@ -19,6 +19,7 @@
 
 from typing import List, Optional
 
+import numpy as np
 import pyarrow as pa
 
 import sedonadb
@@ -122,22 +123,24 @@ def test_rs_ensureloaded_input_is_partitioned_by_raster_source():
     rs_ensureloaded, so loading is not confined to the partitions a
     whole-batch round-robin reaches, rows of one raster stay together (each
     raster loaded once), and results match a single-partition run."""
-    # 32 rows reading 8 rasters: one batch, which a round-robin would deal
-    # to a single partition.
-    rasters = [
+    # 32 rows reading two bands of 8 files (URIs that differ only by
+    # `#band=`), plus in-db and null rows that have no file to group by. One
+    # batch, which a round-robin would deal to a single partition.
+    lazy = [
         Raster.lazy(
-            uri=f"test://mock/r{i % 8}.tif#band=1",
+            uri=f"test://mock/r{i % 8}.tif#band={i // 8 % 2 + 1}",
             shape=(4, 4),
             dtype="UInt8",
             format="test_format",
-        )
+        )._array
         for i in range(32)
     ]
+    in_db = [
+        Raster.from_numpy(np.full((4, 4), i, dtype=np.uint8))._array for i in range(2)
+    ]
+    rasters = pa.concat_arrays([*lazy, *in_db, pa.nulls(1, lazy[0].type)])
     table = pa.table(
-        {
-            "id": pa.array(range(32), pa.int32()),
-            "raster": pa.concat_arrays([r._array for r in rasters]),
-        }
+        {"id": pa.array(range(len(rasters)), pa.int32()), "raster": rasters}
     )
     sql = "SELECT id, RS_EnsureLoaded(raster) AS raster FROM catalog"
 
@@ -156,11 +159,17 @@ def test_rs_ensureloaded_input_is_partitioned_by_raster_source():
         )
         spread = f"partitioning=Hash([raster_source(raster@1)], {target_partitions})"
         assert (spread in plan) == (target_partitions > 1), plan
+        # The spread replaces the planner's round-robin instead of stacking.
+        assert "RoundRobinBatch" not in plan, plan
 
         rows = sd.sql(sql).to_arrow_table().to_pylist()
         results[target_partitions] = sorted(rows, key=lambda row: row["id"])
+        assert len(rows) == 35
+        assert results[target_partitions][-1]["raster"] is None
         uris = [req.uri for requests in loader._load_calls for req in requests]
-        assert sorted(uris) == sorted(f"test://mock/r{i}.tif#band=1" for i in range(8))
+        assert sorted(uris) == sorted(
+            f"test://mock/r{i}.tif#band={band}" for i in range(8) for band in (1, 2)
+        )
 
     assert results[4] == results[1]
 
