@@ -271,19 +271,16 @@ where
             // is free for it right now. A helper that would only queue for the
             // budget behind other users adds nothing, so a busy budget does
             // not make this call spawn threads; they come as permits free up.
-            if self.next.load(Ordering::SeqCst) < n
-                && self.budget.available() > 0
-                && self
-                    .helpers
-                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |h| {
-                        (h < self.max_helpers).then_some(h + 1)
-                    })
-                    .is_ok()
-            {
-                // A helper that cannot be spawned only lowers the parallelism.
-                let _ = std::thread::Builder::new()
-                    .name("rs_frompath".to_string())
-                    .spawn_scoped(scope, move || self.work(scope));
+            if self.next.load(Ordering::SeqCst) < n && self.budget.available() > 0 {
+                // Claim a helper slot; give it back if all slots are taken.
+                if self.helpers.fetch_add(1, Ordering::SeqCst) < self.max_helpers {
+                    // A helper that cannot be spawned only lowers the parallelism.
+                    let _ = std::thread::Builder::new()
+                        .name("rs_frompath".to_string())
+                        .spawn_scoped(scope, move || self.work(scope));
+                } else {
+                    self.helpers.fetch_sub(1, Ordering::SeqCst);
+                }
             }
             let result = (self.open)(self.paths[idx]);
             if result.is_err() {
