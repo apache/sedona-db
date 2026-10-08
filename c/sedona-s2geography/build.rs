@@ -161,14 +161,13 @@ fn parse_cmake_linker_flags(binary_dir: &Path) -> Vec<String> {
                         _ => println!("cargo:rustc-link-lib=dylib={lib}"),
                     }
 
-                    // A Rust staticlib does not propagate its dynamic native
+                    // A Rust staticlib does not reliably propagate native
                     // dependencies to the program that consumes it. Preserve
-                    // the resolved library path for R's final shared-object
-                    // link; this is especially important for Homebrew's S2 and
-                    // Abseil dylibs.
-                    if suffix != "a" && suffix != "lib" && suffix != "LIB" {
-                        r_link_flags.push(path.to_string_lossy().into_owned());
-                    }
+                    // every resolved library path for R's final shared-object
+                    // link. Dynamic libraries need this on Homebrew, while
+                    // vcpkg's MinGW triplet needs the static S2 and Abseil
+                    // archives to resolve references left in libsedonadbr.a.
+                    r_link_flags.push(path.to_string_lossy().into_owned());
                 }
             }
             _ => {
