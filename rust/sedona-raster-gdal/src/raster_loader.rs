@@ -20,9 +20,34 @@
 //! Reads OutDb raster bands identified by a `#band=N` URI fragment via
 //! GDAL's blocking API. The blocking work runs inside
 //! `tokio::task::spawn_blocking` so the caller's async runtime is not
-//! stalled. Dataset opens are cached per-thread via the existing
-//! `GDALDatasetCache` thread-local, so repeated queries against the
-//! same file pay one open per worker thread.
+//! stalled. Each read opens its file, reads the requested bands, and closes
+//! it again; the loader keeps no datasets open between calls. Repeat loads
+//! are served before they reach the loader, by `RS_EnsureLoaded`'s session
+//! chunk cache, and GDAL's own `/vsicurl` cache makes reopening a remote
+//! file cheap. A per-thread dataset cache here hit rarely (reads land on
+//! whichever blocking thread is free), held open file descriptors on every
+//! blocking thread the budget brings, and kept about a gigabyte more
+//! resident on a 640-COG load, for no measurable gain in wall time.
+//!
+//! `load` treats its request slice as a batch: requests are grouped by
+//! file, and each file is read by its own blocking task, so a batch of
+//! COGs on object storage waits on many round trips at once rather than
+//! one after another. A file named by several requests (one per band) is
+//! opened once and its bands are read in turn by the same task, since a
+//! GDAL dataset handle must not cross threads. Files read at once are
+//! bounded by the loader's [`RasterIoBudget`], which every concurrent `load`
+//! call on the loader and its clones shares: DataFusion runs one call per
+//! partition at once, and the budget is what the storage sees in total, not
+//! per partition. A session gives its loader the session's budget, which
+//! `RS_FromPath`'s file opens draw on as well, so the cap is on pixel reads
+//! and header opens together (`sedona.raster.io_concurrency`).
+//!
+//! Each blocking task waits for its permit on its own thread; the call never
+//! waits for the budget as a future (see `sedona_raster::io_budget` for why
+//! that would deadlock against `RS_FromPath`). The call spawns a file's task
+//! only once the previous one has its permit, so it keeps at most one
+//! blocking thread waiting for the budget. Results are taken in file order,
+//! so a failing call reports its first failing file.
 //!
 //! ## Cancellation
 //!
@@ -30,9 +55,15 @@
 //! (`band.block_size().1` rows per iteration), with a cooperative
 //! cancellation check between strips. When the outer async future is
 //! dropped (e.g. a query is cancelled), a [`CancelOnDrop`] guard flips
-//! a shared [`AtomicBool`]; the next iteration of the loop observes
-//! the flag and returns a cancellation error rather than running to
-//! completion.
+//! an [`AtomicBool`] shared by every task of the call; the next iteration
+//! of each task's loop observes the flag and returns a cancellation error
+//! rather than running to completion. Files not yet spawned are never
+//! started, and a task still waiting for its permit returns as soon as it
+//! gets one, without opening its file. The same guard fires when one file fails:
+//! the call returns that error and the files still being read stop at
+//! their next check. A task holds its share of the budget until its
+//! blocking work has actually returned, so abandoned reads still count
+//! against the budget while they wind down.
 //!
 //! Cancellation granularity is the source's natural block height:
 //!
@@ -57,21 +88,25 @@
 //! [`GdalLoader`] during `SedonaContext` construction and registers
 //! it during session bootstrap.
 
+use std::collections::HashMap;
 use std::iter::zip;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use arrow_buffer::Buffer;
 use arrow_schema::ArrowError;
 use async_trait::async_trait;
 use datafusion_common::{DataFusionError, Result as DFResult};
+use futures::StreamExt;
+use futures::stream::FuturesOrdered;
 use sedona_gdal::raster::rasterband::RasterBand;
+use sedona_raster::io_budget::RasterIoBudget;
 use sedona_raster::raster_loader::{AsyncRasterLoader, RasterLoadRequest, RasterLoadResult};
 use sedona_raster::traits::{is_spatial_dim_pair, split_outdb_band_fragment};
 use sedona_schema::raster::BandDataType;
+use tokio::sync::oneshot;
 
-use crate::gdal_common::{convert_gdal_err, gdal_to_band_data_type, with_gdal};
-use crate::gdal_dataset_provider::thread_local_cache;
+use crate::gdal_common::{convert_gdal_err, gdal_to_band_data_type, open_gdal_dataset, with_gdal};
 
 /// Diagnostic name for the GDAL raster loader (reported via
 /// [`AsyncRasterLoader::name`]). GDAL is a catch-all loader — it doesn't key
@@ -92,22 +127,95 @@ pub const MAX_OUTDB_LOAD_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 
 /// GDAL-backed `AsyncRasterLoader`.
 ///
-/// Stateless: the per-thread dataset cache lives in a thread-local owned
-/// by `sedona-raster-gdal::gdal_dataset_provider`, so constructing a
-/// `GdalLoader` is free and instances are interchangeable.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct GdalLoader;
+/// The only state is the I/O budget, which clones share. Datasets are opened
+/// per read and closed when the read returns (see the module docs).
+#[derive(Debug, Clone)]
+pub struct GdalLoader {
+    /// The I/O budget: one permit per file read in flight, shared by every
+    /// concurrent `load` call on this loader and its clones, and by whatever
+    /// else the budget was handed to.
+    budget: RasterIoBudget,
+    io: Arc<IoCounters>,
+}
+
+/// In-flight file reads, for tests and benchmarks.
+#[derive(Debug, Default)]
+struct IoCounters {
+    in_flight: AtomicUsize,
+    peak_in_flight: AtomicUsize,
+}
+
+impl IoCounters {
+    /// Count one read as in flight until the returned guard drops, including
+    /// when the read panics.
+    fn enter(&self) -> InFlightRead<'_> {
+        let now = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+        self.peak_in_flight.fetch_max(now, Ordering::SeqCst);
+        InFlightRead(self)
+    }
+}
+
+struct InFlightRead<'a>(&'a IoCounters);
+
+impl Drop for InFlightRead<'_> {
+    fn drop(&mut self) {
+        self.0.in_flight.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+impl Default for GdalLoader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl GdalLoader {
+    /// A loader with a budget of its own, of
+    /// [`DEFAULT_RASTER_IO_CONCURRENCY`](sedona_raster::io_budget::DEFAULT_RASTER_IO_CONCURRENCY).
+    /// A session uses [`Self::with_budget`] instead.
     pub fn new() -> Self {
-        Self
+        Self {
+            budget: RasterIoBudget::default(),
+            io: Arc::new(IoCounters::default()),
+        }
+    }
+
+    /// Draw on `budget`, typically the session's, shared with the session's
+    /// other blocking raster I/O.
+    pub fn with_budget(mut self, budget: RasterIoBudget) -> Self {
+        self.budget = budget;
+        self
+    }
+
+    /// Draw on a fresh budget of `concurrency` files at once (clamped to at
+    /// least 1). For tests and benchmarks.
+    pub fn with_concurrency(self, concurrency: usize) -> Self {
+        self.with_budget(RasterIoBudget::new(concurrency))
+    }
+
+    /// The budget this loader draws on.
+    pub fn budget(&self) -> &RasterIoBudget {
+        &self.budget
+    }
+
+    /// The budget's current limit: the most files read at once across all
+    /// of the budget's users.
+    pub fn concurrency(&self) -> usize {
+        self.budget.limit()
+    }
+
+    /// The most file reads this loader has had in flight at once, over its
+    /// lifetime. For tests and benchmarks.
+    pub fn peak_in_flight(&self) -> usize {
+        self.io.peak_in_flight.load(Ordering::SeqCst)
     }
 }
 
 /// Drop guard that flips an `AtomicBool` when the outer async future
-/// is dropped. Paired with a `spawn_blocking` task that polls the same
+/// is dropped. Paired with the `spawn_blocking` tasks that poll the same
 /// flag between unit-of-work iterations: dropping the outer future
-/// signals the blocking task to exit at the next checkpoint.
+/// signals every blocking task of the call to exit at its next
+/// checkpoint.
 struct CancelOnDrop(Arc<AtomicBool>);
 
 impl Drop for CancelOnDrop {
@@ -155,6 +263,10 @@ impl AsyncRasterLoader for GdalLoader {
 
 struct OwnedGdalLoadRequest {
     uri: String,
+    /// `uri` without its `#band=N` fragment: the file to open.
+    path: String,
+    /// The fragment's band, 1 if it has none.
+    band: usize,
     height: usize,
     width: usize,
     expected_bytes: usize,
@@ -221,8 +333,13 @@ impl GdalLoader {
             )));
         }
 
+        let (path, band) = split_outdb_band_fragment(req.uri)
+            .map_err(|e| ArrowError::ExternalError(Box::new(e)))?;
+
         Ok(OwnedGdalLoadRequest {
             uri: req.uri.to_string(),
+            path,
+            band: band as usize,
             height,
             width,
             expected_bytes: expected_bytes_u64 as usize,
@@ -233,74 +350,154 @@ impl GdalLoader {
 
     async fn load_all(&self, reqs: Vec<OwnedGdalLoadRequest>) -> Result<Vec<Buffer>, ArrowError> {
         // Cancellation plumbing: the guard lives in this async fn's
-        // frame. On normal completion `_guard` drops after the await
-        // returns, flipping the flag on an already-finished blocking
-        // task (no-op). On cancellation (outer future dropped
-        // mid-await), the guard drops first and flips the flag; the
-        // blocking task observes it at the next strip boundary and
-        // returns a cancellation error.
+        // frame. On normal completion `_guard` drops after every task has
+        // returned, flipping the flag on finished work (no-op). When the
+        // outer future is dropped mid-await, or when a file fails and the
+        // call returns early, the guard drops and flips the flag; each
+        // blocking task still running observes it at its next strip
+        // boundary, and each still waiting for budget when it gets a permit,
+        // and returns a cancellation error.
         let cancel: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
         let _guard = CancelOnDrop(Arc::clone(&cancel));
 
-        let buffers = tokio::task::spawn_blocking({
-            let cancel = Arc::clone(&cancel);
-            move || -> Result<Vec<Buffer>, ArrowError> {
-                with_gdal(|gdal| {
-                    let mut buffers = Vec::new();
-                    for req in reqs {
-                        // `#band=N` fragment, with N defaulting to 1 if absent.
-                        let (path, band_num) = split_outdb_band_fragment(&req.uri)?;
-                        let cache = thread_local_cache()?;
-                        let dataset = cache.get_or_create_outdb_source(gdal, &path, None)?;
-                        let band = dataset
-                            .rasterband(band_num as usize)
-                            .map_err(convert_gdal_err)?;
+        // Group requests by file, keeping first-appearance order, so that a
+        // file named once per band is opened once, by one thread.
+        let num_reqs = reqs.len();
+        let mut files: Vec<Vec<(usize, OwnedGdalLoadRequest)>> = Vec::new();
+        let mut file_index: HashMap<String, usize> = HashMap::new();
+        for (req_idx, req) in reqs.into_iter().enumerate() {
+            let idx = *file_index.entry(req.path.clone()).or_insert_with(|| {
+                files.push(Vec::new());
+                files.len() - 1
+            });
+            files[idx].push((req_idx, req));
+        }
 
-                        // Verify the file's pixel type matches the band metadata's
-                        // claim BEFORE reading. The bytes-out path doesn't convert;
-                        // a mismatch would produce a 2x-or-N/2 byte count and the
-                        // size check in `RS_EnsureLoaded` would mis-blame the
-                        // loader for size rather than naming the dtype mismatch.
-                        // Catch it cleanly here.
-                        let file_dtype = gdal_to_band_data_type(band.band_type())?;
-                        if file_dtype != req.expected_dtype {
-                            return sedona_common::sedona_internal_err!(
-                                "GDAL OutDb band metadata claims {:?} but file {} band {} is {:?}",
-                                req.expected_dtype,
-                                req.uri,
-                                band_num,
-                                file_dtype
-                            );
-                        }
-
-                        // Pre-allocate the output buffer once; each strip read
-                        // writes into a contiguous slice.
-                        let mut output = vec![0u8; req.expected_bytes];
-                        read_band_blockwise(
-                            &band,
-                            &mut output,
-                            req.width,
-                            req.height,
-                            req.byte_size,
-                            &cancel,
-                        )?;
-                        buffers.push(Buffer::from_vec(output));
+        // Each file is read by its own blocking task, which waits for its
+        // permit of the shared I/O budget on its own thread and holds it
+        // until the read has returned. Nothing here waits for the budget as
+        // a future (see `sedona_raster::io_budget`): a future queued on the
+        // semaphore is handed a released permit even if its task is blocked
+        // and cannot poll it, which deadlocks a task that also evaluates
+        // `RS_FromPath`. A task is spawned only once the previous one has its
+        // permit, so a call keeps at most one thread waiting for the budget,
+        // and as many reading as the budget lets it.
+        //
+        // Results are taken in file order, so a failing call reports the
+        // failure of its first failing file, whatever order the reads end
+        // in. Returning early drops the rest: reads in flight stop at their
+        // next strip, and a task still waiting returns as soon as it gets a
+        // permit, without opening anything.
+        let mut files = files.into_iter();
+        let mut reads = FuturesOrdered::new();
+        let mut waiting: Option<oneshot::Receiver<()>> = None;
+        let mut loaded = Vec::with_capacity(num_reqs);
+        loop {
+            if waiting.is_none()
+                && let Some(file_reqs) = files.next()
+            {
+                let (got_permit, permit_signal) = oneshot::channel();
+                let budget = self.budget.clone();
+                let io = Arc::clone(&self.io);
+                let cancel = Arc::clone(&cancel);
+                reads.push_back(tokio::task::spawn_blocking(move || {
+                    let _permit = budget.acquire_blocking();
+                    // The call may be gone; it no longer listens.
+                    let _ = got_permit.send(());
+                    if cancel.load(Ordering::Acquire) {
+                        return Err(cancelled_err(0, 0));
                     }
-
-                    Ok(buffers)
-                })
-                .map_err(|e| ArrowError::ExternalError(Box::new(e)))
+                    let _in_flight = io.enter();
+                    read_file(file_reqs, &cancel)
+                }));
+                waiting = Some(permit_signal);
             }
-        })
-        .await
-        .map_err(|e| {
-            ArrowError::ExternalError(Box::new(sedona_common::sedona_internal_datafusion_err!(
-                "GDAL raster loader task panicked or was cancelled: {e}"
-            )))
-        })??;
+            tokio::select! {
+                read = reads.next() => match read {
+                    Some(read) => {
+                        let read = read.map_err(|e| {
+                            ArrowError::ExternalError(Box::new(
+                                sedona_common::sedona_internal_datafusion_err!(
+                                    "GDAL raster loader task panicked: {e}"
+                                ),
+                            ))
+                        })?;
+                        loaded.extend(read.map_err(|e| ArrowError::ExternalError(Box::new(e)))?);
+                    }
+                    // Every task spawned so far has finished, so the one
+                    // that was waiting got its permit: start the next file,
+                    // if any.
+                    None => {
+                        if waiting.take().is_none() {
+                            break;
+                        }
+                    }
+                },
+                // Resolves when the waiting task gets its permit, or panics.
+                _ = async { waiting.as_mut().expect("guarded by the precondition").await },
+                    if waiting.is_some() => waiting = None,
+            }
+        }
 
-        Ok(buffers)
+        // Back to request order: every request belongs to exactly one file,
+        // and a file's read returns a buffer for each of its requests.
+        loaded.sort_unstable_by_key(|(req_idx, _)| *req_idx);
+        Ok(loaded.into_iter().map(|(_, buffer)| buffer).collect())
     }
+}
+
+/// Read every requested band of one file, in request order, on the calling
+/// (blocking) thread. Returns each band's bytes tagged with its request
+/// index.
+fn read_file(
+    reqs: Vec<(usize, OwnedGdalLoadRequest)>,
+    cancel: &AtomicBool,
+) -> DFResult<Vec<(usize, Buffer)>> {
+    let Some((_, first)) = reqs.first() else {
+        return Ok(Vec::new());
+    };
+    with_gdal(|gdal| {
+        // The file's bands share one open dataset, closed when this returns.
+        let dataset = open_gdal_dataset(gdal, &first.path, None)?;
+        let mut buffers = Vec::with_capacity(reqs.len());
+        for (req_idx, req) in &reqs {
+            if cancel.load(Ordering::Acquire) {
+                return Err(cancelled_err(0, req.height));
+            }
+            let band = dataset.rasterband(req.band).map_err(convert_gdal_err)?;
+
+            // Verify the file's pixel type matches the band metadata's
+            // claim BEFORE reading. The bytes-out path doesn't convert;
+            // a mismatch would produce a 2x-or-N/2 byte count and the
+            // size check in `RS_EnsureLoaded` would mis-blame the
+            // loader for size rather than naming the dtype mismatch.
+            // Catch it cleanly here.
+            let file_dtype = gdal_to_band_data_type(band.band_type())?;
+            if file_dtype != req.expected_dtype {
+                return sedona_common::sedona_internal_err!(
+                    "GDAL OutDb band metadata claims {:?} but file {} band {} is {:?}",
+                    req.expected_dtype,
+                    req.uri,
+                    req.band,
+                    file_dtype
+                );
+            }
+
+            // Pre-allocate the output buffer once; each strip read
+            // writes into a contiguous slice.
+            let mut output = vec![0u8; req.expected_bytes];
+            read_band_blockwise(
+                &band,
+                &mut output,
+                req.width,
+                req.height,
+                req.byte_size,
+                cancel,
+            )?;
+            buffers.push((*req_idx, Buffer::from_vec(output)));
+        }
+        Ok(buffers)
+    })
 }
 
 /// Read a band's full extent into `output` in row-major order, looping
@@ -373,6 +570,7 @@ mod tests {
     use super::*;
     use crate::gdal_common::with_gdal;
     use sedona_gdal::raster::types::Buffer as GdalBuffer;
+    use sedona_raster::io_budget::DEFAULT_RASTER_IO_CONCURRENCY;
     use sedona_raster::view_entries::ViewEntries;
     use sedona_schema::raster::BandDataType;
     use tempfile::TempDir;
@@ -629,8 +827,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let path = write_pattern_geotiff(&tmp, "cancel.tif", 16, 64);
         with_gdal(|gdal| {
-            let cache = thread_local_cache()?;
-            let dataset = cache.get_or_create_outdb_source(gdal, &path, None)?;
+            let dataset = open_gdal_dataset(gdal, &path, None)?;
             let band = dataset.rasterband(1).map_err(convert_gdal_err)?;
             let cancel = AtomicBool::new(true);
             let mut out = vec![0u8; 16 * 64];
@@ -648,6 +845,72 @@ mod tests {
         .unwrap();
     }
 
+    /// Write a 2 × 3 UInt8 GeoTIFF with two bands, band `b` holding pixels
+    /// `10 * b + (0..6)`.
+    fn write_two_band_geotiff(dir: &TempDir, name: &str) -> String {
+        let path = dir.path().join(name);
+        let path_str = path.to_string_lossy().to_string();
+        with_gdal(|gdal| {
+            let driver = gdal.get_driver_by_name("GTiff").unwrap();
+            let dataset = driver
+                .create_with_band_type::<u8>(&path_str, 3, 2, 2)
+                .unwrap();
+            dataset
+                .set_geo_transform(&[0.0, 1.0, 0.0, 2.0, 0.0, -1.0])
+                .unwrap();
+            for b in 1..=2u8 {
+                let band = dataset.rasterband(b as usize).unwrap();
+                let pixels = (0..6u8).map(|i| 10 * b + i).collect::<Vec<_>>();
+                let mut buffer = GdalBuffer::new((3, 2), pixels);
+                band.write((0, 0), (3, 2), &mut buffer).unwrap();
+            }
+            Ok(())
+        })
+        .unwrap();
+        path_str
+    }
+
+    /// `n` distinct 2 × 3 UInt8 GeoTIFFs, returned as `#band=1` URIs.
+    fn write_many_geotiffs(dir: &TempDir, n: usize) -> Vec<String> {
+        (0..n)
+            .map(|i| format!("{}#band=1", write_uint8_geotiff(dir, &format!("f{i}.tif"))))
+            .collect()
+    }
+
+    /// Load every URI as a 2 × 3 UInt8 band in one call.
+    async fn load_uris(
+        loader: &GdalLoader,
+        uris: &[String],
+    ) -> Result<Vec<RasterLoadResult>, ArrowError> {
+        let view = ViewEntries::identity_for_shape(&[2, 3]);
+        let reqs: Vec<RasterLoadRequest> = uris
+            .iter()
+            .map(|uri| RasterLoadRequest {
+                uri,
+                dim_names: &["y", "x"],
+                source_shape: &[2, 3],
+                view: &view,
+                data_type: BandDataType::UInt8,
+            })
+            .collect();
+        let refs: Vec<&RasterLoadRequest> = reqs.iter().collect();
+        loader.load(&refs).await
+    }
+
+    #[test]
+    fn with_concurrency_clamps_to_at_least_one() {
+        assert_eq!(
+            GdalLoader::new().concurrency(),
+            DEFAULT_RASTER_IO_CONCURRENCY
+        );
+        assert_eq!(GdalLoader::new().with_concurrency(0).concurrency(), 1);
+        assert_eq!(GdalLoader::new().with_concurrency(3).concurrency(), 3);
+        assert_eq!(
+            GdalLoader::new().with_concurrency(3).budget().available(),
+            3
+        );
+    }
+
     #[tokio::test]
     async fn gdal_loader_serves_a_batch_of_requests_in_request_order() {
         // RS_EnsureLoaded issues every OutDb band of a batch in one call:
@@ -657,31 +920,332 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let a = write_uint8_geotiff(&tmp, "a.tif"); // 2 × 3, pixels 0..6
         let b = write_pattern_geotiff(&tmp, "b.tif", 4, 2); // 2 × 4, pixels 0..8
+        let c = write_two_band_geotiff(&tmp, "c.tif"); // 2 × 3, bands 10.. and 20..
         let a_uri = format!("{a}#band=1");
         let b_uri = format!("{b}#band=1");
+        let c1_uri = format!("{c}#band=1");
+        let c2_uri = format!("{c}#band=2");
         let view_a = ViewEntries::identity_for_shape(&[2, 3]);
         let view_b = ViewEntries::identity_for_shape(&[2, 4]);
-        let req_a = RasterLoadRequest {
-            uri: &a_uri,
+        let req = |uri, shape, view| RasterLoadRequest {
+            uri,
             dim_names: &["y", "x"],
-            source_shape: &[2, 3],
-            view: &view_a,
+            source_shape: shape,
+            view,
             data_type: BandDataType::UInt8,
         };
-        let req_b = RasterLoadRequest {
-            uri: &b_uri,
-            dim_names: &["y", "x"],
-            source_shape: &[2, 4],
-            view: &view_b,
-            data_type: BandDataType::UInt8,
-        };
+        let req_a = req(&a_uri, &[2, 3], &view_a);
+        let req_b = req(&b_uri, &[2, 4], &view_b);
+        let req_c1 = req(&c1_uri, &[2, 3], &view_a);
+        let req_c2 = req(&c2_uri, &[2, 3], &view_a);
 
-        let loader = GdalLoader::new();
-        let results = loader.load(&[&req_a, &req_b, &req_a]).await.unwrap();
-        assert_eq!(results.len(), 3);
-        assert_eq!(results[0].bytes.as_slice(), &[0u8, 1, 2, 3, 4, 5]);
-        assert_eq!(results[1].bytes.as_slice(), &[0u8, 1, 2, 3, 4, 5, 6, 7]);
-        assert_eq!(results[2].bytes.as_slice(), &[0u8, 1, 2, 3, 4, 5]);
-        assert_eq!(results[1].source_shape, vec![2, 4]);
+        // Serial and fanned-out must agree, and both must preserve request
+        // order, including two bands of one file split around other files.
+        for concurrency in [1, DEFAULT_RASTER_IO_CONCURRENCY] {
+            let loader = GdalLoader::new().with_concurrency(concurrency);
+            let results = loader
+                .load(&[&req_c2, &req_a, &req_b, &req_c1, &req_a])
+                .await
+                .unwrap();
+            assert_eq!(results.len(), 5);
+            assert_eq!(results[0].bytes.as_slice(), &[20u8, 21, 22, 23, 24, 25]);
+            assert_eq!(results[1].bytes.as_slice(), &[0u8, 1, 2, 3, 4, 5]);
+            assert_eq!(results[2].bytes.as_slice(), &[0u8, 1, 2, 3, 4, 5, 6, 7]);
+            assert_eq!(results[3].bytes.as_slice(), &[10u8, 11, 12, 13, 14, 15]);
+            assert_eq!(results[4].bytes.as_slice(), &[0u8, 1, 2, 3, 4, 5]);
+            assert_eq!(results[2].source_shape, vec![2, 4]);
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn gdal_loader_fan_out_preserves_order_across_many_files() {
+        let tmp = TempDir::new().unwrap();
+        // Distinct contents per file so a misplaced result is observable.
+        let uris: Vec<String> = (0..48)
+            .map(|i| {
+                let path = write_pattern_geotiff(&tmp, &format!("p{i}.tif"), 3, 2 + i);
+                format!("{path}#band=1")
+            })
+            .collect();
+        let views: Vec<ViewEntries> = (0..48)
+            .map(|i| ViewEntries::identity_for_shape(&[2 + i as i64, 3]))
+            .collect();
+        let shapes: Vec<[i64; 2]> = (0..48).map(|i| [2 + i as i64, 3]).collect();
+        let reqs: Vec<RasterLoadRequest> = (0..48)
+            .map(|i| RasterLoadRequest {
+                uri: &uris[i],
+                dim_names: &["y", "x"],
+                source_shape: &shapes[i],
+                view: &views[i],
+                data_type: BandDataType::UInt8,
+            })
+            .collect();
+        let refs: Vec<&RasterLoadRequest> = reqs.iter().collect();
+
+        let loader = GdalLoader::new().with_concurrency(8);
+        let results = loader.load(&refs).await.unwrap();
+        for (i, result) in results.iter().enumerate() {
+            let expected: Vec<u8> = (0..3 * (2 + i)).map(|p| (p % 251) as u8).collect();
+            assert_eq!(result.bytes.as_slice(), expected.as_slice(), "request {i}");
+        }
+    }
+
+    /// Eight concurrent calls on clones of one loader with a budget of two
+    /// never have more than two files being read between them.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_loads_share_one_io_budget() {
+        let tmp = TempDir::new().unwrap();
+        let uris = Arc::new(write_many_geotiffs(&tmp, 16));
+        let loader = GdalLoader::new().with_concurrency(2);
+
+        let mut tasks = Vec::new();
+        for _ in 0..8 {
+            let loader = loader.clone();
+            let uris = Arc::clone(&uris);
+            tasks.push(tokio::spawn(async move {
+                load_uris(&loader, &uris).await.unwrap().len()
+            }));
+        }
+        for task in tasks {
+            assert_eq!(task.await.unwrap(), 16);
+        }
+
+        let peak = loader.peak_in_flight();
+        assert!((1..=2).contains(&peak), "peak in flight {peak}");
+        assert_eq!(loader.budget().available(), 2);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn gdal_loader_batch_fails_when_any_file_fails() {
+        // One unreadable file among good ones fails the whole call with that
+        // file's error, at any budget, and leaves the budget intact.
+        let tmp = TempDir::new().unwrap();
+        let mut uris = write_many_geotiffs(&tmp, 12);
+        uris.insert(5, "/nonexistent/path/to/file.tif#band=1".to_string());
+        for concurrency in [1, 4, DEFAULT_RASTER_IO_CONCURRENCY] {
+            let loader = GdalLoader::new().with_concurrency(concurrency);
+            let err = load_uris(&loader, &uris).await.unwrap_err();
+            assert!(
+                err.to_string().to_lowercase().contains("nonexistent"),
+                "concurrency {concurrency}: {err}"
+            );
+            // Tasks still running when the call returned wind down and hand
+            // their permits back.
+            for _ in 0..200 {
+                if loader.budget().available() == concurrency {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            assert_eq!(loader.budget().available(), concurrency);
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn dropping_the_load_future_abandons_files_not_yet_started() {
+        // With the whole budget taken, a call's files wait for a permit.
+        // Dropping the call (a cancelled query) must not start any of them,
+        // and must not leak or consume budget: the one task still waiting
+        // takes the permit when it frees, sees the call is gone, and gives
+        // it back without opening anything.
+        let tmp = TempDir::new().unwrap();
+        let uris = write_many_geotiffs(&tmp, 4);
+        let loader = GdalLoader::new().with_concurrency(1);
+        let held = loader.budget().try_acquire().unwrap();
+
+        let timed_out = tokio::time::timeout(
+            std::time::Duration::from_millis(50),
+            load_uris(&loader, &uris),
+        )
+        .await;
+        assert!(timed_out.is_err(), "load should wait on the held budget");
+        assert_eq!(loader.peak_in_flight(), 0, "no file should have started");
+
+        drop(held);
+        for _ in 0..200 {
+            if loader.budget().available() == 1 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert_eq!(loader.budget().available(), 1);
+        assert_eq!(loader.budget().in_use(), 0);
+        assert_eq!(loader.peak_in_flight(), 0, "no file should have started");
+        // The loader is still usable after the abandoned call.
+        assert_eq!(load_uris(&loader, &uris).await.unwrap().len(), 4);
+    }
+
+    /// Pixel reads and `RS_FromPath` opens drawing on one session budget
+    /// never have more files in flight between them than the budget allows.
+    /// At a budget of 1 this also shows that neither waits for a permit while
+    /// it holds one, which would deadlock the two against each other.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn loader_reads_and_frompath_opens_share_one_budget() {
+        use crate::rs_frompath::RsFromPath;
+        use arrow_array::StringArray;
+        use arrow_schema::DataType;
+        use datafusion_common::config::ConfigOptions;
+        use datafusion_expr::ColumnarValue;
+        use sedona_common::option::SedonaOptions;
+        use sedona_expr::scalar_udf::SedonaScalarKernel;
+        use sedona_raster::raster_loader::{
+            RasterLoaderConfig, RasterLoaderRegistry, io_budget_from_config,
+        };
+        use sedona_schema::datatypes::SedonaType;
+        use std::sync::RwLock;
+
+        let tmp = TempDir::new().unwrap();
+        let uris = Arc::new(write_many_geotiffs(&tmp, 24));
+        let paths: Vec<String> = uris
+            .iter()
+            .map(|uri| uri.trim_end_matches("#band=1").to_string())
+            .collect();
+
+        for limit in [1, 3] {
+            // A session's wiring: one budget, handed to the loader and to
+            // the config extension `RS_FromPath` reads it from.
+            let budget = RasterIoBudget::default();
+            let loader = GdalLoader::new().with_budget(budget.clone());
+            let mut config = ConfigOptions::new();
+            config.extensions.insert(SedonaOptions::default());
+            config.extensions.insert(
+                RasterLoaderConfig::from_handle(Arc::new(RwLock::new(RasterLoaderRegistry::new())))
+                    .with_io_budget(budget.clone()),
+            );
+            config
+                .set("sedona.raster.io_concurrency", &limit.to_string())
+                .unwrap();
+            // What `RS_EnsureLoaded` does before it calls the loader.
+            io_budget_from_config(&config).unwrap();
+            let config = Arc::new(config);
+            let kernel = Arc::new(RsFromPath::default());
+
+            let mut tasks = Vec::new();
+            for _ in 0..4 {
+                let loader = loader.clone();
+                let uris = Arc::clone(&uris);
+                tasks.push(tokio::spawn(async move {
+                    load_uris(&loader, &uris).await.unwrap().len()
+                }));
+
+                let kernel = Arc::clone(&kernel);
+                let config = Arc::clone(&config);
+                let input = ColumnarValue::Array(Arc::new(StringArray::from(paths.clone())));
+                tasks.push(tokio::spawn(async move {
+                    match kernel
+                        .invoke_batch_from_args(
+                            &[],
+                            &[input],
+                            &SedonaType::Arrow(DataType::Null),
+                            0,
+                            Some(&config),
+                        )
+                        .unwrap()
+                    {
+                        ColumnarValue::Array(rasters) => rasters.len(),
+                        other => panic!("expected an array, got {other:?}"),
+                    }
+                }));
+            }
+            let done = tokio::time::timeout(
+                std::time::Duration::from_secs(60),
+                futures::future::join_all(tasks),
+            )
+            .await
+            .expect("pixel reads and header opens deadlocked on one budget");
+            for rows in done {
+                assert_eq!(rows.unwrap(), 24);
+            }
+
+            assert_eq!(budget.limit(), limit);
+            let peak = budget.peak_in_use();
+            assert!((1..=limit).contains(&peak), "budget {limit}: peak {peak}");
+            assert!(loader.peak_in_flight() <= limit);
+            assert_eq!(budget.in_use(), 0);
+            assert_eq!(budget.available(), limit);
+        }
+    }
+
+    /// One task polls a load that is waiting for the budget, then evaluates
+    /// `RS_FromPath`, which blocks that task's thread until it gets a permit
+    /// (as when `SortPreservingMergeExec` polls several partitions, or
+    /// `EnsureLoadedExec` evaluates hoisted `RS_FromPath` arguments). If the
+    /// load waited as a future, the semaphore would hand the released permit
+    /// to that future, parked inside the blocked task, and neither could
+    /// ever run again.
+    #[test]
+    fn a_task_with_a_pending_load_can_evaluate_rs_frompath() {
+        use crate::rs_frompath::RsFromPath;
+        use arrow_array::StringArray;
+        use arrow_schema::DataType;
+        use datafusion_common::config::ConfigOptions;
+        use datafusion_expr::ColumnarValue;
+        use sedona_common::option::SedonaOptions;
+        use sedona_expr::scalar_udf::SedonaScalarKernel;
+        use sedona_raster::raster_loader::{RasterLoaderConfig, RasterLoaderRegistry};
+        use sedona_schema::datatypes::SedonaType;
+        use std::sync::RwLock;
+        use std::time::Duration;
+
+        let tmp = TempDir::new().unwrap();
+        let uris = write_many_geotiffs(&tmp, 4);
+        let paths: Vec<String> = uris
+            .iter()
+            .map(|uri| uri.trim_end_matches("#band=1").to_string())
+            .collect();
+        let budget = RasterIoBudget::new(1);
+        let loader = GdalLoader::new().with_budget(budget.clone());
+        let mut config = ConfigOptions::new();
+        config.extensions.insert(SedonaOptions::default());
+        config.extensions.insert(
+            RasterLoaderConfig::from_handle(Arc::new(RwLock::new(RasterLoaderRegistry::new())))
+                .with_io_budget(budget.clone()),
+        );
+        config.set("sedona.raster.io_concurrency", "1").unwrap();
+        // Held elsewhere, so both the load and `RS_FromPath` have to wait.
+        let held = budget.try_acquire().unwrap();
+
+        // A timeout inside the runtime cannot fire while the task's thread
+        // is blocked, so the test thread watches the clock, and a deadlocked
+        // runtime is left behind on its own thread rather than dropped.
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .build()
+                .unwrap();
+            let rows = runtime.block_on(async move {
+                tokio::spawn(async move {
+                    let release = std::thread::spawn(move || {
+                        std::thread::sleep(Duration::from_millis(50));
+                        drop(held);
+                    });
+                    let input = ColumnarValue::Array(Arc::new(StringArray::from(paths)));
+                    let (loaded, opened) = tokio::join!(load_uris(&loader, &uris), async {
+                        RsFromPath::default().invoke_batch_from_args(
+                            &[],
+                            &[input],
+                            &SedonaType::Arrow(DataType::Null),
+                            0,
+                            Some(&config),
+                        )
+                    });
+                    release.join().unwrap();
+                    let ColumnarValue::Array(opened) = opened.unwrap() else {
+                        panic!("expected an array");
+                    };
+                    (loaded.unwrap().len(), opened.len())
+                })
+                .await
+                .unwrap()
+            });
+            done_tx.send(rows).unwrap();
+        });
+        let rows = done_rx
+            .recv_timeout(Duration::from_secs(60))
+            .expect("a pending load and RS_FromPath in one task deadlocked");
+        assert_eq!(rows, (4, 4));
+        assert_eq!(budget.in_use(), 0);
+        assert_eq!(budget.available(), 1);
     }
 }
