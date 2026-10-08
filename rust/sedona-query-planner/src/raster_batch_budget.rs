@@ -718,6 +718,14 @@ impl ExecutionPlan for EnsureLoadedExec {
 /// The spread has `max(target_partitions, input partitions)` partitions, so
 /// an input wider than the target (a `UnionExec`, say) keeps its width.
 ///
+/// The repartition decouples the producer below from the loads: a fast
+/// producer (a spatial join) fills the repartition's channels while the
+/// loads drain them slowly, so rows queue there, still as metadata-only
+/// references. Under a memory limit the repartition spills them; without one
+/// they cost resident memory (about 2 GB on SpatialBench Raster Q5 at SF1).
+/// Nor does the spread look at a `LIMIT` above, so a limited query may pull
+/// more input than it needs.
+///
 /// The rule does not try to detect an input that is already well spread:
 /// the plan cannot tell how many batches a partition will deliver, and the
 /// cost of the repartition is one hash of rows that are still metadata-only
