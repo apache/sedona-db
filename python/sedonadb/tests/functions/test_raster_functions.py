@@ -20,6 +20,7 @@ import math
 import numpy as np
 import pandas as pd
 import pytest
+import sedonadb
 from shapely import wkt
 
 from sedonadb.testing import SedonaDB
@@ -933,12 +934,12 @@ def test_rs_summarystats_of_rs_frompath_many_rows(con, sedona_testing):
 
 
 @pytest.mark.parametrize("io_concurrency", [1, 4])
-def test_rs_frompath_and_loads_under_a_small_io_budget(
-    con, sedona_testing, io_concurrency
-):
+def test_rs_frompath_and_loads_under_a_small_io_budget(sedona_testing, io_concurrency):
     # RS_FromPath's opens and the pixel loads after them share the session's
     # I/O budget. At a budget of 1 they take turns; the results must match
-    # the default budget's.
+    # the default budget's. A connection of its own, so the setting does not
+    # outlive the test.
+    con = sedonadb.connect()
     rows = _frompath_rows(sedona_testing)
     _frompath_view(con, rows, "frompath_budget")
     query = """
