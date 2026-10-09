@@ -20,7 +20,11 @@
 //! Resolves a band's OutDb URI back into a Zarr chunk read: the URI is
 //! a chunk anchor of the form
 //! `<store_uri>#array=<array_path>&chunk=<i0>,<i1>,...` (see
-//! [`crate::source_uri::build_chunk_anchor`]).
+//! [`crate::source_uri::build_chunk_anchor`]). For an array stored with
+//! the `sharding_indexed` codec the indices address an inner chunk, and
+//! the read fetches just that chunk's byte range out of its shard (plus
+//! the shard's index, once per shard and opened array) rather than
+//! decoding the whole shard.
 //!
 //! `load` treats its request slice as a batch (see the trait docs): the
 //! anchors are first reduced to the distinct stores, arrays and chunks
@@ -64,7 +68,10 @@ use object_store::ObjectStore;
 use sedona_common::sedona_internal_datafusion_err;
 use sedona_raster::raster_loader::{AsyncRasterLoader, RasterLoadRequest, RasterLoadResult};
 use tokio::sync::Semaphore;
-use zarrs::array::{Array, ArrayBytes};
+use zarrs::array::{
+    Array, ArrayBytes, AsyncArrayShardedReadableExt, AsyncArrayShardedReadableExtCache,
+    CodecOptions,
+};
 use zarrs::storage::AsyncReadableListableStorageTraits;
 
 use crate::dtype::zarr_to_band_data_type;
@@ -101,7 +108,8 @@ pub const DEFAULT_ARRAY_HANDLE_CAPACITY: usize = 256;
 /// array after this re-reads its metadata, which is the only guard
 /// against an array rewritten or removed under a running session: with
 /// a live handle, a chunk whose key has been deleted comes back as the
-/// array's fill value rather than as an open error, until the TTL lapses.
+/// array's fill value rather than as an open error, and a rewritten shard
+/// is read through its cached index, until the TTL lapses.
 pub const DEFAULT_ARRAY_HANDLE_TTL: Duration = Duration::from_secs(300);
 
 /// Async raster byte loader for Zarr-backed bands.
@@ -236,7 +244,21 @@ pub struct HandleStats {
     pub array_misses: u64,
 }
 
-type SharedArray = Arc<Array<dyn AsyncReadableListableStorageTraits>>;
+/// An opened array together with the shard-index cache its chunk reads
+/// go through. The cache is what makes a sharded array's inner-chunk
+/// reads cheap: a shard's index is fetched and decoded on the first read
+/// into that shard and reused by every later read into it, by this call
+/// and by later calls while the handle lives. It holds one entry per
+/// shard touched, each the shard's decoded index (16 bytes per inner
+/// chunk) and nothing of the pixel data; it is dropped with the handle.
+/// For an unsharded array the cache stays empty and reads go straight
+/// to the chunk.
+struct OpenedArray {
+    array: Array<dyn AsyncReadableListableStorageTraits>,
+    shards: AsyncArrayShardedReadableExtCache,
+}
+
+type SharedArray = Arc<OpenedArray>;
 
 struct ArrayHandle {
     array: SharedArray,
@@ -316,7 +338,8 @@ impl HandleCache {
             )))
         })?;
         self.array_misses.fetch_add(1, Ordering::Relaxed);
-        let array: SharedArray = Arc::new(array);
+        let shards = AsyncArrayShardedReadableExtCache::new(&array);
+        let array: SharedArray = Arc::new(OpenedArray { array, shards });
         lock(&self.arrays).put(
             key,
             ArrayHandle {
@@ -435,7 +458,7 @@ impl AsyncRasterLoader for ZarrLoader {
         for (req, &chunk) in reqs.iter().zip(&plan.request_chunk) {
             let (array_idx, _) = plan.chunks[chunk];
             let array_path = &plan.arrays[array_idx].1;
-            let file_dtype = zarr_to_band_data_type(arrays[array_idx].data_type())?;
+            let file_dtype = zarr_to_band_data_type(arrays[array_idx].array.data_type())?;
             if file_dtype != req.data_type {
                 return Err(ArrowError::ExternalError(Box::new(
                     sedona_internal_datafusion_err!(
@@ -460,7 +483,7 @@ impl AsyncRasterLoader for ZarrLoader {
         // general enough" check under async_trait's `Send` bound.)
         let mut fetches = Vec::with_capacity(plan.chunks.len());
         for (chunk_idx, (array_idx, chunk_indices)) in plan.chunks.iter().enumerate() {
-            let array: &Array<dyn AsyncReadableListableStorageTraits> = &arrays[*array_idx];
+            let array: &OpenedArray = &arrays[*array_idx];
             let (store, array_path) = &plan.arrays[*array_idx];
             let store_uri = plan.stores[*store].as_str();
             let permits = Arc::clone(&self.permits);
@@ -504,14 +527,28 @@ impl AsyncRasterLoader for ZarrLoader {
 }
 
 /// Read one chunk's raw bytes out of an already-open array.
+///
+/// `chunk_indices` are on the grid the reader walks: the inner-chunk grid
+/// of a sharded array, the chunk grid of any other. zarrs' subchunk read
+/// falls through to a plain chunk read for an unsharded array, so there
+/// is one path for both. Within a shard, reads of distinct inner chunks
+/// proceed concurrently once the shard's index is cached; the first read
+/// into a shard fetches the index while holding the cache's lock, which
+/// serializes the other reads of that array for the length of that one
+/// small ranged request.
 async fn retrieve_chunk(
-    array: &Array<dyn AsyncReadableListableStorageTraits>,
+    opened: &OpenedArray,
     store_uri: &str,
     array_path: &str,
     chunk_indices: &[u64],
 ) -> Result<Buffer, ArrowError> {
-    let bytes = array
-        .async_retrieve_chunk::<ArrayBytes<'static>>(chunk_indices)
+    let bytes = opened
+        .array
+        .async_retrieve_subchunk_opt::<ArrayBytes<'static>>(
+            &opened.shards,
+            chunk_indices,
+            &CodecOptions::default(),
+        )
         .await
         .map_err(|e| {
             ArrowError::ExternalError(Box::new(sedona_internal_datafusion_err!(
@@ -589,6 +626,53 @@ mod tests {
         };
         let result = loader.load(&[&req]).await.unwrap();
         assert_eq!(result[0].bytes.as_slice(), expected_pixels.as_slice());
+    }
+
+    /// A sharded array's anchor indexes an inner chunk: the bytes come
+    /// back for that 2×2 block alone, not the 4×4 shard it sits in. The
+    /// array has one shard; the second load reuses its index.
+    #[tokio::test]
+    async fn zarr_loader_reads_one_inner_chunk_of_a_sharded_array() {
+        let tmp = TempDir::new().unwrap();
+        let store_path = tmp.path().join("store.zarr");
+        let store = Arc::new(FilesystemStore::new(&store_path).unwrap());
+        GroupBuilder::new()
+            .build(store.clone(), "/")
+            .unwrap()
+            .store_metadata()
+            .unwrap();
+        let array = ArrayBuilder::new(
+            vec![4, 4],
+            vec![4, 4],
+            zarr_dtype::uint8(),
+            FillValue::from(0u8),
+        )
+        .dimension_names(Some(["y", "x"]))
+        .subchunk_shape(vec![2, 2])
+        .build(store.clone(), "/temperature")
+        .unwrap();
+        array.store_metadata().unwrap();
+        // Pixel (y, x) holds 10*y + x.
+        let pixels: Vec<u8> = (0..4u8)
+            .flat_map(|y| (0..4u8).map(move |x| 10 * y + x))
+            .collect();
+        array.store_chunk(&[0, 0], pixels).unwrap();
+
+        let store_uri = format!("file://{}", store_path.display());
+        let uri = build_chunk_anchor(&store_uri, "temperature", &[1, 0]);
+        let loader = ZarrLoader::new();
+        let req = RasterLoadRequest {
+            uri: &uri,
+            dim_names: &["y", "x"],
+            source_shape: &[2, 2],
+            view: &ViewEntries::identity_for_shape(&[2, 2]),
+            data_type: BandDataType::UInt8,
+        };
+        for _ in 0..2 {
+            let result = loader.load(&[&req]).await.unwrap();
+            assert_eq!(result[0].bytes.as_slice(), &[20, 21, 30, 31]);
+        }
+        assert_eq!(loader.handle_stats().array_misses, 1);
     }
 
     #[tokio::test]
