@@ -526,7 +526,9 @@ struct SedonaCCatalogProviderList {
   /// "definition": null|string}}. Missing options fields use their Rust defaults.
   /// A NULL input means no plan; otherwise move it and clear its release callback
   /// when taking ownership. out is required on success and defers the mutation
-  /// (including existence/conflict checks) until execution.
+  /// (including existence/conflict checks) until execution. Return ENOTSUP if this
+  /// catalog list cannot create the object: for a new top-level catalog (CREATE
+  /// DATABASE), SedonaDB then offers it to the next registered catalog list.
   int (*create_object)(const struct SedonaCCatalogProviderList* self, const char* args,
                        struct SedonaCExecutionPlan* input,
                        struct SedonaCExecutionPlan* out, struct SedonaCError* err);

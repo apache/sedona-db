@@ -134,6 +134,12 @@ pub trait SedonaCatalogList: Debug + Send + Sync {
     /// external tables, namespaces, and indexes. `session` belongs to
     /// this call and must not be retained by the catalog. The returned plan applies
     /// conflict behavior and validates the parent namespace when executed.
+    ///
+    /// A new top-level catalog (`CREATE DATABASE`) is offered to the newest
+    /// registration first. An implementation that cannot create one should return a
+    /// `NotImplemented` error, so that the next older registration, and then the
+    /// built-in catalog list, can create it instead. Any other error is returned to
+    /// the caller.
     async fn create_object(
         &self,
         session: &dyn Session,
