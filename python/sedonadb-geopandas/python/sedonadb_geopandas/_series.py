@@ -20,6 +20,7 @@ import math
 import numbers
 
 import pyarrow as pa
+from sedonadb.expr import lit
 
 from sedonadb_geopandas._temporal import (
     coerce_duration_scalar,
@@ -408,10 +409,14 @@ class Series:
         column is integer for division purposes. Read from the projected
         schema, which is a plan build, not an execution.
         """
-        dtype = pa.schema(self._df.select(self._expr.alias("x")).schema).field("x").type
+        dtype = self._stored_dtype()
         while pa.types.is_dictionary(dtype) or pa.types.is_run_end_encoded(dtype):
             dtype = dtype.value_type
         return dtype
+
+    def _stored_dtype(self):
+        """This expression's Arrow type as stored, encodings included."""
+        return pa.schema(self._df.select(self._expr.alias("x")).schema).field("x").type
 
     def _is_duration(self):
         return pa.types.is_duration(self._dtype())
@@ -443,6 +448,131 @@ class Series:
             self._name,
         )
 
+    # -- missing values, membership, and casting ---------------------------
+
+    def _is_floating(self):
+        return pa.types.is_floating(self._dtype())
+
+    def _missing(self):
+        """True where this column holds a missing value.
+
+        pandas treats NaN in a float column as missing too, not only null.
+        """
+        expr = self._expr.is_null()
+        if self._is_floating():
+            expr = expr | self._expr.funcs.isnan()
+        return expr.funcs.coalesce(lit(True))
+
+    def isna(self):
+        """Whether each value is missing (null, or NaN in a float column).
+
+        As in GeoPandas, an empty geometry is not missing.
+        """
+        return Series(self._df, self._missing(), self._name)
+
+    isnull = isna
+
+    def notna(self):
+        """Whether each value is present: the inverse of `isna()`."""
+        return Series(self._df, ~self._missing(), self._name)
+
+    notnull = notna
+
+    def fillna(self, value):
+        """Replace missing values (null, or NaN in a float column) with `value`."""
+        if value is None:
+            raise ValueError("Must specify a fill 'value'")
+        if not is_scalar(value):
+            raise TypeError(
+                f"fillna() takes a single value, got {type(value).__name__}"
+            )
+        fill = _operand(self._df, value)
+        expr = self._expr
+        if self._is_floating():
+            # NaN is missing in pandas; nanvl replaces it, coalesce the nulls.
+            expr = expr.funcs.nanvl(fill)
+        return Series(self._df, expr.funcs.coalesce(fill), self._name)
+
+    def isin(self, values):
+        """Whether each value is one of `values`.
+
+        As in pandas, values compare without coercion across kinds (a number
+        never matches a string, while True matches 1 and 1 matches 1.0), and a
+        missing value is a member only when `values` holds a missing marker
+        that pandas matches for this column's type: NaN but not None in a float
+        column, for instance.
+        """
+        if isinstance(values, (str, bytes)) or not hasattr(values, "__iter__"):
+            raise TypeError(
+                f"only list-like objects are allowed to be passed to isin(), you "
+                f"passed a {type(values).__name__!r}"
+            )
+        if isinstance(values, Series):
+            raise TypeError(
+                "isin() takes plain values, not a lazy Series; collect it first"
+            )
+        from sedonadb_geopandas._frame import _is_missing
+
+        given = list(values)
+        present, any_missing = [], False
+        for value in given:
+            normalized = normalize_scalar(value)
+            if _is_missing(normalized):
+                any_missing = True
+            else:
+                present.append(normalized)
+        dtype = self._dtype()
+        present = _comparable(dtype, present)
+        expr = lit(False)
+        if present:
+            expr = self._expr.isin(present).funcs.coalesce(lit(False))
+        if any_missing:
+            # The stored type, since an encoding can change the pandas dtype:
+            # a dictionary column becomes a categorical, whose missing value
+            # is NaN. The values as given, all of them: pandas' answer for a
+            # missing value can depend on the whole list (NumPy's NaT matches
+            # a missing geometry only on its own).
+            matches_null, matches_nan = _missing_members(
+                self._stored_dtype(), dtype, given
+            )
+            if matches_null:
+                expr = expr | self._expr.is_null()
+            if matches_nan:
+                expr = expr | self._expr.funcs.isnan().funcs.coalesce(lit(False))
+        return Series(self._df, expr, self._name)
+
+    def astype(self, dtype):
+        """Cast to `dtype` (a NumPy/pandas dtype name, Python type, or Arrow type).
+
+        As in pandas, casting a missing value to an integer type raises, and a
+        float's fractional part is truncated. Casting to `bool` follows
+        truthiness: a number is True unless it is zero (NaN is True), a string
+        unless it is empty, and a missing value as pandas treats the missing
+        value of this column's type. Casting to a string keeps missing values
+        missing (pandas' `"string"` dtype, not `str`, which writes the text
+        "nan"), and a float's text is Arrow's formatting ("1" and "NaN" rather
+        than "1.0" and "nan"). Casting to `object` leaves the values as they
+        are: an Arrow-backed column has no object type.
+        """
+        if _is_object_dtype(dtype):
+            return Series(self._df, self._expr, self._name)
+        target = _arrow_type(dtype)
+        source = self._dtype()
+        if pa.types.is_boolean(target):
+            truth = _truthiness(self._expr, source)
+            if truth is not None:
+                return Series(self._df, truth, self._name)
+        expr = self._expr.cast(target)
+        if pa.types.is_integer(target):
+            # The engine casts a null to a null silently (and NaN with its own
+            # message); pandas raises for any missing value, an integer
+            # column's included.
+            expr = expr + _fail_where(
+                self._missing(),
+                "Cannot convert non-finite values (NA or inf) to integer",
+            ).cast(target)
+        return Series(self._df, expr, self._name)
+
     __hash__ = None
 
     # -- materialization ---------------------------------------------------
@@ -469,6 +599,202 @@ def _buffer_style(style, names, argument):
     elif value in names:
         return value
     raise ValueError(f"{argument} must be one of {list(names)}, got {style!r}")
+
+
+def _kind(arrow_type):
+    """ "number", "bool", "string", or "other", for comparing kinds."""
+    if pa.types.is_boolean(arrow_type):
+        return "bool"
+    if (
+        pa.types.is_integer(arrow_type)
+        or pa.types.is_floating(arrow_type)
+        or pa.types.is_decimal(arrow_type)
+    ):
+        return "number"
+    if (
+        pa.types.is_string(arrow_type)
+        or pa.types.is_large_string(arrow_type)
+        or pa.types.is_string_view(arrow_type)
+    ):
+        return "string"
+    return "other"
+
+
+def _comparable(dtype, values):
+    """The `values` an `isin` on a column of `dtype` can match, in its terms.
+
+    pandas matches by value without coercing across kinds: a number never
+    equals a string, while True equals 1 and 1 equals 1.0. SQL would coerce a
+    string to a number (or fail to), and refuses to compare a boolean with a
+    number, so values of another kind are dropped and booleans and numbers
+    are converted to the column's kind. Other column types take every value.
+    """
+    column = _kind(dtype)
+    if column == "other":
+        return values
+    comparable = []
+    for value in values:
+        plain = value
+        if isinstance(value, pa.Scalar):
+            kind, plain = _kind(value.type), value.as_py()
+        elif isinstance(value, bool):
+            kind = "bool"
+        elif isinstance(value, numbers.Number):
+            kind = "number"
+        elif isinstance(value, str):
+            kind = "string"
+        else:
+            kind = "other"
+        if kind == column:
+            # A typed scalar is kept as given: unwrapping a large unsigned
+            # value would leave an integer no literal can hold.
+            if (
+                isinstance(value, int)
+                and pa.types.is_integer(dtype)
+                and not -(2**63) <= value < 2**63
+            ):
+                try:
+                    value = pa.scalar(value, type=dtype)
+                except (pa.ArrowInvalid, OverflowError):
+                    # Out of the column's range, so it matches nothing.
+                    continue
+            comparable.append(value)
+        elif column == "number" and kind == "bool":
+            comparable.append(int(plain))
+        elif column == "bool" and kind == "number" and plain in (0, 1):
+            comparable.append(bool(plain))
+    return comparable
+
+
+def _pandas_missing(dtype, nan=False):
+    """A one-element pandas Series holding this type's missing value (or NaN),
+    converted as `to_pandas()` converts it, or None without pandas.
+
+    Which missing marker matches a missing value, and whether that value is
+    truthy, depends on its pandas dtype: a float column holds NaN, a string
+    column None in pandas 2 and NaN in pandas 3, a dictionary column a
+    categorical's NaN. Asking the installed pandas keeps the answers in step
+    with what `to_pandas()` returns. Geometry (an extension type here) is a
+    missing GeoSeries element, so GeoPandas answers for it.
+    """
+    if isinstance(dtype, pa.ExtensionType):
+        if nan:
+            return None
+        try:
+            import geopandas
+        except ImportError:
+            return None
+        return geopandas.GeoSeries([None])
+    try:
+        import pandas  # noqa: F401
+    except ImportError:
+        return None
+    try:
+        return pa.array([float("nan") if nan else None], type=dtype).to_pandas()
+    except (pa.ArrowException, TypeError, ValueError):
+        return None
+
+
+def _is_null_marker(marker):
+    """Whether Arrow reads `marker` as a null: None, NumPy's NaT, or a null
+    Arrow scalar."""
+    import numpy as np
+
+    if marker is None:
+        return True
+    if isinstance(marker, (np.datetime64, np.timedelta64)):
+        return bool(np.isnat(marker))
+    return isinstance(marker, pa.Scalar) and not marker.is_valid
+
+
+def _is_nan_marker(marker):
+    """A floating-point NaN, NumPy's included (np.float32 is not a float)."""
+    if isinstance(marker, pa.Scalar):
+        marker = marker.as_py() if marker.is_valid else None
+    return isinstance(marker, numbers.Real) and marker != marker
+
+
+def _missing_members(stored, dtype, values):
+    """Whether a null, and a NaN, of a column are members of `values`.
+
+    pandas (GeoPandas, for geometry) decides when it is installed, given the
+    whole list as passed to `isin`: `stored` is the column's type as stored,
+    `dtype` without encodings. Without it, Arrow's reading applies: a null
+    is matched by what Arrow reads as a null, and a NaN by a NaN.
+    """
+    floating = pa.types.is_floating(dtype)
+    answers = []
+    for nan in (False, True):
+        if nan and not floating:
+            answers.append(False)
+            continue
+        series = _pandas_missing(stored, nan)
+        if series is not None:
+            answers.append(bool(series.isin(values).iloc[0]))
+        elif nan:
+            answers.append(any(_is_nan_marker(value) for value in values))
+        else:
+            answers.append(any(_is_null_marker(value) for value in values))
+    return tuple(answers)
+
+
+def _truthiness(expr, dtype):
+    """`expr` as a boolean the way Python's `bool()` reads it, or None if this
+    type has no truthiness here (the engine's cast then applies).
+    """
+    kind = _kind(dtype)
+    if kind == "bool":
+        truth = expr
+    elif kind == "number":
+        truth = expr != lit(0)
+    elif kind == "string":
+        truth = expr != lit("")
+    else:
+        return None
+    # A missing value is as truthy as pandas reads it; without pandas, as
+    # Python reads None.
+    missing = _pandas_missing(dtype)
+    return truth.funcs.coalesce(
+        lit(bool(missing is not None and missing.astype(bool).iloc[0]))
+    )
+
+
+def _is_object_dtype(dtype):
+    import numpy as np
+
+    try:
+        return np.dtype(dtype) == np.dtype(object)
+    except TypeError:
+        return False
+
+
+def _arrow_type(dtype):
+    """The Arrow type for a pandas-style `astype` target."""
+    if isinstance(dtype, pa.DataType):
+        return dtype
+    if dtype in (str, "str", "string"):
+        return pa.string()
+    import numpy as np
+
+    try:
+        return pa.from_numpy_dtype(np.dtype(dtype))
+    except (TypeError, pa.ArrowNotImplementedError) as err:
+        raise TypeError(f"astype() does not support dtype {dtype!r}") from err
+
+
+def _fail_where(condition, message):
+    """An int64 expression that is 0 where `condition` is not true and raises
+    `message` where it is.
+
+    A lazy expression has no way to raise for a particular row except by
+    failing to evaluate there, so the failure is a cast: rows that pass cast
+    the string "0", and failing rows cast `message`, which fails with that
+    message in the error. Adding the result leaves passing values unchanged.
+    """
+    passing = (~condition).funcs.coalesce(lit(True))
+    flag = passing.funcs.nullif(lit(True)).cast(pa.string())
+    text = flag.funcs.replace(lit("false"), lit(message))
+    return text.funcs.coalesce(lit("0")).cast(pa.int64())
 
 
 def _same_crs(current, crs):
@@ -1028,6 +1354,29 @@ class GeoSeries(Series):
     def length(self):
         """The length/perimeter of each geometry (`ST_Length`)."""
         return Series(self._df, self._expr.geo.length(), "length")
+
+    def fillna(self, value=None):
+        """Replace missing geometries with `value`, as in GeoPandas.
+
+        `value` is a Shapely geometry, or None for an empty geometry
+        collection (GeoPandas' default). It takes this column's spatial kind
+        and CRS. Empty geometries are not missing and stay as they are.
+        """
+        import shapely
+        from shapely.geometry.base import BaseGeometry
+
+        if value is None:
+            value = shapely.GeometryCollection()
+        if not isinstance(value, BaseGeometry):
+            raise TypeError(
+                f"GeoSeries.fillna() takes a geometry, got {type(value).__name__}"
+            )
+        ctx = self._df._ctx
+        # coalesce() drops the geometry type, so the choice is made on WKB
+        # and the result rebuilt with this column's spatial kind and CRS.
+        wkb = self._expr.geo.as_binary().funcs.coalesce(ctx.lit(value.wkb))
+        rebuilt = self._as_column_kind(wkb.funcs.st_geomfromwkb(), own_crs=None)
+        return self._geo(rebuilt)
 
     def to_geopandas(self):
         """Execute and return this column as a `geopandas.GeoSeries`."""
