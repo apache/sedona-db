@@ -203,6 +203,7 @@ impl FileFormatFactory for NativeFlatGeobufFormatFactory {
     ) -> Result<Arc<dyn FileFormat>> {
         FlatGeobufFormatFactory.create(state, options)
     }
+
     fn default(&self) -> Arc<dyn FileFormat> {
         FlatGeobufFormatFactory.default()
     }

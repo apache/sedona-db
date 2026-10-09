@@ -30,7 +30,8 @@ use std::{
 
 type Stream = Box<dyn Read + Send>;
 struct Reader {
-    iter: FeatureIter<Stream, NotSeekable>,
+    pending: Option<FgbReader<Stream>>,
+    iter: Option<FeatureIter<Stream, NotSeekable>>,
     meta: Arc<Metadata>,
     projection: Vec<usize>,
     schema: SchemaRef,
@@ -109,12 +110,14 @@ pub(crate) fn decode(
     let mut header = MAGIC.to_vec();
     header.extend_from_slice(builder.finished_data());
     let stream: Stream = Box::new(Cursor::new(header).chain(payload));
-    let iter = FgbReader::open(stream)
-        .map_err(|e| exec_datafusion_err!("Invalid FlatGeobuf partition header: {e}"))?
-        .select_all_seq()
-        .map_err(|e| exec_datafusion_err!("Cannot open FlatGeobuf partition: {e}"))?;
+    // Opening reads only the in-memory normalized header. select_all_seq()
+    // reads the first feature prefix, so defer it to the synchronous iterator
+    // rather than performing payload I/O in the async opener's constructor.
+    let pending = FgbReader::open(stream)
+        .map_err(|e| exec_datafusion_err!("Invalid FlatGeobuf partition header: {e}"))?;
     Ok(Box::new(Reader {
-        iter,
+        pending: Some(pending),
+        iter: None,
         meta,
         projection,
         schema,
@@ -170,6 +173,17 @@ impl Iterator for Reader {
 }
 impl Reader {
     fn read_batch(&mut self) -> Result<RecordBatch> {
+        if let Some(pending) = self.pending.take() {
+            self.iter = Some(
+                pending
+                    .select_all_seq()
+                    .map_err(|e| exec_datafusion_err!("Cannot open FlatGeobuf partition: {e}"))?,
+            );
+        }
+        let iter = self
+            .iter
+            .as_mut()
+            .ok_or_else(|| exec_datafusion_err!("FlatGeobuf iterator was not initialized"))?;
         let count = self.remaining.min(self.batch_size);
         let mut columns: Vec<Vec<ScalarValue>> = self
             .projection
@@ -177,8 +191,7 @@ impl Reader {
             .map(|_| Vec::with_capacity(count))
             .collect();
         for _ in 0..count {
-            let feature = self
-                .iter
+            let feature = iter
                 .next()
                 .map_err(|e| exec_datafusion_err!("Invalid FlatGeobuf feature: {e}"))?
                 .ok_or_else(|| exec_datafusion_err!("Truncated FlatGeobuf partition"))?;
@@ -322,4 +335,47 @@ fn decode_properties(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct NoPayloadReads;
+    impl Read for NoPayloadReads {
+        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+            panic!("payload read during decoder construction");
+        }
+    }
+
+    #[test]
+    fn decoder_construction_does_not_read_payload() {
+        let mut writer = flatgeobuf::FgbWriter::create_with_options(
+            "header",
+            flatgeobuf::GeometryType::Point,
+            flatgeobuf::FgbWriterOptions {
+                write_index: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        writer.add_column("id", ColumnType::Int, |_, _| {});
+        let mut bytes = Vec::new();
+        writer.write(&mut bytes).unwrap();
+        let header = FgbReader::open(Cursor::new(bytes.clone())).unwrap();
+        let (meta, _, _) = Metadata::from_header(&header.header(), bytes[8..].to_vec()).unwrap();
+        let schema = meta.infer_schema("wkb_geometry").unwrap();
+        let reader = decode(
+            Arc::new(meta),
+            schema.clone(),
+            Box::new(NoPayloadReads),
+            1,
+            vec![0, 1],
+            3,
+        )
+        .unwrap();
+        assert_eq!(reader.schema(), schema);
+        // Feature reads belong to the synchronous batch iterator, never to the
+        // constructor invoked by an async opener.
+    }
 }

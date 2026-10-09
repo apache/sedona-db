@@ -22,8 +22,6 @@
 //!
 //! See the crate README for the partitioning contract and draft limitations.
 //!
-//! Register explicitly in a DataFusion session:
-//!
 //! The native format can also be registered with `SessionState::register_file_format`.
 
 mod format;
@@ -74,6 +72,7 @@ impl ExternalFormatSpec for FlatGeobufFormatSpec {
             .as_ref()
             .clone())
     }
+
     async fn open_reader(
         &self,
         args: &OpenReaderArgs,
@@ -81,6 +80,7 @@ impl ExternalFormatSpec for FlatGeobufFormatSpec {
         let meta = self.metadata(&args.src).await?;
         reader::open(meta, args, &self.geometry_column_name).await
     }
+
     fn with_options(
         &self,
         options: &HashMap<String, String>,
@@ -96,9 +96,11 @@ impl ExternalFormatSpec for FlatGeobufFormatSpec {
         }
         Ok(Arc::new(format))
     }
+
     fn extension(&self) -> &str {
         "fgb"
     }
+
     fn supports_repartition(&self) -> SupportsRepartition {
         SupportsRepartition::ByRange
     }

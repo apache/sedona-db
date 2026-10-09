@@ -679,8 +679,8 @@ def test_independent_reader_progress_while_first_reader_is_paused(extension):
     assert result["row_counts"] == [len(values) for values in expected_values]
 
 
-# The native FlatGeobuf reader defaults to geometry. Other formats use GDAL
-# names: GeoJSON/Shapefile fall back to wkb_geometry; GeoPackage persists geom.
+# GDAL remains the default for these formats. FlatGeobuf, GeoJSON and
+# Shapefile use wkb_geometry; GeoPackage persists geom.
 @pytest.mark.parametrize(
     ("extension", "geometry_column"),
     [
@@ -767,10 +767,11 @@ def test_native_fgb_geoarrow_roundtrip(con, geoarrow_data, tmp_path, fixture):
     assert restored["idx"].tolist() == expected["idx"].tolist()
     # GDAL normalizes some mixed-type dimensions on write. Compare the actual
     # serialized file's geometry, including nulls, rather than that writer's input.
+    # Compare full-precision WKB: the default WKT precision could hide drift.
     written = geopandas.read_file(target).sort_values("idx")
     pd.testing.assert_series_equal(
-        pd.Series(shapely.to_wkt(restored.geometry, output_dimension=4)),
-        pd.Series(shapely.to_wkt(written.geometry, output_dimension=4)),
+        pd.Series(shapely.to_wkb(restored.geometry, output_dimension=4)),
+        pd.Series(shapely.to_wkb(written.geometry, output_dimension=4)),
         check_names=False,
     )
 

@@ -73,6 +73,7 @@ impl FileSource for FlatGeobufSource {
         });
         ProjectionOpener::try_new(split, opener, schema)
     }
+
     fn repartitioned(
         &self,
         target: usize,
@@ -137,23 +138,29 @@ impl FileSource for FlatGeobufSource {
             .collect();
         Ok(Some(conf))
     }
+
     fn table_schema(&self) -> &TableSchema {
         &self.table_schema
     }
+
     fn with_batch_size(&self, size: usize) -> Arc<dyn FileSource> {
         let mut s = self.clone();
         s.batch_size = Some(size);
         Arc::new(s)
     }
+
     fn projection(&self) -> Option<&ProjectionExprs> {
         Some(&self.projection)
     }
+
     fn metrics(&self) -> &ExecutionPlanMetricsSet {
         &self.metrics
     }
+
     fn file_type(&self) -> &str {
         "fgb"
     }
+
     fn try_pushdown_projection(
         &self,
         projection: &ProjectionExprs,

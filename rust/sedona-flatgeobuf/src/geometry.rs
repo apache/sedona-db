@@ -231,26 +231,49 @@ mod tests {
                 "GEOMETRYCOLLECTION (POINT (1 2),LINESTRING EMPTY)",
             ),
         ] {
-            let mut b = flatbuffers::FlatBufferBuilder::new();
-            let xy = b.create_vector(xy);
-            let ends = ends.map(|v| b.create_vector(v));
-            let child = flatgeobuf::Geometry::create(
-                &mut b,
-                &GeometryArgs {
-                    type_: if kind == GeometryType::MultiPolygon {
-                        GeometryType::Polygon
-                    } else if kind == GeometryType::GeometryCollection {
-                        GeometryType::Point
-                    } else {
-                        kind
+            for (z, m, dimension, extra) in [
+                (false, false, "", ""),
+                (true, false, " Z", " 3"),
+                (false, true, " M", " 4"),
+                (true, true, " ZM", " 3 4"),
+            ] {
+                let mut expected_wkt = wkt.to_string();
+                for coordinate in ["0 0", "1 0", "1 1", "0 1", "1 2", "2 2", "3 3"] {
+                    expected_wkt =
+                        expected_wkt.replace(coordinate, &format!("{coordinate}{extra}"));
+                }
+                if kind == GeometryType::GeometryCollection {
+                    expected_wkt = expected_wkt
+                        .replace("POINT (", &format!("POINT{dimension} ("))
+                        .replace("LINESTRING EMPTY", &format!("LINESTRING{dimension} EMPTY"));
+                }
+                let (name, body) = expected_wkt.split_once(' ').unwrap();
+                let expected_wkt = format!("{name}{dimension} {body}");
+                let mut b = flatbuffers::FlatBufferBuilder::new();
+                let z_values = z.then(|| b.create_vector(&vec![3.; xy.len() / 2]));
+                let m_values = m.then(|| b.create_vector(&vec![4.; xy.len() / 2]));
+                let xy = b.create_vector(xy);
+                let ends = ends.map(|v| b.create_vector(v));
+                let child = flatgeobuf::Geometry::create(
+                    &mut b,
+                    &GeometryArgs {
+                        type_: if kind == GeometryType::MultiPolygon {
+                            GeometryType::Polygon
+                        } else if kind == GeometryType::GeometryCollection {
+                            GeometryType::Point
+                        } else {
+                            kind
+                        },
+                        xy: Some(xy),
+                        z: z_values,
+                        m: m_values,
+                        ends,
+                        ..Default::default()
                     },
-                    xy: Some(xy),
-                    ends,
-                    ..Default::default()
-                },
-            );
-            let g =
-                if kind == GeometryType::MultiPolygon || kind == GeometryType::GeometryCollection {
+                );
+                let g = if kind == GeometryType::MultiPolygon
+                    || kind == GeometryType::GeometryCollection
+                {
                     let mut children = vec![child];
                     if kind == GeometryType::GeometryCollection {
                         children.push(flatgeobuf::Geometry::create(
@@ -272,28 +295,29 @@ mod tests {
                 } else {
                     child
                 };
-            let feat = Feature::create(
-                &mut b,
-                &FeatureArgs {
-                    geometry: Some(g),
-                    ..Default::default()
-                },
-            );
-            b.finish_size_prefixed(feat, None);
-            let g = size_prefixed_root_as_feature(b.finished_data())
-                .unwrap()
-                .geometry()
+                let feat = Feature::create(
+                    &mut b,
+                    &FeatureArgs {
+                        geometry: Some(g),
+                        ..Default::default()
+                    },
+                );
+                b.finish_size_prefixed(feat, None);
+                let g = size_prefixed_root_as_feature(b.finished_data())
+                    .unwrap()
+                    .geometry()
+                    .unwrap();
+                let got = to_wkb(g, kind, z, m).unwrap();
+                let mut expected = vec![];
+                wkb::writer::write_geometry(
+                    &mut expected,
+                    &wkt::Wkt::<f64>::from_str(&expected_wkt).unwrap(),
+                    &Default::default(),
+                )
                 .unwrap();
-            let got = to_wkb(g, kind, false, false).unwrap();
-            let mut expected = vec![];
-            wkb::writer::write_geometry(
-                &mut expected,
-                &wkt::Wkt::<f64>::from_str(wkt).unwrap(),
-                &Default::default(),
-            )
-            .unwrap();
-            assert_eq!(got, expected, "{kind:?}");
-            wkb::reader::read_wkb(&got).unwrap();
+                assert_eq!(got, expected, "{kind:?}{dimension}");
+                wkb::reader::read_wkb(&got).unwrap();
+            }
         }
     }
 }
