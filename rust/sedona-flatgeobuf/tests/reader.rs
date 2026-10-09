@@ -857,7 +857,7 @@ async fn metadata_allows_duplicate_names_and_geometry_collisions() {
             .iter()
             .map(|f| f.name().as_str())
             .collect::<Vec<_>>(),
-        ["geometry", "geometry", "geometry"]
+        ["geometry", "geometry", "wkb_geometry"]
     );
     let renamed = spec
         .with_options(&[("geometry_column_name".into(), "shape".into())].into())

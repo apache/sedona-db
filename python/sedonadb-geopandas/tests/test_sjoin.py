@@ -222,7 +222,7 @@ def test_sjoin_rejects_suffix_generated_duplicates():
 @pytest.mark.parametrize(
     "distance", [0.0, 0.5, 1.0, -1.0, float("nan"), float("inf"), np.float64(1.0)]
 )
-def test_sjoin_dwithin_distances(distance):
+def test_sjoin_dwithin_distances_match_geopandas(distance):
     # Including the edges: zero, negative and NaN distances match nothing
     # (or only coincident geometries), infinity matches everything.
     left = gpd.GeoDataFrame(
@@ -241,12 +241,13 @@ def test_sjoin_dwithin_distances(distance):
         sgpd.from_geopandas(right), predicate="dwithin", distance=distance
     )
     if distance < 0:
-        # Assert the distance contract directly: Shapely 2.2 / GEOS 3.14
-        # STRtree can return intersecting lines for a negative distance.
+        # Shapely 2.2's STRtree "dwithin" query matches intersecting geometries
+        # for negative distances (unlike shapely.dwithin), so don't compare
+        # against geopandas here.
         assert _pairs(ours.to_geopandas()) == collections.Counter()
-    else:
-        expected = gpd.sjoin(left, right, predicate="dwithin", distance=distance)
-        assert _pairs(ours.to_geopandas()) == _pairs(expected)
+        return
+    expected = gpd.sjoin(left, right, predicate="dwithin", distance=distance)
+    assert _pairs(ours.to_geopandas()) == _pairs(expected)
 
 
 @pytest.mark.parametrize("predicate", PREDICATES)

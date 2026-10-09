@@ -15,8 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use crate::{metadata::Metadata, reader::decode};
 use arrow_schema::SchemaRef;
 use datafusion_common::{Result, exec_datafusion_err, exec_err};
+use datafusion_datasource::FileRange;
 use datafusion_datasource::{
     PartitionedFile,
     file_stream::{FileOpenFuture, FileOpener},
@@ -49,33 +51,14 @@ impl FileOpener for FlatGeobufOpener {
             let meta = crate::store_metadata::metadata(
                 store.clone(),
                 &file.object_meta,
-                &format.geometry_column_name,
                 format.metadata_size_hint,
                 cache.as_ref(),
             )
             .await?;
-            if meta.schema.as_ref() != schema.as_ref() {
+            if meta.infer_schema(&format.geometry_column_name)?.as_ref() != schema.as_ref() {
                 return exec_err!("FlatGeobuf schema changed before reading");
             }
-            let count = meta.offsets.len() - 1;
-            let (lo, hi) = if let Some(range) = file.range {
-                if range.start < 0 || range.end < range.start {
-                    return exec_err!("Invalid FlatGeobuf file range");
-                }
-                if meta.indexed {
-                    let starts = &meta.offsets[..count];
-                    (
-                        starts.partition_point(|p| *p < range.start as u64),
-                        starts.partition_point(|p| *p < range.end as u64),
-                    )
-                } else if range.start == 0 && range.end > 0 {
-                    (0, count)
-                } else {
-                    (0, 0)
-                }
-            } else {
-                (0, count)
-            };
+            let (lo, hi) = feature_bounds(&meta, file.range.as_ref())?;
             let stream = async_stream::try_stream! {
                 let mut first=lo;
                 while first<hi {
@@ -87,7 +70,7 @@ impl FileOpener for FlatGeobufOpener {
                         let end=meta.offsets.binary_search(&range.end).map_err(|_|exec_datafusion_err!("Invalid planned feature end"))?;
                         let bytes=crate::object_io::fetch_range(store.as_ref(),&file.object_meta,range.clone()).await?;
                         validate_frames(&bytes,&meta.offsets[begin..=end],range.start)?;
-                        let reader=crate::reader::decode(meta.clone(),Box::new(Cursor::new(bytes)),end-begin,projection.clone(),batch_size)?;
+                        let reader=decode(meta.clone(),schema.clone(),Box::new(Cursor::new(bytes)),end-begin,projection.clone(),batch_size)?;
                         for batch in reader { yield batch.map_err(|e|datafusion_common::DataFusionError::ArrowError(Box::new(e),None))?; }
                     }
                     first=last;
@@ -110,4 +93,29 @@ fn validate_frames(bytes: &[u8], offsets: &[u64], begin: u64) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Select features whose size-prefix starts are owned by this half-open byte range.
+/// Indexed ranges may cut through payloads: ownership follows the prefix, and the
+/// fetched payload is expanded to feature boundaries. Without an RTree only the
+/// range owning byte zero reads rows, avoiding duplicate serial fallback scans.
+fn feature_bounds(meta: &Metadata, range: Option<&FileRange>) -> Result<(usize, usize)> {
+    let count = meta.offsets.len() - 1;
+    let Some(range) = range else {
+        return Ok((0, count));
+    };
+    if range.start < 0 || range.end < range.start {
+        return exec_err!("Invalid FlatGeobuf file range");
+    }
+    if meta.indexed {
+        let starts = &meta.offsets[..count];
+        Ok((
+            starts.partition_point(|p| *p < range.start as u64),
+            starts.partition_point(|p| *p < range.end as u64),
+        ))
+    } else if range.start == 0 && range.end > 0 {
+        Ok((0, count))
+    } else {
+        Ok((0, 0))
+    }
 }

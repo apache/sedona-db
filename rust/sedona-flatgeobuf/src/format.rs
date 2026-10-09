@@ -27,6 +27,7 @@ use datafusion_datasource::{
     file_scan_config::{FileScanConfig, FileScanConfigBuilder},
 };
 use datafusion_physical_plan::ExecutionPlan;
+use futures::{StreamExt, TryStreamExt};
 use object_store::{ObjectMeta, ObjectStore};
 use std::{collections::HashMap, sync::Arc};
 
@@ -39,7 +40,7 @@ pub struct FlatGeobufFormat {
 impl Default for FlatGeobufFormat {
     fn default() -> Self {
         Self {
-            geometry_column_name: "geometry".into(),
+            geometry_column_name: "wkb_geometry".into(),
             metadata_size_hint: 65536,
         }
     }
@@ -47,7 +48,7 @@ impl Default for FlatGeobufFormat {
 impl FlatGeobufFormat {
     pub fn with_options(mut self, options: &HashMap<String, String>) -> Result<Self> {
         for (key, value) in options {
-            match key.as_str() {
+            match key.strip_prefix("format.").unwrap_or(key) {
                 "geometry_column_name" if !value.is_empty() => {
                     self.geometry_column_name = value.clone()
                 }
@@ -77,6 +78,7 @@ impl FileFormatFactory for FlatGeobufFormatFactory {
     ) -> Result<Arc<dyn FileFormat>> {
         Ok(Arc::new(FlatGeobufFormat::default().with_options(options)?))
     }
+
     fn default(&self) -> Arc<dyn FileFormat> {
         Arc::new(FlatGeobufFormat::default())
     }
@@ -86,15 +88,18 @@ impl FileFormat for FlatGeobufFormat {
     fn get_ext(&self) -> String {
         "fgb".into()
     }
+
     fn get_ext_with_compression(&self, compression: &FileCompressionType) -> Result<String> {
         match compression.get_variant() {
             CompressionTypeVariant::UNCOMPRESSED => Ok("fgb".into()),
             _ => exec_err!("FlatGeobuf does not support outer compression"),
         }
     }
+
     fn compression_type(&self) -> Option<FileCompressionType> {
         Some(FileCompressionType::UNCOMPRESSED)
     }
+
     async fn infer_schema(
         &self,
         state: &dyn Session,
@@ -102,26 +107,33 @@ impl FileFormat for FlatGeobufFormat {
         objects: &[ObjectMeta],
     ) -> Result<SchemaRef> {
         let cache = state.runtime_env().cache_manager.get_file_metadata_cache();
-        let mut schemas = vec![];
         let mut objects = objects.to_vec();
         objects.sort_by(|a, b| a.location.cmp(&b.location));
-        for object in objects {
-            schemas.push(
+        let schemas: Vec<_> = futures::stream::iter(&objects)
+            .map(|object| async {
                 crate::store_metadata::metadata(
                     store.clone(),
-                    &object,
-                    &self.geometry_column_name,
+                    object,
                     self.metadata_size_hint,
                     Some(&cache),
                 )
                 .await?
-                .schema
-                .as_ref()
-                .clone(),
-            );
-        }
+                .infer_schema(&self.geometry_column_name)
+                .map(|s| s.as_ref().clone())
+            })
+            .boxed()
+            .buffered(
+                state
+                    .config_options()
+                    .execution
+                    .meta_fetch_concurrency
+                    .max(1),
+            )
+            .try_collect()
+            .await?;
         Ok(Arc::new(Schema::try_merge(schemas)?))
     }
+
     async fn infer_stats(
         &self,
         _state: &dyn Session,
@@ -131,6 +143,7 @@ impl FileFormat for FlatGeobufFormat {
     ) -> Result<Statistics> {
         Ok(Statistics::new_unknown(table_schema.as_ref()))
     }
+
     async fn create_physical_plan(
         &self,
         state: &dyn Session,
@@ -152,14 +165,10 @@ impl FileFormat for FlatGeobufFormat {
                 let data = crate::store_metadata::metadata(
                     store.clone(),
                     &file.object_meta,
-                    &self.geometry_column_name,
                     self.metadata_size_hint,
                     Some(&cache),
                 )
                 .await?;
-                if data.schema.as_ref() != conf.file_schema().as_ref() {
-                    return exec_err!("FlatGeobuf files must have consistent schemas and CRS");
-                }
                 planned.insert(file.object_meta.location.clone(), data);
             }
         }
@@ -169,10 +178,32 @@ impl FileFormat for FlatGeobufFormat {
             .build();
         Ok(DataSourceExec::from_data_source(conf))
     }
+
     fn file_source(&self, table_schema: TableSchema) -> Arc<dyn FileSource> {
         Arc::new(crate::source::FlatGeobufSource::new(
             table_schema,
             self.clone(),
         ))
+    }
+}
+
+/// Opt-in native reader alias for sessions whose `fgb` default uses GDAL.
+#[derive(Debug, Default)]
+pub struct NativeFlatGeobufFormatFactory;
+impl GetExt for NativeFlatGeobufFormatFactory {
+    fn get_ext(&self) -> String {
+        "fgb_native".into()
+    }
+}
+impl FileFormatFactory for NativeFlatGeobufFormatFactory {
+    fn create(
+        &self,
+        state: &dyn Session,
+        options: &HashMap<String, String>,
+    ) -> Result<Arc<dyn FileFormat>> {
+        FlatGeobufFormatFactory.create(state, options)
+    }
+    fn default(&self) -> Arc<dyn FileFormat> {
+        FlatGeobufFormatFactory.default()
     }
 }

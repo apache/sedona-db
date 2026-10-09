@@ -22,12 +22,13 @@
 `FlatGeobufFormatFactory` implements DataFusion's native `FileFormat` API,
 using generic `ObjectStore` range reads and DataFusion's file metadata cache.
 Enable Sedona's `fgb` feature for automatic registration; Python enables it by
-default. Explicit `read_pyogrio()` remains available for GDAL reads.
+default as a compiled capability. Python keeps pyogrio/GDAL as its `fgb` default;
+use `sd.read(path, format="fgb_native")` to opt in to native range reads.
 `FlatGeobufFormatSpec` retains the earlier local external datasource adapter.
 
 ## Read contract
 
-- Header-defined attributes precede the nullable `geometry` column, encoded as ISO WKB with
+- Header-defined attributes precede the nullable `wkb_geometry` column, encoded as ISO WKB with
   GeoArrow metadata. Preserve Z/M dimensions and header CRS. JSON uses Utf8 with
   the `arrow.json` extension; RFC3339 DateTime strings are parsed to UTC
   microsecond timestamps (sub-microsecond precision is truncated). Invalid dates
@@ -45,7 +46,8 @@ default. Explicit `read_pyogrio()` remains available for GDAL reads.
   Feature-local column overrides and absent header column schemas are rejected explicitly.
 - Reject invalid framing, unsupported schema types and inconsistent requested
   schemas. Native metadata cache entries are validated against ObjectMeta and
-  store identity, and isolated by geometry column option. Inputs must remain
+  store identity. Arrow schemas are derived from cached FlatGeobuf headers using
+  the requested geometry column option. Inputs must remain
   unchanged during a scan. Multi-file reads require consistent schemas and CRS.
 
 The `metadata_size_hint` option controls the initial header prefix read (default
@@ -54,7 +56,7 @@ Feature payload requests coalesce adjacent records up to an 8 MiB target; a
 single indivisible feature may exceed this target.
 
 The `geometry_column_name` format option renames the geometry field (default
-`geometry`). Header conversion preserves duplicate names; DataFusion handles
+`wkb_geometry`). Header conversion preserves duplicate names; DataFusion handles
 name validation when the schema is registered.
 
 ## Verification
@@ -63,26 +65,11 @@ Run `cargo test -p sedona-flatgeobuf`. Tests generate their own FlatGeobuf files
 no third-party binary fixtures are bundled. Implementation and validation results
 will be recorded in the draft PR after these checks complete.
 
-## Explicit registration
-
-```rust
-use std::sync::Arc;
-use datafusion::{execution::SessionStateBuilder, prelude::SessionContext};
-use sedona_flatgeobuf::FlatGeobufFormatFactory;
-
-// In an async function:
-let mut state = SessionStateBuilder::new().with_default_features().build();
-state.register_file_format(Arc::new(FlatGeobufFormatFactory), false)?;
-let context = SessionContext::new_with_state(state).enable_url_table();
-let batches = context.sql("SELECT * FROM 'file:///data/roads.fgb'").await?
-    .collect().await?;
-```
-
-The crate documentation compiles this registration example. The reader uses the
+The reader uses the
 released FlatGeobuf crate to verify and decode each feature buffer, followed by
 bounds-checked ISO WKB encoding. It does not require the earlier research fork.
 Batch size bounds rows per batch; it is not a byte-memory limit or a zero-copy
 claim. Index metadata uses one offset per feature and fetches only RTree leaves.
 The native cache uses DataFusion's configured memory limit; the local adapter
-retains metadata for at most 16 files.
+opens asynchronously and does not retain its own metadata cache.
 This draft validates correctness, not a throughput improvement.

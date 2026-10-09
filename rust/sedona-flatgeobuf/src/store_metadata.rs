@@ -34,7 +34,6 @@ use std::{any::Any, io::Cursor, sync::Arc};
 struct CachedMetadata {
     data: Arc<Metadata>,
     store: Arc<dyn ObjectStore>,
-    geometry_name: String,
 }
 impl FileMetadata for CachedMetadata {
     fn as_any(&self) -> &dyn Any {
@@ -46,21 +45,13 @@ impl FileMetadata for CachedMetadata {
     fn memory_size(&self) -> usize {
         std::mem::size_of::<Self>()
             + self.data.offsets.capacity() * 8
-            + self
-                .data
-                .schema
-                .fields()
-                .iter()
-                .map(|f| f.size())
-                .sum::<usize>()
+            + self.data.header.capacity()
             + self.data.types.capacity() * std::mem::size_of::<flatgeobuf::ColumnType>()
-            + self.geometry_name.capacity()
     }
 }
 pub(crate) async fn metadata(
     store: Arc<dyn ObjectStore>,
     object: &ObjectMeta,
-    geometry_name: &str,
     hint: usize,
     cache: Option<&Arc<dyn FileMetadataCache>>,
 ) -> Result<Arc<Metadata>> {
@@ -72,7 +63,6 @@ pub(crate) async fn metadata(
             .file_metadata
             .as_any()
             .downcast_ref::<CachedMetadata>()
-        && cached.geometry_name == geometry_name
         && Arc::ptr_eq(&cached.store, &store)
     {
         return Ok(cached.data.clone());
@@ -80,7 +70,8 @@ pub(crate) async fn metadata(
     let header = fetch_header(store.as_ref(), object, hint).await?;
     let reader = FgbReader::open(Cursor::new(header.clone()))
         .map_err(|e| exec_datafusion_err!("Invalid FlatGeobuf header: {e}"))?;
-    let (mut data, count, node_size) = Metadata::from_header(&reader.header(), geometry_name)?;
+    let (mut data, count, node_size) =
+        Metadata::from_header(&reader.header(), header[8..].to_vec())?;
     let index_begin = header.len() as u64;
     data.offsets = if data.indexed {
         indexed_offsets(store.as_ref(), object, index_begin, count, node_size).await?
@@ -96,7 +87,6 @@ pub(crate) async fn metadata(
                 Arc::new(CachedMetadata {
                     data: data.clone(),
                     store,
-                    geometry_name: geometry_name.into(),
                 }),
             ),
         );
@@ -212,43 +202,50 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cache_keys_include_object_version_store_and_geometry_option() {
+    async fn cache_keys_include_object_version_and_store_with_schema_options_applied_after_fetch() {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let path = Path::from("empty.fgb");
         store.put(&path, empty_file().into()).await.unwrap();
         let object = store.head(&path).await.unwrap();
         let runtime = datafusion_execution::runtime_env::RuntimeEnv::default();
         let cache = runtime.cache_manager.get_file_metadata_cache();
-        let first = metadata(store.clone(), &object, "geometry", 12, Some(&cache))
+        let first = metadata(store.clone(), &object, 12, Some(&cache))
             .await
             .unwrap();
-        let again = metadata(store.clone(), &object, "geometry", 65536, Some(&cache))
+        let again = metadata(store.clone(), &object, 65536, Some(&cache))
             .await
             .unwrap();
         assert!(Arc::ptr_eq(&first, &again));
+        let renamed = metadata(store.clone(), &object, 12, Some(&cache))
+            .await
+            .unwrap();
+        assert_eq!(
+            renamed
+                .infer_schema("shape")
+                .unwrap()
+                .fields()
+                .last()
+                .unwrap()
+                .name(),
+            "shape"
+        );
+        assert!(Arc::ptr_eq(&first, &renamed));
         let mut new_version = object.clone();
         new_version.e_tag = Some("changed-etag".into());
         new_version.version = Some("changed-version".into());
-        let versioned = metadata(store.clone(), &new_version, "geometry", 12, Some(&cache))
+        let versioned = metadata(store.clone(), &new_version, 12, Some(&cache))
             .await
             .unwrap();
         assert!(!Arc::ptr_eq(&first, &versioned));
-        let renamed = metadata(store.clone(), &object, "shape", 12, Some(&cache))
-            .await
-            .unwrap();
-        assert_eq!(renamed.schema.fields().last().unwrap().name(), "shape");
-        assert!(!Arc::ptr_eq(&first, &renamed));
         store.put(&path, empty_file().into()).await.unwrap();
         let updated = store.head(&path).await.unwrap();
-        let replacement = metadata(store.clone(), &updated, "shape", 12, Some(&cache))
+        let replacement = metadata(store.clone(), &updated, 12, Some(&cache))
             .await
             .unwrap();
         assert!(!Arc::ptr_eq(&renamed, &replacement));
         let other: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         other.put(&path, empty_file().into()).await.unwrap();
-        let different = metadata(other, &updated, "shape", 12, Some(&cache))
-            .await
-            .unwrap();
+        let different = metadata(other, &updated, 12, Some(&cache)).await.unwrap();
         assert!(!Arc::ptr_eq(&replacement, &different));
     }
 }

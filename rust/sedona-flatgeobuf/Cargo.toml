@@ -48,7 +48,7 @@ sedona-schema = { workspace = true }
 flatgeobuf = { version = "6.0.1", default-features = false }
 flatbuffers = "=24.12.23"
 url = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["fs", "io-util"] }
 
 [dev-dependencies]
 wkt = { workspace = true }

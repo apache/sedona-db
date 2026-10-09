@@ -24,19 +24,8 @@
 //!
 //! Register explicitly in a DataFusion session:
 //!
-//! ```no_run
-//! use std::sync::Arc;
-//! use datafusion::{execution::SessionStateBuilder, prelude::SessionContext};
-//! use sedona_flatgeobuf::FlatGeobufFormatFactory;
-//! # async fn example() -> datafusion_common::Result<()> {
-//! let mut state = SessionStateBuilder::new().with_default_features().build();
-//! state.register_file_format(Arc::new(FlatGeobufFormatFactory), false)?;
-//! let context = SessionContext::new_with_state(state).enable_url_table();
-//! let batches = context.sql("SELECT * FROM 'file:///data/roads.fgb'").await?
-//!     .collect().await?;
-//! # Ok(())
-//! # }
-//! ```
+//! The native format can also be registered with `SessionState::register_file_format`.
+
 mod format;
 mod geometry;
 mod metadata;
@@ -44,7 +33,7 @@ mod object_io;
 mod opener;
 mod source;
 mod store_metadata;
-pub use format::{FlatGeobufFormat, FlatGeobufFormatFactory};
+pub use format::{FlatGeobufFormat, FlatGeobufFormatFactory, NativeFlatGeobufFormatFactory};
 mod reader;
 
 use arrow_array::RecordBatchReader;
@@ -53,76 +42,44 @@ use async_trait::async_trait;
 use datafusion_common::{Result, exec_err};
 use metadata::{FileMetadata, local_path};
 use sedona_datasource::spec::{ExternalFormatSpec, Object, OpenReaderArgs, SupportsRepartition};
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+use std::{collections::HashMap, sync::Arc};
 
-/// Native reader for local FlatGeobuf files.
-///
-/// Clones share a bounded metadata cache. Each open reader owns an independent
-/// file stream. Files must remain unchanged for the duration of a scan.
+/// Native reader for local FlatGeobuf files, without a private metadata cache.
+/// Each open reader owns an independent file stream.
 #[derive(Debug, Clone)]
 pub struct FlatGeobufFormatSpec {
     geometry_column_name: String,
-    cache: Arc<Mutex<HashMap<std::path::PathBuf, Arc<FileMetadata>>>>,
 }
 impl Default for FlatGeobufFormatSpec {
     fn default() -> Self {
         Self {
-            geometry_column_name: "geometry".into(),
-            cache: Default::default(),
+            geometry_column_name: "wkb_geometry".into(),
         }
     }
 }
 impl FlatGeobufFormatSpec {
     async fn metadata(&self, object: &Object) -> Result<Arc<FileMetadata>> {
         let path = local_path(object)?;
-        let this = self.clone();
-        tokio::task::spawn_blocking(move || {
-            let stamp = metadata::file_stamp(&path)?;
-            let mut cache = this.cache.lock().map_err(|_| {
-                datafusion_common::exec_datafusion_err!("FlatGeobuf metadata cache lock poisoned")
-            })?;
-            if let Some(meta) = cache.get(&path)
-                && meta.stamp == stamp
-            {
-                return Ok(meta.clone());
-            }
-            let meta = Arc::new(FileMetadata::read(
-                &path,
-                stamp,
-                &this.geometry_column_name,
-            )?);
-            // Bound retained metadata. Readers keep their own Arc when evicted.
-            if cache.len() >= 16 {
-                cache.clear();
-            }
-            cache.insert(path, meta.clone());
-            Ok(meta)
-        })
-        .await
-        .map_err(|e| {
-            datafusion_common::exec_datafusion_err!("FlatGeobuf metadata task failed: {e}")
-        })?
+        let stamp = metadata::file_stamp(&path).await?;
+        Ok(Arc::new(FileMetadata::read(&path, stamp).await?))
     }
 }
 #[async_trait]
 impl ExternalFormatSpec for FlatGeobufFormatSpec {
     async fn infer_schema(&self, object: &Object) -> Result<Schema> {
-        Ok(self.metadata(object).await?.schema.as_ref().clone())
+        Ok(self
+            .metadata(object)
+            .await?
+            .infer_schema(&self.geometry_column_name)?
+            .as_ref()
+            .clone())
     }
     async fn open_reader(
         &self,
         args: &OpenReaderArgs,
     ) -> Result<Box<dyn RecordBatchReader + Send>> {
         let meta = self.metadata(&args.src).await?;
-        let args = args.clone();
-        tokio::task::spawn_blocking(move || reader::open(meta, &args))
-            .await
-            .map_err(|e| {
-                datafusion_common::exec_datafusion_err!("FlatGeobuf reader task failed: {e}")
-            })?
+        reader::open(meta, args, &self.geometry_column_name).await
     }
     fn with_options(
         &self,
@@ -133,8 +90,6 @@ impl ExternalFormatSpec for FlatGeobufFormatSpec {
             match name.as_str() {
                 "geometry_column_name" if !value.is_empty() => {
                     format.geometry_column_name = value.clone();
-                    // Cached schemas depend on options; keep configurations isolated.
-                    format.cache = Default::default();
                 }
                 _ => return exec_err!("Unknown or invalid FlatGeobuf option: {name}"),
             }

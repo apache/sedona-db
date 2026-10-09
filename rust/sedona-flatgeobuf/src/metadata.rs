@@ -17,18 +17,13 @@
 
 use arrow_schema::{DataType, Field, FieldRef, Schema, SchemaRef, TimeUnit};
 use datafusion_common::{Result, exec_datafusion_err, exec_err};
-use flatgeobuf::{
-    Column, ColumnType, FgbReader, GeometryType, Header,
-    packed_r_tree::{NodeItem, PackedRTree},
-};
+use flatgeobuf::{Column, ColumnType, GeometryType, Header};
 use sedona_datasource::spec::Object;
 use sedona_schema::{
     crs::deserialize_crs,
     datatypes::{Edges, SedonaType},
 };
 use std::{
-    fs::File,
-    io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
     sync::Arc,
     time::SystemTime,
@@ -40,8 +35,8 @@ pub(crate) struct FileStamp {
     pub size: u64,
     modified: SystemTime,
 }
-pub(crate) fn file_stamp(path: &Path) -> Result<FileStamp> {
-    let m = std::fs::metadata(path)?;
+pub(crate) async fn file_stamp(path: &Path) -> Result<FileStamp> {
+    let m = tokio::fs::metadata(path).await?;
     Ok(FileStamp {
         size: m.len(),
         modified: m.modified()?,
@@ -70,7 +65,7 @@ impl std::ops::Deref for FileMetadata {
 }
 #[derive(Debug, Clone)]
 pub(crate) struct Metadata {
-    pub schema: SchemaRef,
+    pub header: Vec<u8>,
     pub types: Vec<ColumnType>,
     pub geometry_type: GeometryType,
     pub has_z: bool,
@@ -80,32 +75,59 @@ pub(crate) struct Metadata {
     pub offsets: Vec<u64>,
 }
 impl FileMetadata {
-    pub fn read(path: &Path, stamp: FileStamp, geometry_column_name: &str) -> Result<Self> {
-        let mut file = File::open(path)?;
-        let fgb = FgbReader::open(&mut file)
-            .map_err(|e| exec_datafusion_err!("Invalid FlatGeobuf header: {e}"))?;
-        let (mut data, count, node_size) =
-            Metadata::from_header(&fgb.header(), geometry_column_name)?;
-        drop(fgb);
-        let index_begin = file.stream_position()?;
-        let offsets = feature_offsets(&mut file, index_begin, stamp.size, count, node_size)?;
-        if file_stamp(path)? != stamp {
+    pub async fn read(path: &Path, stamp: FileStamp) -> Result<Self> {
+        use object_store::{ObjectStoreExt, local::LocalFileSystem};
+        let store = Arc::new(LocalFileSystem::new());
+        let location = object_store::path::Path::from_filesystem_path(path)?;
+        let object = store.head(&location).await?;
+        let data = crate::store_metadata::metadata(store.clone(), &object, 65536, None).await?;
+        // Preserve the local adapter's eager framing validation using byte slices.
+        use futures::{StreamExt, TryStreamExt};
+        futures::stream::iter(data.offsets.windows(2))
+            .map(|pair: &[u64]| async {
+                let prefix =
+                    crate::object_io::fetch_range(store.as_ref(), &object, pair[0]..pair[0] + 4)
+                        .await?;
+                let size = u32::from_le_bytes(prefix.as_ref().try_into().unwrap()) as u64;
+                if size == 0 || pair[1] - pair[0] != 4 + size {
+                    return exec_err!("FlatGeobuf index does not match feature framing");
+                }
+                Ok(())
+            })
+            .boxed()
+            .buffered(16)
+            .try_collect::<Vec<_>>()
+            .await?;
+        if file_stamp(path).await? != stamp {
             return exec_err!("FlatGeobuf file changed while reading metadata");
         }
-        data.offsets = offsets;
         Ok(Self {
             path: path.into(),
             stamp,
-            data,
+            data: data.as_ref().clone(),
         })
     }
 }
 impl Metadata {
-    pub(crate) fn from_header(
-        h: &Header<'_>,
-        geometry_column_name: &str,
-    ) -> Result<(Self, usize, u16)> {
-        let geometry_field = geometry_type(h)?.to_storage_field(geometry_column_name, true)?;
+    /// Derive Arrow fields from the retained FlatGeobuf header when required.
+    /// Geometry naming is a scan option, not a property of cached file metadata.
+    pub(crate) fn infer_schema(&self, geometry_column_name: &str) -> Result<SchemaRef> {
+        let h = flatgeobuf::size_prefixed_root_as_header(&self.header)
+            .map_err(|e| exec_datafusion_err!("Invalid FlatGeobuf header: {e}"))?;
+        let mut fields = h
+            .columns()
+            .unwrap()
+            .iter()
+            .map(column_field)
+            .collect::<Result<Vec<_>>>()?;
+        fields.push(Arc::new(
+            geometry_type(&h)?.to_storage_field(geometry_column_name, true)?,
+        ));
+        Ok(Arc::new(Schema::new(fields)))
+    }
+
+    pub(crate) fn from_header(h: &Header<'_>, header: Vec<u8>) -> Result<(Self, usize, u16)> {
+        geometry_type(h)?;
         let geometry_type = h.geometry_type();
         let has_z = h.has_z();
         let has_m = h.has_m();
@@ -113,18 +135,12 @@ impl Metadata {
             .map_err(|_| exec_datafusion_err!("FlatGeobuf count overflow"))?;
         let node_size = h.index_node_size();
         let indexed = node_size > 0 && count > 0;
-        let mut fields = vec![];
-        let mut types = vec![];
         let columns = h.columns().ok_or_else(||
             exec_datafusion_err!("FlatGeobuf missing header columns / feature-local schema inference is not supported"))?;
-        for col in columns {
-            fields.push(column_field(col)?);
-            types.push(col.type_());
-        }
-        fields.push(Arc::new(geometry_field));
+        let types = columns.iter().map(|col| col.type_()).collect();
         Ok((
             Self {
-                schema: Arc::new(Schema::new(fields)),
+                header,
                 types,
                 geometry_type,
                 has_z,
@@ -136,90 +152,6 @@ impl Metadata {
             node_size,
         ))
     }
-}
-/// Read feature boundaries once. Indexed files store relative feature starts in
-/// the packed RTree's final (leaf) level; convert those to absolute offsets and
-/// validate the framing. Without an RTree, scan size prefixes and seek past
-/// payloads. Unindexed payload reading remains serial until planning changes.
-fn feature_offsets(
-    file: &mut File,
-    index_begin: u64,
-    file_size: u64,
-    count: usize,
-    node_size: u16,
-) -> Result<Vec<u64>> {
-    let indexed = node_size > 0 && count > 0;
-    let mut offsets = vec![];
-    if indexed {
-        if node_size < 2 || count > usize::MAX / 80 {
-            return exec_err!("Invalid FlatGeobuf index dimensions");
-        }
-        // Reject impossible counts before index_size or vector allocation.
-        if count as u64 > file_size / 40 {
-            return exec_err!("FlatGeobuf index count exceeds file size");
-        }
-        let index_size = PackedRTree::index_size(count, node_size) as u64;
-        let begin = index_begin
-            .checked_add(index_size)
-            .filter(|b| *b <= file_size)
-            .ok_or_else(|| exec_datafusion_err!("FlatGeobuf index extends beyond file"))?;
-        let leaf_begin = begin
-            .checked_sub(count as u64 * 40)
-            .ok_or_else(|| exec_datafusion_err!("Invalid FlatGeobuf index layout"))?;
-        file.seek(SeekFrom::Start(leaf_begin))?;
-        for _ in 0..count {
-            let node = NodeItem::from_reader(&mut *file)
-                .map_err(|e| exec_datafusion_err!("Invalid FlatGeobuf leaf: {e}"))?;
-            let start = begin
-                .checked_add(node.offset)
-                .filter(|p| *p < file_size)
-                .ok_or_else(|| exec_datafusion_err!("FlatGeobuf feature offset outside file"))?;
-            if offsets.last().is_some_and(|p| *p >= start) {
-                return exec_err!("FlatGeobuf feature offsets are not increasing");
-            }
-            offsets.push(start);
-        }
-        if offsets.first().copied() != Some(begin) {
-            return exec_err!("First FlatGeobuf feature offset is not zero");
-        }
-        offsets.push(file_size);
-        for pair in offsets.windows(2) {
-            validate_frame(file, pair[0], pair[1])?;
-        }
-    } else {
-        let mut pos = index_begin;
-        while pos < file_size {
-            offsets.push(pos);
-            let end = frame_end(file, pos)?;
-            if end > file_size {
-                return exec_err!("Truncated FlatGeobuf feature payload");
-            }
-            pos = end;
-        }
-        if count != 0 && count != offsets.len() {
-            return exec_err!("FlatGeobuf feature count does not match file");
-        }
-        offsets.push(file_size);
-    }
-    Ok(offsets)
-}
-fn frame_end(file: &mut File, start: u64) -> Result<u64> {
-    file.seek(SeekFrom::Start(start))?;
-    let mut bytes = [0; 4];
-    file.read_exact(&mut bytes)?;
-    let size = u32::from_le_bytes(bytes) as u64;
-    if size == 0 {
-        return exec_err!("Invalid zero-length FlatGeobuf feature");
-    }
-    start
-        .checked_add(4 + size)
-        .ok_or_else(|| exec_datafusion_err!("FlatGeobuf feature size overflow"))
-}
-fn validate_frame(file: &mut File, start: u64, end: u64) -> Result<()> {
-    if frame_end(file, start)? != end {
-        return exec_err!("FlatGeobuf index does not match feature framing");
-    }
-    Ok(())
 }
 pub(crate) fn column_type(t: ColumnType) -> Result<DataType> {
     Ok(match t {

@@ -55,7 +55,7 @@ from sedonadb.utility import sedona  # noqa: F401
 # Single-file OGR formats auto-registered (via pyogrio/GDAL) when a context is
 # created, so that `SELECT * FROM 'file:///path/to/data.<ext>'` works without a
 # manual `register()` call. Add an extension here to enable another format.
-_DEFAULT_PYOGRIO_EXTENSIONS = ("gpkg", "shp", "geojson")
+_DEFAULT_PYOGRIO_EXTENSIONS = ("fgb", "gpkg", "shp", "geojson")
 
 
 class SedonaContext:

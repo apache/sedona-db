@@ -24,8 +24,7 @@ use flatgeobuf::{
 };
 use sedona_datasource::spec::OpenReaderArgs;
 use std::{
-    fs::File,
-    io::{Cursor, Read, Seek, SeekFrom},
+    io::{Cursor, Read, SeekFrom},
     sync::Arc,
 };
 
@@ -35,18 +34,21 @@ struct Reader {
     meta: Arc<Metadata>,
     projection: Vec<usize>,
     schema: SchemaRef,
+    full_schema: SchemaRef,
     batch_size: usize,
     remaining: usize,
     failed: bool,
 }
-pub(crate) fn open(
+pub(crate) async fn open(
     meta: Arc<FileMetadata>,
     args: &OpenReaderArgs,
+    geometry_column_name: &str,
 ) -> Result<Box<dyn RecordBatchReader + Send>> {
+    let full_schema = meta.infer_schema(geometry_column_name)?;
     if args
         .file_schema
         .as_ref()
-        .is_some_and(|s| s.as_ref() != meta.schema.as_ref())
+        .is_some_and(|s| s.as_ref() != full_schema.as_ref())
     {
         return exec_err!("Requested FlatGeobuf schema differs from file schema");
     }
@@ -57,16 +59,19 @@ pub(crate) fn open(
     let projection = args
         .file_projection
         .clone()
-        .unwrap_or_else(|| (0..meta.schema.fields().len()).collect());
-    meta.schema.project(&projection)?;
+        .unwrap_or_else(|| (0..full_schema.fields().len()).collect());
+    full_schema.project(&projection)?;
     let (lo, hi) = feature_bounds(&meta, args)?;
-    let mut f = File::open(&meta.path)?;
-    if file_stamp(&meta.path)? != meta.stamp {
+    use tokio::io::AsyncSeekExt;
+    let mut f = tokio::fs::File::open(&meta.path).await?;
+    if file_stamp(&meta.path).await? != meta.stamp {
         return exec_err!("FlatGeobuf file changed before opening reader");
     }
-    f.seek(SeekFrom::Start(meta.offsets[lo]))?;
+    f.seek(SeekFrom::Start(meta.offsets[lo])).await?;
+    let f = f.into_std().await;
     decode(
         Arc::new(meta.data.clone()),
+        full_schema,
         Box::new(f.take(meta.offsets[hi] - meta.offsets[lo])),
         hi - lo,
         projection,
@@ -76,6 +81,7 @@ pub(crate) fn open(
 
 pub(crate) fn decode(
     meta: Arc<Metadata>,
+    full_schema: SchemaRef,
     payload: Stream,
     count: usize,
     projection: Vec<usize>,
@@ -84,7 +90,7 @@ pub(crate) fn decode(
     if batch_size == 0 {
         return exec_err!("FlatGeobuf batch size must be positive");
     }
-    let schema = Arc::new(meta.schema.project(&projection)?);
+    let schema = Arc::new(full_schema.project(&projection)?);
     // A normalized unindexed header plus a bounded feature slice allows the
     // released crate's verified decoder to read a partition without a fork.
     let mut builder = flatbuffers::FlatBufferBuilder::new();
@@ -112,6 +118,7 @@ pub(crate) fn decode(
         meta,
         projection,
         schema,
+        full_schema,
         batch_size,
         remaining: count,
         failed: false,
@@ -181,12 +188,18 @@ impl Reader {
             let mut row = self
                 .projection
                 .iter()
-                .map(|i| ScalarValue::try_from(self.meta.schema.field(*i).data_type()))
+                .map(|i| ScalarValue::try_from(self.full_schema.field(*i).data_type()))
                 .collect::<Result<Vec<_>>>()?;
             if self.projection.iter().any(|i| *i < self.meta.types.len())
                 && let Some(props) = feature.fbs_feature().properties()
             {
-                decode_properties(props.bytes(), &self.meta, &self.projection, &mut row)?;
+                decode_properties(
+                    props.bytes(),
+                    &self.meta,
+                    &self.full_schema,
+                    &self.projection,
+                    &mut row,
+                )?;
             }
             if self.projection.contains(&self.meta.types.len()) {
                 let value = if let Some(g) = feature.geometry() {
@@ -232,6 +245,7 @@ fn take<'a>(bytes: &mut &'a [u8], n: usize) -> Result<&'a [u8]> {
 fn decode_properties(
     mut bytes: &[u8],
     meta: &Metadata,
+    full_schema: &SchemaRef,
     projection: &[usize],
     row: &mut [ScalarValue],
 ) -> Result<()> {
@@ -300,10 +314,10 @@ fn decode_properties(
         }
     }
     for (i, col) in projection.iter().enumerate() {
-        if !meta.schema.field(*col).is_nullable() && row[i].is_null() {
+        if !full_schema.field(*col).is_nullable() && row[i].is_null() {
             return exec_err!(
                 "Missing non-nullable FlatGeobuf property: {}",
-                meta.schema.field(*col).name()
+                full_schema.field(*col).name()
             );
         }
     }

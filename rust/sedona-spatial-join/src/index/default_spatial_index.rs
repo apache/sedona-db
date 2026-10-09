@@ -28,7 +28,7 @@ use arrow_schema::SchemaRef;
 use datafusion_common::{DataFusionError, Result};
 use datafusion_common_runtime::JoinSet;
 use float_next_after::NextAfter;
-use geo::{BoundingRect, Distance, Euclidean, Geometry, Rect, coord};
+use geo::{BoundingRect, Centroid, Distance, Euclidean, Geometry, Rect, coord};
 use geo_index::rtree::{
     NeighborsOptions, RTree, RTreeBuilder, RTreeIndex, sort::HilbertSort, util::f64_box_to_f32,
 };
@@ -44,7 +44,10 @@ use crate::{
     evaluated_batch::EvaluatedBatch,
     index::{
         IndexQueryResult, QueryResultMetrics,
-        knn_adapter::{KnnComponents, SedonaKnnAdapter},
+        knn_adapter::{
+            KnnComponents, SedonaKnnAdapter, euclidean_point_to_box_distance,
+            haversine_point_to_box_lower_bound,
+        },
     },
     operand_evaluator::distance_value_at,
     refine::IndexQueryResultRefiner,
@@ -339,9 +342,18 @@ impl SpatialIndex for DefaultSpatialIndex {
         // Create geometry accessor for on-demand WKB decoding and caching
         let geometry_accessor = self.create_knn_accessor()?;
 
-        // Use dependency-free callbacks from geo-index. A zero lower bound is required for
-        // spherical distances because planar longitude/latitude boxes do not provide a valid
-        // Haversine lower bound. Planar queries use the exact geometry-to-rectangle distance.
+        // Spherical item distances are measured between centroids, and an item's centroid lies
+        // within its bounding box, so the probe centroid's distance to a node box is a valid
+        // lower bound for every item under that node.
+        let probe_centroid = if use_spheroid {
+            probe_geom.centroid()
+        } else {
+            None
+        };
+
+        // Use dependency-free callbacks from geo-index. Point probes use a direct
+        // point-to-box distance; other planar probes use the exact geometry-to-rectangle
+        // distance.
         let initial_results = self.inner.rtree.neighbors_with_callbacks(
             NeighborsOptions {
                 k: Some(k as usize),
@@ -349,14 +361,19 @@ impl SpatialIndex for DefaultSpatialIndex {
                 include_tie_breakers: false,
             },
             |[min_x, min_y, max_x, max_y]| {
+                let bbox = [min_x as f64, min_y as f64, max_x as f64, max_y as f64];
                 if use_spheroid {
-                    0.0
+                    probe_centroid
+                        .map(|c| haversine_point_to_box_lower_bound(c, bbox))
+                        .unwrap_or(0.0)
+                } else if let Geometry::Point(p) = &probe_geom {
+                    euclidean_point_to_box_distance(*p, bbox)
                 } else {
-                    let bbox = Geometry::Rect(Rect::new(
-                        coord! { x: min_x as f64, y: min_y as f64 },
-                        coord! { x: max_x as f64, y: max_y as f64 },
+                    let rect = Geometry::Rect(Rect::new(
+                        coord! { x: bbox[0], y: bbox[1] },
+                        coord! { x: bbox[2], y: bbox[3] },
                     ));
-                    Euclidean.distance(&probe_geom, &bbox)
+                    Euclidean.distance(&probe_geom, &rect)
                 }
             },
             |item_index, _bbox| {
@@ -682,6 +699,7 @@ mod tests {
     use datafusion_expr::JoinType;
     use datafusion_physical_expr::expressions::Column;
     use futures::Stream;
+    use geo::Haversine;
     use geo_traits::Dimensions;
     use sedona_common::option::{ExecutionMode, SpatialJoinOptions};
     use sedona_geometry::wkb_factory::write_wkb_empty_point;
@@ -1122,6 +1140,141 @@ mod tests {
         assert!(result_spheroid.candidate_count >= 1);
         assert_eq!(spheroid_distances.len(), build_positions_spheroid.len());
         assert!(spheroid_distances.iter().all(|dist| dist.is_finite()));
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn test_knn_query_matches_brute_force(#[values(false, true)] use_spheroid: bool) {
+        let options = SpatialJoinOptions {
+            execution_mode: ExecutionMode::PrepareBuild,
+            ..Default::default()
+        };
+        let spatial_predicate = SpatialPredicate::KNearestNeighbors(KNNPredicate::new(
+            Arc::new(Column::new("geom", 0)),
+            Arc::new(Column::new("geom", 1)),
+            5,
+            use_spheroid,
+            JoinSide::Left,
+        ));
+        let schema = Arc::new(arrow_schema::Schema::new(vec![Field::new(
+            "geom",
+            DataType::Binary,
+            true,
+        )]));
+        let builder = DefaultSpatialIndexBuilder::new(
+            schema.clone(),
+            spatial_predicate,
+            options,
+            JoinType::Inner,
+            4,
+            SpatialJoinBuildMetrics::default(),
+        )
+        .unwrap();
+
+        // Global points plus clusters next to the antimeridian and the poles, and some
+        // small polygons so that non-point items are covered as well
+        let mut rng = fastrand::Rng::with_seed(42);
+        let mut build_wkts: Vec<String> = (0..2000)
+            .map(|_| {
+                format!(
+                    "POINT ({} {})",
+                    rng.f64() * 360.0 - 180.0,
+                    rng.f64() * 180.0 - 90.0
+                )
+            })
+            .collect();
+        for _ in 0..100 {
+            build_wkts.push(format!(
+                "POINT ({} {})",
+                -180.0 + rng.f64() * 2.0,
+                rng.f64() * 20.0 - 10.0
+            ));
+            build_wkts.push(format!(
+                "POINT ({} {})",
+                rng.f64() * 360.0 - 180.0,
+                88.0 + rng.f64() * 2.0
+            ));
+        }
+        for _ in 0..200 {
+            let (x, y) = (rng.f64() * 350.0 - 175.0, rng.f64() * 170.0 - 85.0);
+            build_wkts.push(format!(
+                "POLYGON (({x} {y}, {} {y}, {} {}, {x} {}, {x} {y}))",
+                x + 1.0,
+                x + 1.0,
+                y + 1.0,
+                y + 1.0
+            ));
+        }
+        let build_refs: Vec<Option<&str>> = build_wkts.iter().map(|s| Some(s.as_str())).collect();
+        let build_geoms: Vec<Geometry<f64>> = build_wkts
+            .iter()
+            .map(|s| wkt::TryFromWkt::try_from_wkt_str(s).unwrap())
+            .collect();
+
+        let indexed_batch = EvaluatedBatch {
+            batch: RecordBatch::new_empty(schema.clone()),
+            geom_array: EvaluatedGeometryArray::try_new(
+                create_array(&build_refs, &WKB_GEOMETRY),
+                &WKB_GEOMETRY,
+            )
+            .unwrap(),
+        };
+        let index = build_index(builder, indexed_batch, schema.clone()).await;
+
+        let probe_wkts = [
+            "POINT (0 0)",
+            "POINT (179.9 0)",
+            "POINT (-179.95 5)",
+            "POINT (45 89.9)",
+            "POINT (-120 -89.5)",
+            "POINT (100 60)",
+            "LINESTRING (179 1, 179.5 2)",
+            "POLYGON ((10 10, 12 10, 12 12, 10 12, 10 10))",
+        ];
+        let k = 7;
+        for probe_wkt in probe_wkts {
+            let probe_geom: Geometry<f64> = wkt::TryFromWkt::try_from_wkt_str(probe_wkt).unwrap();
+            let mut expected: Vec<f64> = build_geoms
+                .iter()
+                .map(|g| {
+                    if use_spheroid {
+                        Haversine.distance(probe_geom.centroid().unwrap(), g.centroid().unwrap())
+                    } else {
+                        Euclidean.distance(&probe_geom, g)
+                    }
+                })
+                .collect();
+            expected.sort_by(f64::total_cmp);
+            expected.truncate(k);
+
+            let probe_array = EvaluatedGeometryArray::try_new(
+                create_array(&[Some(probe_wkt)], &WKB_GEOMETRY),
+                &WKB_GEOMETRY,
+            )
+            .unwrap();
+            let probe_wkb = probe_array.wkbs()[0].as_ref().unwrap();
+            let mut build_positions = Vec::new();
+            let mut distances = Vec::new();
+            index
+                .query_knn(
+                    probe_wkb,
+                    k as u32,
+                    use_spheroid,
+                    false,
+                    &mut build_positions,
+                    Some(&mut distances),
+                )
+                .unwrap();
+            distances.sort_by(f64::total_cmp);
+
+            assert_eq!(distances.len(), k, "probe {probe_wkt}");
+            for (actual, expected) in distances.iter().zip(&expected) {
+                assert!(
+                    (actual - expected).abs() <= 1e-6 * expected.max(1.0),
+                    "probe {probe_wkt}: got {distances:?}, expected {expected:?}"
+                );
+            }
+        }
     }
 
     #[tokio::test]

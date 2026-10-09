@@ -58,10 +58,10 @@ impl FileSource for FlatGeobufSource {
     fn create_file_opener(
         &self,
         store: Arc<dyn ObjectStore>,
-        _config: &FileScanConfig,
+        config: &FileScanConfig,
         _partition: usize,
     ) -> Result<Arc<dyn FileOpener>> {
-        let schema = self.table_schema.file_schema();
+        let schema = config.file_schema();
         let split = SplitProjection::new(schema, &self.projection);
         let opener = Arc::new(crate::opener::FlatGeobufOpener {
             store,
