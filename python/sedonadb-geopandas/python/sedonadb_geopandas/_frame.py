@@ -111,6 +111,85 @@ def _is_missing(value):
         return isinstance(value, float) and value != value
 
 
+def _explode_parts(df, column):
+    """`df` with one row per part of its geometry column `column`.
+
+    Parts are taken one level deep, as `shapely.get_parts` does. A single
+    geometry is its own one part, even when empty; a multi-geometry or
+    collection with no parts, or a missing geometry, yields no row. The
+    exploded column moves to the end. All three as in GeoPandas.
+
+    `ST_Dump` lists the parts before they are unnested, so each part is
+    stored once rather than the whole geometry being repeated per part. It
+    flattens nested collections, though, so a geometry collection's members
+    are read one level deep with `ST_GeometryN` instead, which repeats the
+    collection (only) once per member while it is exploded.
+    """
+    ctx = df._ctx
+    column_type = df.schema.field(column).type
+    crs = column_type.crs
+    spherical = "SPHERICAL" in str(getattr(column_type, "edge_type", "")).upper()
+    df = df.filter(df[column].is_not_null())
+    geometry = df[column]
+    is_collection = geometry.geo.geometry_type() == lit("ST_GeometryCollection")
+    # nvl2 needs its condition in the same type as its values, hence the
+    # binary flag (non-null on collections only), as in GeoSeries.envelope.
+    collection_flag = _binary_flag(is_collection)
+    carried = collection_flag.funcs.nvl2(geometry.geo.as_binary(), lit(None))
+    members = (
+        geometry.geo.num_geometries().cast(pa.int64()) * is_collection.cast(pa.int64())
+    ).funcs.coalesce(lit(0))
+    # A collection's parts come from its member positions, so its dumped
+    # leaves are dropped before unnesting: unnested in parallel with the
+    # positions, each leaf would carry the whole collection.
+    leaves = geometry.geo.dump()
+    leaves = leaves.funcs.array_slice(
+        lit(1),
+        leaves.funcs.cardinality().cast(pa.int64()) * (~is_collection).cast(pa.int64()),
+    )
+    others = [name for name in df.schema.names if name != column]
+    dump, position, carry = (
+        _unused_name(df, "__dump"),
+        _unused_name(df, "__member"),
+        _unused_name(df, "__collection"),
+    )
+    staged = df.select(
+        *[df[name] for name in others],
+        leaves.alias(dump),
+        ctx.lit(1).funcs.range(members + lit(1)).alias(position),
+        carried.alias(carry),
+    ).unnest(dump, position)
+
+    def from_wkb(wkb):
+        return wkb.funcs.st_geogfromwkb() if spherical else wkb.funcs.st_geomfromwkb()
+
+    member = from_wkb(staged[carry]).geo.geometry_n(staged[position]).geo.as_binary()
+    wkb = _binary_flag(staged[position].is_not_null()).funcs.nvl2(
+        member, staged[dump]["geom"].cast(pa.binary())
+    )
+    # WKB carries neither the spatial kind nor the CRS: both are restored.
+    part = from_wkb(wkb)
+    if crs is not None:
+        part = part.funcs.st_setcrs(ctx.lit(crs.to_json()))
+    elif spherical:
+        # The geography constructor assigns OGC:CRS84; SRID 0 clears it, as
+        # the column had no CRS.
+        part = part.geo.set_srid(ctx.lit(0))
+    return staged.select(*[staged[name] for name in others], part.alias(column))
+
+
+def _binary_flag(condition):
+    """A binary value that is non-null exactly where `condition` is true."""
+    return condition.funcs.nullif(lit(False)).cast(pa.string()).cast(pa.binary())
+
+
+def _unused_name(df, name):
+    """`name`, prefixed with underscores until no column of `df` has it."""
+    while name in df.schema.names:
+        name = f"_{name}"
+    return name
+
+
 class GeoDataFrame:
     """A lazy SedonaDB frame in the shape of a `geopandas.GeoDataFrame`.
 
@@ -805,6 +884,44 @@ class GeoDataFrame:
 
         unioned = collected.mutate(geometry_expr.alias(self._geometry_name))
         return GeoDataFrame(unioned, self._geometry_name)
+
+    def explode(self, column=None, ignore_index=False, index_parts=False):
+        """One row per part of each multi-part geometry, as in GeoPandas.
+
+        Parts are taken one level deep, as `shapely.get_parts` does: a
+        multi-geometry or collection yields its members, a single geometry
+        stays one row, and a row whose geometry has no parts (an empty
+        multi-geometry or collection, or a missing geometry) is dropped. The
+        other columns repeat for each part, and the exploded column moves to
+        the end, as in GeoPandas.
+
+        Args:
+            column: The column to explode: only the active geometry column
+                (the default) is supported. GeoPandas explodes the active
+                geometry even when `column` names another geometry column,
+                and explodes a non-geometry column as lists.
+            ignore_index: Accepted for compatibility; there is no index.
+            index_parts: Not supported, since there is no index to number the
+                parts in.
+
+        Returns:
+            A `GeoDataFrame` with the same active geometry column.
+        """
+        if column is None:
+            if self._geometry_name is None:
+                raise AttributeError("This GeoDataFrame has no active geometry column")
+            column = self._geometry_name
+        if column not in self.columns:
+            raise KeyError(column)
+        if column != self._geometry_name:
+            raise NotImplementedError(
+                f"explode() supports the active geometry column only, not {column!r}"
+            )
+        if index_parts:
+            raise NotImplementedError(
+                "explode() cannot number parts with index_parts=True: there is no index"
+            )
+        return GeoDataFrame(_explode_parts(self._df, column), self._geometry_name)
 
     def to_geopandas(self):
         """Execute and return a `geopandas.GeoDataFrame` (or plain DataFrame).
