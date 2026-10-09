@@ -64,7 +64,9 @@ if(WIN32 AND NOT MSVC)
       crypt32)
 endif()
 
-# Abseil libraries needed by the linker_flags discovery target below.
+# Abseil libraries needed by the linker_flags discovery target below. Keep the
+# leaf libraries explicit: their transitive edges are not consistently emitted
+# when the synthetic ECHO linker language is used with MinGW.
 set(ABSL_LIBRARIES
     absl::base
     absl::btree
@@ -81,12 +83,17 @@ set(ABSL_LIBRARIES
     absl::inlined_vector
     absl::int128
     absl::log
+    absl::log_internal_fnmatch
     absl::log_severity
     absl::memory
+    absl::raw_logging_internal
     absl::span
+    absl::spinlock_wait
     absl::status
     absl::str_format
     absl::strings
+    absl::strings_internal
+    absl::throw_delegate
     absl::type_traits
     absl::utility
     absl::vlog_is_on)

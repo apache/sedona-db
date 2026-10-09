@@ -188,7 +188,19 @@ fn write_r_link_flags(flags: &[String]) {
         return;
     }
 
-    std::fs::write(path, flags.join(" ")).expect("Write R native linker flags");
+    let mut output = flags.join(" ");
+
+    // Abseil's static archives have circular dependencies. CMake accounts for
+    // those while linking its own targets, but the flattened list handed to R
+    // loses that information. Ask the GNU-compatible MinGW linker to rescan the
+    // complete native dependency set until all archive references are resolved.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+        && flags.iter().any(|flag| flag.ends_with(".a"))
+    {
+        output = format!("-Wl,--start-group {output} -Wl,--end-group");
+    }
+
+    std::fs::write(path, output).expect("Write R native linker flags");
 }
 
 fn find_cmake_linker_flags(binary_dir: &Path) -> PathBuf {
