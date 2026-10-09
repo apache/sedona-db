@@ -28,7 +28,8 @@ crate-type = ["cdylib"]
 doc = false
 
 [features]
-default = ["mimalloc"]
+default = ["mimalloc", "fgb"]
+fgb = ["sedona/fgb"]
 mimalloc = ["dep:mimalloc", "dep:libmimalloc-sys"]
 s2geography = ["sedona/s2geography"]
 gpu = ["sedona/gpu"]

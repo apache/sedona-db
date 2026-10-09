@@ -70,6 +70,36 @@ def test_read_ogr_projection(con):
         )
 
 
+@pytest.mark.parametrize("reader", ["native", "pyogrio"])
+@pytest.mark.parametrize("spatial_index", [False, True])
+def test_fgb_native_and_gdal_projection(con, tmp_path, reader, spatial_index):
+    expected = geopandas.GeoDataFrame(
+        {
+            "idx": list(range(31)),
+            "geometry": geopandas.GeoSeries.from_xy(
+                list(range(31)), list(range(1, 32)), crs="EPSG:3857"
+            ),
+        }
+    )
+    path = tmp_path / "points.fgb"
+    expected.to_file(path, driver="FlatGeobuf", SPATIAL_INDEX=spatial_index)
+    if reader == "native":
+        frame = con.read(path, format="fgb_native")
+    else:
+        frame = con.read_pyogrio(path)
+    frame.to_view("fgb_comparison", overwrite=True)
+    pd.testing.assert_frame_equal(
+        con.sql("SELECT idx FROM fgb_comparison ORDER BY idx").to_pandas(),
+        expected[["idx"]],
+        check_dtype=False,
+    )
+    assert con.sql("SELECT count(*) AS n FROM fgb_comparison").to_pandas()["n"][0] == 31
+    actual = con.sql("SELECT * FROM fgb_comparison ORDER BY idx").to_pandas()
+    if actual.geometry.name != "geometry":
+        actual = actual.rename_geometry("geometry")
+    geopandas.testing.assert_geodataframe_equal(actual, expected, check_dtype=False)
+
+
 def test_read_ogr_multi_file(con):
     n = 1024 * 16
     partitions = [f"part_{c}" for c in "abcdefghijklmnop"]
@@ -649,9 +679,8 @@ def test_independent_reader_progress_while_first_reader_is_paused(extension):
     assert result["row_counts"] == [len(values) for values in expected_values]
 
 
-# The geometry-column name is GDAL's OGR reader's, not ours: fgb/geojson/shp
-# store no named geometry field, so GDAL falls back to `wkb_geometry`, whereas
-# GeoPackage persists a named geometry column (GDAL defaults it to `geom`).
+# GDAL remains the default for these formats. FlatGeobuf, GeoJSON and
+# Shapefile use wkb_geometry; GeoPackage persists geom.
 @pytest.mark.parametrize(
     ("extension", "geometry_column"),
     [
@@ -707,3 +736,109 @@ def test_url_table_smoke_bare_path(con):
         table = con.sql(f"SELECT * FROM '{path}' ORDER BY idx").to_arrow_table()
         assert table.num_rows == 3
         assert table.column("idx").to_pylist() == [0, 1, 2]
+
+
+@pytest.mark.parametrize(
+    "fixture",
+    [
+        "geometry",
+        "geometry-z",
+        "point-z",
+        "polygon-z",
+        "geometrycollection-nested",
+    ],
+)
+def test_native_fgb_geoarrow_roundtrip(con, geoarrow_data, tmp_path, fixture):
+    path = geoarrow_data / "example" / "files" / f"example_{fixture}_wkb.arrows"
+    if not path.exists():
+        pytest.skip(f"geoarrow-data fixture not present: {path}")
+    table = pa.ipc.open_stream(path).read_all()
+    expected = geopandas.GeoDataFrame(
+        {"idx": range(table.num_rows)},
+        geometry=geopandas.GeoSeries.from_wkb(table["geometry"].to_pylist()),
+    )
+    target = tmp_path / "roundtrip.fgb"
+    # Mixed types and null geometries require the unindexed GDAL writer path.
+    expected.to_file(target, driver="FlatGeobuf", SPATIAL_INDEX=False)
+    actual = con.read(target, format="fgb_native")
+    assert actual.to_arrow_table().column_names == ["idx", "wkb_geometry"]
+    actual.to_view("native_roundtrip", overwrite=True)
+    restored = con.sql("SELECT * FROM native_roundtrip ORDER BY idx").to_pandas()
+    assert restored["idx"].tolist() == expected["idx"].tolist()
+    # GDAL normalizes some mixed-type dimensions on write. Compare the actual
+    # serialized file's geometry, including nulls, rather than that writer's input.
+    # Compare full-precision WKB: the default WKT precision could hide drift.
+    written = geopandas.read_file(target).sort_values("idx")
+    pd.testing.assert_series_equal(
+        pd.Series(shapely.to_wkb(restored.geometry, output_dimension=4)),
+        pd.Series(shapely.to_wkb(written.geometry, output_dimension=4)),
+        check_names=False,
+    )
+
+
+def test_native_fgb_larger_point_roundtrip(con, tmp_path):
+    # Several reader batches and partitions, with every row identified uniquely.
+    expected = geopandas.GeoDataFrame(
+        {"idx": range(20000)},
+        geometry=geopandas.GeoSeries.from_xy(
+            range(20000), range(1, 20001), crs="EPSG:3857"
+        ),
+    )
+    target = tmp_path / "points.fgb"
+    expected.to_file(target, driver="FlatGeobuf")
+    con.read(target, format="fgb_native").to_view("native_large", overwrite=True)
+    restored = (
+        con.sql("SELECT * FROM native_large ORDER BY idx")
+        .to_pandas()
+        .rename_geometry("geometry")
+    )
+    geopandas.testing.assert_geodataframe_equal(restored, expected, check_dtype=False)
+
+
+def test_native_fgb_directory_and_options(con, tmp_path):
+    expected = geopandas.GeoDataFrame(
+        {"idx": [0, 1]},
+        geometry=geopandas.GeoSeries.from_xy([0, 1], [1, 2], crs="EPSG:3857"),
+    )
+    expected.iloc[:1].to_file(tmp_path / "first.fgb", driver="FlatGeobuf")
+    expected.iloc[1:].to_file(tmp_path / "second.fgb", driver="FlatGeobuf")
+    (tmp_path / "unrelated.txt").write_text("not FlatGeobuf")
+    frame = con.read(
+        tmp_path,
+        format="fgb_native",
+        options={"geometry_column_name": "shape", "metadata_size_hint": "12"},
+    )
+    assert frame.to_arrow_table().column_names == ["idx", "shape"]
+    frame.to_view("native_directory", overwrite=True)
+    restored = (
+        con.sql("SELECT * FROM native_directory ORDER BY idx")
+        .to_pandas()
+        .rename_geometry("geometry")
+    )
+    geopandas.testing.assert_geodataframe_equal(restored, expected, check_dtype=False)
+
+
+@pytest.mark.parametrize(
+    "fixture",
+    [
+        "natural-earth/files/natural-earth_countries_geo.parquet",
+        "quadrangles/files/quadrangles_100k_geo.parquet",
+    ],
+)
+def test_native_fgb_geoarrow_dataset_roundtrip(con, geoarrow_data, tmp_path, fixture):
+    source = geoarrow_data / fixture
+    if not source.exists():
+        pytest.skip(f"geoarrow-data fixture not present: {source}")
+    expected = geopandas.read_parquet(source)
+    expected["roundtrip_idx"] = range(len(expected))
+    target = tmp_path / "dataset.fgb"
+    expected.to_file(target, driver="FlatGeobuf")
+    con.read(target, format="fgb_native").to_view("native_dataset", overwrite=True)
+    restored = con.sql(
+        "SELECT * FROM native_dataset ORDER BY roundtrip_idx"
+    ).to_pandas()
+    restored = restored.rename_geometry(expected.geometry.name)
+    # GDAL can normalize attribute widths; all values, geometries and CRS remain.
+    geopandas.testing.assert_geodataframe_equal(
+        restored, expected, check_dtype=False, check_like=True
+    )
