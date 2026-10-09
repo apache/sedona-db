@@ -1,0 +1,63 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+title: RS_Stack_Aggr
+description: >
+  Aggregates a column of rasters into one raster holding all of their bands,
+  ordered by an index column.
+kernels:
+  - returns: raster
+    args:
+    - raster
+    - name: index
+      type: integer
+      description: >
+        The position of this row's raster in the result. Indexes must be
+        distinct and evenly spaced, such as 1, 2, 3 or 0, 10, 20.
+---
+
+::: callout-warning
+**Experimental.** This function is experimental; its behavior may change without notice.
+:::
+
+## Description
+
+An aggregate function: the aggregate form of [RS_Stack](rs_stack.qmd). Sedona
+Spark 1.9 calls it `RS_Union_Aggr`.
+
+The result holds every band of the raster with the lowest index, then every band
+of the next, and so on, under the georeference of the lowest-index raster. The
+index decides the order because an aggregate sees its rows in no particular
+order. Indexes must be distinct and evenly spaced: a gap usually means a raster
+is missing, which would silently shift every later band, so it is an error.
+
+As with RS_Stack, every raster must be on one grid (the same width, height,
+geotransform and CRS), each band keeps its own pixel type, nodata value and
+name, and a band's spatial dimensions take the lowest-index raster's names.
+Rows with a NULL raster or a NULL index are skipped; a group with no other rows
+gives NULL.
+
+No pixel is read: bands are carried over as they are, so stacking rasters that
+are still out-of-database does not load them.
+
+## Examples
+
+```sql
+SELECT RS_NumBands(RS_Stack_Aggr(rast, i))
+FROM (VALUES (RS_Example(), 1), (RS_Example(), 2)) AS t(rast, i);
+```
