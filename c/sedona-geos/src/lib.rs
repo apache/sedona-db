@@ -27,6 +27,7 @@ mod st_boundary;
 mod st_buffer;
 mod st_buildarea;
 mod st_centroid;
+mod st_closest_point;
 mod st_concavehull;
 mod st_convexhull;
 mod st_delaunaytriangles;
