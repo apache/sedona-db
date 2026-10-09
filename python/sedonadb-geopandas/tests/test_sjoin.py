@@ -240,6 +240,12 @@ def test_sjoin_dwithin_distances_match_geopandas(distance):
     ours = sgpd.from_geopandas(left).sjoin(
         sgpd.from_geopandas(right), predicate="dwithin", distance=distance
     )
+    if distance < 0:
+        # Shapely 2.2's STRtree "dwithin" query matches intersecting geometries
+        # for negative distances (unlike shapely.dwithin), so don't compare
+        # against geopandas here.
+        assert _pairs(ours.to_geopandas()) == collections.Counter()
+        return
     expected = gpd.sjoin(left, right, predicate="dwithin", distance=distance)
     assert _pairs(ours.to_geopandas()) == _pairs(expected)
 
