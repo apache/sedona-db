@@ -64,7 +64,9 @@ if(WIN32 AND NOT MSVC)
       crypt32)
 endif()
 
-# Abseil libraries needed by the linker_flags discovery target below.
+# Abseil libraries needed by the linker_flags discovery target below. Keep the
+# leaf libraries explicit: their transitive edges are not consistently emitted
+# when the synthetic ECHO linker language is used with MinGW.
 set(ABSL_LIBRARIES
     absl::base
     absl::btree
@@ -81,12 +83,17 @@ set(ABSL_LIBRARIES
     absl::inlined_vector
     absl::int128
     absl::log
+    absl::log_internal_fnmatch
     absl::log_severity
     absl::memory
+    absl::raw_logging_internal
     absl::span
+    absl::spinlock_wait
     absl::status
     absl::str_format
     absl::strings
+    absl::strings_internal
+    absl::throw_delegate
     absl::type_traits
     absl::utility
     absl::vlog_is_on)
@@ -151,8 +158,11 @@ if(NOT MSVC)
   set(CMAKE_ECHO_LINK_FLAGS ${CMAKE_CXX_LINK_FLAGS})
   set(CMAKE_ECHO_IMPLICIT_LINK_DIRECTORIES ${CMAKE_CXX_IMPLICIT_LINK_DIRECTORIES})
 
+  # Pass the resolved flags as arguments instead of embedding them in a quoted
+  # shell command. The extra sh -c quoting breaks under Windows/Rtools.
+  set(WRITE_LINKER_FLAGS "${CMAKE_CURRENT_SOURCE_DIR}/write_linker_flags.cmake")
   set(CMAKE_ECHO_LINK_EXECUTABLE
-      "sh -c \"echo <FLAGS> <LINK_FLAGS> <LINK_LIBRARIES> ${LINK_CXX_STANDARD_LIB} > <TARGET>\""
+      "\"${CMAKE_COMMAND}\" -P \"${WRITE_LINKER_FLAGS}\" -- <TARGET> <FLAGS> <LINK_FLAGS> <LINK_LIBRARIES> ${LINK_CXX_STANDARD_LIB}"
   )
 
   add_executable(linker_flags "CMakeLists.txt")
@@ -163,7 +173,10 @@ if(NOT MSVC)
                         ${S2_EXTRA_OPENSSL_LIBS}
                         ${ABSL_LIBRARIES})
 
-  set_target_properties(linker_flags PROPERTIES LINKER_LANGUAGE ECHO SUFFIX ".txt")
+  set_target_properties(linker_flags
+                        PROPERTIES LINKER_LANGUAGE ECHO
+                                   SUFFIX ".txt"
+                                   LINK_DEPENDS "${WRITE_LINKER_FLAGS}")
 
   install(TARGETS linker_flags DESTINATION "${CMAKE_INSTALL_LIBDIR}")
 
