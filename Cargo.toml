@@ -80,6 +80,7 @@ arrow-ipc = { version = "58.3.0" }
 arrow-json = { version = "58.3.0" }
 arrow-schema = { version = "58.3.0" }
 async-trait = { version = "0.1.87" }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 bytemuck = "1.25"
 byteorder = "1"
 bytes = "1.11"
@@ -137,6 +138,7 @@ tempfile = { version = "3"}
 thiserror = { version = "2" }
 tokio = { version = "1.52", features = ["macros", "rt", "sync"] }
 tokio-stream = "0.1"
+tower-http = "0.6"
 url = "2.5.7"
 wkb = "0.9.2"
 wkt = "0.14.0"
