@@ -22,7 +22,13 @@ import pyarrow as pa
 from sedonadb.expr import Expr, Literal, lit
 from shapely.geometry.base import BaseGeometry
 
-from sedonadb_geopandas._series import GeoSeries, Series, is_scalar, normalize_scalar
+from sedonadb_geopandas._series import (
+    GeoSeries,
+    Series,
+    _same_crs,
+    is_scalar,
+    normalize_scalar,
+)
 from sedonadb_geopandas._temporal import sanitize_temporal
 
 # Rows to collect for the Jupyter rich-text (`_repr_html_`) preview.
@@ -697,8 +703,12 @@ class GeoDataFrame:
         if isinstance(col, Series):
             if not isinstance(col, GeoSeries):
                 raise TypeError("set_geometry() needs a GeoSeries or a column name")
-            target[col._name] = col
+            # As in GeoPandas, an unnamed GeoSeries replaces the active
+            # geometry column, or is added as "geometry" if there is none.
             name = col._name
+            if name is None:
+                name = target._geometry_name or "geometry"
+            target[name] = col
         elif isinstance(col, str):
             if col not in target.columns:
                 raise ValueError(f"Unknown column {col}")
@@ -738,8 +748,15 @@ class GeoDataFrame:
             raise AttributeError("This GeoDataFrame has no active geometry column")
         if crs is None and epsg is not None:
             crs = int(epsg)
-        relabeled = self.geometry.set_crs(crs, allow_override=allow_override)
         target = self if inplace else self._copy()
+        current = self.crs
+        if (current is None and crs is None) or (
+            current is not None and crs is not None and _same_crs(current, crs)
+        ):
+            # Unchanged: rebinding the column would only invalidate Series read
+            # from this frame earlier.
+            return target
+        relabeled = self.geometry.set_crs(crs, allow_override=allow_override)
         # Not through assignment, which gives a CRS-less geometry the column's
         # current CRS and so would undo clearing it.
         target._assign(target._geometry_name, relabeled._expr)

@@ -523,7 +523,9 @@ class Series:
                 present.append(normalized)
         dtype = self._dtype()
         present = _comparable(dtype, present)
-        expr = lit(False)
+        # False, as an expression over this column: a bare literal is not an
+        # expression, so `~`, `isna()` or `astype()` on the result would fail.
+        expr = self._expr.is_null() & lit(False)
         if present:
             expr = self._expr.isin(present).funcs.coalesce(lit(False))
         if any_missing:
@@ -647,16 +649,19 @@ def _comparable(dtype, values):
             kind = "other"
         if kind == column:
             # A typed scalar is kept as given: unwrapping a large unsigned
-            # value would leave an integer no literal can hold.
-            if (
-                isinstance(value, int)
-                and pa.types.is_integer(dtype)
-                and not -(2**63) <= value < 2**63
-            ):
+            # value would leave an integer no literal can hold. A plain one
+            # beyond int64 is typed as the column, and dropped if it cannot be
+            # exactly: then it matches nothing (pandas compares exactly, so
+            # 2**64 + 1 does not match the float 2**64).
+            if isinstance(value, int) and not -(2**63) <= value < 2**63:
                 try:
-                    value = pa.scalar(value, type=dtype)
-                except (pa.ArrowInvalid, OverflowError):
-                    # Out of the column's range, so it matches nothing.
+                    if pa.types.is_floating(dtype):
+                        if float(value) != value:
+                            continue
+                        value = float(value)
+                    else:
+                        value = pa.scalar(value, type=dtype)
+                except (pa.ArrowException, OverflowError):
                     continue
             comparable.append(value)
         elif column == "number" and kind == "bool":

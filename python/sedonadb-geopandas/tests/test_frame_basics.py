@@ -78,6 +78,29 @@ def test_set_geometry_with_a_geoseries_adds_it_under_its_name():
     assert result.columns == list(theirs.columns)
 
 
+def test_set_geometry_with_an_unnamed_geoseries_matches_geopandas():
+    # An unnamed GeoSeries replaces the active geometry column, or is added as
+    # "geometry" when there is none.
+    gdf = gpd.GeoDataFrame(
+        {"n": [1]}, geometry=gpd.GeoSeries.from_wkt(["POINT (1 2)"], crs=3857)
+    ).rename_geometry("pt")
+    ours = sgpd.from_geopandas(gdf)
+    unnamed = ours.geometry.buffer(1.0)
+    unnamed._name = None
+    theirs = gpd.GeoSeries(gdf.geometry.buffer(1.0).values, crs=3857)
+    expected = gdf.set_geometry(theirs)
+    result = ours.set_geometry(unnamed)
+    assert result.columns == list(expected.columns) == ["n", "pt"]
+    assert _active(result) == _active(expected) == "pt"
+    assert result.to_geopandas().geometry.geom_type.tolist() == ["Polygon"]
+
+    inactive = sgpd.GeoDataFrame(ours._df, geometry=None)
+    expected = gpd.GeoDataFrame(pd.DataFrame(gdf)).set_geometry(theirs)
+    result = inactive.set_geometry(unnamed)
+    assert result.columns == list(expected.columns) == ["n", "pt", "geometry"]
+    assert _active(result) == _active(expected) == "geometry"
+
+
 def test_set_geometry_inplace_and_errors():
     gdf = gpd.GeoDataFrame(
         {"v": [1.0], "other": gpd.GeoSeries.from_wkt(["POINT (9 9)"], crs=3857)},
@@ -133,6 +156,29 @@ def test_frame_set_crs_matches_geopandas():
     target = sgpd.from_geopandas(bare)
     assert target.set_crs(32633, inplace=True) is target
     assert target.to_geopandas().crs == "EPSG:32633"
+
+
+def test_frame_set_crs_with_the_same_crs_keeps_earlier_reads():
+    gdf = gpd.GeoDataFrame(
+        {"n": [1]}, geometry=gpd.GeoSeries.from_wkt(["POINT (1 2)"], crs=3857)
+    )
+    ours = sgpd.from_geopandas(gdf)
+    n = ours["n"]
+    # The same CRS, however spelled, leaves the frame as it was.
+    for crs in (ours.crs, 3857, "EPSG:3857"):
+        assert ours.set_crs(crs, inplace=True) is ours
+    ours["m"] = n
+    assert ours.to_geopandas()["m"].tolist() == [1]
+    # A different one still needs allow_override.
+    with pytest.raises(ValueError, match="allow_override"):
+        ours.set_crs(4326)
+    bare = sgpd.from_geopandas(
+        gpd.GeoDataFrame({"n": [1]}, geometry=gpd.GeoSeries.from_wkt(["POINT (1 2)"]))
+    )
+    n = bare["n"]
+    bare.set_crs(None, inplace=True)
+    bare["m"] = n
+    assert bare.crs is None
 
 
 def test_frame_set_crs_none_clears_the_crs():
@@ -391,6 +437,30 @@ def test_isin_on_nullable_columns_matches_pandas_on_the_result(values):
     for column in ("i", "b", "s", "d"):
         expected = ours[column].to_pandas().isin(values).tolist()
         assert ours[column].isin(values).to_pandas().tolist() == expected, column
+
+
+@pytest.mark.parametrize("values", [[], ["a"]], ids=["empty", "nothing-comparable"])
+def test_isin_without_comparable_values_is_still_an_expression(values):
+    # The usual "not in" pattern, and anything else applied to the result.
+    gdf, ours = _series_case()
+    got = ours["n"].isin(values)
+    expected = gdf["n"].isin(values)
+    assert (~got).to_pandas().tolist() == (~expected).tolist()
+    assert got.isna().to_pandas().tolist() == expected.isna().tolist()
+    assert got.astype(int).to_pandas().tolist() == expected.astype(int).tolist()
+
+
+def test_isin_with_integers_beyond_int64_on_a_float_column():
+    gdf = gpd.GeoDataFrame(
+        {"f": [1.0, 2.0**64]}, geometry=gpd.points_from_xy([0, 1], [0, 1])
+    )
+    ours = sgpd.from_geopandas(gdf)
+    # Exactly, as pandas compares: 2**64 + 1 is not the float 2**64.
+    for values in ([2**64], [2**64 + 1], [2**1100], [2**70], [-(2**64)]):
+        assert (
+            ours["f"].isin(values).to_pandas().tolist()
+            == gdf["f"].isin(values).tolist()
+        )
 
 
 def test_isin_keeps_large_unsigned_values():
