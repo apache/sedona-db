@@ -42,7 +42,20 @@ LIBDIR = $(TARGET_DIR)/$(TARGET)/$(subst dev,debug,$(PROFILE))
 STATLIB = $(LIBDIR)/libsedonadbr.a
 S2_R_LINK_FLAGS = $(LIBDIR)/sedonadb-s2-r-link-flags.txt
 S2_NATIVE_LIBS = $(if $(findstring s2geography,$(FEATURE_FLAGS)),$(shell test ! -f "$(S2_R_LINK_FLAGS)" || cat "$(S2_R_LINK_FLAGS)"))
-PKG_LIBS = -L$(LIBDIR) -lsedonadbr $(S2_NATIVE_LIBS) -lws2_32 -ladvapi32 -luserenv -lbcrypt -lntdll -lole32 @PKG_LIBS@
+# CMake's synthetic linker target does not consistently preserve every leaf in
+# Abseil's static dependency graph. These archives are stable for the pinned
+# vcpkg package and contain the Windows-only unresolved symbols seen at the
+# final R DLL link. Keep them in the same rescan group as the generated flags.
+S2_WINDOWS_ABSL_LIBS = -L$(CMAKE_PREFIX_PATH)/lib \
+	-labsl_time \
+	-labsl_time_zone \
+	-labsl_civil_time \
+	-labsl_malloc_internal \
+	-labsl_kernel_timeout_internal
+S2_LINK_GROUP_START = -Wl,--start-group
+S2_LINK_GROUP_END = -Wl,--end-group
+S2_LINK_LIBS = $(if $(findstring s2geography,$(FEATURE_FLAGS)),$(S2_LINK_GROUP_START) $(S2_NATIVE_LIBS) $(S2_WINDOWS_ABSL_LIBS) $(S2_LINK_GROUP_END))
+PKG_LIBS = -L$(LIBDIR) -lsedonadbr $(S2_LINK_LIBS) -lws2_32 -ladvapi32 -luserenv -lbcrypt -lntdll -lole32 @PKG_LIBS@
 
 # Rtools doesn't have the linker in the location that cargo expects, so we need
 # to overwrite it via configuration.
