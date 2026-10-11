@@ -17,6 +17,7 @@
 """GeoPandas-style GeoDataFrame backed by a lazy SedonaDB frame."""
 
 import numbers
+import os
 
 import pyarrow as pa
 from sedonadb.expr import Expr, Literal, lit
@@ -27,6 +28,18 @@ from sedonadb_geopandas._temporal import sanitize_temporal
 
 # Rows to collect for the Jupyter rich-text (`_repr_html_`) preview.
 _REPR_HTML_ROWS = 10
+
+# GeoPandas' compression names, at pyarrow's default levels, in the writer's
+# spelling: it needs an explicit level, and calls pyarrow's "lz4" lz4_raw.
+_PARQUET_COMPRESSION = {
+    "snappy": "snappy",
+    "gzip": "gzip(9)",
+    "brotli": "brotli(8)",
+    "zstd": "zstd(1)",
+    "lz4": "lz4_raw",
+    "none": "uncompressed",
+    None: "uncompressed",
+}
 
 # Default for the `geometry` argument, distinguishing "not specified, apply the
 # heuristic" from an explicit `None` meaning "this frame has no active geometry".
@@ -839,6 +852,102 @@ class GeoDataFrame:
 
     # Alias: results carry geometry, so this returns a GeoDataFrame too.
     to_pandas = to_geopandas
+
+    def to_parquet(
+        self,
+        path,
+        index=None,
+        compression="snappy",
+        geometry_encoding="WKB",
+        write_covering_bbox=False,
+        schema_version=None,
+        **kwargs,
+    ):
+        """Write one GeoParquet file, as `GeoDataFrame.to_parquet` does.
+
+        **EXPERIMENTAL.** Computes the frame and writes it to `path`, which needs
+        a file extension (such as `.parquet`): SedonaDB writes a directory of
+        files to a path without one.
+
+        Args:
+            path: The file to write; an existing file is replaced.
+            index: There is no index to write; only None or False is accepted.
+            compression: `"snappy"`, `"gzip"`, `"brotli"`, `"zstd"`, `"lz4"`, or
+                None for no compression, at pyarrow's default levels.
+            geometry_encoding: Only `"WKB"` is supported.
+            write_covering_bbox: Add a bounding-box column per geometry column
+                (`bbox` for `geometry`, `<name>_bbox` otherwise) and declare it
+                as the GeoParquet 1.1 covering, which readers can use to skip row
+                groups. An existing column of that name raises, as in
+                GeoPandas: `read_parquet` leaves a file's coverings out, so
+                this is an ordinary column.
+            schema_version: The GeoParquet version: `"1.0.0"` without a covering
+                bbox, `"1.1.0"` with one (SedonaDB writes a covering exactly
+                when writing 1.1.0). Defaults to the one that fits
+                `write_covering_bbox`.
+
+        Every geometry column needs a CRS: SedonaDB's GeoParquet writer does not
+        write an unknown one. The file's `primary_column` is chosen by SedonaDB's
+        heuristic (a column named `geometry`, `geography`, `geom` or `geog`, else
+        the first geometry column), not by the active geometry column.
+        """
+        if kwargs:
+            raise NotImplementedError(
+                f"to_parquet() does not support {', '.join(sorted(kwargs))}"
+            )
+        if index:
+            raise NotImplementedError("to_parquet() has no index to write")
+        if str(geometry_encoding).upper() != "WKB":
+            raise NotImplementedError(
+                f"to_parquet() supports geometry_encoding='WKB' only, got "
+                f"{geometry_encoding!r}"
+            )
+        codec = None if compression is None else str(compression).lower()
+        if codec not in _PARQUET_COMPRESSION:
+            raise ValueError(
+                f"to_parquet() `compression` must be one of "
+                f"{sorted(c for c in _PARQUET_COMPRESSION if c)} or None, got "
+                f"{compression!r}"
+            )
+        version = "1.1" if write_covering_bbox else "1.0"
+        if schema_version not in (None, "1.0.0", "1.1.0"):
+            raise NotImplementedError(
+                f"to_parquet() writes schema_version '1.0.0' or '1.1.0', got "
+                f"{schema_version!r}"
+            )
+        if schema_version is not None and schema_version[:3] != version:
+            raise NotImplementedError(
+                "to_parquet() writes a covering bbox exactly with GeoParquet 1.1.0: "
+                "pass write_covering_bbox=True with schema_version='1.1.0', or "
+                "neither"
+            )
+        if not os.path.splitext(os.fspath(path))[1]:
+            raise ValueError(
+                f"to_parquet() needs a file name with an extension (such as "
+                f"'.parquet'), got {os.fspath(path)!r}: SedonaDB writes a "
+                f"directory of files to a path without one"
+            )
+        for name in _geometry_column_names(self._df):
+            if self._df.schema.field(name).type.crs is None:
+                raise ValueError(
+                    f"to_parquet() cannot write geometry column {name!r} without a "
+                    f"CRS: SedonaDB's GeoParquet writer does not write an unknown "
+                    f"one. Assign one with set_crs() first."
+                )
+        if write_covering_bbox:
+            for name in _geometry_column_names(self._df):
+                covering = "bbox" if name == "geometry" else f"{name}_bbox"
+                if covering in self.columns:
+                    raise ValueError(
+                        f"to_parquet() cannot write a covering bbox: a column named "
+                        f"{covering!r} already exists. Rename or drop it first."
+                    )
+        self._df.to_parquet(
+            path,
+            single_file_output=True,
+            geoparquet_version=version,
+            compression=_PARQUET_COMPRESSION[codec],
+        )
 
     def __len__(self):
         return self._df.count()

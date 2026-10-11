@@ -110,5 +110,27 @@ categorical key do not produce empty groups the way GeoPandas' default
 `observed=False` does, because the category domain does not survive a relational
 aggregation.
 
+`read_parquet()`, `read_file()` and `to_parquet()` follow GeoPandas, with
+differences that come from SedonaDB's readers and GeoParquet writer:
+
+- The active geometry column of a file that is read, and the `primary_column`
+  written to one, follow SedonaDB's heuristic (a column named `geometry`,
+  `geography`, `geom` or `geog`, else the first geometry column) rather than the
+  file's metadata or the frame's active geometry. This matters only for files
+  with several geometry columns (apache/sedona-db#1404).
+- A file that declares an unknown CRS (`"crs": null`, which GeoPandas writes for
+  a frame without one) reads back as OGC:CRS84, and `to_parquet()` refuses a
+  geometry column without a CRS (apache/sedona-db#1404). EPSG:4326 is written as
+  OGC:CRS84.
+- The covering (bounding-box) columns a file's metadata declares are left out
+  on read, as in GeoPandas, for local files only: a remote file's metadata is
+  not read, so its coverings stay. A covering is written for every geometry
+  column, not only the active one, and exactly with `schema_version="1.1.0"`.
+- `read_file()` keeps the source's name for the geometry column (`geom` in a
+  GeoPackage) where GeoPandas renames it to `geometry`: renaming it would break
+  later column selections (apache/sedona-db#1405).
+- `to_parquet()` writes one file and needs a file extension such as `.parquet`,
+  since SedonaDB writes a directory of files to a path without one.
+
 See the SedonaDB "Migrating from GeoPandas" guide for the relational model that
 underlies each method.
