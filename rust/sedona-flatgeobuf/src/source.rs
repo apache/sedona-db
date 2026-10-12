@@ -16,7 +16,7 @@
 // under the License.
 
 use datafusion_common::Result;
-use datafusion_datasource::{FileRange, file_groups::FileGroup};
+use datafusion_datasource::file_groups::FileGroupPartitioner;
 use datafusion_datasource::{
     TableSchema,
     file::FileSource,
@@ -29,7 +29,7 @@ use datafusion_physical_expr::LexOrdering;
 use datafusion_physical_expr::projection::ProjectionExprs;
 use datafusion_physical_plan::metrics::ExecutionPlanMetricsSet;
 use object_store::ObjectStore;
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 #[derive(Debug, Clone)]
 pub(crate) struct FlatGeobufSource {
     table_schema: TableSchema,
@@ -38,7 +38,6 @@ pub(crate) struct FlatGeobufSource {
     projection: ProjectionExprs,
     metrics: ExecutionPlanMetricsSet,
     pub(crate) cache: Option<Arc<dyn FileMetadataCache>>,
-    pub(crate) planned: Arc<HashMap<object_store::path::Path, Arc<crate::metadata::Metadata>>>,
 }
 impl FlatGeobufSource {
     pub(crate) fn new(table_schema: TableSchema, format: crate::format::FlatGeobufFormat) -> Self {
@@ -50,7 +49,6 @@ impl FlatGeobufSource {
             projection,
             metrics: Default::default(),
             cache: None,
-            planned: Default::default(),
         }
     }
 }
@@ -84,59 +82,16 @@ impl FileSource for FlatGeobufSource {
         if target < 2 || ordering.is_some() {
             return Ok(None);
         }
-        let mut groups = vec![vec![]; target];
-        let mut group_index = 0;
-        for group in &config.file_groups {
-            for file in group.iter() {
-                let data = self
-                    .planned
-                    .get(&file.object_meta.location)
-                    .ok_or_else(|| {
-                        datafusion_common::exec_datafusion_err!(
-                            "Missing FlatGeobuf planning metadata"
-                        )
-                    })?;
-                let count = data.offsets.len() - 1;
-                if !data.indexed
-                    || count == 0
-                    || file.range.is_some()
-                    || file.object_meta.size < (min_size as u64)
-                {
-                    groups[group_index % target].push(file.clone());
-                    group_index += 1;
-                    continue;
-                }
-                let parts = target.min(count);
-                // Split at feature boundaries so every worker owns at least one feature.
-                for i in 0..parts {
-                    let mut part = file.clone();
-                    part.range = Some(FileRange {
-                        start: i64::try_from(
-                            data.offsets[(count as u128 * i as u128 / parts as u128) as usize],
-                        )
-                        .map_err(|_| {
-                            datafusion_common::exec_datafusion_err!("FlatGeobuf range overflow")
-                        })?,
-                        end: i64::try_from(
-                            data.offsets
-                                [(count as u128 * (i + 1) as u128 / parts as u128) as usize],
-                        )
-                        .map_err(|_| {
-                            datafusion_common::exec_datafusion_err!("FlatGeobuf range overflow")
-                        })?,
-                    });
-                    groups[group_index % target].push(part);
-                    group_index += 1;
-                }
-            }
-        }
-        let mut conf = config.clone();
-        conf.file_groups = groups
-            .into_iter()
-            .filter(|g| !g.is_empty())
-            .map(FileGroup::new)
-            .collect();
-        Ok(Some(conf))
+        let partitioner = FileGroupPartitioner::new()
+            .with_target_partitions(target)
+            .with_repartition_file_min_size(min_size);
+        Ok(partitioner
+            .repartition_file_groups(&config.file_groups)
+            .map(|groups| {
+                let mut conf = config.clone();
+                conf.file_groups = groups;
+                conf
+            }))
     }
 
     fn table_schema(&self) -> &TableSchema {

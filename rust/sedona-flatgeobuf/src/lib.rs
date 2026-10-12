@@ -24,6 +24,7 @@
 //!
 //! The native format can also be registered with `SessionState::register_file_format`.
 
+mod converter;
 mod format;
 mod geometry;
 mod metadata;

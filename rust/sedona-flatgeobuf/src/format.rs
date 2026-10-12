@@ -149,9 +149,6 @@ impl FileFormat for FlatGeobufFormat {
         state: &dyn Session,
         conf: FileScanConfig,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        let store = state
-            .runtime_env()
-            .object_store(conf.object_store_url.clone())?;
         let cache = state.runtime_env().cache_manager.get_file_metadata_cache();
         let mut source = conf
             .file_source()
@@ -159,20 +156,6 @@ impl FileFormat for FlatGeobufFormat {
             .cloned()
             .ok_or_else(|| datafusion_common::exec_datafusion_err!("Expected FlatGeobufSource"))?;
         source.cache = Some(cache.clone());
-        let mut planned = HashMap::new();
-        for group in &conf.file_groups {
-            for file in group.iter() {
-                let data = crate::store_metadata::metadata(
-                    store.clone(),
-                    &file.object_meta,
-                    self.metadata_size_hint,
-                    Some(&cache),
-                )
-                .await?;
-                planned.insert(file.object_meta.location.clone(), data);
-            }
-        }
-        source.planned = Arc::new(planned);
         let conf = FileScanConfigBuilder::from(conf)
             .with_source(Arc::new(source))
             .build();

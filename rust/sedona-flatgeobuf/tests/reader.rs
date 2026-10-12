@@ -919,7 +919,7 @@ async fn native_format_reads_generic_object_store() {
             }
             plan.children().iter().map(|p| scan_partitions(p)).sum()
         }
-        assert_eq!(scan_partitions(&scan), if indexed { 8 } else { 1 });
+        assert_eq!(scan_partitions(&scan), 8);
         let result = ctx
             .sql("SELECT id, label FROM 'memory://fgb/points.fgb' WHERE id >= 3 ORDER BY id")
             .await
@@ -985,4 +985,218 @@ async fn native_format_reads_generic_object_store() {
             62
         );
     }
+}
+
+#[tokio::test]
+async fn requested_schema_widens_reorders_and_fills_missing_columns() {
+    use arrow_schema::{DataType, Field, Schema};
+    let (_d, obj) = fixture(true, 7);
+    let mut request = args(obj, None);
+    request.file_schema = Some(Arc::new(Schema::new(vec![
+        Field::new("extra", DataType::Utf8, true),
+        Field::new("id", DataType::Int64, true),
+        Field::new("label", DataType::Utf8, true),
+    ])));
+    let batches = FlatGeobufFormatSpec::default()
+        .open_reader(&request)
+        .await
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(batches.iter().map(|b| b.num_rows()).sum::<usize>(), 7);
+    assert!(
+        batches
+            .iter()
+            .all(|b| b.column(0).null_count() == b.num_rows())
+    );
+    let mut ids = batches
+        .iter()
+        .flat_map(|b| {
+            b.column(1)
+                .as_any()
+                .downcast_ref::<arrow_array::Int64Array>()
+                .unwrap()
+                .values()
+                .to_vec()
+        })
+        .collect::<Vec<_>>();
+    ids.sort();
+    assert_eq!(ids, (0..7).collect::<Vec<_>>());
+}
+
+#[tokio::test]
+async fn seeded_sedona_random_geometries_roundtrip() {
+    use sedona_geometry::types::GeometryTypeId;
+    use sedona_testing::datagen::RandomPartitionedDataBuilder;
+    for kind in [
+        GeometryTypeId::Point,
+        GeometryTypeId::LineString,
+        GeometryTypeId::Polygon,
+        GeometryTypeId::MultiPoint,
+        GeometryTypeId::MultiLineString,
+        GeometryTypeId::MultiPolygon,
+    ] {
+        let (_, parts) = RandomPartitionedDataBuilder::new()
+            .seed(20261012)
+            .geometry_type(kind)
+            .rows_per_batch(32)
+            .build()
+            .unwrap();
+        let original = parts[0][0]
+            .column(2)
+            .as_any()
+            .downcast_ref::<arrow_array::BinaryArray>()
+            .unwrap();
+        let (_dir, obj) = fixture(false, 0);
+        let mut writer = FgbWriter::create_with_options(
+            "random",
+            GeometryType::Unknown,
+            FgbWriterOptions {
+                write_index: false,
+                promote_to_multi: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        writer.add_column("id", ColumnType::Int, |_, _| {});
+        for i in 0..original.len() {
+            writer
+                .add_feature_geom(geozero::wkb::Wkb(original.value(i)), |f| {
+                    f.property(0, "id", &ColumnValue::Int(i as i32)).unwrap();
+                })
+                .unwrap();
+        }
+        let path = _dir.path().join("points.fgb");
+        writer.write(File::create(&path).unwrap()).unwrap();
+        let mut obj = obj;
+        obj.meta.as_mut().unwrap().size = std::fs::metadata(&path).unwrap().len();
+        let batches = FlatGeobufFormatSpec::default()
+            .open_reader(&args(obj, None))
+            .await
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let got = batches
+            .iter()
+            .flat_map(|b| {
+                b.column(1)
+                    .as_any()
+                    .downcast_ref::<arrow_array::BinaryArray>()
+                    .unwrap()
+                    .iter()
+                    .map(|v| v.unwrap().to_vec())
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            got,
+            original
+                .iter()
+                .map(|v| v.unwrap().to_vec())
+                .collect::<Vec<_>>(),
+            "{kind:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn requested_plain_binary_geometry_uses_configured_name() {
+    use arrow_schema::{DataType, Field, Schema};
+    let (_d, obj) = fixture(false, 3);
+    let mut request = args(obj, None);
+    request.file_schema = Some(Arc::new(Schema::new(vec![Field::new(
+        "shape",
+        DataType::Binary,
+        true,
+    )])));
+    let spec = FlatGeobufFormatSpec::default()
+        .with_options(&std::collections::HashMap::from([(
+            "geometry_column_name".into(),
+            "shape".into(),
+        )]))
+        .unwrap();
+    let batches = spec
+        .open_reader(&request)
+        .await
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert!(batches.iter().all(|b| b.column(0).null_count() == 0));
+    let got = batches[0]
+        .column(0)
+        .as_any()
+        .downcast_ref::<arrow_array::BinaryArray>()
+        .unwrap();
+    let mut expected = vec![1, 1, 0, 0, 0];
+    expected.extend_from_slice(&0f64.to_le_bytes());
+    expected.extend_from_slice(&1f64.to_le_bytes());
+    assert_eq!(got.value(0), expected);
+}
+
+#[tokio::test]
+async fn requested_geometry_metadata_cannot_relabel_crs() {
+    let (_d, obj) = fixture(false, 2);
+    let spec = FlatGeobufFormatSpec::default();
+    let schema = spec.infer_schema(&obj).await.unwrap();
+    let mut field = schema.field(2).clone();
+    let mut metadata = field.metadata().clone();
+    metadata.insert(
+        "ARROW:extension:metadata".into(),
+        "{\"crs\":\"EPSG:4326\"}".into(),
+    );
+    field = field.with_metadata(metadata);
+    let mut request = args(obj, None);
+    request.file_schema = Some(Arc::new(arrow_schema::Schema::new(vec![field])));
+    let result = spec.open_reader(&request).await.unwrap().next().unwrap();
+    assert!(result.unwrap_err().to_string().contains("geometry/CRS"));
+}
+
+#[tokio::test]
+async fn duplicate_attribute_names_keep_positional_values() {
+    let (dir, mut obj) = fixture(false, 0);
+    let mut writer = FgbWriter::create_with_options(
+        "duplicate",
+        GeometryType::Point,
+        FgbWriterOptions {
+            write_index: false,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    writer.add_column("same", ColumnType::Int, |_, _| {});
+    writer.add_column("same", ColumnType::Long, |_, _| {});
+    writer
+        .add_feature_geom(Point(0.), |f| {
+            f.property(0, "same", &ColumnValue::Int(111)).unwrap();
+            f.property(1, "same", &ColumnValue::Long(222)).unwrap();
+        })
+        .unwrap();
+    let path = dir.path().join("points.fgb");
+    writer.write(File::create(&path).unwrap()).unwrap();
+    obj.meta.as_mut().unwrap().size = std::fs::metadata(path).unwrap().len();
+    let batch = FlatGeobufFormatSpec::default()
+        .open_reader(&args(obj, Some(vec![1, 0])))
+        .await
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow_array::Int64Array>()
+            .unwrap()
+            .value(0),
+        222
+    );
+    assert_eq!(
+        batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<arrow_array::Int32Array>()
+            .unwrap()
+            .value(0),
+        111
+    );
 }

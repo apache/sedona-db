@@ -39,6 +39,7 @@ datafusion-execution = { workspace = true }
 bytes = { workspace = true }
 object_store = { workspace = true }
 chrono = { workspace = true }
+arrow-cast = { workspace = true }
 arrow-array = { workspace = true }
 arrow-schema = { workspace = true }
 async-trait = { workspace = true }
@@ -51,6 +52,9 @@ url = { workspace = true }
 tokio = { workspace = true, features = ["fs", "io-util"] }
 
 [dev-dependencies]
+sedona-testing = { workspace = true }
+sedona-geometry = { workspace = true }
+geozero = { version = "0.15.1", default-features = false, features = ["with-wkb"] }
 wkt = { workspace = true }
 wkb = { workspace = true }
 datafusion = { workspace = true, features = ["sql"] }

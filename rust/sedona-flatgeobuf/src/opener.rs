@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::{metadata::Metadata, reader::decode};
+use crate::{metadata::Metadata, reader::decode_batch};
 use arrow_schema::SchemaRef;
 use datafusion_common::{Result, exec_datafusion_err, exec_err};
 use datafusion_datasource::FileRange;
@@ -24,9 +24,10 @@ use datafusion_datasource::{
     file_stream::{FileOpenFuture, FileOpener},
 };
 use datafusion_execution::cache::cache_manager::FileMetadataCache;
+use datafusion_physical_plan::{SendableRecordBatchStream, stream::RecordBatchStreamAdapter};
 use futures::StreamExt;
 use object_store::ObjectStore;
-use std::{io::Cursor, sync::Arc};
+use std::sync::Arc;
 
 pub(crate) struct FlatGeobufOpener {
     pub store: Arc<dyn ObjectStore>,
@@ -55,10 +56,8 @@ impl FileOpener for FlatGeobufOpener {
                 cache.as_ref(),
             )
             .await?;
-            if meta.infer_schema(&format.geometry_column_name)?.as_ref() != schema.as_ref() {
-                return exec_err!("FlatGeobuf schema changed before reading");
-            }
             let (lo, hi) = feature_bounds(&meta, file.range.as_ref())?;
+            let output_schema = Arc::new(schema.project(&projection)?);
             let stream = async_stream::try_stream! {
                 let mut first=lo;
                 while first<hi {
@@ -68,17 +67,40 @@ impl FileOpener for FlatGeobufOpener {
                     for range in requests {
                         let begin=meta.offsets.binary_search(&range.start).map_err(|_|exec_datafusion_err!("Invalid planned feature start"))?;
                         let end=meta.offsets.binary_search(&range.end).map_err(|_|exec_datafusion_err!("Invalid planned feature end"))?;
-                        let bytes=crate::object_io::fetch_range(store.as_ref(),&file.object_meta,range.clone()).await?;
-                        validate_frames(&bytes,&meta.offsets[begin..=end],range.start)?;
-                        let reader=decode(meta.clone(),schema.clone(),Box::new(Cursor::new(bytes)),end-begin,projection.clone(),batch_size)?;
-                        for batch in reader { yield batch.map_err(|e|datafusion_common::DataFusionError::ArrowError(Box::new(e),None))?; }
+                        yield fetch_batch(store.as_ref(),&file.object_meta,&meta,&schema,&projection,begin,end,range,&format.geometry_column_name).await?;
                     }
                     first=last;
                 }
             };
+            let stream: SendableRecordBatchStream =
+                Box::pin(RecordBatchStreamAdapter::new(output_schema, stream));
             Ok(stream.boxed())
         }))
     }
+}
+#[allow(clippy::too_many_arguments)]
+async fn fetch_batch(
+    store: &dyn ObjectStore,
+    object: &object_store::ObjectMeta,
+    meta: &Metadata,
+    schema: &SchemaRef,
+    projection: &[usize],
+    begin: usize,
+    end: usize,
+    range: std::ops::Range<u64>,
+    geometry_column_name: &str,
+) -> Result<arrow_array::RecordBatch> {
+    let bytes = crate::object_io::fetch_range(store, object, range.clone()).await?;
+    validate_frames(&bytes, &meta.offsets[begin..=end], range.start)?;
+    decode_batch(
+        meta,
+        schema,
+        projection,
+        &bytes,
+        &meta.offsets[begin..=end],
+        range.start,
+        geometry_column_name,
+    )
 }
 fn validate_frames(bytes: &[u8], offsets: &[u64], begin: u64) -> Result<()> {
     for pair in offsets.windows(2) {
@@ -99,7 +121,7 @@ fn validate_frames(bytes: &[u8], offsets: &[u64], begin: u64) -> Result<()> {
 /// Indexed ranges may cut through payloads: ownership follows the prefix, and the
 /// fetched payload is expanded to feature boundaries. Without an RTree only the
 /// range owning byte zero reads rows, avoiding duplicate serial fallback scans.
-fn feature_bounds(meta: &Metadata, range: Option<&FileRange>) -> Result<(usize, usize)> {
+pub(crate) fn feature_bounds(meta: &Metadata, range: Option<&FileRange>) -> Result<(usize, usize)> {
     let count = meta.offsets.len() - 1;
     let Some(range) = range else {
         return Ok((0, count));

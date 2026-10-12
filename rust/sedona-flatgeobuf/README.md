@@ -44,11 +44,13 @@ use `sd.read(path, format="fgb_native")` to opt in to native range reads.
 - Any registered ObjectStore can provide range reads. Curves and temporal T/TM
   dimensions, spatial pruning, writing and morselized scans are outside this draft.
   Feature-local column overrides and absent header column schemas are rejected explicitly.
-- Reject invalid framing, unsupported schema types and inconsistent requested
-  schemas. Native metadata cache entries are validated against ObjectMeta and
+- Reject invalid framing and unsupported schema types. Requested table fields
+  are matched by name, missing fields become null, and supported Arrow casts adapt
+  attribute types with conversion errors reported explicitly. Geometry/CRS
+  metadata must remain compatible. Native metadata cache entries are validated against ObjectMeta and
   store identity. Arrow schemas are derived from cached FlatGeobuf headers using
   the requested geometry column option. Inputs must remain
-  unchanged during a scan. Multi-file reads require consistent schemas and CRS.
+  unchanged during a scan. Multi-file inferred schemas must merge successfully and retain consistent CRS.
 
 The `metadata_size_hint` option controls the initial header prefix read (default
 65536 bytes); incomplete headers are refetched before verified decoding.
