@@ -64,39 +64,15 @@ if(WIN32 AND NOT MSVC)
       crypt32)
 endif()
 
-# Abseil libraries needed by the linker_flags discovery target below. Keep the
-# leaf libraries explicit: their transitive edges are not consistently emitted
-# when the synthetic ECHO linker language is used with MinGW.
-set(ABSL_LIBRARIES
-    absl::base
-    absl::btree
-    absl::check
-    absl::config
-    absl::core_headers
-    absl::dynamic_annotations
-    absl::endian
-    absl::fixed_array
-    absl::flags
-    absl::flat_hash_map
-    absl::flat_hash_set
-    absl::hash
-    absl::inlined_vector
-    absl::int128
-    absl::log
-    absl::log_internal_fnmatch
-    absl::log_severity
-    absl::memory
-    absl::raw_logging_internal
-    absl::span
-    absl::spinlock_wait
-    absl::status
+# Discover transitive dependencies through S2's imported/build target instead
+# of maintaining an Abseil component list here. s2geography also uses str_format
+# and OpenSSL directly; include those even if a particular S2 version does not.
+set(S2GEOGRAPHY_LINK_DEPENDENCIES
+    s2::s2
+    OpenSSL::SSL
+    OpenSSL::Crypto
     absl::str_format
-    absl::strings
-    absl::strings_internal
-    absl::throw_delegate
-    absl::type_traits
-    absl::utility
-    absl::vlog_is_on)
+    ${S2_EXTRA_OPENSSL_LIBS})
 
 # Build s2geography (needs the s2::s2 alias and version info)
 if(S2_BUILT_FROM_SUBDIRECTORY)
@@ -166,12 +142,7 @@ if(NOT MSVC)
   )
 
   add_executable(linker_flags "CMakeLists.txt")
-  target_link_libraries(linker_flags
-                        s2::s2
-                        OpenSSL::SSL
-                        OpenSSL::Crypto
-                        ${S2_EXTRA_OPENSSL_LIBS}
-                        ${ABSL_LIBRARIES})
+  target_link_libraries(linker_flags ${S2GEOGRAPHY_LINK_DEPENDENCIES})
 
   set_target_properties(linker_flags
                         PROPERTIES LINKER_LANGUAGE ECHO
@@ -189,12 +160,7 @@ int main(int argc, const char** args) {
   return 0;
 }")
   add_executable(linker_flags "${CMAKE_CURRENT_BINARY_DIR}/linker_flags.cc")
-  target_link_libraries(linker_flags
-                        s2::s2
-                        OpenSSL::SSL
-                        OpenSSL::Crypto
-                        ${S2_EXTRA_OPENSSL_LIBS}
-                        ${ABSL_LIBRARIES})
+  target_link_libraries(linker_flags ${S2GEOGRAPHY_LINK_DEPENDENCIES})
 
   add_custom_command(TARGET linker_flags
                      POST_BUILD

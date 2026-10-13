@@ -42,11 +42,16 @@ LIBDIR = $(TARGET_DIR)/$(TARGET)/$(subst dev,debug,$(PROFILE))
 STATLIB = $(LIBDIR)/libsedonadbr.a
 S2_R_LINK_FLAGS = $(LIBDIR)/sedonadb-s2-r-link-flags.txt
 S2_NATIVE_LIBS = $(if $(findstring s2geography,$(FEATURE_FLAGS)),$(shell test ! -f "$(S2_R_LINK_FLAGS)" || cat "$(S2_R_LINK_FLAGS)"))
-# CMake's synthetic linker target does not consistently preserve every leaf in
-# Abseil's static dependency graph. These archives are stable for the pinned
-# vcpkg package and contain the Windows-only unresolved symbols seen at the
-# final R DLL link. Keep them in the same rescan group as the generated flags.
+# Supplement the generated flags with the leaf archives missing from the
+# Rtools DLL link. This fallback is specific to R's pinned vcpkg package: keep
+# Abseil implementation details here, outside the shared CMake/Rust builder.
+# Keep these archives in the same rescan group as the generated flags.
 S2_WINDOWS_ABSL_LIBS = -L$(CMAKE_PREFIX_PATH)/lib \
+	-labsl_log_internal_fnmatch \
+	-labsl_raw_logging_internal \
+	-labsl_spinlock_wait \
+	-labsl_strings_internal \
+	-labsl_throw_delegate \
 	-labsl_time \
 	-labsl_time_zone \
 	-labsl_civil_time \
