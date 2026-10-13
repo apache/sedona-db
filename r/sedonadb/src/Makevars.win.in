@@ -47,6 +47,7 @@ S2_NATIVE_LIBS = $(if $(findstring s2geography,$(FEATURE_FLAGS)),$(shell test ! 
 # Abseil implementation details here, outside the shared CMake/Rust builder.
 # Keep these archives in the same rescan group as the generated flags.
 S2_WINDOWS_ABSL_LIBS = -L$(CMAKE_PREFIX_PATH)/lib \
+	-labsl_base \
 	-labsl_log_internal_fnmatch \
 	-labsl_raw_logging_internal \
 	-labsl_spinlock_wait \

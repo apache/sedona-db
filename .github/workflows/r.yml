@@ -116,7 +116,8 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: "r-v4"
+          # Invalidate CMake caches containing the former repo-root vcpkg path.
+          prefix-key: "r-v5"
           workspaces: ${{ env.CACHE_WORKSPACE }}
           cache-bin: false
 
