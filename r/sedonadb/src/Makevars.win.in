@@ -53,10 +53,14 @@ CARGO_LINKER = x86_64-w64-mingw32.static.posix-gcc.exe
 # cf. https://stackoverflow.com/a/68979087
 PKG_CONFIG_SYSROOT_DIR = /x86_64-w64-mingw32.static.posix/
 
-# "-Wno-pedantic" is to override the "-pedantic" flag passed by pkgbuild, which
-# makes the compilation of aws-lc-sys fail. Hopefully, such C code will be fixed
-# on upstream so that we can remove this.
-CFLAGS_TWEAKED = $(CFLAGS) -Wno-pedantic
+# cc appends environment CFLAGS after a crate's source-specific flags. Do not
+# let R's optimization setting override aws-lc-sys's required -O0 for its
+# jitterentropy source. Cargo still supplies the release-profile optimization
+# level for other native dependencies.
+#
+# "-Wno-pedantic" overrides the "-pedantic" flag passed by pkgbuild, which is
+# also incompatible with aws-lc-sys.
+CFLAGS_TWEAKED = $(filter-out -O%,$(CFLAGS)) -Wno-pedantic
 
 all: $(SHLIB) clean_intermediate
 
