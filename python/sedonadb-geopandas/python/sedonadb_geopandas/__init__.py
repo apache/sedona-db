@@ -27,7 +27,7 @@ from sedonadb_geopandas._context import default_context
 from sedonadb_geopandas._frame import GeoDataFrame
 from sedonadb_geopandas._series import GeoSeries, Series
 
-__all__ = ["GeoDataFrame", "GeoSeries", "Series", "from_geopandas"]
+__all__ = ["GeoDataFrame", "GeoSeries", "Series", "from_geopandas", "sjoin"]
 
 
 def from_geopandas(data, *, context=None, geometry=None):
@@ -52,3 +52,31 @@ def from_geopandas(data, *, context=None, geometry=None):
     if geometry is None:
         return GeoDataFrame(df)
     return GeoDataFrame(df, geometry=geometry)
+
+
+def sjoin(
+    left_df,
+    right_df,
+    how="inner",
+    predicate="intersects",
+    lsuffix="left",
+    rsuffix="right",
+    distance=None,
+    on_attribute=None,
+):
+    """Spatially join two frames, as `geopandas.sjoin` does.
+
+    **EXPERIMENTAL.** Equivalent to `left_df.sjoin(right_df, ...)`; see
+    `GeoDataFrame.sjoin`.
+    """
+    if not isinstance(left_df, GeoDataFrame):
+        raise TypeError(f"sjoin() expects a GeoDataFrame, got {type(left_df).__name__}")
+    return left_df.sjoin(
+        right_df,
+        how=how,
+        predicate=predicate,
+        lsuffix=lsuffix,
+        rsuffix=rsuffix,
+        distance=distance,
+        on_attribute=on_attribute,
+    )

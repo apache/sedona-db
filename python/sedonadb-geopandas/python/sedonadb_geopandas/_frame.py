@@ -16,11 +16,19 @@
 # under the License.
 """GeoPandas-style GeoDataFrame backed by a lazy SedonaDB frame."""
 
+import numbers
+
 import pyarrow as pa
 from sedonadb.expr import Expr, Literal, lit
 from shapely.geometry.base import BaseGeometry
 
-from sedonadb_geopandas._series import GeoSeries, Series, is_scalar, normalize_scalar
+from sedonadb_geopandas._series import (
+    GeoSeries,
+    Series,
+    _same_crs,
+    is_scalar,
+    normalize_scalar,
+)
 from sedonadb_geopandas._temporal import sanitize_temporal
 
 # Rows to collect for the Jupyter rich-text (`_repr_html_`) preview.
@@ -29,6 +37,32 @@ _REPR_HTML_ROWS = 10
 # Default for the `geometry` argument, distinguishing "not specified, apply the
 # heuristic" from an explicit `None` meaning "this frame has no active geometry".
 _DERIVE = object()
+
+
+# GeoPandas' sjoin predicates, each mapped to the `.geo` method the engine's
+# planner rewrites into an indexed spatial join.
+_SJOIN_PREDICATES = {
+    "intersects": "intersects",
+    "within": "within",
+    "contains": "contains",
+    "touches": "touches",
+    "crosses": "crosses",
+    "overlaps": "overlaps",
+    "covers": "covers",
+    "covered_by": "covered_by",
+    "dwithin": "d_within",
+}
+
+
+def _renamed(df, mapping):
+    """`df` with columns renamed old to new, in place and order.
+
+    A projection with aliases rather than `DataFrame.rename`, whose keyword
+    arguments cannot take a name such as "self".
+    """
+    return df.select(
+        *[df[name].alias(mapping.get(name, name)) for name in df.schema.names]
+    )
 
 
 def _geometry_column_names(df):
@@ -92,6 +126,85 @@ def _is_missing(value):
     except Exception:
         # Without pandas, catch NaN via its self-inequality.
         return isinstance(value, float) and value != value
+
+
+def _explode_parts(df, column):
+    """`df` with one row per part of its geometry column `column`.
+
+    Parts are taken one level deep, as `shapely.get_parts` does. A single
+    geometry is its own one part, even when empty; a multi-geometry or
+    collection with no parts, or a missing geometry, yields no row. The
+    exploded column moves to the end. All three as in GeoPandas.
+
+    `ST_Dump` lists the parts before they are unnested, so each part is
+    stored once rather than the whole geometry being repeated per part. It
+    flattens nested collections, though, so a geometry collection's members
+    are read one level deep with `ST_GeometryN` instead, which repeats the
+    collection (only) once per member while it is exploded.
+    """
+    ctx = df._ctx
+    column_type = df.schema.field(column).type
+    crs = column_type.crs
+    spherical = "SPHERICAL" in str(getattr(column_type, "edge_type", "")).upper()
+    df = df.filter(df[column].is_not_null())
+    geometry = df[column]
+    is_collection = geometry.geo.geometry_type() == lit("ST_GeometryCollection")
+    # nvl2 needs its condition in the same type as its values, hence the
+    # binary flag (non-null on collections only), as in GeoSeries.envelope.
+    collection_flag = _binary_flag(is_collection)
+    carried = collection_flag.funcs.nvl2(geometry.geo.as_binary(), lit(None))
+    members = (
+        geometry.geo.num_geometries().cast(pa.int64()) * is_collection.cast(pa.int64())
+    ).funcs.coalesce(lit(0))
+    # A collection's parts come from its member positions, so its dumped
+    # leaves are dropped before unnesting: unnested in parallel with the
+    # positions, each leaf would carry the whole collection.
+    leaves = geometry.geo.dump()
+    leaves = leaves.funcs.array_slice(
+        lit(1),
+        leaves.funcs.cardinality().cast(pa.int64()) * (~is_collection).cast(pa.int64()),
+    )
+    others = [name for name in df.schema.names if name != column]
+    dump, position, carry = (
+        _unused_name(df, "__dump"),
+        _unused_name(df, "__member"),
+        _unused_name(df, "__collection"),
+    )
+    staged = df.select(
+        *[df[name] for name in others],
+        leaves.alias(dump),
+        ctx.lit(1).funcs.range(members + lit(1)).alias(position),
+        carried.alias(carry),
+    ).unnest(dump, position)
+
+    def from_wkb(wkb):
+        return wkb.funcs.st_geogfromwkb() if spherical else wkb.funcs.st_geomfromwkb()
+
+    member = from_wkb(staged[carry]).geo.geometry_n(staged[position]).geo.as_binary()
+    wkb = _binary_flag(staged[position].is_not_null()).funcs.nvl2(
+        member, staged[dump]["geom"].cast(pa.binary())
+    )
+    # WKB carries neither the spatial kind nor the CRS: both are restored.
+    part = from_wkb(wkb)
+    if crs is not None:
+        part = part.funcs.st_setcrs(ctx.lit(crs.to_json()))
+    elif spherical:
+        # The geography constructor assigns OGC:CRS84; SRID 0 clears it, as
+        # the column had no CRS.
+        part = part.geo.set_srid(ctx.lit(0))
+    return staged.select(*[staged[name] for name in others], part.alias(column))
+
+
+def _binary_flag(condition):
+    """A binary value that is non-null exactly where `condition` is true."""
+    return condition.funcs.nullif(lit(False)).cast(pa.string()).cast(pa.binary())
+
+
+def _unused_name(df, name):
+    """`name`, prefixed with underscores until no column of `df` has it."""
+    while name in df.schema.names:
+        name = f"_{name}"
+    return name
 
 
 class GeoDataFrame:
@@ -270,7 +383,11 @@ class GeoDataFrame:
             )
         else:
             expr = self._scalar_expr(key, value)
+        self._assign(key, expr)
 
+    def _assign(self, key, expr):
+        """Rebind this frame with `expr` as column `key`, keeping lineage and
+        the active geometry in step."""
         geometry_before = _geometry_column_names(self._df)
         if key in self._df.schema.names:
             # Replacing a column: an earlier Series may reference it and
@@ -481,6 +598,360 @@ class GeoDataFrame:
         new_df = self._df.mutate(transformed.alias(self._geometry_name))
         return GeoDataFrame(new_df, self._geometry_name)
 
+    def sjoin(
+        self,
+        other,
+        how="inner",
+        predicate="intersects",
+        lsuffix="left",
+        rsuffix="right",
+        distance=None,
+        on_attribute=None,
+    ):
+        """Join two frames on a spatial predicate, as in `geopandas.sjoin`.
+
+        The predicate reads left-relative-to-right: with `predicate="within"`,
+        rows are matched where the left geometry is within the right one.
+
+        Args:
+            other: The right-hand `GeoDataFrame`.
+            how: `"inner"`, `"left"`, or `"right"`.
+            predicate: One of `intersects`, `within`, `contains`, `touches`,
+                `crosses`, `overlaps`, `covers`, `covered_by`, `dwithin`.
+            lsuffix: Suffix for left columns whose names also occur on the right;
+                `None` keeps them unsuffixed.
+            rsuffix: Suffix for the corresponding right columns; `None` keeps
+                them unsuffixed.
+            distance: Required by (and only used with) `predicate="dwithin"`.
+            on_attribute: Not supported yet.
+
+        Returns:
+            A `GeoDataFrame` carrying one geometry column: the left frame's for
+            `how="inner"`/`"left"`, the right frame's for `how="right"`, as in
+            GeoPandas.
+
+        Differences from GeoPandas: there is no row index, so no
+        `index_left`/`index_right` column is produced; and the two geometry
+        columns must share a CRS (GeoPandas warns and joins anyway, which is
+        almost always a mistake). Use `to_crs` on one side first.
+        """
+        if not isinstance(other, GeoDataFrame):
+            raise TypeError(
+                f"sjoin() expects a GeoDataFrame, got {type(other).__name__}"
+            )
+        if self._geometry_name is None or other._geometry_name is None:
+            raise ValueError(
+                "sjoin() requires an active geometry column on both frames"
+            )
+        if how not in ("inner", "left", "right"):
+            raise ValueError(
+                f"sjoin() `how` must be 'inner', 'left', or 'right', got {how!r}"
+            )
+        if predicate not in _SJOIN_PREDICATES:
+            raise ValueError(
+                f"sjoin() `predicate` must be one of {sorted(_SJOIN_PREDICATES)}, "
+                f"got {predicate!r}"
+            )
+        if on_attribute is not None:
+            raise NotImplementedError("sjoin() does not support on_attribute yet")
+        if (predicate == "dwithin") != (distance is not None):
+            raise ValueError(
+                "sjoin() `distance` is required for predicate='dwithin' and accepted "
+                "only for that predicate"
+            )
+        if distance is not None:
+            # Only a single number. A Series or expression cannot be a distance:
+            # the predicate is built against re-aliased copies of both frames, so
+            # a column reference would resolve by name inside the join rather
+            # than against the frame it was read from.
+            from sedonadb_geopandas._series import _numeric_value
+
+            if isinstance(distance, (Series, Expr)) or not is_scalar(distance):
+                raise TypeError(
+                    f"sjoin() `distance` must be a number, got {type(distance).__name__}"
+                )
+            distance = _numeric_value(distance)
+            if not isinstance(distance, numbers.Real) or isinstance(distance, bool):
+                raise TypeError(
+                    f"sjoin() `distance` must be a number, got {type(distance).__name__}"
+                )
+            distance = float(distance)
+
+        from sedonadb_geopandas._series import _same_crs
+
+        left_crs, right_crs = self.crs, other.crs
+        if (left_crs is None) != (right_crs is None) or (
+            left_crs is not None and not _same_crs(left_crs, right_crs.to_json())
+        ):
+            raise ValueError(
+                f"sjoin() needs both geometry columns in the same CRS, got "
+                f"{left_crs} and {right_crs}; reproject one side with to_crs() first"
+            )
+
+        # Both sides are aliased so the predicate and the output projection can
+        # name columns unambiguously when both frames use the same names.
+        left = self._df.alias("sjoin_left")
+        right = other._df.alias("sjoin_right")
+        left_geom = left[self._geometry_name]
+        right_geom = right[other._geometry_name]
+        if left_crs is not None and left_crs.to_json() != right_crs.to_json():
+            # The same CRS can be spelled differently (an EPSG code and the
+            # matching PROJ string), and the engine refuses that as a mismatch.
+            # Only the predicate's operand is restamped; each output column keeps
+            # its own CRS.
+            right_geom = right_geom.funcs.st_setcrs(
+                self._df._ctx.lit(left_crs.to_json())
+            )
+        # Always a single spatial predicate: that is what the planner rewrites
+        # into an indexed spatial join. A composition (`a OR b`) falls back to a
+        # nested-loop join, which is quadratic.
+        if predicate == "dwithin":
+            on = left_geom.geo.d_within(right_geom, lit(distance))
+        else:
+            on = getattr(left_geom.geo, _SJOIN_PREDICATES[predicate])(right_geom)
+        joined = left.join(right, on=on, how=how)
+
+        # One geometry column survives: whichever side GeoPandas keeps.
+        keep_left_geom = how != "right"
+        geometry = self._geometry_name if keep_left_geom else other._geometry_name
+
+        # Collisions are counted over the columns actually emitted, so a dropped
+        # geometry is no collision while an ordinary column sharing the retained
+        # geometry's name is. As in GeoPandas, the retained geometry keeps its
+        # name and only the other side's column is suffixed; ordinary collisions
+        # suffix both sides, except a side whose suffix is None.
+        emitted_left = [
+            name
+            for name in self.columns
+            if keep_left_geom or name != self._geometry_name
+        ]
+        emitted_right = [
+            name
+            for name in other.columns
+            if not keep_left_geom or name != other._geometry_name
+        ]
+        collisions = set(emitted_left) & set(emitted_right)
+
+        def out_name(name, suffix, is_retained_geometry):
+            if name not in collisions or is_retained_geometry or suffix is None:
+                return name
+            return f"{name}_{suffix}"
+
+        left_out = [
+            out_name(name, lsuffix, keep_left_geom and name == geometry)
+            for name in emitted_left
+        ]
+        right_out = [
+            out_name(name, rsuffix, not keep_left_geom and name == geometry)
+            for name in emitted_right
+        ]
+        # Suffixing can itself collide (left `v` and `v_left` against a right
+        # `v` both want `v_left`), as can two unsuffixed sides. The engine
+        # cannot hold duplicate names, so this says so up front rather than
+        # failing on a generated name. (GeoPandas allows a suffix-generated
+        # duplicate with a FutureWarning.)
+        final_names = left_out + right_out
+        duplicates = sorted({n for n in final_names if final_names.count(n) > 1})
+        if duplicates:
+            raise ValueError(
+                f"sjoin() would produce duplicate column name(s) {duplicates} with "
+                f"lsuffix={lsuffix!r} and rsuffix={rsuffix!r}. Pass different "
+                f"suffixes, or rename the column first."
+            )
+
+        projection = [
+            left[name].alias(out) for name, out in zip(emitted_left, left_out)
+        ]
+        projection += [
+            right[name].alias(out) for name, out in zip(emitted_right, right_out)
+        ]
+        return GeoDataFrame(joined.select(*projection), geometry)
+
+    # -- geometry and CRS bookkeeping --------------------------------------
+
+    def set_geometry(self, col, inplace=False, crs=None):
+        """Make `col` the active geometry column, as in GeoPandas.
+
+        `col` is the name of a geometry column, or a `GeoSeries` of this
+        frame, which is added under its own name first. `crs` relabels the
+        new active column (overriding any CRS it has) without transforming
+        coordinates. With `inplace=True` this frame changes and None is
+        returned.
+        """
+        target = self if inplace else self._copy()
+        if isinstance(col, Series):
+            if not isinstance(col, GeoSeries):
+                raise TypeError("set_geometry() needs a GeoSeries or a column name")
+            # As in GeoPandas, an unnamed GeoSeries replaces the active
+            # geometry column, or is added as "geometry" if there is none.
+            name = col._name
+            if name is None:
+                name = target._geometry_name or "geometry"
+            target[name] = col
+        elif isinstance(col, str):
+            if col not in target.columns:
+                raise ValueError(f"Unknown column {col}")
+            if col not in _geometry_column_names(target._df):
+                raise TypeError(f"Column {col!r} is not a geometry column")
+            name = col
+        else:
+            raise TypeError(
+                f"set_geometry() takes a column name or a GeoSeries, got "
+                f"{type(col).__name__}"
+            )
+        target._geometry_name = name
+        if crs is not None:
+            target.set_crs(crs, allow_override=True, inplace=True)
+        return None if inplace else target
+
+    def rename_geometry(self, col, inplace=False):
+        """Rename the active geometry column to `col`, as in GeoPandas."""
+        if self._geometry_name is None:
+            raise AttributeError("This GeoDataFrame has no active geometry column")
+        if col in self.columns:
+            raise ValueError(f"Column named {col} already exists")
+        target = self if inplace else self._copy()
+        old = target._geometry_name
+        target._rebind(_renamed(target._df, {old: col}), renames_columns=True)
+        target._geometry_name = col
+        return None if inplace else target
+
+    def set_crs(self, crs=None, epsg=None, inplace=False, allow_override=False):
+        """Label the active geometry column with a CRS, as in GeoPandas.
+
+        Coordinates are not transformed (use `to_crs` for that). Replacing a
+        different existing CRS needs `allow_override=True`. Returns the frame,
+        this one when `inplace=True`, as GeoPandas does.
+        """
+        if self._geometry_name is None:
+            raise AttributeError("This GeoDataFrame has no active geometry column")
+        if crs is None and epsg is not None:
+            crs = int(epsg)
+        target = self if inplace else self._copy()
+        current = self.crs
+        if (current is None and crs is None) or (
+            current is not None and crs is not None and _same_crs(current, crs)
+        ):
+            # Unchanged: rebinding the column would only invalidate Series read
+            # from this frame earlier.
+            return target
+        relabeled = self.geometry.set_crs(crs, allow_override=allow_override)
+        # Not through assignment, which gives a CRS-less geometry the column's
+        # current CRS and so would undo clearing it.
+        target._assign(target._geometry_name, relabeled._expr)
+        return target
+
+    # -- columns and rows ---------------------------------------------------
+
+    def drop(self, labels=None, axis=0, columns=None, errors="raise"):
+        """Drop columns, as in `DataFrame.drop(columns=...)`.
+
+        There is no index, so only columns can be dropped: pass `columns=`,
+        or `labels` with `axis=1`. Dropping the active geometry column leaves
+        the frame without one, as in GeoPandas.
+        """
+        if columns is None:
+            if axis not in (1, "columns"):
+                raise NotImplementedError(
+                    "drop() removes columns only: there is no index to drop "
+                    "rows by; filter with a boolean mask instead"
+                )
+            columns = labels
+        names = [columns] if isinstance(columns, str) else list(columns)
+        missing = [name for name in names if name not in self.columns]
+        if missing and errors == "raise":
+            raise KeyError(f"{missing} not found in axis")
+        names = [name for name in names if name in self.columns]
+        if not names:
+            return self._copy()
+        geometry = None if self._geometry_name in names else self._geometry_name
+        return GeoDataFrame(self._df.drop(*names), geometry)
+
+    def rename(self, mapper=None, columns=None, axis=None, errors="ignore"):
+        """Rename columns, as in `DataFrame.rename(columns=...)`.
+
+        `columns` (or `mapper` with `axis=1`) is a mapping of old to new names
+        or a function of the old name. As in GeoPandas, renaming the active
+        geometry column this way leaves the frame without an active geometry;
+        `rename_geometry` renames it and keeps it active.
+        """
+        if columns is None:
+            if axis not in (1, "columns"):
+                raise NotImplementedError(
+                    "rename() renames columns only: there is no index; pass "
+                    "columns= or axis=1"
+                )
+            columns = mapper
+        if callable(columns):
+            mapping = {name: columns(name) for name in self.columns}
+        else:
+            mapping = dict(columns)
+            missing = [name for name in mapping if name not in self.columns]
+            if missing and errors == "raise":
+                raise KeyError(f"{missing} not found in axis")
+        mapping = {
+            old: new
+            for old, new in mapping.items()
+            if old in self.columns and old != new
+        }
+        if not mapping:
+            return self._copy()
+        final = [mapping.get(name, name) for name in self.columns]
+        duplicates = sorted({name for name in final if final.count(name) > 1})
+        if duplicates:
+            raise ValueError(
+                f"rename() would produce duplicate column name(s) {duplicates}, "
+                f"which a frame cannot hold"
+            )
+        renamed = _renamed(self._df, mapping)
+        geometry = None if self._geometry_name in mapping else self._geometry_name
+        return GeoDataFrame(renamed, geometry)
+
+    def sort_values(self, by, ascending=True, na_position="last"):
+        """Sort rows by one or more columns, as in `DataFrame.sort_values`.
+
+        As in pandas, NaN in a float column sorts as missing, placed by
+        `na_position`. Sorting orders the rows this frame produces; a later
+        operation that does not preserve order (a join, an aggregation) may
+        not keep it.
+        """
+        keys = [by] if isinstance(by, str) else list(by)
+        directions = (
+            [ascending] * len(keys) if isinstance(ascending, bool) else list(ascending)
+        )
+        if len(directions) != len(keys):
+            raise ValueError(
+                f"Length of ascending ({len(directions)}) != length of by ({len(keys)})"
+            )
+        if na_position not in ("first", "last"):
+            raise ValueError(f"invalid na_position: {na_position}")
+        missing = [key for key in keys if key not in self.columns]
+        if missing:
+            raise KeyError(missing[0])
+        sort_keys = []
+        for key, up in zip(keys, directions):
+            expr = self._df[key]
+            if _is_floating(self._df, key):
+                # NaN sorts as missing in pandas; the engine orders it above
+                # every number, so it becomes null for the sort key.
+                gate = expr.funcs.isnan().funcs.nullif(lit(True)).cast(pa.float64())
+                expr = expr + gate
+            first = na_position == "first"
+            sort_keys.append(expr.asc(first) if up else expr.desc(first))
+        return GeoDataFrame(self._df.sort(*sort_keys), self._geometry_name)
+
+    def _copy(self):
+        """A new frame over the same data, sharing its lineage."""
+        copy = GeoDataFrame(self._df, self._geometry_name)
+        copy._ancestors = list(self._ancestors)
+        return copy
+
+    def _rebind(self, df, renames_columns=False):
+        """Point this frame at `df`; earlier Series are stale if names moved."""
+        if renames_columns:
+            self._ancestors = []
+        self._df = df
+
     def dissolve(self, by=None, aggfunc="first", dropna=True):
         """Group rows and union each group's geometry.
 
@@ -619,6 +1090,44 @@ class GeoDataFrame:
 
         unioned = collected.mutate(geometry_expr.alias(self._geometry_name))
         return GeoDataFrame(unioned, self._geometry_name)
+
+    def explode(self, column=None, ignore_index=False, index_parts=False):
+        """One row per part of each multi-part geometry, as in GeoPandas.
+
+        Parts are taken one level deep, as `shapely.get_parts` does: a
+        multi-geometry or collection yields its members, a single geometry
+        stays one row, and a row whose geometry has no parts (an empty
+        multi-geometry or collection, or a missing geometry) is dropped. The
+        other columns repeat for each part, and the exploded column moves to
+        the end, as in GeoPandas.
+
+        Args:
+            column: The column to explode: only the active geometry column
+                (the default) is supported. GeoPandas explodes the active
+                geometry even when `column` names another geometry column,
+                and explodes a non-geometry column as lists.
+            ignore_index: Accepted for compatibility; there is no index.
+            index_parts: Not supported, since there is no index to number the
+                parts in.
+
+        Returns:
+            A `GeoDataFrame` with the same active geometry column.
+        """
+        if column is None:
+            if self._geometry_name is None:
+                raise AttributeError("This GeoDataFrame has no active geometry column")
+            column = self._geometry_name
+        if column not in self.columns:
+            raise KeyError(column)
+        if column != self._geometry_name:
+            raise NotImplementedError(
+                f"explode() supports the active geometry column only, not {column!r}"
+            )
+        if index_parts:
+            raise NotImplementedError(
+                "explode() cannot number parts with index_parts=True: there is no index"
+            )
+        return GeoDataFrame(_explode_parts(self._df, column), self._geometry_name)
 
     def to_geopandas(self):
         """Execute and return a `geopandas.GeoDataFrame` (or plain DataFrame).

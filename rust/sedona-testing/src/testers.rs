@@ -510,6 +510,32 @@ impl ScalarUdfTester {
         }
     }
 
+    /// Invoke this function with any number of scalars, each given as a literal
+    /// expression (e.g. `vec![lit(1), lit(2.5), lit("POINT (0 1)")]`) and cast
+    /// to its argument type as in [Self::invoke_scalar]
+    pub fn invoke_scalars(&self, args: Vec<Expr>) -> Result<ScalarValue> {
+        assert_eq!(args.len(), self.arg_types.len(), "Unexpected arg length");
+        let scalar_args = args
+            .into_iter()
+            .zip(&self.arg_types)
+            .map(|(arg, sedona_type)| Self::scalar_from_expr(arg, sedona_type))
+            .collect::<Result<Vec<_>>>()?;
+
+        // Some UDF calculate the return type from the input scalar arguments, so try it first.
+        let return_type = self
+            .return_type_with_scalars_inner(
+                &scalar_args.iter().cloned().map(Some).collect::<Vec<_>>(),
+            )
+            .ok();
+
+        let args = scalar_args.into_iter().map(ColumnarValue::Scalar).collect();
+        if let ColumnarValue::Scalar(scalar) = self.invoke_with_return_type(args, return_type)? {
+            Ok(scalar)
+        } else {
+            sedona_internal_err!("Expected scalar result from scalar invoke")
+        }
+    }
+
     /// Invoke this function with a raster scalar built from a [RasterSpec]
     pub fn invoke_raster_scalar(&self, spec: &RasterSpec) -> Result<ScalarValue> {
         self.invoke_scalar(spec)
@@ -707,7 +733,11 @@ impl ScalarUdfTester {
     }
 
     fn scalar_lit(arg: impl Literal, sedona_type: &SedonaType) -> Result<ScalarValue> {
-        if let Expr::Literal(scalar, _) = arg.lit() {
+        Self::scalar_from_expr(arg.lit(), sedona_type)
+    }
+
+    fn scalar_from_expr(arg: Expr, sedona_type: &SedonaType) -> Result<ScalarValue> {
+        if let Expr::Literal(scalar, _) = arg {
             let is_geometry_or_geography = match sedona_type {
                 SedonaType::Wkb(_, _) | SedonaType::WkbLarge(_, _) | SedonaType::WkbView(_, _) => {
                     true

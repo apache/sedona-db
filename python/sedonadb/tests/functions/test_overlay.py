@@ -25,10 +25,9 @@ from sedonadb.testing import geom_or_null, PostGIS, SedonaDB
         (None, None, None),
         (None, "POINT (0 0)", None),
         ("POINT (0 0)", None, None),
-        # Currently geoarrow returns POINT (nan, nan) instead of POINT EMPTY
-        ("POINT EMPTY", "POINT EMPTY", "POINT (nan nan)"),
-        ("POINT (0 0)", "POINT (0 0)", "POINT (nan nan)"),
-        ("POINT (0 0)", "LINESTRING (0 0, 1 1)", "POINT (nan nan)"),
+        ("POINT EMPTY", "POINT EMPTY", "POINT EMPTY"),
+        ("POINT (0 0)", "POINT (0 0)", "POINT EMPTY"),
+        ("POINT (0 0)", "LINESTRING (0 0, 1 1)", "POINT EMPTY"),
         ("POINT (0 0)", "POINT (1 1)", "POINT (0 0)"),
         (
             "LINESTRING (0 0, 1 1)",
@@ -62,10 +61,9 @@ def test_st_difference(eng, geom1, geom2, expected):
         (None, None, None),
         (None, "POINT (0 0)", None),
         ("POINT (0 0)", None, None),
-        # Currently geoarrow returns POINT (nan, nan) instead of POINT EMPTY
-        ("POINT EMPTY", "POINT EMPTY", "POINT (nan nan)"),
+        ("POINT EMPTY", "POINT EMPTY", "POINT EMPTY"),
         ("POINT (0 0)", "POINT (0 0)", "POINT (0 0)"),
-        ("POINT (0 0)", "POINT (1 1)", "POINT (nan nan)"),
+        ("POINT (0 0)", "POINT (1 1)", "POINT EMPTY"),
         ("POINT (0 0)", "LINESTRING (0 0, 1 1)", "POINT (0 0)"),
         ("LINESTRING (0 0, 1 1)", "LINESTRING (2 2, 3 3)", "LINESTRING EMPTY"),
         ("LINESTRING (0 0, 1 1)", "LINESTRING (1 1, 2 2)", "POINT (1 1)"),
@@ -96,9 +94,8 @@ def test_st_intersection(eng, geom1, geom2, expected):
         (None, None, None),
         (None, "POINT (0 0)", None),
         ("POINT (0 0)", None, None),
-        # Currently geoarrow returns POINT (nan, nan) instead of POINT EMPTY
-        ("POINT EMPTY", "POINT EMPTY", "POINT (nan nan)"),
-        ("POINT (0 0)", "POINT (0 0)", "POINT (nan nan)"),
+        ("POINT EMPTY", "POINT EMPTY", "POINT EMPTY"),
+        ("POINT (0 0)", "POINT (0 0)", "POINT EMPTY"),
         ("POINT (0 0)", "LINESTRING (0 0, 1 1)", "LINESTRING (0 0, 1 1)"),
         ("POINT (0 0)", "POINT (1 1)", "MULTIPOINT (0 0, 1 1)"),
         (

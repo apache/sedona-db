@@ -34,7 +34,7 @@ use crate::{
     dataframe::InternalDataFrame,
     datasource::PyExternalFormat,
     error::PySedonaError,
-    import_from::import_table_provider_from_any,
+    import_from::{import_sedona_ffi_catalog_list, import_table_provider_from_any},
     raster_loader::PyRasterLoaderWrapper,
     runtime::wait_for_future,
     udf::{PyAggregateUdf, PyScalarUdf, PySedonaAggregateUdf, PySedonaScalarUdf},
@@ -420,6 +420,13 @@ impl InternalContext {
                 .call_method0("__sedonadb_raster_loader__")?
                 .extract::<PyRasterLoaderWrapper>()?;
             self.inner.register_raster_loader(wrapper.inner);
+            return Ok(());
+        } else if component.hasattr("__sedonadb_catalog_list__")? {
+            let foreign = Arc::new(import_sedona_ffi_catalog_list(
+                &component,
+                self.runtime.clone(),
+            )?);
+            self.inner.register_catalog_list(foreign);
             return Ok(());
         } else if component.hasattr("__sedonadb_scalar_udf__")? {
             // One function's overload kernels, each a natively-compiled kernel

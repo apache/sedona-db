@@ -25,9 +25,10 @@ kernels:
 
 ## Description
 
-Returns `true` if the geometry is well-formed according to OGC rules. Use
-`ST_IsValidReason` to get a diagnostic message for invalid geometries and
-`ST_MakeValid` to attempt to repair them.
+Returns `true` if the geometry is well-formed according to OGC rules. A
+geometry that GEOS cannot build or validate is reported as `false` rather than
+raising an error. Use `ST_IsValidReason` to get a diagnostic message for invalid
+geometries and `ST_MakeValid` to attempt to repair them.
 
 ## Examples
 

@@ -76,6 +76,16 @@ impl SedonaScalarKernel for STDWithin {
 }
 
 fn invoke_scalar(lhs: &geos::Geometry, rhs: &geos::Geometry, distance: f64) -> Result<bool> {
+    if lhs
+        .is_empty()
+        .map_err(|e| DataFusionError::Execution(format!("Failed to check geometry: {e}")))?
+        || rhs
+            .is_empty()
+            .map_err(|e| DataFusionError::Execution(format!("Failed to check geometry: {e}")))?
+    {
+        return Ok(false);
+    }
+
     let dist_between = lhs
         .distance(rhs)
         .map_err(|e| DataFusionError::Execution(format!("Failed to calculate dwithin: {e}")))?;
@@ -127,6 +137,7 @@ mod tests {
                 Some("POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))"),
                 None,
                 Some("POINT EMPTY"),
+                Some("POINT (5 5)"),
             ],
             &sedona_type,
         );
@@ -136,12 +147,16 @@ mod tests {
                 Some("POINT (5 5)"),
                 Some("POINT (0 0)"),
                 Some("POINT EMPTY"),
+                Some("POLYGON EMPTY"),
             ],
             &sedona_type,
         );
         let distance = 1;
 
-        let expected: ArrayRef = arrow_array!(Boolean, [Some(true), Some(false), None, Some(true)]);
+        let expected: ArrayRef = arrow_array!(
+            Boolean,
+            [Some(true), Some(false), None, Some(false), Some(false)]
+        );
         assert_array_equal(
             &tester
                 .invoke_array_array_scalar(Arc::clone(&arg1), Arc::clone(&arg2), distance)
@@ -149,8 +164,11 @@ mod tests {
             &expected,
         );
 
-        let distance = arrow_array!(Int32, [Some(1), Some(1), Some(1), Some(1)]);
-        let expected: ArrayRef = arrow_array!(Boolean, [Some(true), Some(false), None, Some(true)]);
+        let distance = arrow_array!(Int32, [Some(1), Some(1), Some(1), Some(1), Some(1)]);
+        let expected: ArrayRef = arrow_array!(
+            Boolean,
+            [Some(true), Some(false), None, Some(false), Some(false)]
+        );
         assert_array_equal(
             &tester.invoke_arrays(vec![arg1, arg2, distance]).unwrap(),
             &expected,

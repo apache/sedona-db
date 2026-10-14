@@ -283,7 +283,6 @@ fn bounding_rect_merge<T: CoordNum>(a: Rect<T>, b: Rect<T>) -> Rect<T> {
 
 #[cfg(test)]
 mod test {
-    use core::f64;
 
     use wkb::Endianness;
     use wkb::writer::WriteOptions;

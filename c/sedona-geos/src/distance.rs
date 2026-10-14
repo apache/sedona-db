@@ -54,7 +54,11 @@ impl SedonaScalarKernel for STDistance {
         executor.execute_wkb_wkb_void(|lhs, rhs| {
             match (lhs, rhs) {
                 (Some(lhs), Some(rhs)) => {
-                    builder.append_value(invoke_scalar(lhs, rhs)?);
+                    if let Some(distance) = invoke_scalar(lhs, rhs)? {
+                        builder.append_value(distance);
+                    } else {
+                        builder.append_null();
+                    }
                 }
                 _ => builder.append_null(),
             }
@@ -66,12 +70,25 @@ impl SedonaScalarKernel for STDistance {
     }
 }
 
-fn invoke_scalar(geos_geom: &geos::Geometry, other_geos_geom: &geos::Geometry) -> Result<f64> {
+fn invoke_scalar(
+    geos_geom: &geos::Geometry,
+    other_geos_geom: &geos::Geometry,
+) -> Result<Option<f64>> {
+    if geos_geom
+        .is_empty()
+        .map_err(|e| DataFusionError::Execution(format!("Failed to check geometry: {e}")))?
+        || other_geos_geom
+            .is_empty()
+            .map_err(|e| DataFusionError::Execution(format!("Failed to check geometry: {e}")))?
+    {
+        return Ok(None);
+    }
+
     let distance = geos_geom
         .distance(other_geos_geom)
         .map_err(|e| DataFusionError::Execution(format!("Failed to calculate distance: {e}")))?;
 
-    Ok(distance)
+    Ok(Some(distance))
 }
 
 #[cfg(test)]
@@ -104,19 +121,26 @@ mod tests {
         assert!(result.is_null());
 
         let lhs = create_array(
-            &[Some("POINT (72 42)"), Some("POINT EMPTY"), None],
+            &[
+                Some("POINT (72 42)"),
+                Some("POINT EMPTY"),
+                Some("POINT (5 5)"),
+                None,
+            ],
             &WKB_GEOMETRY,
         );
         let rhs = create_array(
             &[
                 Some("LINESTRING(-72 -42, 82 92)"),
                 Some("POINT (5 5)"),
+                Some("POLYGON EMPTY"),
                 Some("POINT (0 0)"),
             ],
             &WKB_GEOMETRY,
         );
 
-        let expected: ArrayRef = arrow_array!(Float64, [Some(31.155515639003543), Some(0.0), None]);
+        let expected: ArrayRef =
+            arrow_array!(Float64, [Some(31.155515639003543), None, None, None]);
         assert_array_equal(&tester.invoke_array_array(lhs, rhs).unwrap(), &expected);
     }
 }

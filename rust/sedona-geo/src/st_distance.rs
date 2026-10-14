@@ -26,7 +26,7 @@ use sedona_expr::{
     scalar_udf::{ScalarKernelRef, SedonaScalarKernel},
 };
 use sedona_functions::executor::{PointOrWkb, PointXYExecutor};
-use sedona_geo_generic_alg::line_measures::DistanceExt;
+use sedona_geo_generic_alg::{HasDimensions, line_measures::DistanceExt};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 /// ST_Distance() implementation using [DistanceExt]
@@ -60,7 +60,10 @@ impl SedonaScalarKernel for STDistance {
 
         executor.execute_wkb_wkb_void(|maybe0, maybe1| {
             match (maybe0, maybe1) {
-                (Some(a), Some(b)) => builder.append_value(point_or_wkb_distance(a, b)),
+                (Some(a), Some(b)) => match point_or_wkb_distance(a, b) {
+                    Some(distance) => builder.append_value(distance),
+                    None => builder.append_null(),
+                },
                 _ => builder.append_null(),
             }
             Ok(())
@@ -74,16 +77,22 @@ impl SedonaScalarKernel for STDistance {
 /// from the coordinates; any other combination defers to the generic
 /// [DistanceExt] (a Point operand becomes a [`geo_types::Point`] so the mixed
 /// Point/geometry case never re-parses the Point). Shared with `ST_DWithin`.
-pub(crate) fn point_or_wkb_distance(a: &PointOrWkb, b: &PointOrWkb) -> f64 {
+pub(crate) fn point_or_wkb_distance(a: &PointOrWkb, b: &PointOrWkb) -> Option<f64> {
     match (a, b) {
         (PointOrWkb::Point(ax, ay), PointOrWkb::Point(bx, by)) => {
             let dx = ax - bx;
             let dy = ay - by;
-            (dx * dx + dy * dy).sqrt()
+            Some((dx * dx + dy * dy).sqrt())
         }
-        (PointOrWkb::Point(x, y), PointOrWkb::Other(wkb)) => Point::new(*x, *y).distance_ext(wkb),
-        (PointOrWkb::Other(wkb), PointOrWkb::Point(x, y)) => wkb.distance_ext(&Point::new(*x, *y)),
-        (PointOrWkb::Other(wkb0), PointOrWkb::Other(wkb1)) => wkb0.distance_ext(wkb1),
+        (PointOrWkb::Point(x, y), PointOrWkb::Other(wkb)) => {
+            (!wkb.is_empty()).then(|| Point::new(*x, *y).distance_ext(wkb))
+        }
+        (PointOrWkb::Other(wkb), PointOrWkb::Point(x, y)) => {
+            (!wkb.is_empty()).then(|| wkb.distance_ext(&Point::new(*x, *y)))
+        }
+        (PointOrWkb::Other(wkb0), PointOrWkb::Other(wkb1)) => {
+            (!wkb0.is_empty() && !wkb1.is_empty()).then(|| wkb0.distance_ext(wkb1))
+        }
     }
 }
 
@@ -138,6 +147,22 @@ mod tests {
         assert!(result.is_null());
         let result = tester
             .invoke_scalar_scalar(point_0_0.clone(), ScalarValue::Null)
+            .unwrap();
+        assert!(result.is_null());
+
+        // Distance involving an empty geometry is undefined.
+        let result = tester
+            .invoke_scalar_scalar(
+                create_scalar(Some("POINT EMPTY"), &left_sedona_type),
+                point_3_4.clone(),
+            )
+            .unwrap();
+        assert!(result.is_null());
+        let result = tester
+            .invoke_scalar_scalar(
+                point_0_0,
+                create_scalar(Some("POLYGON EMPTY"), &right_sedona_type),
+            )
             .unwrap();
         assert!(result.is_null());
     }
@@ -218,5 +243,102 @@ mod tests {
             .unwrap();
 
         assert_eq!(result, ScalarValue::Float64(Some(0.0)));
+    }
+
+    #[test]
+    fn nonempty_collection_with_empty_point() {
+        let point = create_scalar(Some("POINT (0 0)"), &WKB_GEOMETRY);
+        let mixed = create_scalar(
+            Some("GEOMETRYCOLLECTION (POINT EMPTY, POINT (10 0))"),
+            &WKB_GEOMETRY,
+        );
+        let distance = ScalarUdfTester::new(
+            SedonaScalarUDF::from_impl("st_distance", st_distance_impl()).into(),
+            vec![WKB_GEOMETRY, WKB_GEOMETRY],
+        )
+        .invoke_scalar_scalar(point.clone(), mixed.clone())
+        .unwrap();
+        let dwithin = ScalarUdfTester::new(
+            SedonaScalarUDF::from_impl("st_dwithin", crate::st_dwithin::st_dwithin_impl()).into(),
+            vec![
+                WKB_GEOMETRY,
+                WKB_GEOMETRY,
+                SedonaType::Arrow(DataType::Float64),
+            ],
+        )
+        .invoke_scalar_scalar_scalar(point, mixed, ScalarValue::Float64(Some(1.0)))
+        .unwrap();
+        assert_eq!(
+            (distance, dwithin),
+            (
+                ScalarValue::Float64(Some(10.0)),
+                ScalarValue::Boolean(Some(false))
+            )
+        );
+    }
+
+    #[rstest]
+    #[case("POINT (0 0)", "GEOMETRYCOLLECTION (POINT EMPTY, POINT (10 0))", 10.0)]
+    #[case("GEOMETRYCOLLECTION (POINT EMPTY, POINT (10 0))", "POINT (0 0)", 10.0)]
+    #[case(
+        "GEOMETRYCOLLECTION (POINT EMPTY, POINT (0 3))",
+        "GEOMETRYCOLLECTION (LINESTRING EMPTY, POINT (4 0))",
+        5.0
+    )]
+    #[case(
+        "LINESTRING (0 0, 0 1)",
+        "GEOMETRYCOLLECTION (POLYGON EMPTY, POINT (3 1))",
+        3.0
+    )]
+    #[case(
+        "POINT (0 0)",
+        "GEOMETRYCOLLECTION (GEOMETRYCOLLECTION (POINT EMPTY), POINT (10 0))",
+        10.0
+    )]
+    fn collection_with_empty_members(#[case] lhs: &str, #[case] rhs: &str, #[case] expected: f64) {
+        let tester = ScalarUdfTester::new(
+            SedonaScalarUDF::from_impl("st_distance", st_distance_impl()).into(),
+            vec![WKB_GEOMETRY, WKB_GEOMETRY],
+        );
+        let result = tester
+            .invoke_scalar_scalar(
+                create_scalar(Some(lhs), &WKB_GEOMETRY),
+                create_scalar(Some(rhs), &WKB_GEOMETRY),
+            )
+            .unwrap();
+        assert_eq!(result, ScalarValue::Float64(Some(expected)));
+    }
+
+    #[test]
+    fn collection_member_at_the_largest_distance() {
+        // f64::MAX is a real distance, not a marker for a collection without members
+        let point = create_scalar(Some("POINT (0 0)"), &WKB_GEOMETRY);
+        let far = create_scalar(
+            Some("GEOMETRYCOLLECTION (POINT EMPTY, POINT (1.7976931348623157e308 0))"),
+            &WKB_GEOMETRY,
+        );
+        let distance = ScalarUdfTester::new(
+            SedonaScalarUDF::from_impl("st_distance", st_distance_impl()).into(),
+            vec![WKB_GEOMETRY, WKB_GEOMETRY],
+        )
+        .invoke_scalar_scalar(point.clone(), far.clone())
+        .unwrap();
+        let dwithin = ScalarUdfTester::new(
+            SedonaScalarUDF::from_impl("st_dwithin", crate::st_dwithin::st_dwithin_impl()).into(),
+            vec![
+                WKB_GEOMETRY,
+                WKB_GEOMETRY,
+                SedonaType::Arrow(DataType::Float64),
+            ],
+        )
+        .invoke_scalar_scalar_scalar(point, far, ScalarValue::Float64(Some(1.0)))
+        .unwrap();
+        assert_eq!(
+            (distance, dwithin),
+            (
+                ScalarValue::Float64(Some(f64::MAX)),
+                ScalarValue::Boolean(Some(false))
+            )
+        );
     }
 }

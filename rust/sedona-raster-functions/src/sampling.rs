@@ -35,7 +35,9 @@ use sedona_geometry::error::SedonaGeometryError;
 use sedona_geometry::transform::{CrsEngine, CrsTransform, visit_point_coords};
 use sedona_raster::error::RasterResultExt;
 use sedona_raster::geo_transform::GeoTransformEx;
-use sedona_raster::traits::{BandRef, NdBuffer, RasterRef, nodata_bytes_to_f64_lossless};
+use sedona_raster::traits::{
+    BandRef, NdBuffer, RasterRef, nodata_bytes_to_f64_lossless, split_outdb_band_fragment,
+};
 use sedona_schema::crs::CrsRef;
 use sedona_schema::datatypes::SedonaType;
 use wkb::reader::read_wkb;
@@ -52,8 +54,9 @@ pub(crate) fn int32_array_arg(arg: &ColumnarValue, num_iterations: usize) -> Res
 
 /// Resolve the **1-based** `band_num` to a [`BandRef`], mapping it onto the
 /// raster's 0-based [`RasterRef::band`] accessor. Band 0 is rejected as not
-/// 1-based (callers clamp negative inputs to 0 for exactly this signal); an
-/// out-of-range band surfaces the accessor's own error. `func` names the
+/// 1-based (callers clamp negative inputs to 0 for exactly this signal). An
+/// out-of-range band is checked here rather than left to the accessor, whose
+/// error names the 0-based index the caller never wrote. `func` names the
 /// calling UDF for the error message.
 pub(crate) fn resolve_band<'a>(
     func: &str,
@@ -63,9 +66,48 @@ pub(crate) fn resolve_band<'a>(
     let index = band_num.checked_sub(1).ok_or_else(|| {
         exec_datafusion_err!("{func}: Invalid band number {band_num}: band numbers must be 1-based")
     })?;
+    let num_bands = raster.num_bands();
+    if index >= num_bands {
+        return exec_err!(
+            "{func}: Band {band_num} is out of range: {} has {num_bands} bands",
+            describe_raster(raster)
+        );
+    }
     raster
         .band(index)
         .map_err(|e| exec_datafusion_err!("{func}: {e}"))
+}
+
+/// How an error message names `raster`: the file its bands were read from,
+/// when every band carries the same source URI, otherwise `"this raster"`.
+///
+/// A band's URI loses its `#band=N` fragment, so the bands of one file compare
+/// equal, and a URL loses its query string, which can hold a signed URL's
+/// credentials that do not belong in an error message.
+pub(crate) fn describe_raster(raster: &dyn RasterRef) -> String {
+    let mut source = None;
+    for index in 0..raster.num_bands() {
+        let Some(uri) = raster.band_outdb_uri(index) else {
+            return "this raster".to_string();
+        };
+        let uri = source_of(uri);
+        match source {
+            None => source = Some(uri),
+            Some(ref seen) if *seen == uri => {}
+            Some(_) => return "this raster".to_string(),
+        }
+    }
+    source.unwrap_or_else(|| "this raster".to_string())
+}
+
+/// A band URI without its `#band=N` fragment and, for a `scheme://` URL, its
+/// query string.
+fn source_of(uri: &str) -> String {
+    let uri = split_outdb_band_fragment(uri).map_or_else(|_| uri.to_string(), |(base, _)| base);
+    match uri.split_once('?') {
+        Some((base, _)) if uri.contains("://") => base.to_string(),
+        _ => uri,
+    }
 }
 
 /// Advance the optional band-number iterator one row, yielding the 1-based band
@@ -82,18 +124,19 @@ pub(crate) fn next_band(
     }
 }
 
-/// Resolve the 1-based band to sample when no band argument was given: band 1
-/// for a single-band raster, otherwise an error. Sampling an unspecified band of
-/// a multiband raster is ambiguous, so the caller must name the band rather than
+/// Resolve the 1-based band to use when no band argument was given: band 1
+/// for a single-band raster, otherwise an error. Leaving the band out on a
+/// multiband raster is ambiguous, so the caller must name the band rather than
 /// silently getting band 1 (matches `RS_SetBandNoDataValue`'s 2-argument form).
-/// `func` names the calling UDF for the error message.
-pub(crate) fn default_band(func: &str, num_bands: usize) -> Result<usize> {
+/// `func` names the calling UDF and `elided_form` the argument form that leaves
+/// the band out (e.g. `"2-argument"`), both for the error message.
+pub(crate) fn default_band(func: &str, elided_form: &str, num_bands: usize) -> Result<usize> {
     if num_bands == 1 {
         Ok(1)
     } else {
         exec_err!(
-            "{func}: raster has {num_bands} bands; specify which band to sample (the \
-             2-argument form is only allowed for a single-band raster)"
+            "{func}: raster has {num_bands} bands; specify which band to use (the \
+             {elided_form} form is only allowed for a single-band raster)"
         )
     }
 }
@@ -281,4 +324,76 @@ pub(crate) fn read_pixel(
     }
 
     Ok(Some(value))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sedona_raster::array::RasterStructArray;
+    use sedona_schema::raster::BandDataType;
+    use sedona_testing::raster_spec::RasterSpec;
+
+    fn describe(spec: RasterSpec) -> String {
+        let array = spec.build();
+        let rasters = RasterStructArray::try_new(&array).unwrap();
+        describe_raster(&rasters.get(0).unwrap())
+    }
+
+    fn outdb(spec: RasterSpec, uri: &str) -> RasterSpec {
+        spec.band(BandDataType::UInt8).outdb(uri, Some("geotiff"))
+    }
+
+    #[test]
+    fn names_the_file_every_band_was_read_from() {
+        let spec = outdb(
+            outdb(RasterSpec::d2(2, 2), "s3://bucket/foofy.tif#band=1"),
+            "s3://bucket/foofy.tif#band=2",
+        );
+        assert_eq!(describe(spec), "s3://bucket/foofy.tif");
+    }
+
+    #[test]
+    fn drops_a_urls_query_string() {
+        let spec = outdb(
+            RasterSpec::d2(2, 2),
+            "https://host/foofy.tif?X-Amz-Signature=secret#band=1",
+        );
+        assert_eq!(describe(spec), "https://host/foofy.tif");
+        // A local path keeps a literal '?'.
+        let spec = outdb(RasterSpec::d2(2, 2), "/data/what?.tif");
+        assert_eq!(describe(spec), "/data/what?.tif");
+    }
+
+    #[test]
+    fn falls_back_without_a_single_source() {
+        // In-memory bands carry no URI.
+        let spec = RasterSpec::d2(2, 2).band_values(&[0u8; 4]);
+        assert_eq!(describe(spec), "this raster");
+        // Bands read from different files.
+        let spec = outdb(
+            outdb(RasterSpec::d2(2, 2), "s3://bucket/a.tif"),
+            "s3://bucket/b.tif",
+        );
+        assert_eq!(describe(spec), "this raster");
+        // One band from a file, one in memory.
+        let spec = outdb(RasterSpec::d2(2, 2), "s3://bucket/a.tif").band_values(&[0u8; 4]);
+        assert_eq!(describe(spec), "this raster");
+        // No bands at all.
+        assert_eq!(describe(RasterSpec::d2(2, 2)), "this raster");
+    }
+
+    #[test]
+    fn out_of_range_band_names_the_file() {
+        let array = outdb(RasterSpec::d2(2, 2), "/data/foofy.tif").build();
+        let rasters = RasterStructArray::try_new(&array).unwrap();
+        let raster = rasters.get(0).unwrap();
+        let err = resolve_band("RS_Value", &raster, 3)
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(
+            err.contains("RS_Value: Band 3 is out of range: /data/foofy.tif has 1 bands"),
+            "{err}"
+        );
+    }
 }

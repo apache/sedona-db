@@ -16,12 +16,10 @@
 # under the License.
 """SedonaDB vs Sedona Spark parity for RS_RasterToWorldCoordX.
 
-Every case is a cataloged divergence: SedonaDB treats pixel coordinates
-as 0-based where Sedona Spark (following PostGIS, and SedonaDB's own
-RS_PixelAs* functions) is 1-based, so results are exactly one pixel
-apart everywhere, extrapolation included (apache/sedona-db#1235). The
-geometry-returning combined form is deferred until the harness can
-compare geometry columns without ST_ wrappers.
+Both engines read pixel coordinates 1-based, as PostGIS and the
+RS_PixelAs* functions do, so pixel (1, 1) is the upper-left corner,
+extrapolation included (apache/sedona-db#1235). The combined form is
+covered in test_rs_rastertoworldcoord.py.
 """
 
 import pytest
@@ -33,10 +31,6 @@ from sedonadb.testing_spark import SedonaSpark
 @pytest.mark.parametrize(
     "px,py",
     [pytest.param(1, 1, id="origin"), pytest.param(9, 9, id="outside")],
-)
-@pytest.mark.xfail(
-    reason="SedonaDB maps pixel coordinates 0-based (returns 102 for pixel "
-    "(1, 1)); Sedona Spark is 1-based (returns 100) — apache/sedona-db#1235"
 )
 def test_rs_rastertoworldcoordx(px, py, tmp_path):
     """Pixel (1, 1) is the upper-left corner on both engines."""

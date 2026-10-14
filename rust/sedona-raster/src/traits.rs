@@ -769,6 +769,20 @@ pub fn nodata_f64_to_bytes(value: f64, dt: &BandDataType) -> Result<Vec<u8>, Ras
     })
 }
 
+/// Pack an `f64` pixel value into the little-endian bytes of a band's data
+/// type, the way a pixel write stores it. An integer type truncates toward zero
+/// first (3.9 is stored as 3, as a Java or Spark numeric cast does); the result
+/// must then fit the type exactly, as for [`nodata_f64_to_bytes`]: in range,
+/// not NaN, and within ±2^53 for the 64-bit integer types. `Float32` rounds to
+/// the nearest `f32`.
+pub fn pixel_f64_to_bytes(value: f64, dt: &BandDataType) -> Result<Vec<u8>, RasterError> {
+    let stored = match dt {
+        BandDataType::Float32 | BandDataType::Float64 => value,
+        _ => value.trunc(),
+    };
+    nodata_f64_to_bytes(stored, dt)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -813,6 +827,46 @@ mod tests {
         nodata_f64_to_bytes(-1.0, &BandDataType::UInt8).unwrap_err();
         // Beyond 2^53 can't have arrived losslessly through f64.
         nodata_f64_to_bytes(1e18, &BandDataType::Int64).unwrap_err();
+    }
+
+    #[test]
+    fn test_pixel_f64_to_bytes_truncates_toward_zero() {
+        assert_eq!(
+            pixel_f64_to_bytes(3.9, &BandDataType::UInt8).unwrap(),
+            vec![3]
+        );
+        assert_eq!(
+            pixel_f64_to_bytes(-3.9, &BandDataType::Int16).unwrap(),
+            (-3i16).to_le_bytes().to_vec()
+        );
+        // Floats are not truncated; Float32 rounds to the nearest f32.
+        assert_eq!(
+            pixel_f64_to_bytes(0.1, &BandDataType::Float32).unwrap(),
+            0.1f32.to_le_bytes().to_vec()
+        );
+        assert_eq!(
+            pixel_f64_to_bytes(-7.25, &BandDataType::Float64).unwrap(),
+            (-7.25f64).to_le_bytes().to_vec()
+        );
+    }
+
+    #[test]
+    fn test_pixel_f64_to_bytes_rejects_what_does_not_fit() {
+        // 255.9 truncates to 255 and fits; 256 does not.
+        assert_eq!(
+            pixel_f64_to_bytes(255.9, &BandDataType::UInt8).unwrap(),
+            vec![255]
+        );
+        pixel_f64_to_bytes(256.0, &BandDataType::UInt8).unwrap_err();
+        // -0.5 truncates to 0 and fits an unsigned type; -1 does not.
+        assert_eq!(
+            pixel_f64_to_bytes(-0.5, &BandDataType::UInt8).unwrap(),
+            vec![0]
+        );
+        pixel_f64_to_bytes(-1.0, &BandDataType::UInt8).unwrap_err();
+        pixel_f64_to_bytes(f64::NAN, &BandDataType::Int32).unwrap_err();
+        pixel_f64_to_bytes(f64::INFINITY, &BandDataType::Int32).unwrap_err();
+        pixel_f64_to_bytes(1e18, &BandDataType::Int64).unwrap_err();
     }
 
     #[test]

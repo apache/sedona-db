@@ -229,10 +229,11 @@ def write_geotiff(
     data's shape (rasterio's `transform.from_bounds`) — or `gdal_transform` —
     GDAL-order `(origin_x, scale_x, skew_x, origin_y, skew_y, scale_y)`, for
     grids a bbox cannot express (skew, south-up).
-    `nodata` (optional) becomes the per-band nodata of every band. `crs`
-    (optional) is any CRS rasterio accepts; parity fixtures stay CRS-less
-    unless an engine requires one, and then use the same CRS everywhere so
-    nothing reprojects.
+    `nodata` (optional) becomes the per-band nodata of every band. It may be
+    one the dtype cannot hold (-9999 or NaN on uint8): TIFFTAG_GDAL_NODATA is
+    ASCII, so real files carry such values. `crs` (optional) is any CRS
+    rasterio accepts; parity fixtures stay CRS-less unless an engine requires
+    one, and then use the same CRS everywhere so nothing reprojects.
     """
     import rasterio
 
@@ -246,9 +247,13 @@ def write_geotiff(
         count=bands,
         dtype=str(data.dtype),
         transform=_resolve_transform(bbox, gdal_transform, width=width, height=height),
-        nodata=nodata,
         crs=crs,
     ) as dst:
+        # The setter, unlike rasterio.open's `nodata=`, does not reject a
+        # value outside the dtype's range; for any other value the file is
+        # byte-identical.
+        if nodata is not None:
+            dst.nodata = nodata
         dst.write(data)
 
 

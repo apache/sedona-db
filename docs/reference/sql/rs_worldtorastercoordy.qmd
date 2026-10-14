@@ -36,6 +36,13 @@ kernels:
         as given, in the raster's own space — this form does not reproject.
 ---
 
+## Description
+
+The result is a 1-based pixel coordinate, as in PostGIS
+`ST_WorldToRasterCoord`: a world coordinate inside the upper-left pixel maps to
+`(1, 1)`. A world coordinate outside the raster extrapolates along the
+geotransform, so it can map to `0` or a negative coordinate.
+
 ## Examples
 
 ```sql

@@ -336,6 +336,17 @@ def test_st_longestline(eng, geom1, geom2, expected):
             "LINESTRING (0 2, 2 0)",
             0,
         ),
+        # An empty member of a non-empty collection is skipped
+        (
+            "POINT (0 0)",
+            "GEOMETRYCOLLECTION (POINT EMPTY, POINT (10 0))",
+            10,
+        ),
+        (
+            "GEOMETRYCOLLECTION (POINT EMPTY, POINT (10 0))",
+            "POINT (0 0)",
+            10,
+        ),
     ],
 )
 def test_st_distance(eng, geom1, geom2, expected):

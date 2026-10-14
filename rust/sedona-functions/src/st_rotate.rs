@@ -125,7 +125,6 @@ impl SedonaScalarKernel for STRotate {
 
 #[cfg(test)]
 mod tests {
-    use std::f64;
 
     use arrow_array::Array;
     use datafusion_expr::ScalarUDF;

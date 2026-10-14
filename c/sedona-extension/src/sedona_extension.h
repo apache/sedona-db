@@ -497,116 +497,50 @@ struct SedonaCTableProvider {
   void* private_data;
 };
 
-/// \brief ABI-stable schema provider interface
+/// \brief Catalog operations over full identifier paths.
 ///
-struct SedonaCSchemaProvider {
-  /// \brief Get the data type of a property
-  int (*get_property_schema)(const struct SedonaCSchemaProvider* self,
-                             const char* property, struct ArrowSchema* out,
-                             struct SedonaCError* err);
-
-  /// \brief Extract a JSON-encoded property from this schema
-  ///
-  /// Supported properties are `owner_name`, `table_names`, and `table_exist`.
-  /// The `table_exist` property accepts `{ "name": "..." }` in args.
-  int (*get_property)(const struct SedonaCSchemaProvider* self, const char* property,
-                      const char* args, struct ArrowArray* out, struct SedonaCError* err);
-
-  /// \brief Look up a table by name
-  int (*table)(const struct SedonaCSchemaProvider* self, const char* name,
-               struct SedonaCTableProvider* out, struct SedonaCError* err);
-
-  /// \brief Create a table from `plan`, taking ownership of the input plan
-  ///
-  /// The returned execution plan performs the create operation when executed.
-  int (*create_table)(const struct SedonaCSchemaProvider* self, const char* name,
-                      struct SedonaCExecutionPlan* plan, struct SedonaCExecutionPlan* out,
-                      struct SedonaCError* err);
-
-  /// \brief Deregister a table by name
-  int (*deregister_table)(const struct SedonaCSchemaProvider* self, const char* name,
-                          struct SedonaCTableProvider* out, struct SedonaCError* err);
-
-  /// \brief Reserved for future use. Must be NULL.
-  void* reserved;
-
-  /// \brief Release this instance
-  ///
-  /// Implementations of this callback must set self->release to NULL.
-  void (*release)(struct SedonaCSchemaProvider* self);
-
-  /// \brief Opaque implementation-specific data
-  void* private_data;
-};
-
-/// \brief ABI-stable catalog provider interface
-struct SedonaCCatalogProvider {
-  /// \brief Get the data type of a property
-  int (*get_property_schema)(const struct SedonaCCatalogProvider* self,
-                             const char* property, struct ArrowSchema* out,
-                             struct SedonaCError* err);
-
-  /// \brief Extract a JSON-encoded property from this catalog
-  ///
-  /// The supported property is `schema_names`.
-  int (*get_property)(const struct SedonaCCatalogProvider* self, const char* property,
-                      const char* args, struct ArrowArray* out, struct SedonaCError* err);
-
-  /// \brief Look up a schema by name
-  int (*schema)(const struct SedonaCCatalogProvider* self, const char* name,
-                struct SedonaCSchemaProvider* out, struct SedonaCError* err);
-
-  /// \brief Create a schema and return it
-  int (*create_schema)(const struct SedonaCCatalogProvider* self, const char* name,
-                       struct SedonaCSchemaProvider* out, struct SedonaCError* err);
-
-  /// \brief Deregister a schema by name
-  int (*deregister_schema)(const struct SedonaCCatalogProvider* self, const char* name,
-                           bool cascade, struct SedonaCSchemaProvider* out,
-                           struct SedonaCError* err);
-
-  /// \brief Reserved for future use. Must be NULL.
-  void* reserved;
-
-  /// \brief Release this instance
-  ///
-  /// Implementations of this callback must set self->release to NULL.
-  void (*release)(struct SedonaCCatalogProvider* self);
-
-  /// \brief Opaque implementation-specific data
-  void* private_data;
-};
-
-/// \brief ABI-stable catalog provider list interface
+/// Callbacks may block and must support concurrent calls. Property names are
+/// UTF-8; identifiers and arguments are UTF-8 JSON. Strings are borrowed for the
+/// duration of the call. All successful outputs transfer ownership to the caller.
 struct SedonaCCatalogProviderList {
-  /// \brief Get the data type of a property
+  /// Get a property's schema. name and list_identifiers are non-null Utf8.
   int (*get_property_schema)(const struct SedonaCCatalogProviderList* self,
                              const char* property, struct ArrowSchema* out,
                              struct SedonaCError* err);
-
-  /// \brief Extract a JSON-encoded property from this catalog list
-  ///
-  /// The supported property is `catalog_names`.
+  /// Get a JSON-encoded property. name returns the stable implementation name
+  /// (e.g., "iceberg") as a JSON string and takes no arguments. It must be
+  /// available without catalog I/O and is cached on import.
+  /// list_identifiers accepts
+  /// args: {"prefix": [...], "depth": null|integer}.
+  /// Prefix matches exact components. Depth counts components after
+  /// prefix, including the prefix itself at depth zero; null is unlimited.
+  /// out: one non-null Utf8 Arrow value containing a JSON array of
+  /// {"identifier": [...], "object_type": "catalog"|"schema"|"table"|"view"|"index"}.
   int (*get_property)(const struct SedonaCCatalogProviderList* self, const char* property,
                       const char* args, struct ArrowArray* out, struct SedonaCError* err);
-
-  /// \brief Look up a catalog by name
-  int (*catalog)(const struct SedonaCCatalogProviderList* self, const char* name,
-                 struct SedonaCCatalogProvider* out, struct SedonaCError* err);
-
-  /// \brief Create a catalog and return it
-  int (*create_catalog)(const struct SedonaCCatalogProviderList* self, const char* name,
-                        struct SedonaCCatalogProvider* out, struct SedonaCError* err);
-
-  /// \brief Reserved for future use. Must be NULL.
+  /// identifier: JSON array of literal components. Missing table: NULL release.
+  int (*table)(const struct SedonaCCatalogProviderList* self, const char* identifier,
+               struct SedonaCTableProvider* out, struct SedonaCError* err);
+  /// args: {"identifier": [...], "options": {"object_type": ..., "mode":
+  /// "create"|"create_or_ignore"|"replace", "temporary": bool, "external": bool,
+  /// "definition": null|string}}. Missing options fields use their Rust defaults.
+  /// A NULL input means no plan; otherwise move it and clear its release callback
+  /// when taking ownership. out is required on success and defers the mutation
+  /// (including existence/conflict checks) until execution. Return ENOTSUP if this
+  /// catalog list cannot create the object: for a new top-level catalog (CREATE
+  /// DATABASE), SedonaDB then offers it to the next registered catalog list.
+  int (*create_object)(const struct SedonaCCatalogProviderList* self, const char* args,
+                       struct SedonaCExecutionPlan* input,
+                       struct SedonaCExecutionPlan* out, struct SedonaCError* err);
+  /// args: {"identifier": [...], "options": {"object_type": ..., "if_exists": bool,
+  /// "cascade": bool, "purge": bool}}. Missing fields use their Rust defaults.
+  /// out is required on success, including for DROP IF EXISTS.
+  int (*drop_object)(const struct SedonaCCatalogProviderList* self, const char* args,
+                     struct SedonaCExecutionPlan* out, struct SedonaCError* err);
+  /// Reserved; must be NULL.
   void* reserved;
-
-  /// \brief Release this instance
-  ///
-  /// Implementations of this callback must set self->release to NULL.
+  /// Release the instance and set release to NULL.
   void (*release)(struct SedonaCCatalogProviderList* self);
-
-  /// \brief Opaque implementation-specific data
   void* private_data;
 };
 

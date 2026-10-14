@@ -19,12 +19,12 @@ use std::{
     sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard},
 };
 
-use crate::exec::create_plan_from_sql;
+use crate::exec::{create_plan_from_sql, resolve_sedona_catalog_ddl};
 use crate::object_storage::ensure_object_store_registered_with_options;
 use crate::read::{read_provider, resolve_read_format};
 use crate::url_table::install_sedona_url_table;
 use crate::{
-    catalog::DynamicObjectStoreCatalog,
+    catalog::SedonaCatalogRegistry,
     random_geometry_provider::RandomGeometryFunction,
     show::{show_batches, DisplayTableOptions},
 };
@@ -32,6 +32,7 @@ use arrow_array::RecordBatch;
 use arrow_schema::{DataType, Schema};
 use async_trait::async_trait;
 use datafusion::datasource::file_format::{format_as_file_type, FileFormatFactory};
+use datafusion::datasource::MemTable;
 use datafusion::{
     common::plan_err,
     error::{DataFusionError, Result},
@@ -50,6 +51,7 @@ use datafusion_expr::dml::InsertOp;
 use datafusion_expr::sqlparser::dialect::{dialect_from_str, Dialect};
 use datafusion_expr::{AggregateUDFImpl, LogicalPlan, LogicalPlanBuilder, ScalarUDFImpl, SortExpr};
 use parking_lot::Mutex;
+use sedona_catalog::SedonaCatalogList;
 use sedona_common::{sedona_internal_datafusion_err, SedonaOptions};
 use sedona_datasource::format::ExternalFormatFactory;
 use sedona_datasource::spec::ExternalFormatSpec;
@@ -95,6 +97,7 @@ use sedona_raster::raster_loader::{AsyncRasterLoader, RasterLoaderConfig, Raster
 /// interface for configuring the behaviour of
 pub struct SedonaContext {
     pub ctx: SessionContext,
+    catalogs: Arc<SedonaCatalogRegistry>,
     functions: RwLock<FunctionSet>,
     /// Per-session registry of async raster byte loaders, keyed by
     /// `outdb_format`. Held behind an `Arc<RwLock<…>>` so the registered
@@ -118,7 +121,7 @@ impl SedonaContext {
         // https://github.com/apache/sedona-db/issues/1232.
         let state_builder = register_vendored_optimizer_rules(state_builder).unwrap();
         let state_builder = register_sedona_analyzer_rules(state_builder).unwrap();
-        Self::finish_new(SessionContext::new_with_state(state_builder.build())).unwrap()
+        Self::finish_new(SessionContext::new_with_state(state_builder.build()), false).unwrap()
     }
 
     /// Creates a new context with default interactive options
@@ -307,24 +310,14 @@ impl SedonaContext {
         // Load the configured catalogs before finishing context setup below.
         ctx.refresh_catalogs().await?;
 
-        let out = Self::finish_new(ctx)?;
+        // Install URL resolution before the session catalog registry so it is
+        // part of the built-in fallback rather than another outer wrapper.
+        install_sedona_url_table(&ctx);
 
-        // Install state-dependent catalog wrappers after context setup so
-        // their weak references point at the live SessionState.
-        install_sedona_url_table(&out.ctx);
-
-        // The provider stores a weak reference to SessionState, so install it
-        // only after the context is fully initialized.
-        out.ctx
-            .register_catalog_list(Arc::new(DynamicObjectStoreCatalog::new(
-                out.ctx.state().catalog_list().clone(),
-                out.ctx.state_weak_ref(),
-            )));
-
-        Ok(out)
+        Self::finish_new(ctx, true)
     }
 
-    fn finish_new(ctx: SessionContext) -> Result<Self> {
+    fn finish_new(ctx: SessionContext, dynamic_object_store: bool) -> Result<Self> {
         // The cache's budget comes from `sedona.raster.cache_max_bytes`
         // (derived above under a memory limit, the default otherwise) and
         // is re-read at every `RS_EnsureLoaded` call, so `SET` applies
@@ -345,8 +338,16 @@ impl SedonaContext {
         let raster_chunk_cache: Arc<dyn RasterChunkCache> =
             Arc::new(InMemoryChunkCache::new(cache_max_bytes).with_memory_pool(Arc::new(pool)));
 
+        let catalogs = Arc::new(SedonaCatalogRegistry::new(
+            ctx.state().catalog_list().clone(),
+            ctx.state_weak_ref(),
+            dynamic_object_store,
+        ));
+        ctx.register_catalog_list(catalogs.clone());
+
         let mut out = Self {
             ctx,
+            catalogs,
             functions: RwLock::new(FunctionSet::new()),
             raster_loader_registry: Arc::new(RwLock::new(RasterLoaderRegistry::new())),
             raster_chunk_cache,
@@ -508,6 +509,19 @@ impl SedonaContext {
         }
     }
 
+    /// Register a foreign catalog list for this session.
+    ///
+    /// Later registrations take precedence over earlier foreign catalogs and
+    /// DataFusion's built-in catalogs when names overlap in Sedona SQL. Foreign
+    /// objects are not exposed through the synchronous DataFusion catalog API.
+    pub fn register_catalog_list(&self, catalogs: Arc<dyn SedonaCatalogList>) {
+        self.catalogs.register_foreign(catalogs);
+    }
+
+    pub(crate) fn catalog_registry(&self) -> &SedonaCatalogRegistry {
+        &self.catalogs
+    }
+
     /// The session's cache of loaded OutDb band bytes: inspect its
     /// [`stats`](RasterChunkCache::stats) or [`clear`](RasterChunkCache::clear)
     /// it. Its budget is `sedona.raster.cache_max_bytes`.
@@ -655,7 +669,18 @@ impl SedonaContext {
         let mut results = Vec::with_capacity(statements.len());
         for statement in statements {
             let plan = create_plan_from_sql(self, statement.clone()).await?;
-            let df = self.ctx.execute_logical_plan(plan).await?;
+            let df = if let Some(plan) = resolve_sedona_catalog_ddl(self, &plan, &statement).await?
+            {
+                // Like DataFusion's built-in DDL, finish catalog mutations before
+                // planning the next statement. Return results that can be collected
+                // repeatedly without executing the DDL again.
+                let schema = plan.schema();
+                let batches = datafusion_physical_plan::collect(plan, self.ctx.task_ctx()).await?;
+                let table = MemTable::try_new(schema, vec![batches])?;
+                self.ctx.read_table(Arc::new(table))?
+            } else {
+                self.ctx.execute_logical_plan(plan).await?
+            };
             results.push(df);
         }
 

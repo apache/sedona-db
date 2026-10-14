@@ -29,6 +29,10 @@ pub enum TgError {
     Arrow(ArrowError),
     #[error("{0}")]
     External(Box<dyn std::error::Error + Send + Sync>),
+    #[error(
+        "Containment predicates are not supported for geometries with interacting collection components"
+    )]
+    UnsupportedContainmentPredicate,
 }
 
 impl From<ArrowError> for TgError {

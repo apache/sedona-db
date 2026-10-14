@@ -25,7 +25,7 @@ use sedona_gdal::raster::types::DatasetOptions;
 use sedona_gdal::raster::types::GdalDataType;
 use sedona_raster::geo_transform::GeoTransform;
 
-use sedona_raster::traits::{RasterRef, is_spatial_dim_pair};
+use sedona_raster::traits::{RasterRef, is_spatial_dim_pair, nodata_f64_to_bytes};
 use sedona_schema::raster::BandDataType;
 
 use datafusion_common::{DataFusionError, Result, exec_datafusion_err, exec_err};
@@ -418,6 +418,14 @@ pub fn nodata_bytes_to_f64(nodata_bytes: Option<&[u8]>, band_type: &BandDataType
 }
 
 /// Read a GDAL band's nodata value into a byte vector using the band's native type.
+///
+/// GDAL reports nodata as an `f64` (for GeoTIFF, the ASCII `TIFFTAG_GDAL_NODATA`
+/// tag), so a file can declare a value its band type cannot hold: -9999 or NaN on
+/// a UInt8 band, or 0.5 on an Int32 band. No pixel can equal such a value, so the
+/// band reads as having no nodata. Packing it into the band type instead would
+/// saturate -9999 to 0 and turn every real 0 pixel into nodata. Sedona Spark
+/// matches no pixel either, and GDAL's own mask band ignores an out-of-range
+/// nodata the same way (though it truncates an in-range fraction such as 0.5).
 pub fn band_nodata_to_bytes(band: &RasterBand<'_>) -> Result<Option<Vec<u8>>> {
     let band_type = gdal_to_band_data_type(band.band_type())?;
 
@@ -430,7 +438,7 @@ pub fn band_nodata_to_bytes(band: &RasterBand<'_>) -> Result<Option<Vec<u8>>> {
             .map(|nodata| nodata.to_le_bytes().to_vec()),
         _ => band
             .no_data_value()
-            .map(|nodata| nodata_f64_to_bytes(nodata, &band_type)),
+            .and_then(|nodata| nodata_f64_to_bytes(nodata, &band_type).ok()),
     })
 }
 
@@ -462,22 +470,6 @@ pub fn set_band_nodata_from_bytes(
         (None, BandDataType::UInt64) => band.set_no_data_value_u64(None).map_err(convert_gdal_err),
         (None, BandDataType::Int64) => band.set_no_data_value_i64(None).map_err(convert_gdal_err),
         (None, _) => band.set_no_data_value(None).map_err(convert_gdal_err),
-    }
-}
-
-/// Convert a f64 nodata value into a byte vector appropriate for the given band type.
-pub fn nodata_f64_to_bytes(nodata: f64, band_type: &BandDataType) -> Vec<u8> {
-    match band_type {
-        BandDataType::UInt8 => vec![(nodata as u8)],
-        BandDataType::Int8 => (nodata as i8).to_le_bytes().to_vec(),
-        BandDataType::UInt16 => (nodata as u16).to_le_bytes().to_vec(),
-        BandDataType::Int16 => (nodata as i16).to_le_bytes().to_vec(),
-        BandDataType::UInt32 => (nodata as u32).to_le_bytes().to_vec(),
-        BandDataType::Int32 => (nodata as i32).to_le_bytes().to_vec(),
-        BandDataType::UInt64 => (nodata as u64).to_le_bytes().to_vec(),
-        BandDataType::Int64 => (nodata as i64).to_le_bytes().to_vec(),
-        BandDataType::Float32 => (nodata as f32).to_le_bytes().to_vec(),
-        BandDataType::Float64 => nodata.to_le_bytes().to_vec(),
     }
 }
 
@@ -733,6 +725,44 @@ mod tests {
 
         // Wrong length
         assert!(bytes_to_f64(&[1, 2, 3], &BandDataType::UInt8).is_err());
+    }
+
+    #[test]
+    fn test_band_nodata_to_bytes_drops_unrepresentable_nodata() {
+        // GDAL reports the nodata as an f64; one the band type can't hold
+        // exactly reads back as no nodata instead of saturating into a real
+        // pixel value (-9999 on UInt8 used to become 0).
+        with_gdal(|gdal| {
+            let driver = gdal.get_driver_by_name("MEM").unwrap();
+            let uint8 = driver.create_with_band_type::<u8>("", 1, 1, 1).unwrap();
+            let int16 = driver.create_with_band_type::<i16>("", 1, 1, 1).unwrap();
+            let float32 = driver.create_with_band_type::<f32>("", 1, 1, 1).unwrap();
+            for (dataset, nodata, expected) in [
+                (&uint8, -9999.0, None),
+                (&uint8, 256.0, None),
+                (&uint8, f64::NAN, None),
+                (&uint8, 0.5, None),
+                (&uint8, 0.0, Some(vec![0u8])),
+                (&uint8, 255.0, Some(vec![255u8])),
+                (&int16, -32769.0, None),
+                (&int16, -32768.0, Some(i16::MIN.to_le_bytes().to_vec())),
+                // A Float32 band rounds to the nearest f32, as GDAL does.
+                (&float32, 0.1, Some(0.1f32.to_le_bytes().to_vec())),
+            ] {
+                let band = dataset.rasterband(1).unwrap();
+                band.set_no_data_value(Some(nodata)).unwrap();
+                // GDAL keeps whatever was declared; the conversion decides.
+                assert!(band.no_data_value().is_some());
+                assert_eq!(
+                    band_nodata_to_bytes(&band)?,
+                    expected,
+                    "{:?} nodata {nodata}",
+                    band.band_type()
+                );
+            }
+            Ok(())
+        })
+        .unwrap();
     }
 
     #[test]

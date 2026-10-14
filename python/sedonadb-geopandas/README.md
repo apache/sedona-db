@@ -30,12 +30,15 @@ import geopandas
 import sedonadb_geopandas as sgpd
 
 gdf = sgpd.from_geopandas(geopandas.read_file("cities.geojson"))
+regions = sgpd.from_geopandas(geopandas.read_file("regions.geojson"))
 big = gdf[gdf["pop"] > 1_000_000]          # boolean-mask filter
 gdf["density"] = gdf["pop"] / gdf["area"]  # assign a computed column
 buffered = gdf.geometry.buffer(0.5)        # element-wise .geo operation
 web = gdf.to_crs("EPSG:3857")              # reproject (CRS tracked through)
 
-zones = gdf.dissolve(by="region")          # group and union geometry
+joined = gdf.sjoin(regions, predicate="within")  # spatial join
+zones = joined.dissolve(by="region")              # group and union geometry
+parts = zones.explode()                           # one row per geometry part
 
 result = zones.to_geopandas()               # back to a real GeoDataFrame
 ```
@@ -48,9 +51,9 @@ deliberately *not* identical to GeoPandas:
 - **Lazy, not eager**: operations build a query; data materializes on
   `to_geopandas()` / `to_pandas()` / display.
 - **No row index / alignment**: there is no pandas `Index`; joins and filters
-  are positional/relational, not index-aligned. Consequently `dissolve()`
-  leaves the group keys as ordinary columns instead of moving them into the
-  index.
+  are positional/relational, not index-aligned. Consequently `sjoin()`
+  produces no `index_left`/`index_right` column, and `dissolve()` leaves the
+  group keys as ordinary columns instead of moving them into the index.
 - **Immutable under the hood**: "in-place" style operations return a new frame.
   A `Series` read from a frame stays usable across assignments that only *add*
   columns (so `g = gdf.geometry` can supply `g.area`, `g.length`, ... in turn),
@@ -77,6 +80,38 @@ integer operand that itself exceeds the 64-bit range raises `OverflowError`
 immediately, as in every pandas version. Mixed-unit duration
 operands are rebuilt in the column's own unit when exactly representable,
 rather than widening to the engine's interval type.
+
+`GeoSeries` properties and methods follow GeoPandas, with a few differences
+in form: `to_wkt()` writes equivalent but differently spaced WKT
+(`POINT(1 2)`), `to_wkb()` writes ISO WKB (GeoPandas' `flavor="iso"`),
+`is_simple` and `boundary` answer for geometry collections where GEOS leaves
+them undefined, and `x`/`y`/`z` on a non-point raise when the result is
+computed rather than when the property is read.
+
+Binary geometry operations (`intersects`, `within`, `distance`,
+`intersection`, ...) take either a single Shapely geometry, which takes the
+column's CRS, or a `GeoSeries` from the same frame, matched row by row as with
+GeoPandas' `align=False`; there is no index to align on. `touches` inherits
+an engine issue with geometry collections that mix dimensions
+(apache/sedona-db#1383).
+
+`explode()` takes parts one level deep and drops rows whose geometry has no
+parts, as GeoPandas does. Without an index it cannot number the parts
+(`index_parts=True`), and it explodes the active geometry column only:
+GeoPandas explodes the active geometry even when `column=` names another
+geometry column, and explodes non-geometry columns as lists.
+
+`sjoin()` requires both geometry columns to share a CRS: GeoPandas warns on a
+mismatch and joins anyway, which is almost always a mistake, so this raises and
+points at `to_crs()`. `on_attribute` is not supported yet.
+
+Without an index, `drop()` and `rename()` work on columns only, `rename()`
+raises rather than producing duplicate column names, and a sort from
+`sort_values()` holds until an operation that does not preserve row order (a
+join or an aggregation). `astype()` to a string keeps missing values missing,
+like pandas' `"string"` dtype rather than `str`, and formats floats the way
+Arrow does (`"1"`, `"NaN"`); `astype(object)` leaves the values as they are,
+since an Arrow-backed column has no object type.
 
 `dissolve()` aggregates non-geometry columns with `"first"`, which is an
 unordered aggregate: it returns *some* value from the group rather than the one

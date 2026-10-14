@@ -46,6 +46,7 @@ prost = { workspace = true, optional = true }
 futures = { workspace = true }
 libc = "0.2.178"
 sedona-common = { workspace = true }
+sedona-catalog = { workspace = true }
 sedona-expr = { workspace = true }
 sedona-schema = { workspace = true }
 serde = { workspace = true }

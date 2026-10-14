@@ -243,9 +243,7 @@ def test_antimeridian_wrapping(eng, geog, expected_xmin, expected_xmax):
     ("geog", "expected"),
     [
         pytest.param(None, None, id="null"),
-        # POINT EMPTY returns POINT (nan nan) due to geoarrow-c quirk
-        # https://github.com/geoarrow/geoarrow-c/issues/143
-        pytest.param("POINT EMPTY", "POINT (nan nan)", id="point_empty"),
+        pytest.param("POINT EMPTY", "POINT EMPTY", id="point_empty"),
         pytest.param("POLYGON EMPTY", "POLYGON EMPTY", id="polygon_empty"),
         pytest.param("LINESTRING EMPTY", "LINESTRING EMPTY", id="linestring_empty"),
         pytest.param("MULTIPOINT EMPTY", "MULTIPOINT EMPTY", id="multipoint_empty"),

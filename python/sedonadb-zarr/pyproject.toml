@@ -45,6 +45,11 @@ test = [
     "numpy",
 ]
 
+[tool.cibuildwheel]
+# pyarrow publishes no cp315 wheels yet, so the test environment cannot be
+# installed. Build the wheels but skip testing them until it does.
+test-skip = "cp315*"
+
 [tool.maturin]
 features = ["pyo3/extension-module"]
 module-name = "sedonadb_zarr._lib"

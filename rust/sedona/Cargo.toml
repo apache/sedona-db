@@ -70,6 +70,7 @@ datafusion-execution = { workspace = true, features = ["arrow_buffer_pool"] }
 datafusion-expr = { workspace = true, features = ["sql"] }
 datafusion-ffi = { workspace = true }
 datafusion-optimizer = { workspace = true }
+datafusion-physical-plan = { workspace = true }
 datafusion-session = { workspace = true }
 dirs = { workspace = true }
 futures = { workspace = true }
@@ -79,6 +80,7 @@ object_store = { workspace = true }
 parking_lot = { workspace = true }
 regex = { workspace = true }
 sedona-common = { workspace = true }
+sedona-catalog = { workspace = true }
 sedona-datasource = { workspace = true }
 sedona-expr = { workspace = true }
 sedona-functions = { workspace = true }

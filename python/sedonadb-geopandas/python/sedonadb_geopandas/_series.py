@@ -16,7 +16,11 @@
 # under the License.
 """pandas/GeoPandas-style Series backed by a SedonaDB expression."""
 
+import math
+import numbers
+
 import pyarrow as pa
+from sedonadb.expr import lit
 
 from sedonadb_geopandas._temporal import (
     coerce_duration_scalar,
@@ -405,10 +409,14 @@ class Series:
         column is integer for division purposes. Read from the projected
         schema, which is a plan build, not an execution.
         """
-        dtype = pa.schema(self._df.select(self._expr.alias("x")).schema).field("x").type
+        dtype = self._stored_dtype()
         while pa.types.is_dictionary(dtype) or pa.types.is_run_end_encoded(dtype):
             dtype = dtype.value_type
         return dtype
+
+    def _stored_dtype(self):
+        """This expression's Arrow type as stored, encodings included."""
+        return pa.schema(self._df.select(self._expr.alias("x")).schema).field("x").type
 
     def _is_duration(self):
         return pa.types.is_duration(self._dtype())
@@ -440,6 +448,133 @@ class Series:
             self._name,
         )
 
+    # -- missing values, membership, and casting ---------------------------
+
+    def _is_floating(self):
+        return pa.types.is_floating(self._dtype())
+
+    def _missing(self):
+        """True where this column holds a missing value.
+
+        pandas treats NaN in a float column as missing too, not only null.
+        """
+        expr = self._expr.is_null()
+        if self._is_floating():
+            expr = expr | self._expr.funcs.isnan()
+        return expr.funcs.coalesce(lit(True))
+
+    def isna(self):
+        """Whether each value is missing (null, or NaN in a float column).
+
+        As in GeoPandas, an empty geometry is not missing.
+        """
+        return Series(self._df, self._missing(), self._name)
+
+    isnull = isna
+
+    def notna(self):
+        """Whether each value is present: the inverse of `isna()`."""
+        return Series(self._df, ~self._missing(), self._name)
+
+    notnull = notna
+
+    def fillna(self, value):
+        """Replace missing values (null, or NaN in a float column) with `value`."""
+        if value is None:
+            raise ValueError("Must specify a fill 'value'")
+        if not is_scalar(value):
+            raise TypeError(
+                f"fillna() takes a single value, got {type(value).__name__}"
+            )
+        fill = _operand(self._df, value)
+        expr = self._expr
+        if self._is_floating():
+            # NaN is missing in pandas; nanvl replaces it, coalesce the nulls.
+            expr = expr.funcs.nanvl(fill)
+        return Series(self._df, expr.funcs.coalesce(fill), self._name)
+
+    def isin(self, values):
+        """Whether each value is one of `values`.
+
+        As in pandas, values compare without coercion across kinds (a number
+        never matches a string, while True matches 1 and 1 matches 1.0), and a
+        missing value is a member only when `values` holds a missing marker
+        that pandas matches for this column's type: NaN but not None in a float
+        column, for instance.
+        """
+        if isinstance(values, (str, bytes)) or not hasattr(values, "__iter__"):
+            raise TypeError(
+                f"only list-like objects are allowed to be passed to isin(), you "
+                f"passed a {type(values).__name__!r}"
+            )
+        if isinstance(values, Series):
+            raise TypeError(
+                "isin() takes plain values, not a lazy Series; collect it first"
+            )
+        from sedonadb_geopandas._frame import _is_missing
+
+        given = list(values)
+        present, any_missing = [], False
+        for value in given:
+            normalized = normalize_scalar(value)
+            if _is_missing(normalized):
+                any_missing = True
+            else:
+                present.append(normalized)
+        dtype = self._dtype()
+        present = _comparable(dtype, present)
+        # False, as an expression over this column: a bare literal is not an
+        # expression, so `~`, `isna()` or `astype()` on the result would fail.
+        expr = self._expr.is_null() & lit(False)
+        if present:
+            expr = self._expr.isin(present).funcs.coalesce(lit(False))
+        if any_missing:
+            # The stored type, since an encoding can change the pandas dtype:
+            # a dictionary column becomes a categorical, whose missing value
+            # is NaN. The values as given, all of them: pandas' answer for a
+            # missing value can depend on the whole list (NumPy's NaT matches
+            # a missing geometry only on its own).
+            matches_null, matches_nan = _missing_members(
+                self._stored_dtype(), dtype, given
+            )
+            if matches_null:
+                expr = expr | self._expr.is_null()
+            if matches_nan:
+                expr = expr | self._expr.funcs.isnan().funcs.coalesce(lit(False))
+        return Series(self._df, expr, self._name)
+
+    def astype(self, dtype):
+        """Cast to `dtype` (a NumPy/pandas dtype name, Python type, or Arrow type).
+
+        As in pandas, casting a missing value to an integer type raises, and a
+        float's fractional part is truncated. Casting to `bool` follows
+        truthiness: a number is True unless it is zero (NaN is True), a string
+        unless it is empty, and a missing value as pandas treats the missing
+        value of this column's type. Casting to a string keeps missing values
+        missing (pandas' `"string"` dtype, not `str`, which writes the text
+        "nan"), and a float's text is Arrow's formatting ("1" and "NaN" rather
+        than "1.0" and "nan"). Casting to `object` leaves the values as they
+        are: an Arrow-backed column has no object type.
+        """
+        if _is_object_dtype(dtype):
+            return Series(self._df, self._expr, self._name)
+        target = _arrow_type(dtype)
+        source = self._dtype()
+        if pa.types.is_boolean(target):
+            truth = _truthiness(self._expr, source)
+            if truth is not None:
+                return Series(self._df, truth, self._name)
+        expr = self._expr.cast(target)
+        if pa.types.is_integer(target):
+            # The engine casts a null to a null silently (and NaN with its own
+            # message); pandas raises for any missing value, an integer
+            # column's included.
+            expr = expr + _fail_where(
+                self._missing(),
+                "Cannot convert non-finite values (NA or inf) to integer",
+            ).cast(target)
+        return Series(self._df, expr, self._name)
+
     __hash__ = None
 
     # -- materialization ---------------------------------------------------
@@ -452,6 +587,266 @@ class Series:
         return f"<{type(self).__name__} {self._expr!r} (lazy; call .to_pandas())>"
 
 
+def _buffer_style(style, names, argument):
+    """A buffer style as a GEOS parameter name.
+
+    Accepts the name, Shapely's `BufferCapStyle`/`BufferJoinStyle` enum
+    member, or its integer code (1, 2, 3 in the order of `names`), as
+    GeoPandas does.
+    """
+    value = getattr(style, "value", style)
+    if isinstance(value, numbers.Integral) and not isinstance(value, bool):
+        if 1 <= value <= len(names):
+            return names[value - 1]
+    elif value in names:
+        return value
+    raise ValueError(f"{argument} must be one of {list(names)}, got {style!r}")
+
+
+def _kind(arrow_type):
+    """ "number", "bool", "string", or "other", for comparing kinds."""
+    if pa.types.is_boolean(arrow_type):
+        return "bool"
+    if (
+        pa.types.is_integer(arrow_type)
+        or pa.types.is_floating(arrow_type)
+        or pa.types.is_decimal(arrow_type)
+    ):
+        return "number"
+    if (
+        pa.types.is_string(arrow_type)
+        or pa.types.is_large_string(arrow_type)
+        or pa.types.is_string_view(arrow_type)
+    ):
+        return "string"
+    return "other"
+
+
+def _comparable(dtype, values):
+    """The `values` an `isin` on a column of `dtype` can match, in its terms.
+
+    pandas matches by value without coercing across kinds: a number never
+    equals a string, while True equals 1 and 1 equals 1.0. SQL would coerce a
+    string to a number (or fail to), and refuses to compare a boolean with a
+    number, so values of another kind are dropped and booleans and numbers
+    are converted to the column's kind. Other column types take every value.
+    """
+    column = _kind(dtype)
+    if column == "other":
+        return values
+    comparable = []
+    for value in values:
+        plain = value
+        if isinstance(value, pa.Scalar):
+            kind, plain = _kind(value.type), value.as_py()
+        elif isinstance(value, bool):
+            kind = "bool"
+        elif isinstance(value, numbers.Number):
+            kind = "number"
+        elif isinstance(value, str):
+            kind = "string"
+        else:
+            kind = "other"
+        if kind == column:
+            # A typed scalar is kept as given: unwrapping a large unsigned
+            # value would leave an integer no literal can hold. A plain one
+            # beyond int64 is typed as the column, and dropped if it cannot be
+            # exactly: then it matches nothing (pandas compares exactly, so
+            # 2**64 + 1 does not match the float 2**64).
+            if isinstance(value, int) and not -(2**63) <= value < 2**63:
+                try:
+                    if pa.types.is_floating(dtype):
+                        if float(value) != value:
+                            continue
+                        value = float(value)
+                    else:
+                        value = pa.scalar(value, type=dtype)
+                except (pa.ArrowException, OverflowError):
+                    continue
+            comparable.append(value)
+        elif column == "number" and kind == "bool":
+            comparable.append(int(plain))
+        elif column == "bool" and kind == "number" and plain in (0, 1):
+            comparable.append(bool(plain))
+    return comparable
+
+
+def _pandas_missing(dtype, nan=False):
+    """A one-element pandas Series holding this type's missing value (or NaN),
+    converted as `to_pandas()` converts it, or None without pandas.
+
+    Which missing marker matches a missing value, and whether that value is
+    truthy, depends on its pandas dtype: a float column holds NaN, a string
+    column None in pandas 2 and NaN in pandas 3, a dictionary column a
+    categorical's NaN. Asking the installed pandas keeps the answers in step
+    with what `to_pandas()` returns. Geometry (an extension type here) is a
+    missing GeoSeries element, so GeoPandas answers for it.
+    """
+    if isinstance(dtype, pa.ExtensionType):
+        if nan:
+            return None
+        try:
+            import geopandas
+        except ImportError:
+            return None
+        return geopandas.GeoSeries([None])
+    try:
+        import pandas  # noqa: F401
+    except ImportError:
+        return None
+    try:
+        return pa.array([float("nan") if nan else None], type=dtype).to_pandas()
+    except (pa.ArrowException, TypeError, ValueError):
+        return None
+
+
+def _is_null_marker(marker):
+    """Whether Arrow reads `marker` as a null: None, NumPy's NaT, or a null
+    Arrow scalar."""
+    import numpy as np
+
+    if marker is None:
+        return True
+    if isinstance(marker, (np.datetime64, np.timedelta64)):
+        return bool(np.isnat(marker))
+    return isinstance(marker, pa.Scalar) and not marker.is_valid
+
+
+def _is_nan_marker(marker):
+    """A floating-point NaN, NumPy's included (np.float32 is not a float)."""
+    if isinstance(marker, pa.Scalar):
+        marker = marker.as_py() if marker.is_valid else None
+    return isinstance(marker, numbers.Real) and marker != marker
+
+
+def _missing_members(stored, dtype, values):
+    """Whether a null, and a NaN, of a column are members of `values`.
+
+    pandas (GeoPandas, for geometry) decides when it is installed, given the
+    whole list as passed to `isin`: `stored` is the column's type as stored,
+    `dtype` without encodings. Without it, Arrow's reading applies: a null
+    is matched by what Arrow reads as a null, and a NaN by a NaN.
+    """
+    floating = pa.types.is_floating(dtype)
+    answers = []
+    for nan in (False, True):
+        if nan and not floating:
+            answers.append(False)
+            continue
+        series = _pandas_missing(stored, nan)
+        if series is not None:
+            answers.append(bool(series.isin(values).iloc[0]))
+        elif nan:
+            answers.append(any(_is_nan_marker(value) for value in values))
+        else:
+            answers.append(any(_is_null_marker(value) for value in values))
+    return tuple(answers)
+
+
+def _truthiness(expr, dtype):
+    """`expr` as a boolean the way Python's `bool()` reads it, or None if this
+    type has no truthiness here (the engine's cast then applies).
+    """
+    kind = _kind(dtype)
+    if kind == "bool":
+        truth = expr
+    elif kind == "number":
+        truth = expr != lit(0)
+    elif kind == "string":
+        truth = expr != lit("")
+    else:
+        return None
+    # A missing value is as truthy as pandas reads it; without pandas, as
+    # Python reads None.
+    missing = _pandas_missing(dtype)
+    return truth.funcs.coalesce(
+        lit(bool(missing is not None and missing.astype(bool).iloc[0]))
+    )
+
+
+def _is_object_dtype(dtype):
+    import numpy as np
+
+    try:
+        return np.dtype(dtype) == np.dtype(object)
+    except TypeError:
+        return False
+
+
+def _arrow_type(dtype):
+    """The Arrow type for a pandas-style `astype` target."""
+    if isinstance(dtype, pa.DataType):
+        return dtype
+    if dtype in (str, "str", "string"):
+        return pa.string()
+    import numpy as np
+
+    try:
+        return pa.from_numpy_dtype(np.dtype(dtype))
+    except (TypeError, pa.ArrowNotImplementedError) as err:
+        raise TypeError(f"astype() does not support dtype {dtype!r}") from err
+
+
+def _fail_where(condition, message):
+    """An int64 expression that is 0 where `condition` is not true and raises
+    `message` where it is.
+
+    A lazy expression has no way to raise for a particular row except by
+    failing to evaluate there, so the failure is a cast: rows that pass cast
+    the string "0", and failing rows cast `message`, which fails with that
+    message in the error. Adding the result leaves passing values unchanged.
+    """
+    passing = (~condition).funcs.coalesce(lit(True))
+    flag = passing.funcs.nullif(lit(True)).cast(pa.string())
+    text = flag.funcs.replace(lit("false"), lit(message))
+    return text.funcs.coalesce(lit("0")).cast(pa.int64())
+
+
+def _same_crs(current, crs):
+    """Whether an existing CRS and a requested one denote the same CRS."""
+    import pyproj
+
+    if crs is None:
+        return False
+    try:
+        return pyproj.CRS.from_user_input(
+            current.to_json()
+        ) == pyproj.CRS.from_user_input(crs)
+    except pyproj.exceptions.CRSError:
+        return False
+
+
+def _normalize_crs(crs):
+    """`crs` as PROJJSON, a form the engine keeps as given.
+
+    Stamping a user string directly lets the engine canonicalize it
+    ("EPSG:4326" becomes OGC:CRS84) and rejects forms GeoPandas accepts, such
+    as the integer 4326. Parsing through pyproj accepts every form GeoPandas
+    does and rejects invalid input up front.
+    """
+    import pyproj
+
+    try:
+        return pyproj.CRS.from_user_input(crs).to_json()
+    except pyproj.exceptions.CRSError as err:
+        raise ValueError(f"Invalid CRS {crs!r}: {err}") from err
+
+
+def _check_align(align):
+    """GeoPandas' `align` argument.
+
+    There is no index to align on: operands are always columns of the same
+    frame, matched row by row, which is what GeoPandas does with
+    `align=False`. Asking for index alignment is an error rather than being
+    silently ignored.
+    """
+    if align:
+        raise ValueError(
+            "align=True is not supported: there is no index; columns of the "
+            "same frame are always matched row by row"
+        )
+
+
 class GeoSeries(Series):
     """A geometry column, in the shape of a `geopandas.GeoSeries`.
 
@@ -461,14 +856,520 @@ class GeoSeries(Series):
     `.geo` accessor.
     """
 
-    def buffer(self, distance):
-        """Buffer each geometry by `distance` (`ST_Buffer`)."""
-        return GeoSeries(self._df, self._expr.geo.buffer(distance), self._name)
+    def _geo(self, expr):
+        """A geometry result, keeping this column's name."""
+        return GeoSeries(self._df, expr, self._name)
+
+    def _is_geography(self):
+        """Whether this column holds geography (spherical edges)."""
+        schema = self._df.select(self._expr.alias("x")).schema
+        edge_type = getattr(schema.field("x").type, "edge_type", "")
+        return "SPHERICAL" in str(edge_type).upper()
+
+    def _flag(self, expr, name):
+        """A boolean property: GeoPandas answers False for a missing geometry."""
+        from sedonadb.expr import lit
+
+        return Series(self._df, expr.funcs.coalesce(lit(False)), name)
+
+    # -- properties --------------------------------------------------------
+
+    @property
+    def geom_type(self):
+        """The geometry type of each element (`"Point"`, `"Polygon"`, ...).
+
+        `ST_GeometryType` without its `ST_` prefix, so the names match
+        GeoPandas. A missing geometry gives a missing type. A `LinearRing`
+        reads as `"LineString"`, as it does in GeoPandas after a WKB round
+        trip, since WKB has no ring type.
+        """
+        from sedonadb.expr import lit
+
+        expr = self._expr.geo.geometry_type().funcs.replace(lit("ST_"), lit(""))
+        return Series(self._df, expr, "geom_type")
+
+    @property
+    def is_valid(self):
+        """Whether each geometry is valid (`ST_IsValid`); False if missing."""
+        return self._flag(self._expr.geo.is_valid(), "is_valid")
+
+    @property
+    def is_empty(self):
+        """Whether each geometry is empty (`ST_IsEmpty`); False if missing."""
+        return self._flag(self._expr.geo.is_empty(), "is_empty")
+
+    @property
+    def is_simple(self):
+        """Whether each geometry is simple (`ST_IsSimple`); False if missing.
+
+        Unlike GeoPandas, a geometry collection whose parts are simple is
+        simple here; GEOS leaves simplicity undefined for collections and
+        GeoPandas reports False.
+        """
+        return self._flag(self._expr.geo.is_simple(), "is_simple")
+
+    @property
+    def has_z(self):
+        """Whether each geometry has Z coordinates (`ST_HasZ`); False if missing."""
+        return self._flag(self._expr.geo.has_z(), "has_z")
+
+    @property
+    def x(self):
+        """The X coordinate of each point (`ST_X`); NaN for empty or missing.
+
+        As in GeoPandas this is defined for points only, but the frame is
+        lazy, so a non-point raises when the result is computed rather than
+        when the property is read.
+        """
+        return Series(self._df, self._expr.geo.x(), "x")
+
+    @property
+    def y(self):
+        """The Y coordinate of each point (`ST_Y`); see `x`."""
+        return Series(self._df, self._expr.geo.y(), "y")
+
+    @property
+    def z(self):
+        """The Z coordinate of each point (`ST_Z`); see `x`."""
+        return Series(self._df, self._expr.geo.z(), "z")
+
+    @property
+    def bounds(self):
+        """The bounds of each geometry, as a frame of minx, miny, maxx, maxy.
+
+        Lazy like everything else here (a `GeoDataFrame` without a geometry
+        column); empty or missing geometries give missing bounds.
+        """
+        from sedonadb_geopandas._frame import GeoDataFrame
+
+        expr = self._expr.geo
+        frame = self._df.select(
+            expr.x_min().alias("minx"),
+            expr.y_min().alias("miny"),
+            expr.x_max().alias("maxx"),
+            expr.y_max().alias("maxy"),
+        )
+        return GeoDataFrame(frame, geometry=None)
+
+    @property
+    def total_bounds(self):
+        """The bounds of all geometries together, as `[minx, miny, maxx, maxy]`.
+
+        Computes the result (an aggregate), unlike the lazy properties.
+        Empty and missing geometries are ignored; all NaN if nothing is left.
+        """
+        import numpy as np
+
+        bounds = self.bounds._df
+        row = bounds.agg(
+            bounds["minx"].funcs.min().alias("minx"),
+            bounds["miny"].funcs.min().alias("miny"),
+            bounds["maxx"].funcs.max().alias("maxx"),
+            bounds["maxy"].funcs.max().alias("maxy"),
+        ).to_pandas()
+        return np.array(
+            [row[c].iloc[0] for c in ("minx", "miny", "maxx", "maxy")], dtype=float
+        )
+
+    # -- constructive methods ---------------------------------------------
+
+    def buffer(
+        self,
+        distance,
+        resolution=16,
+        cap_style="round",
+        join_style="round",
+        mitre_limit=5.0,
+        single_sided=False,
+    ):
+        """Buffer each geometry by `distance` (`ST_Buffer`), as in GeoPandas.
+
+        The style arguments and their defaults are GeoPandas', passed to the
+        engine as GEOS buffer parameters; styles may be given as names,
+        Shapely's `BufferCapStyle`/`BufferJoinStyle` enums, or their integer
+        codes, as in GeoPandas. The resolution matters even at its default:
+        without it the engine approximates a quarter circle with 8 segments
+        rather than GeoPandas' 16.
+        """
+        from sedonadb.expr import lit
+
+        cap = _buffer_style(cap_style, ("round", "flat", "square"), "cap_style")
+        join = _buffer_style(join_style, ("round", "mitre", "bevel"), "join_style")
+        params = f"quad_segs={int(resolution)} endcap={cap}"
+        if self._is_geography():
+            # Spherical buffering accepts only these two parameters.
+            if join != "round" or mitre_limit != 5.0 or single_sided:
+                raise NotImplementedError(
+                    "buffer() on geography supports resolution and cap_style "
+                    "only; join_style, mitre_limit and single_sided need "
+                    "planar geometry"
+                )
+        else:
+            params += f" join={join} mitre_limit={float(mitre_limit)}"
+            if single_sided:
+                params += " side=left" if distance >= 0 else " side=right"
+        return self._geo(self._expr.geo.buffer(distance, lit(params)))
+
+    @property
+    def envelope(self):
+        """The bounding rectangle of each geometry (`ST_Envelope`).
+
+        The envelope of an empty geometry is `POINT EMPTY`, as in GeoPandas,
+        whatever the empty geometry's type (the engine keeps the type). For a
+        geography column the engine's envelope is a planar longitude/latitude
+        box (geometry, not geography), and it stays one here.
+        """
+        import shapely
+
+        envelope = self._expr.geo.envelope()
+        ctx = self._df._ctx
+        # Per row: POINT EMPTY's WKB where the input is empty, the envelope's
+        # otherwise. nvl2 picks its second argument where the first is
+        # non-null, and all three must share a type, hence the binary flag.
+        empty = self._expr.geo.is_empty().funcs.nullif(ctx.lit(False))
+        flag = empty.cast(pa.string()).cast(pa.binary())
+        wkb = flag.funcs.nvl2(ctx.lit(shapely.Point().wkb), envelope.geo.as_binary())
+        # WKB carries neither spatial kind nor CRS, so the result is rebuilt
+        # with the envelope's own: the engine's envelope type, which for a
+        # geography input is planar geometry, not the column's type.
+        result_type = self._df.select(envelope.alias("x")).schema.field("x").type
+        spherical = "SPHERICAL" in str(getattr(result_type, "edge_type", "")).upper()
+        if spherical:
+            expr = wkb.funcs.st_geogfromwkb()
+        else:
+            expr = wkb.funcs.st_geomfromwkb()
+        crs = result_type.crs
+        if crs is not None:
+            expr = expr.funcs.st_setcrs(ctx.lit(crs.to_json()))
+        elif spherical:
+            # The geography constructor synthesizes CRS84; SRID 0 clears it
+            # without touching the value.
+            expr = expr.funcs.st_setsrid(ctx.lit(0))
+        return self._geo(expr)
+
+    @property
+    def convex_hull(self):
+        """The convex hull of each geometry (`ST_ConvexHull`)."""
+        return self._geo(self._expr.geo.convex_hull())
+
+    @property
+    def boundary(self):
+        """The boundary of each geometry (`ST_Boundary`).
+
+        Unlike GeoPandas, which gives None for a geometry collection (GEOS
+        does not define its boundary), this returns the collection of its
+        parts' boundaries.
+        """
+        return self._geo(self._expr.geo.boundary())
+
+    @property
+    def exterior(self):
+        """The exterior ring of each polygon (`ST_ExteriorRing`); None otherwise."""
+        return self._geo(self._expr.geo.exterior_ring())
+
+    def simplify(self, tolerance, preserve_topology=True):
+        """Simplify each geometry within `tolerance`.
+
+        `ST_SimplifyPreserveTopology` by default, as in GeoPandas, or
+        `ST_Simplify` (Douglas-Peucker) with `preserve_topology=False`.
+
+        Two differences with `preserve_topology=False`: when parts of a
+        multi-part geometry collapse, the result stays multi-part (a
+        `MultiPolygon` with one surviving part) where GeoPandas returns the
+        single part (a `Polygon`); and an empty 2D point or line stays 2D,
+        where GEOS' Douglas-Peucker returns a 3D empty (`POINT Z EMPTY`). A Z
+        or M empty input currently loses its Z/M dimension in this and other
+        GEOS-backed operations (apache/sedona-db#1384).
+        """
+        if preserve_topology:
+            return self._geo(self._expr.geo.simplify_preserve_topology(tolerance))
+        return self._geo(self._expr.geo.simplify(tolerance))
+
+    def normalize(self):
+        """Each geometry in normalized form (`ST_Normalize`)."""
+        return self._geo(self._expr.geo.normalize())
+
+    def make_valid(self, method="linework"):
+        """Repair each invalid geometry (`ST_MakeValid`).
+
+        Only GeoPandas' default `method="linework"` is supported.
+        """
+        if method != "linework":
+            raise NotImplementedError(
+                f"make_valid() supports method='linework' only, got {method!r}"
+            )
+        return self._geo(self._expr.geo.make_valid())
+
+    def representative_point(self):
+        """A point guaranteed to lie on each geometry (`ST_PointOnSurface`)."""
+        return self._geo(self._expr.geo.point_on_surface())
+
+    def explode(self, ignore_index=False, index_parts=False):
+        """One element per part of each multi-part geometry, as in GeoPandas.
+
+        Parts are taken one level deep, and a geometry with no parts (or a
+        missing one) yields none; see `GeoDataFrame.explode`. The result has a
+        different number of rows, so it belongs to a new frame and cannot be
+        combined with columns of this one. `ignore_index` is accepted for
+        compatibility; `index_parts=True` is not supported, since there is no
+        index.
+        """
+        from sedonadb_geopandas._frame import _explode_parts
+
+        if index_parts:
+            raise NotImplementedError(
+                "explode() cannot number parts with index_parts=True: there is no index"
+            )
+        exploded = _explode_parts(
+            self._df.select(self._expr.alias(self._name)), self._name
+        )
+        return GeoSeries(exploded, exploded[self._name], self._name)
+
+    # -- binary operations -----------------------------------------------
+
+    def _other(self, other):
+        """The right-hand side of a binary geometry operation, as an expression.
+
+        A `GeoSeries` must come from this same frame (there is no row
+        alignment), as for arithmetic. A geometry scalar, bare Shapely or
+        wrapped in `lit()`, takes this column's spatial kind, since the engine
+        has no kernel pairing geography with geometry. It takes this column's
+        CRS when it has none of its own, as it would in GeoPandas and as an
+        assigned geometry does (the engine refuses mismatched CRS); a literal
+        that carries its own CRS keeps it.
+        """
+        from sedonadb.expr import Literal
+        from shapely.geometry.base import BaseGeometry
+
+        ctx = self._df._ctx
+        value = _operand(self._df, other)
+        if isinstance(value, BaseGeometry):
+            return self._as_column_kind(ctx.lit(value), own_crs=None)
+        if not isinstance(value, Literal):
+            return value
+        # Rebound to this frame's context, so functions can be applied to it
+        # (a bare lit() has none).
+        expr = ctx.lit(value)
+        projected = self._df.select(expr.alias("x")).schema
+        if not projected.geometry_column_indices:
+            return expr
+        return self._as_column_kind(expr, own_crs=projected.field("x").type.crs)
+
+    def _as_column_kind(self, expr, own_crs):
+        """A geometry scalar with this column's spatial kind and a CRS.
+
+        `own_crs` is the CRS the scalar carries itself, if any; otherwise this
+        column's applies (or none, if the column has none).
+        """
+        ctx = self._df._ctx
+        geography = self._is_geography()
+        scalar = self._df.select(expr.alias("x")).schema.field("x").type
+        scalar_geography = "SPHERICAL" in str(getattr(scalar, "edge_type", "")).upper()
+        if geography and not scalar_geography:
+            # Re-entered through WKB as geography. The geography constructor
+            # synthesizes CRS84, so the CRS is always applied explicitly below.
+            expr = expr.geo.as_binary().funcs.st_geogfromwkb()
+        crs = own_crs if own_crs is not None else self.crs
+        if crs is not None:
+            return expr.funcs.st_setcrs(ctx.lit(crs.to_json()))
+        if geography:
+            # SRID 0 clears the synthesized CRS without touching the value.
+            return expr.funcs.st_setsrid(ctx.lit(0))
+        return expr
+
+    def _predicate(self, name, other, align=None):
+        """A GeoPandas binary predicate: False where either side is missing."""
+        from sedonadb.expr import lit
+
+        _check_align(align)
+        expr = getattr(self._expr.geo, name)(self._other(other))
+        return Series(self._df, expr.funcs.coalesce(lit(False)), name)
+
+    def intersects(self, other, align=None):
+        """Whether each geometry intersects `other` (`ST_Intersects`)."""
+        return self._predicate("intersects", other, align)
+
+    def contains(self, other, align=None):
+        """Whether each geometry contains `other` (`ST_Contains`)."""
+        return self._predicate("contains", other, align)
+
+    def within(self, other, align=None):
+        """Whether each geometry is within `other` (`ST_Within`)."""
+        return self._predicate("within", other, align)
+
+    def touches(self, other, align=None):
+        """Whether each geometry touches `other` (`ST_Touches`).
+
+        Known engine issue: a geometry collection mixing dimensions can be
+        misclassified (apache/sedona-db#1383).
+        """
+        return self._predicate("touches", other, align)
+
+    def crosses(self, other, align=None):
+        """Whether each geometry crosses `other` (`ST_Crosses`)."""
+        return self._predicate("crosses", other, align)
+
+    def overlaps(self, other, align=None):
+        """Whether each geometry overlaps `other` (`ST_Overlaps`)."""
+        return self._predicate("overlaps", other, align)
+
+    def covers(self, other, align=None):
+        """Whether each geometry covers `other` (`ST_Covers`)."""
+        return self._predicate("covers", other, align)
+
+    def covered_by(self, other, align=None):
+        """Whether each geometry is covered by `other` (`ST_CoveredBy`)."""
+        return self._predicate("covered_by", other, align)
+
+    def disjoint(self, other, align=None):
+        """Whether each geometry is disjoint from `other` (`ST_Disjoint`)."""
+        return self._predicate("disjoint", other, align)
+
+    def geom_equals(self, other, align=None):
+        """Whether each geometry equals `other` topologically (`ST_Equals`)."""
+        from sedonadb.expr import lit
+
+        _check_align(align)
+        other_expr = self._other(other)
+        # Two empty geometries are equal, whatever their types, as in
+        # GeoPandas; the engine says they are not.
+        both_empty = self._expr.geo.is_empty() & other_expr.geo.is_empty()
+        expr = self._expr.geo.equals(other_expr) | both_empty
+        return Series(self._df, expr.funcs.coalesce(lit(False)), "geom_equals")
+
+    def dwithin(self, other, distance, align=None):
+        """Whether each geometry is within `distance` of `other` (`ST_DWithin`).
+
+        False where either side is missing or empty.
+        """
+        from sedonadb.expr import lit
+
+        _check_align(align)
+        other_expr = self._other(other)
+        # `distance` may be one number or a numeric Series of this frame,
+        # applied row by row as in GeoPandas.
+        row_wise = isinstance(distance, Series)
+        if row_wise:
+            threshold = _operand(self._df, distance).cast(pa.float64())
+        else:
+            # Validated like any other operand (arrays are rejected), then
+            # resolved to a plain number through the same path division uses,
+            # so NumPy, Arrow, and lit() scalars are accepted like floats.
+            _operand(self._df, distance)
+            value = _numeric_value(distance)
+            if not isinstance(value, numbers.Real) or isinstance(value, bool):
+                raise TypeError(
+                    f"dwithin() distance must be a number or a numeric Series of "
+                    f"this frame, got {type(distance).__name__}"
+                )
+            if math.isnan(value):
+                # Nothing is within NaN; the engine orders NaN above every
+                # number, so the comparison alone would say True.
+                return Series(self._df, lit(False), "dwithin")
+            threshold = lit(float(value))
+        # Measured through ST_Distance, so a row-wise threshold works and an
+        # empty operand (a missing distance) is never within.
+        within = self._expr.geo.distance(other_expr) <= threshold
+        if row_wise:
+            # The same NaN rule, per row.
+            within = within & ~threshold.funcs.isnan()
+        return Series(self._df, within.funcs.coalesce(lit(False)), "dwithin")
+
+    def distance(self, other, align=None):
+        """The distance from each geometry to `other` (`ST_Distance`).
+
+        Missing where either side is missing or empty, as in GeoPandas.
+        """
+        _check_align(align)
+        other_expr = self._other(other)
+        return Series(self._df, self._expr.geo.distance(other_expr), "distance")
+
+    def intersection(self, other, align=None):
+        """The intersection of each geometry with `other` (`ST_Intersection`)."""
+        _check_align(align)
+        return self._geo(self._expr.geo.intersection(self._other(other)))
+
+    def union(self, other, align=None):
+        """The union of each geometry with `other` (`ST_Union`)."""
+        _check_align(align)
+        return self._geo(self._expr.geo.union(self._other(other)))
+
+    def difference(self, other, align=None):
+        """Each geometry minus `other` (`ST_Difference`)."""
+        _check_align(align)
+        return self._geo(self._expr.geo.difference(self._other(other)))
+
+    def symmetric_difference(self, other, align=None):
+        """The symmetric difference of each geometry and `other` (`ST_SymDifference`)."""
+        _check_align(align)
+        return self._geo(self._expr.geo.sym_difference(self._other(other)))
+
+    # -- serialization and CRS --------------------------------------------
+
+    def to_wkt(self):
+        """Each geometry as WKT text (`ST_AsText`).
+
+        The text is equivalent to GeoPandas' but not character-identical:
+        SedonaDB writes `POINT(1 2)` where Shapely writes `POINT (1 2)`.
+        """
+        return Series(self._df, self._expr.geo.as_text(), self._name)
+
+    def to_wkb(self, hex=False):
+        """Each geometry as ISO WKB bytes (`ST_AsBinary`).
+
+        Equivalent to GeoPandas' `to_wkb(flavor="iso")`; GeoPandas' default
+        extended flavor encodes Z/M dimensions differently. `hex=True` is not
+        supported.
+        """
+        if hex:
+            raise NotImplementedError("to_wkb(hex=True) is not supported")
+        return Series(self._df, self._expr.geo.as_binary(), self._name)
+
+    def set_crs(self, crs=None, epsg=None, inplace=False, allow_override=False):
+        """Label each geometry with a CRS without transforming coordinates.
+
+        GeoPandas' signature and rules: `crs` takes precedence over `epsg`;
+        passing neither clears the CRS; replacing a different existing CRS
+        requires `allow_override=True` (use `GeoDataFrame.to_crs` to
+        reproject). With `inplace=True` this GeoSeries changes and is
+        returned, as in GeoPandas.
+        """
+        current = self.crs
+        if crs is None and epsg is not None:
+            crs = f"EPSG:{int(epsg)}"
+        if crs is not None:
+            crs = _normalize_crs(crs)
+        if current is not None and not allow_override and not _same_crs(current, crs):
+            raise ValueError(
+                "The GeoSeries already has a CRS which is not equal to the passed "
+                "CRS. Specify 'allow_override=True' to allow replacing the existing "
+                "CRS without doing any transformation. If you actually want to "
+                "transform the geometries, use 'to_crs' instead."
+            )
+        ctx = self._df._ctx
+        if crs is None:
+            # SRID 0 means "no CRS" and keeps the values; ST_SetCRS(NULL)
+            # propagates the null and would erase every geometry.
+            expr = (
+                self._expr if current is None else self._expr.geo.set_srid(ctx.lit(0))
+            )
+        else:
+            expr = self._expr.geo.set_crs(ctx.lit(crs))
+        if inplace:
+            self._expr = expr
+            return self
+        return self._geo(expr)
+
+    @property
+    def crs(self):
+        """The CRS of this column, from the frame's schema."""
+        schema = self._df.select(self._expr.alias("x")).schema
+        return schema.field("x").type.crs
 
     @property
     def centroid(self):
         """The centroid of each geometry (`ST_Centroid`)."""
-        return GeoSeries(self._df, self._expr.geo.centroid(), self._name)
+        return self._geo(self._expr.geo.centroid())
 
     @property
     def area(self):
@@ -479,6 +1380,29 @@ class GeoSeries(Series):
     def length(self):
         """The length/perimeter of each geometry (`ST_Length`)."""
         return Series(self._df, self._expr.geo.length(), "length")
+
+    def fillna(self, value=None):
+        """Replace missing geometries with `value`, as in GeoPandas.
+
+        `value` is a Shapely geometry, or None for an empty geometry
+        collection (GeoPandas' default). It takes this column's spatial kind
+        and CRS. Empty geometries are not missing and stay as they are.
+        """
+        import shapely
+        from shapely.geometry.base import BaseGeometry
+
+        if value is None:
+            value = shapely.GeometryCollection()
+        if not isinstance(value, BaseGeometry):
+            raise TypeError(
+                f"GeoSeries.fillna() takes a geometry, got {type(value).__name__}"
+            )
+        ctx = self._df._ctx
+        # coalesce() drops the geometry type, so the choice is made on WKB
+        # and the result rebuilt with this column's spatial kind and CRS.
+        wkb = self._expr.geo.as_binary().funcs.coalesce(ctx.lit(value.wkb))
+        rebuilt = self._as_column_kind(wkb.funcs.st_geomfromwkb(), own_crs=None)
+        return self._geo(rebuilt)
 
     def to_geopandas(self):
         """Execute and return this column as a `geopandas.GeoSeries`."""

@@ -212,35 +212,32 @@ def test_st_intersection_returns_empty(eng, geom1, geom2, expected):
     )
 
 
-# Results that return POINT (nan nan) - BigQuery differs in handling
+# Results that return empty points - BigQuery differs in handling
 @pytest.mark.parametrize("eng", [SedonaDB])
 @pytest.mark.parametrize(
     ("geom1", "geom2", "expected"),
     [
         # Point + Point: different
-        # Currently geoarrow returns POINT (nan, nan) instead of POINT EMPTY
-        pytest.param(
-            "POINT (0 0)", "POINT (0 1)", "POINT (nan nan)", id="point_different"
-        ),
+        pytest.param("POINT (0 0)", "POINT (0 1)", "POINT EMPTY", id="point_different"),
         # Multipoint + Point: disjoint
         pytest.param(
             "MULTIPOINT ((0 0), (1 1))",
             "POINT (2 2)",
-            "POINT (nan nan)",
+            "POINT EMPTY",
             id="multipoint_point_disjoint",
         ),
         # Point + Linestring: point off line
         pytest.param(
             "POINT (5 5)",
             "LINESTRING (0 0, 10 0)",
-            "POINT (nan nan)",
+            "POINT EMPTY",
             id="point_off_linestring",
         ),
         # Point + Polygon: point outside
         pytest.param(
             "POINT (20 20)",
             "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))",
-            "POINT (nan nan)",
+            "POINT EMPTY",
             id="point_outside_polygon",
         ),
     ],
@@ -338,7 +335,7 @@ def test_st_difference(eng, geom1, geom2, expected):
     ("geom1", "geom2", "expected"),
     [
         # Point - Point: same -> empty
-        pytest.param("POINT (0 0)", "POINT (0 0)", "POINT (nan nan)", id="point_same"),
+        pytest.param("POINT (0 0)", "POINT (0 0)", "POINT EMPTY", id="point_same"),
         # Linestring - Linestring: same -> empty
         pytest.param(
             "LINESTRING (0 0, 10 0)",
@@ -532,7 +529,7 @@ def test_st_union(eng, geom1, geom2, expected):
         pytest.param(
             "POINT EMPTY",
             "POINT EMPTY",
-            "POINT (nan nan)",
+            "POINT EMPTY",
             id="both_empty",
         ),
         pytest.param(
@@ -659,11 +656,10 @@ def test_st_symdifference(eng, geom1, geom2, expected):
 @pytest.mark.parametrize(
     ("geom1", "geom2", "expected"),
     [
-        # Currently geoarrow returns POINT (nan, nan) instead of POINT EMPTY
         pytest.param(
             "POINT EMPTY",
             "POINT EMPTY",
-            "POINT (nan nan)",
+            "POINT EMPTY",
             id="both_empty",
         ),
         pytest.param(
@@ -706,8 +702,7 @@ def test_st_symdifference_empties(eng, geom1, geom2, expected):
     ("geom1", "geom2", "expected"),
     [
         # Point symdiff Point: same -> empty
-        # Currently geoarrow returns POINT (nan, nan) instead of POINT EMPTY
-        pytest.param("POINT (0 0)", "POINT (0 0)", "POINT (nan nan)", id="point_same"),
+        pytest.param("POINT (0 0)", "POINT (0 0)", "POINT EMPTY", id="point_same"),
         # Linestring symdiff Linestring: same -> empty
         pytest.param(
             "LINESTRING (0 0, 10 0)",

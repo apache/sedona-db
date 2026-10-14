@@ -29,7 +29,7 @@ from sedonadb.testing import SedonaDB, geog_or_null, val_or_null
     ("geog", "expected"),
     [
         pytest.param(None, None, id="null"),
-        pytest.param("POINT EMPTY", "POINT (nan nan)", id="point_empty"),
+        pytest.param("POINT EMPTY", "POINT EMPTY", id="point_empty"),
         pytest.param("LINESTRING EMPTY", "LINESTRING EMPTY", id="linestring_empty"),
         pytest.param("POLYGON EMPTY", "POLYGON EMPTY", id="polygon_empty"),
         pytest.param("POINT (0 1)", "POINT (1 0)", id="point"),
@@ -58,8 +58,8 @@ def test_st_flipcoordinates(eng, geog, expected):
         pytest.param(None, None, None, id="null"),
         pytest.param(
             "POINT EMPTY",
-            "POINT (nan nan)",
-            "POINT Z (nan nan nan)",
+            "POINT EMPTY",
+            "POINT Z EMPTY",
             id="point_empty",
         ),
         pytest.param(
@@ -90,8 +90,8 @@ def test_st_force_dim(eng, geog, expected_2d, expected_3d):
         pytest.param(
             "POINT EMPTY",
             5,
-            "POINT M (nan nan nan)",
-            "POINT M (nan nan nan)",
+            "POINT M EMPTY",
+            "POINT M EMPTY",
             id="point_empty",
         ),
         pytest.param(
@@ -131,8 +131,8 @@ def test_st_force3dm(eng, geog, m, expected_without_m, expected_with_m):
             "POINT EMPTY",
             5,
             7,
-            "POINT ZM (nan nan nan nan)",
-            "POINT ZM (nan nan nan nan)",
+            "POINT ZM EMPTY",
+            "POINT ZM EMPTY",
             id="point_empty",
         ),
         pytest.param(
@@ -185,7 +185,7 @@ def test_st_force4d(eng, geog, z, m, expected_without_defaults, expected_with_de
     ("geog", "index", "expected"),
     [
         pytest.param(None, 1, None, id="null"),
-        pytest.param("POINT EMPTY", 1, "POINT (nan nan)", id="point_empty"),
+        pytest.param("POINT EMPTY", 1, "POINT EMPTY", id="point_empty"),
         pytest.param("MULTIPOINT EMPTY", 1, None, id="multipoint_empty"),
         pytest.param("POINT (1 1)", 1, "POINT (1 1)", id="point_n1"),
         pytest.param("POINT (1 1)", 2, None, id="point_n2_oob"),
@@ -286,7 +286,7 @@ def test_st_interiorringn(eng, geog, index, expected):
     ("geog", "expected"),
     [
         pytest.param(None, None, id="null"),
-        pytest.param("POINT EMPTY", "POINT (nan nan)", id="point_empty"),
+        pytest.param("POINT EMPTY", "POINT EMPTY", id="point_empty"),
         pytest.param("LINESTRING EMPTY", "LINESTRING EMPTY", id="linestring_empty"),
         pytest.param("POINT (1 2)", "POINT (1 2)", id="point"),
         pytest.param(
@@ -463,7 +463,7 @@ def test_st_linemerge_directed(eng, geog, expected):
     ("geog", "expected"),
     [
         pytest.param(None, None, id="null"),
-        pytest.param("POINT EMPTY", "POINT (nan nan)", id="point_empty"),
+        pytest.param("POINT EMPTY", "POINT EMPTY", id="point_empty"),
         pytest.param("LINESTRING EMPTY", "LINESTRING EMPTY", id="linestring_empty"),
         pytest.param("POINT (1 2)", "POINT (1 2)", id="point"),
         pytest.param(

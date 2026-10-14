@@ -298,10 +298,8 @@ def test_st_transform_from_wkt_crs(con):
             2.0,
             "GEOMETRYCOLLECTION (POINT (1 3))",
         ),
-        # WKT output of geoarrow-c is causing this (both correctly output
-        # empties)
-        ("POINT EMPTY", 1.0, 2.0, "POINT (nan nan)"),
-        ("POINT Z EMPTY", 1.0, 2.0, "POINT Z (nan nan nan)"),
+        ("POINT EMPTY", 1.0, 2.0, "POINT EMPTY"),
+        ("POINT Z EMPTY", 1.0, 2.0, "POINT Z EMPTY"),
         ("LINESTRING EMPTY", 1.0, 2.0, "LINESTRING EMPTY"),
         ("POLYGON EMPTY", 1.0, 2.0, "POLYGON EMPTY"),
         ("MULTIPOINT EMPTY", 1.0, 2.0, "MULTIPOINT EMPTY"),
@@ -366,10 +364,8 @@ def test_st_translate(eng, geom, dx, dy, expected):
             3.0,
             "GEOMETRYCOLLECTION Z (POINT Z (1 3 5))",
         ),
-        # WKT output of geoarrow-c is causing this (both correctly output
-        # empties)
-        ("POINT EMPTY", 1.0, 2.0, 3.0, "POINT (nan nan)"),
-        ("POINT Z EMPTY", 1.0, 2.0, 3.0, "POINT Z (nan nan nan)"),
+        ("POINT EMPTY", 1.0, 2.0, 3.0, "POINT EMPTY"),
+        ("POINT Z EMPTY", 1.0, 2.0, 3.0, "POINT Z EMPTY"),
         ("LINESTRING EMPTY", 1.0, 2.0, 3.0, "LINESTRING EMPTY"),
         ("POLYGON EMPTY", 1.0, 2.0, 3.0, "POLYGON EMPTY"),
         ("MULTIPOINT EMPTY", 1.0, 2.0, 3.0, "MULTIPOINT EMPTY"),

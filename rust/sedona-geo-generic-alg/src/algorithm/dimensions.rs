@@ -264,11 +264,15 @@ where
     P: PointTraitExt<T = C>,
 {
     fn is_empty_trait(&self) -> bool {
-        false
+        self.coord_ext().is_none()
     }
 
     fn dimensions_trait(&self) -> Dimensions {
-        Dimensions::ZeroDimensional
+        if self.is_empty_trait() {
+            Dimensions::Empty
+        } else {
+            Dimensions::ZeroDimensional
+        }
     }
 
     fn boundary_dimensions_trait(&self) -> Dimensions {
@@ -397,11 +401,11 @@ where
     MP: MultiPointTraitExt<T = C>,
 {
     fn is_empty_trait(&self) -> bool {
-        self.num_points() == 0
+        self.points_ext().all(|point| point.is_empty_trait())
     }
 
     fn dimensions_trait(&self) -> Dimensions {
-        if self.num_points() == 0 {
+        if self.is_empty_trait() {
             return Dimensions::Empty;
         }
 
@@ -649,6 +653,24 @@ mod tests {
 
     mod empty {
         use super::*;
+        use sedona_testing::create::make_wkb;
+
+        #[test]
+        fn empty_wkb_point() {
+            let bytes = make_wkb("POINT EMPTY");
+            let geometry = wkb::reader::read_wkb(&bytes).unwrap();
+            assert!(geometry.is_empty());
+            assert_eq!(Dimensions::Empty, geometry.dimensions());
+        }
+
+        #[test]
+        fn collection_with_empty_wkb_point() {
+            let bytes = make_wkb("GEOMETRYCOLLECTION (POINT EMPTY)");
+            let geometry = wkb::reader::read_wkb(&bytes).unwrap();
+            assert!(geometry.is_empty());
+            assert_eq!(Dimensions::Empty, geometry.dimensions());
+        }
+
         #[test]
         fn empty_line_string() {
             assert_eq!(
