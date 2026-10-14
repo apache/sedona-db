@@ -56,26 +56,17 @@ def is_scalar(value):
 
 
 def normalize_scalar(value):
-    """Normalize an accepted scalar into something a literal can hold.
+    """Normalize an accepted scalar into the value a literal should hold.
 
-    Passing the classifier is not the same as being constructible: a 0-d NumPy
-    array is a scalar but `lit()` cannot take it, and `pandas.NA` is a missing
-    sentinel `lit()` does not recognize. Unwrap the former to its Python value
-    and convert missing sentinels to `None` (SQL null). Callers apply this only
-    after `is_scalar` has accepted the value.
+    A 0-d NumPy array is unwrapped (and its content normalized in turn),
+    masked values and `pandas.NA` become `None` (SQL null), and NumPy scalars
+    become typed Arrow scalars, which keeps their dtype and lets callers such
+    as `isin` tell kinds apart. Callers apply this only after `is_scalar` has
+    accepted the value.
 
     Temporal scalars are handed to `_temporal.normalize_temporal_scalar`,
     which chooses units losslessly and keeps timezones.
     """
-    # lit() rejects a typed-null *nested* scalar (list, map, struct); a
-    # one-element typed Arrow array is the resolver's supported spelling of
-    # the same broadcast value.
-    if (
-        isinstance(value, pa.Scalar)
-        and not value.is_valid
-        and pa.types.is_nested(value.type)
-    ):
-        return pa.array([None], type=value.type)
     try:
         import numpy as np
 

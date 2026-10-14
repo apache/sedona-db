@@ -475,16 +475,14 @@ class GeoDataFrame:
         missing = _is_missing(raw)
         replacing_geometry = key in _geometry_column_names(self._df)
 
-        # A GeoArrow-typed scalar — valid or null — is recognized from its
-        # extension name, not by resolving it: the scalar resolver drops the
-        # planar/spherical edge type and rejects non-WKB storage outright.
-        # It needs the handling below even for a brand-new or non-geometry
-        # column, so this must come before that early return.
+        # A GeoArrow-typed scalar, valid or null, carries its own spatial kind
+        # and CRS, which the literal keeps; a null of it must not be rebuilt
+        # with the destination's kind like other missing values.
         geoarrow_typed = isinstance(raw, pa.Scalar) and str(
             getattr(raw.type, "extension_name", "")
         ).startswith("geoarrow.")
 
-        if not replacing_geometry and not geoarrow_typed:
+        if not replacing_geometry:
             return lit(raw)
 
         if not missing and not geoarrow_typed:
@@ -508,50 +506,8 @@ class GeoDataFrame:
         strips_crs = False
         expr = None
         if geoarrow_typed:
-            scalar_spherical = (
-                "SPHERICAL" in str(getattr(raw.type, "edge_type", "")).upper()
-            )
-            scalar_crs = getattr(raw.type, "crs", None)
-            if str(raw.type.extension_name) == "geoarrow.wkb":
-                arr_type = raw.type
-                if pa.types.is_large_binary(arr_type.storage_type):
-                    # SedonaDB's WKB importer requires Binary storage; the
-                    # type is rebuilt on Binary with the same CRS and edge
-                    # metadata rather than passed through and rejected.
-                    import geoarrow.pyarrow as ga
-
-                    rebuilt = ga.wkb().with_edge_type(arr_type.edge_type)
-                    if arr_type.crs is not None:
-                        rebuilt = rebuilt.with_crs(arr_type.crs)
-                    arr_type = rebuilt
-                expr = ctx.lit(pa.array([raw.as_py()], type=arr_type))
-            elif missing:
-                # Non-WKB storage cannot become a literal; a null of it is
-                # rebuilt from its own metadata. Kind and CRS survive; the
-                # storage kind, which holds nothing for a null, does not.
-                if scalar_spherical:
-                    expr = ctx.lit(None).funcs.st_geogfromwkt()
-                else:
-                    expr = ctx.lit(None).funcs.st_geomfromwkt()
-                if scalar_crs:
-                    # GeoArrow CRS wrappers stringify as StringCrs(...);
-                    # to_json() is the canonical PROJJSON form ST_SetCRS
-                    # accepts.
-                    crs_text = (
-                        scalar_crs.to_json()
-                        if hasattr(scalar_crs, "to_json")
-                        else str(scalar_crs)
-                    )
-                    expr = expr.funcs.st_setcrs(ctx.lit(crs_text))
-                else:
-                    # A CRS-less carrier inherits the destination CRS like
-                    # any other, shedding any constructor-synthesized one.
-                    inherits_crs = True
-                    strips_crs = crs is None
-            else:
-                # A valid non-WKB GeoArrow scalar keeps the literal
-                # resolver's own error, which names the unsupported storage.
-                expr = ctx.lit(raw)
+            # A CRS-less one inherits the destination CRS below.
+            expr = ctx.lit(raw)
         if expr is not None:
             pass
         elif missing:

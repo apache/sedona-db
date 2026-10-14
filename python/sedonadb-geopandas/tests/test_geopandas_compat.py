@@ -24,9 +24,7 @@ import numpy.ma.mrecords as mrecords
 import pandas as pd
 import pyarrow as pa
 import pytest
-import sedonadb
 from geopandas.testing import assert_geodataframe_equal
-from packaging.version import Version
 from sedonadb.expr import lit
 from shapely.geometry import MultiPoint, Point
 
@@ -1035,6 +1033,26 @@ def test_geoarrow_scalars_to_new_columns():
     plain["g"] = pa.scalar(Point(1, 1).wkb, sph)
     assert "geography" in str(plain._df.schema.field("g").type)
     assert plain._geometry_name == "g"
+
+
+def test_valid_non_wkb_geoarrow_scalar_assigns():
+    # A GeoArrow scalar in native (non-WKB) storage becomes a geometry literal
+    # with its own CRS; a CRS-less one takes the destination column's.
+    points = gpd.GeoDataFrame(
+        {"v": [1, 2]}, geometry=gpd.points_from_xy([0, 5], [0, 5]), crs=3857
+    )
+    native = ga.as_geoarrow(["POINT (1 2)"], coord_type=ga.CoordType.SEPARATED)
+    for scalar, crs in (
+        (native[0], "EPSG:3857"),
+        (ga.with_crs(native, "EPSG:4326")[0], "EPSG:4326"),
+    ):
+        gdf = sgpd.from_geopandas(points)
+        gdf["geometry"] = scalar
+        gdf["fresh"] = scalar
+        result = gdf.to_geopandas()
+        assert result.geometry.tolist() == [Point(1, 2)] * 2
+        assert result["fresh"].tolist() == [Point(1, 2)] * 2
+        assert result.crs == crs
 
 
 def test_non_wkb_geoarrow_null_keeps_its_own_crs():
@@ -2142,10 +2160,6 @@ def test_dictionary_duration_columns_treat_sentinel_as_missing():
     assert gdf[gdf["t"] == gdf["t"]]["t"].to_pandas().tolist() == [pd.Timedelta(10)]
 
 
-@pytest.mark.skipif(
-    Version(sedonadb.__version__) < Version("0.5.0a0"),
-    reason="sedonadb < 0.5 expands a sliced run-end-encoded array from the wrong offset (#1345)",
-)
 @pytest.mark.parametrize("type", [pa.duration("ns"), pa.timestamp("ns")])
 def test_sliced_run_end_encoded_temporal_columns_read_correctly(type):
     # Sentinel normalization decodes run-end-encoded temporal columns, so a
