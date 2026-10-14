@@ -886,6 +886,16 @@ mod tests {
     #[tokio::test]
     async fn foreign_async_lookup_and_builtin_fallback() -> Result<()> {
         let (ctx, catalog) = test_context();
+        let foreign = ctx.table_provider("foreign.public.existing").await?;
+        assert_eq!(foreign.schema().field(0).name(), "value");
+        assert_eq!(
+            ctx.table("foreign.public.existing")
+                .await?
+                .collect()
+                .await?
+                .len(),
+            0
+        );
         ctx.sql("SELECT value FROM foreign.public.existing")
             .await?
             .collect()
@@ -894,6 +904,8 @@ mod tests {
             .await?
             .collect()
             .await?;
+        assert!(ctx.catalog_registry().table("builtin").await?.is_some());
+        assert!(ctx.table_provider("missing").await.is_err());
         ctx.sql("SELECT * FROM builtin JOIN foreign.public.existing USING (value)")
             .await?
             .collect()

@@ -32,7 +32,7 @@ use arrow_array::RecordBatch;
 use arrow_schema::{DataType, Schema};
 use async_trait::async_trait;
 use datafusion::datasource::file_format::{format_as_file_type, FileFormatFactory};
-use datafusion::datasource::MemTable;
+use datafusion::datasource::{provider_as_source, MemTable, TableProvider};
 use datafusion::{
     common::plan_err,
     error::{DataFusionError, Result},
@@ -47,6 +47,7 @@ use datafusion::{
 use datafusion::{dataframe::DataFrameWriteOptions, execution::memory_pool::MemoryLimit};
 use datafusion_common::config::{CsvOptions, JsonOptions};
 use datafusion_common::not_impl_err;
+use datafusion_common::TableReference;
 use datafusion_expr::dml::InsertOp;
 use datafusion_expr::sqlparser::dialect::{dialect_from_str, Dialect};
 use datafusion_expr::{AggregateUDFImpl, LogicalPlan, LogicalPlanBuilder, ScalarUDFImpl, SortExpr};
@@ -518,8 +519,37 @@ impl SedonaContext {
         self.catalogs.register_foreign(catalogs);
     }
 
-    pub(crate) fn catalog_registry(&self) -> &SedonaCatalogRegistry {
+    /// Return the registry used to resolve built-in and foreign catalogs.
+    pub fn catalog_registry(&self) -> &SedonaCatalogRegistry {
         &self.catalogs
+    }
+
+    /// Return the provider for a table resolved with Sedona catalog precedence.
+    ///
+    /// This is the catalog-aware counterpart to
+    /// [`SessionContext::table_provider`]. Foreign catalogs registered later
+    /// take precedence over earlier registrations and built-in catalogs.
+    pub async fn table_provider(
+        &self,
+        table_ref: impl Into<TableReference>,
+    ) -> Result<Arc<dyn TableProvider>> {
+        let table_ref = table_ref.into();
+        self.catalogs
+            .table(table_ref.clone())
+            .await?
+            .ok_or_else(|| DataFusionError::Plan(format!("No table named '{}'", table_ref.table())))
+    }
+
+    /// Return a [`DataFrame`] for a table resolved with Sedona catalog precedence.
+    ///
+    /// Unlike [`SessionContext::table`], this also resolves tables from foreign
+    /// [`SedonaCatalogList`] implementations.
+    pub async fn table(&self, table_ref: impl Into<TableReference>) -> Result<DataFrame> {
+        let table_ref = table_ref.into();
+        let provider = self.table_provider(table_ref.clone()).await?;
+        let plan =
+            LogicalPlanBuilder::scan(table_ref, provider_as_source(provider), None)?.build()?;
+        Ok(DataFrame::new(self.ctx.state(), plan))
     }
 
     /// The session's cache of loaded OutDb band bytes: inspect its
