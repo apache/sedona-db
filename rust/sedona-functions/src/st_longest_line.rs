@@ -152,4 +152,17 @@ mod tests {
             .unwrap();
         tester.assert_scalar_result_equals(result, "LINESTRING (0 0, 3 4)");
     }
+
+    #[test]
+    fn selects_longest_line_without_distance_overflow() {
+        let tester = ScalarUdfTester::new(
+            st_longest_line_udf().into(),
+            vec![WKB_GEOMETRY, WKB_GEOMETRY],
+        );
+
+        let result = tester
+            .invoke_scalar_scalar("MULTIPOINT ((1e200 0), (0 0))", "POINT (2e200 0)")
+            .unwrap();
+        tester.assert_scalar_result_equals(result, "LINESTRING (0 0, 2e200 0)");
+    }
 }
