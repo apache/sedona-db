@@ -355,7 +355,7 @@ mod test {
     use datafusion::prelude::{col, lit};
     use datafusion_expr::LogicalPlanBuilder;
     use sedona_geometry::types::Edges;
-    use sedona_schema::{crs::lnglat, datatypes::SedonaType};
+    use sedona_schema::datatypes::SedonaType;
     use sedona_testing::data::{geoarrow_data_dir, test_geoparquet};
     use tempfile::tempdir;
 
@@ -431,10 +431,7 @@ mod test {
         let sedona_types = sedona_types.unwrap();
         assert_eq!(sedona_types.len(), 2);
         assert_eq!(sedona_types[0], SedonaType::Arrow(DataType::Utf8View));
-        assert_eq!(
-            sedona_types[1],
-            SedonaType::WkbView(Edges::Planar, lnglat())
-        );
+        assert_eq!(sedona_types[1], SedonaType::WkbView(Edges::Planar, None));
 
         // Make sure all the rows show up!
         let batches = df.collect().await.unwrap();

@@ -1130,11 +1130,7 @@ mod tests {
     use datafusion::{assert_batches_eq, datasource::file_format::csv::CsvFormatFactory};
     use sedona_datasource::spec::{Object, OpenReaderArgs};
     use sedona_geometry::types::Edges;
-    use sedona_schema::{
-        crs::{deserialize_crs, lnglat},
-        datatypes::SedonaType,
-        schema::SedonaSchema,
-    };
+    use sedona_schema::{crs::deserialize_crs, datatypes::SedonaType, schema::SedonaSchema};
     use sedona_testing::data::test_geoparquet;
     use tempfile::tempdir;
 
@@ -1665,10 +1661,8 @@ mod tests {
             .unwrap();
         assert_eq!(sedona_types.len(), 2);
         assert_eq!(sedona_types[0], SedonaType::Arrow(DataType::Utf8View));
-        assert_eq!(
-            sedona_types[1],
-            SedonaType::WkbView(Edges::Planar, lnglat())
-        );
+        // The example fixture explicitly declares `"crs": null`.
+        assert_eq!(sedona_types[1], SedonaType::WkbView(Edges::Planar, None));
 
         // Ensure read_parquet() works
         let df = ctx
@@ -1682,10 +1676,7 @@ mod tests {
             .unwrap();
         assert_eq!(sedona_types.len(), 2);
         assert_eq!(sedona_types[0], SedonaType::Arrow(DataType::Utf8View));
-        assert_eq!(
-            sedona_types[1],
-            SedonaType::WkbView(Edges::Planar, lnglat())
-        );
+        assert_eq!(sedona_types[1], SedonaType::WkbView(Edges::Planar, None));
 
         // The generic read path resolves the same registered GeoParquet
         // factory used by SQL URL tables.
@@ -1695,7 +1686,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             df.schema().sedona_types().nth(1).unwrap().unwrap(),
-            SedonaType::WkbView(Edges::Planar, lnglat())
+            SedonaType::WkbView(Edges::Planar, None)
         );
     }
 
@@ -1831,9 +1822,10 @@ mod tests {
             )
             .await
             .unwrap();
+        // The example fixture explicitly declares `"crs": null`.
         assert_eq!(
             df.schema().sedona_types().nth(1).unwrap().unwrap(),
-            SedonaType::WkbView(Edges::Planar, lnglat())
+            SedonaType::WkbView(Edges::Planar, None)
         );
     }
 
