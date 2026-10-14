@@ -70,7 +70,7 @@
 <p>You can install the development version of sedonadb from <a href="https://github.com/" class="external-link">GitHub</a> with:</p>
 <div class="sourceCode" id="cb2"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu">pak</span><span class="fu">::</span><span class="fu"><a href="https://pak.r-lib.org/reference/pkg_install.html" class="external-link">pkg_install</a></span><span class="op">(</span><span class="st">"apache/sedona-db/r/sedonadb"</span><span class="op">)</span></span></code></pre></div>
-<p>Installing a development version of sedonadb requires a <a href="https://rustup.rs" class="external-link">Rust compiler</a> and a GEOS system dependency (e.g., <code>brew install geos</code> or <code>apt-get install libgeos-dev</code>). Install instructions for these dependencies on other platforms can be found on the <a href="https://r-spatial.github.io/sf" class="external-link">sf package homepage</a>.</p>
+<p>Installing a development version of sedonadb requires a <a href="https://rustup.rs" class="external-link">Rust compiler</a>, CMake, Git, and a GEOS system dependency (e.g., <code>brew install geos</code> or <code>apt-get install libgeos-dev</code>). Install instructions for GEOS on other platforms can be found on the <a href="https://r-spatial.github.io/sf" class="external-link">sf package homepage</a>. The install automatically sets up a pinned vcpkg checkout for the S2, Abseil, and OpenSSL dependencies. Set <code>SEDONADB_USE_VCPKG=false</code> to disable automatic setup and use dependencies provided through <code>VCPKG_ROOT</code> or the system instead.</p>
 </div>
 <div class="section level2">
 <h2 id="example">Example<a class="anchor" aria-label="anchor" href="#example"></a>
