@@ -129,8 +129,12 @@ differences that come from SedonaDB's readers and GeoParquet writer:
 - `read_file()` keeps the source's name for the geometry column (`geom` in a
   GeoPackage) where GeoPandas renames it to `geometry`: renaming it would break
   later column selections (apache/sedona-db#1405).
-- `to_parquet()` writes one file and needs a file extension such as `.parquet`,
-  since SedonaDB writes a directory of files to a path without one.
+- `to_parquet()` writes one local file and needs a file extension such as
+  `.parquet`, since SedonaDB writes a directory of files to a path without one.
+  It cannot write to a remote URL (`s3://`, `gs://`) yet
+  (apache/sedona-db#1440); reading one works, with the object store's options
+  passed as `storage_options` using SedonaDB's keys (for example
+  `{"aws.skip_signature": True, "aws.region": "us-west-2"}`), not fsspec's.
 
 See the SedonaDB "Migrating from GeoPandas" guide for the relational model that
 underlies each method.

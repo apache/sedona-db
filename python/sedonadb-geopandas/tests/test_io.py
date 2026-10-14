@@ -94,12 +94,38 @@ def test_read_parquet_of_a_directory(tmp_path):
     assert ours.crs == sample.crs
 
 
+def test_read_parquet_from_public_s3_with_storage_options():
+    # As in SedonaDB's own reader tests: anonymous access to a public bucket.
+    gdf = sgpd.read_parquet(
+        "s3://wherobots-examples/data/onboarding_1/nyc_buildings.parquet",
+        storage_options={"aws.skip_signature": True, "aws.region": "us-west-2"},
+    )
+    assert gdf._geometry_name == "geom"
+    assert len(gdf.head(3).to_geopandas()) == 3
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["s3://bucket/out.parquet", "gs://bucket/out.parquet", "https://host/out.parquet"],
+)
+def test_to_parquet_refuses_a_remote_url(tmp_path, url):
+    with pytest.raises(NotImplementedError, match="1440"):
+        sgpd.from_geopandas(_sample()).to_parquet(url)
+
+
+def test_to_parquet_to_a_file_uri(tmp_path):
+    path = tmp_path / "with space.parquet"
+    sgpd.from_geopandas(_sample()).to_parquet(path.as_uri())
+    assert len(gpd.read_parquet(path)) == 4
+
+
 def test_read_parquet_rejects_unsupported_arguments(tmp_path):
     path = tmp_path / "sample.parquet"
     _sample().to_parquet(path)
     with pytest.raises(NotImplementedError, match="bbox"):
         sgpd.read_parquet(path, bbox=(0, 0, 1, 1))
-    with pytest.raises(NotImplementedError, match="storage_options"):
+    # storage_options are SedonaDB's object-store options, not fsspec's.
+    with pytest.raises(Exception, match="anon"):
         sgpd.read_parquet(path, storage_options={"anon": True})
     with pytest.raises(NotImplementedError, match="filters"):
         sgpd.read_parquet(path, filters=[("v", ">", 1)])

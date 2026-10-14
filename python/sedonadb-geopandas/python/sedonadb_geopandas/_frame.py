@@ -865,9 +865,10 @@ class GeoDataFrame:
     ):
         """Write one GeoParquet file, as `GeoDataFrame.to_parquet` does.
 
-        **EXPERIMENTAL.** Computes the frame and writes it to `path`, which needs
-        a file extension (such as `.parquet`): SedonaDB writes a directory of
-        files to a path without one.
+        **EXPERIMENTAL.** Computes the frame and writes it to `path`, a local
+        file (or `file://` URI) with an extension such as `.parquet`: SedonaDB
+        writes a directory of files to a path without one, and cannot write to
+        a remote URL yet (apache/sedona-db#1440).
 
         Args:
             path: The file to write; an existing file is replaced.
@@ -921,7 +922,14 @@ class GeoDataFrame:
                 "pass write_covering_bbox=True with schema_version='1.1.0', or "
                 "neither"
             )
-        if not os.path.splitext(os.fspath(path))[1]:
+        location = os.fspath(path)
+        if "://" in location and not location.startswith("file:"):
+            raise NotImplementedError(
+                f"to_parquet() writes local files only for now, got {location!r}: "
+                f"SedonaDB's DataFrame writer cannot write to a remote URL yet "
+                f"(apache/sedona-db#1440)"
+            )
+        if not os.path.splitext(location)[1]:
             raise ValueError(
                 f"to_parquet() needs a file name with an extension (such as "
                 f"'.parquet'), got {os.fspath(path)!r}: SedonaDB writes a "

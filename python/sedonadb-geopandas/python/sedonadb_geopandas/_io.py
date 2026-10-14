@@ -110,7 +110,11 @@ def read_parquet(
         path: A path, URL, directory or glob of GeoParquet files.
         columns: The columns to read, in this order; at least one must be a
             geometry column.
-        storage_options, bbox, to_pandas_kwargs: Not supported.
+        storage_options: Options for the object store a remote path is read
+            from, passed to SedonaDB's reader with its keys rather than
+            fsspec's: `{"aws.skip_signature": True, "aws.region": "us-west-2"}`
+            reads a public S3 bucket anonymously, for instance.
+        bbox, to_pandas_kwargs: Not supported.
         context: An optional SedonaDB context. Defaults to a shared,
             lazily-created one.
 
@@ -120,7 +124,6 @@ def read_parquet(
     _reject(
         "read_parquet",
         {
-            "storage_options": storage_options,
             "bbox": bbox,
             "to_pandas_kwargs": to_pandas_kwargs,
             **kwargs,
@@ -131,7 +134,7 @@ def read_parquet(
         # iterable such as a generator is collected first.
         path = list(path)
     ctx = context or default_context()
-    df = ctx.read_parquet(path)
+    df = ctx.read_parquet(path, options=storage_options)
     if columns is None:
         hidden = (_declared_coverings(path) & set(df.schema.names)) - set(
             _geometry_column_names(df)
