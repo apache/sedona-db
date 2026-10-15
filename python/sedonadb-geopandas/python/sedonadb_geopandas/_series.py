@@ -568,6 +568,171 @@ class Series:
 
     __hash__ = None
 
+    # -- reductions (computed) ---------------------------------------------
+    def _valued(self):
+        """This column with every missing value as SQL null.
+
+        pandas skips missing values in reductions, and in a float column NaN
+        is missing; the engine's aggregates would count it, propagate it, or
+        sort it last.
+        """
+        if self._is_floating():
+            return self._expr.funcs.nullif(lit(float("nan")))
+        return self._expr
+
+    def _reduce(self, aggregate):
+        """Compute one aggregate over this column as a pandas scalar."""
+        return self._df.agg(aggregate.alias("x")).to_pandas()["x"].iloc[0]
+
+    def _numeric(self, method):
+        """This column's values for an arithmetic reduction, booleans as 0/1."""
+        kind = _kind(self._dtype())
+        if kind == "bool":
+            return self._valued().cast(pa.int64())
+        if kind == "number":
+            return self._valued()
+        raise TypeError(
+            f"{method}() needs a numeric or boolean column, not {self._dtype()}"
+        )
+
+    def _ordered(self, method):
+        kind = _kind(self._dtype())
+        dtype = self._dtype()
+        if kind in ("number", "bool", "string") or _is_temporal(dtype):
+            return self._valued()
+        raise TypeError(f"{method}() is not supported for {dtype}")
+
+    def _distinct_values(self, method):
+        if isinstance(self._dtype(), pa.ExtensionType):
+            raise NotImplementedError(f"{method}() is not supported for geometry")
+        return self._df.select(self._valued().alias("x"))
+
+    def sum(self):
+        """The sum of the values, skipping missing ones; 0 when there are none.
+
+        Computes the result. As in pandas, booleans count as 0 and 1.
+        """
+        return self._reduce(self._numeric("sum").funcs.sum().funcs.coalesce(lit(0)))
+
+    def mean(self):
+        """The mean of the values, skipping missing ones; NaN when there are none."""
+        return self._reduce(self._numeric("mean").cast(pa.float64()).funcs.avg())
+
+    def median(self):
+        """The median of the values, skipping missing ones; NaN when there are none."""
+        return self._reduce(self._numeric("median").cast(pa.float64()).funcs.median())
+
+    def std(self, ddof=1):
+        """The standard deviation, skipping missing values (`ddof` 1 or 0)."""
+        return self._reduce(self._spread("std", ddof, "stddev", "stddev_pop"))
+
+    def var(self, ddof=1):
+        """The variance, skipping missing values (`ddof` 1 or 0)."""
+        return self._reduce(self._spread("var", ddof, "var_samp", "var_pop"))
+
+    def _spread(self, method, ddof, sample, population):
+        if ddof not in (0, 1):
+            raise NotImplementedError(
+                f"{method}() supports ddof=1 or ddof=0, got {ddof!r}"
+            )
+        values = self._numeric(method).cast(pa.float64())
+        return getattr(values.funcs, sample if ddof == 1 else population)()
+
+    def min(self):
+        """The smallest value, skipping missing ones; NaN when there are none."""
+        return self._extreme("min")
+
+    def max(self):
+        """The largest value, skipping missing ones; NaN when there are none."""
+        return self._extreme("max")
+
+    def _extreme(self, method):
+        result = self._reduce(getattr(self._ordered(method).funcs, method)())
+        return math.nan if result is None else result
+
+    def count(self):
+        """The number of values that are not missing (NaN counts as missing)."""
+        return self._reduce(self._valued().funcs.count())
+
+    def quantile(self, q=0.5, interpolation="linear"):
+        """The `q` quantile(s), skipping missing values, interpolated linearly.
+
+        A single `q` gives a number; a list gives a pandas Series indexed by
+        `q`, as in pandas.
+        """
+        if interpolation != "linear":
+            raise NotImplementedError(
+                f"quantile() supports interpolation='linear' only, got {interpolation!r}"
+            )
+        many = not isinstance(q, numbers.Real)
+        qs = [float(value) for value in (q if many else [q])]
+        if any(not 0 <= value <= 1 for value in qs):
+            raise ValueError("percentiles should all be in the interval [0, 1]")
+        values = self._numeric("quantile").cast(pa.float64())
+        row = self._df.agg(
+            *[
+                values.funcs.percentile_cont(lit(value)).alias(f"q{i}")
+                for i, value in enumerate(qs)
+            ]
+        ).to_pandas()
+        results = [row[f"q{i}"].iloc[0] for i in range(len(qs))]
+        if not many:
+            return results[0]
+        import pandas as pd
+
+        return pd.Series(results, index=pd.Index(qs), name=self._name, dtype="float64")
+
+    def nunique(self, dropna=True):
+        """The number of distinct values, a missing value counting once if
+        `dropna=False`."""
+        distinct = self._distinct_values("nunique").distinct()
+        if dropna:
+            return self._reduce_on(distinct, distinct["x"].funcs.count())
+        return distinct.count()
+
+    def _reduce_on(self, df, aggregate):
+        return df.agg(aggregate.alias("n")).to_pandas()["n"].iloc[0]
+
+    def unique(self):
+        """The distinct values, as pandas' `unique()` returns them.
+
+        A missing value appears once. Unlike pandas, the values are not in
+        order of first appearance: a lazy frame has no row order.
+        """
+        distinct = self._distinct_values("unique").distinct()
+        return distinct.to_pandas()["x"].unique()
+
+    def value_counts(self, normalize=False, sort=True, ascending=False, dropna=True):
+        """How often each distinct value occurs, as a pandas Series, as in pandas.
+
+        Values with the same count are ordered by value, since a lazy frame has
+        no order of first appearance to break ties by (and with `sort=False`,
+        the values are in value order).
+        """
+        import pandas as pd
+
+        values = self._distinct_values("value_counts")
+        if dropna:
+            values = values.filter(values["x"].is_not_null())
+        # Rows per value, a missing one included (count of the value would
+        # skip it).
+        counts = (
+            values.group_by("x")
+            .agg(values._ctx.lit(1).funcs.count().alias("n"))
+            .to_pandas()
+        )
+        result = pd.Series(
+            counts["n"].to_numpy(),
+            index=pd.Index(counts["x"], name=self._name),
+            name="proportion" if normalize else "count",
+        )
+        result = result.sort_index(na_position="last", kind="stable")
+        if sort:
+            result = result.sort_values(ascending=ascending, kind="stable")
+        if normalize:
+            result = result / result.sum()
+        return result
+
     # -- materialization ---------------------------------------------------
     def to_pandas(self):
         """Execute and return this column as a pandas (or GeoPandas) Series."""
@@ -611,6 +776,15 @@ def _kind(arrow_type):
     ):
         return "string"
     return "other"
+
+
+def _is_temporal(arrow_type):
+    return (
+        pa.types.is_timestamp(arrow_type)
+        or pa.types.is_date(arrow_type)
+        or pa.types.is_duration(arrow_type)
+        or pa.types.is_time(arrow_type)
+    )
 
 
 def _comparable(dtype, values):
