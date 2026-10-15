@@ -21,7 +21,7 @@ use std::{
 
 use crate::exec::{create_plan_from_sql, resolve_sedona_catalog_ddl};
 use crate::object_storage::{
-    ensure_object_store_registered_with_options, register_object_store_and_config_extensions,
+    ensure_object_store_registered_with_options, register_output_object_store,
 };
 use crate::read::{read_provider, resolve_read_format};
 use crate::url_table::install_sedona_url_table;
@@ -947,18 +947,14 @@ impl SedonaDataFrame for DataFrame {
         }
 
         // A remote output path (e.g., s3://) needs its object store registered,
-        // as reads and COPY ... TO do. As with COPY ... TO's OPTIONS, explicit
-        // options apply even if a store is already registered for the bucket
-        // (by an anonymous read, say); without any, that store is reused.
+        // as reads and COPY ... TO do. Explicit options apply to the write even
+        // if a store is already registered for the bucket (by an anonymous
+        // read, say), which keeps serving reads; without any, that store is
+        // reused.
         if options.storage_options.is_empty() {
             ensure_object_store_registered_with_options(&mut ctx.ctx.state(), path, None).await?;
         } else {
-            register_object_store_and_config_extensions(
-                ctx,
-                &path.to_string(),
-                &options.storage_options,
-            )
-            .await?;
+            register_output_object_store(ctx, path, &options.storage_options).await?;
         }
 
         let format = if let Some(parquet_opts) = writer_options {
