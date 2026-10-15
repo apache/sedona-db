@@ -26,20 +26,16 @@ kernels:
 
 ## Description
 
-Returns the parts of a multi-geometry or the members of a geometry collection,
-one level deep: a collection nested inside a collection is returned whole. A
-geometry that is not a collection returns itself as the only member, even when
-it is empty, while an empty multi-geometry or collection returns an empty list.
-The members keep the input's spatial type and CRS, and NULL returns NULL.
+Returns `ST_GeometryN(geom, n)` for each `n` from 1 to the number of members: the
+parts of a multi-geometry or the members of a geometry collection, one level deep,
+so a collection nested inside a collection is returned whole. A geometry that is not
+a collection is its own single member, even when it is empty, and an empty
+multi-geometry or collection returns an empty list. The members keep the input's
+spatial type and CRS, and NULL returns NULL.
 
-Unlike `ST_Dump`, which recurses into nested collections down to their atomic
-parts and records each part's position in a `path`, `ST_Geometries` returns
-only the members themselves, matching Shapely's `get_parts()`. Combined with
-`UNNEST`, it turns each member into its own row.
-
-`UNNEST` currently returns the members as WKB rather than geometry, because it
-drops the list's item type (apache/datafusion#26331); wrap it in
-`ST_GeomFromWKB` (and `ST_SetSRID`, to keep a CRS) until that is fixed.
+Unlike [ST_Dump](st_dump.qmd), which recurses into nested collections down to their
+atomic parts, `ST_Geometries` returns only a geometry's direct members. See also
+[ST_GeometryN](st_geometryn.qmd).
 
 ## Examples
 
@@ -49,8 +45,4 @@ SELECT ST_Geometries(ST_GeomFromText('MULTIPOINT ((10 40), (40 30), (20 20))'));
 
 ```sql
 SELECT ST_Geometries(ST_GeomFromText('GEOMETRYCOLLECTION (POINT (1 2), GEOMETRYCOLLECTION (POINT (3 4), LINESTRING (0 0, 1 1)))'));
-```
-
-```sql
-SELECT ST_GeomFromWKB(UNNEST(ST_Geometries(ST_GeomFromText('MULTIPOLYGON (((0 0, 1 0, 1 1, 0 0)), ((2 2, 3 2, 3 3, 2 2)))')))) AS part;
 ```

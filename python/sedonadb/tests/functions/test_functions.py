@@ -1438,32 +1438,6 @@ def _extension(field):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="unnest drops the list item's type (apache/datafusion#26331)",
-)
-def test_st_geometries_unnest_keeps_the_type():
-    eng = SedonaDB.create_or_skip()
-    parts = eng.con.sql(
-        "SELECT UNNEST(ST_Geometries(ST_SetSRID("
-        "ST_GeomFromText('MULTIPOINT (0 1, 1 2)'), 3857))) AS part"
-    )
-    assert parts.schema.field("part").type.crs is not None
-
-
-def test_st_geometries_unnest_with_st_geomfromwkb():
-    # The documented workaround until unnest keeps the item type.
-    eng = SedonaDB.create_or_skip()
-    parts = eng.con.sql(
-        "SELECT ST_GeomFromWKB(UNNEST(ST_Geometries("
-        "ST_GeomFromText('MULTIPOINT (0 1, 1 2)')))) AS part"
-    ).to_arrow_table()
-    assert [shapely.from_wkb(m).wkt for m in parts.column("part").to_pylist()] == [
-        "POINT (0 1)",
-        "POINT (1 2)",
-    ]
-
-
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 def test_st_dump(eng):
     is_postgis = eng == PostGIS

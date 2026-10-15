@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 use arrow_array::{
-    ListArray,
+    Array, ListArray,
     builder::{BinaryBuilder, NullBufferBuilder, OffsetBufferBuilder},
 };
 use arrow_schema::{DataType, FieldRef};
@@ -71,13 +71,13 @@ struct STGeometriesBuilder {
 }
 
 impl STGeometriesBuilder {
-    fn new(num_iter: usize, return_type: &SedonaType) -> Result<Self> {
+    fn new(num_iter: usize, data_capacity: usize, return_type: &SedonaType) -> Result<Self> {
         let SedonaType::Arrow(DataType::List(item_field)) = return_type else {
             return sedona_internal_err!("Unexpected return type in st_geometries()");
         };
 
         Ok(Self {
-            geom_builder: BinaryBuilder::with_capacity(num_iter, WKB_MIN_PROBABLE_BYTES * num_iter),
+            geom_builder: BinaryBuilder::with_capacity(num_iter, data_capacity),
             offsets_builder: OffsetBufferBuilder::new(num_iter),
             null_builder: NullBufferBuilder::new(num_iter),
             item_field: item_field.clone(),
@@ -156,8 +156,17 @@ impl SedonaScalarKernel for STGeometries {
         _config_options: Option<&ConfigOptions>,
     ) -> Result<ColumnarValue> {
         let executor = WkbExecutor::new(arg_types, args);
+        let num_iter = executor.num_iterations();
 
-        let mut builder = STGeometriesBuilder::new(executor.num_iterations(), return_type)?;
+        // The members are slices of the input's WKB, so the input's size is a
+        // close estimate of theirs.
+        let data_capacity = match &args[0] {
+            ColumnarValue::Array(array) => array.to_data().get_slice_memory_size().ok(),
+            ColumnarValue::Scalar(_) => None,
+        }
+        .unwrap_or(WKB_MIN_PROBABLE_BYTES * num_iter);
+
+        let mut builder = STGeometriesBuilder::new(num_iter, data_capacity, return_type)?;
         executor.execute_wkb_void(|maybe_wkb| {
             if let Some(wkb) = maybe_wkb {
                 builder.append(wkb)?;
@@ -187,6 +196,7 @@ mod tests {
     use rstest::rstest;
     use sedona_geometry::types::Edges;
     use sedona_schema::crs::lnglat;
+    use sedona_schema::datatypes::{WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY};
     use sedona_testing::{
         compare::assert_array_equal, create::create_array, testers::ScalarUdfTester,
     };
@@ -202,11 +212,19 @@ mod tests {
 
     #[rstest]
     fn return_type_keeps_kind_and_crs(
-        #[values(WKB_GEOMETRY, WKB_GEOGRAPHY, SedonaType::Wkb(Edges::Planar, lnglat()))]
+        #[values(
+            WKB_GEOMETRY,
+            WKB_GEOGRAPHY,
+            WKB_VIEW_GEOMETRY,
+            WKB_VIEW_GEOGRAPHY,
+            SedonaType::Wkb(Edges::Planar, lnglat())
+        )]
         sedona_type: SedonaType,
     ) {
         let tester = ScalarUdfTester::new(st_geometries_udf().into(), vec![sedona_type.clone()]);
-        let expected_item = sedona_type.to_storage_field("item", true).unwrap();
+        let expected_item = output_item_type(&sedona_type)
+            .to_storage_field("item", true)
+            .unwrap();
         assert_eq!(
             tester.return_type().unwrap(),
             SedonaType::Arrow(DataType::List(expected_item.into()))
@@ -215,7 +233,13 @@ mod tests {
 
     #[rstest]
     fn udf(
-        #[values(WKB_GEOMETRY, WKB_GEOGRAPHY, SedonaType::Wkb(Edges::Planar, lnglat()))]
+        #[values(
+            WKB_GEOMETRY,
+            WKB_GEOGRAPHY,
+            WKB_VIEW_GEOMETRY,
+            WKB_VIEW_GEOGRAPHY,
+            SedonaType::Wkb(Edges::Planar, lnglat())
+        )]
         sedona_type: SedonaType,
     ) {
         let tester = ScalarUdfTester::new(st_geometries_udf().into(), vec![sedona_type.clone()]);
@@ -276,8 +300,18 @@ mod tests {
         );
         let result = tester.invoke_array(input).unwrap();
 
+        let item_type = output_item_type(&sedona_type);
         for (row, (_, expected)) in cases.iter().enumerate() {
-            assert_members(&result, row, expected.as_deref(), &sedona_type);
+            assert_members(&result, row, expected.as_deref(), &item_type);
+        }
+    }
+
+    /// The members are WKB with the input's edges and CRS, whatever the
+    /// input's storage.
+    fn output_item_type(input: &SedonaType) -> SedonaType {
+        match input {
+            SedonaType::WkbView(edges, crs) => SedonaType::Wkb(*edges, crs.clone()),
+            other => other.clone(),
         }
     }
 
