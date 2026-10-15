@@ -200,6 +200,29 @@ def test_comparisons_with_literals_follow_pandas(op, value):
     assert got == getattr(operator, op)(gdf.to_geopandas()["f"], value).tolist()
 
 
+@pytest.mark.parametrize("encode", ["dictionary", "run_end"])
+@pytest.mark.parametrize("value", [-0.0, 1.5, np.nan, None])
+def test_encoded_literals_compare_as_their_value(encode, value):
+    plain = pa.array([value], pa.float64())
+    if encode == "dictionary":
+        encoded = plain.dictionary_encode()
+    else:
+        encoded = pa.RunEndEncodedArray.from_arrays(pa.array([1], pa.int32()), plain)
+    gdf = GeoDataFrame(sgpd.default_context().sql(_COMPARED))
+    frame = gdf.to_geopandas()
+    for op in (operator.eq, operator.ne, operator.lt):
+        got = op(gdf["f"], lit(encoded)).to_pandas().tolist()
+        assert got == op(frame["f"], value).tolist()
+
+
+@pytest.mark.parametrize("values", [[-0.0, 1.0], []])
+def test_literals_of_other_than_one_value_are_rejected(values):
+    # Not compared against the first value, nor failing to find one.
+    gdf = GeoDataFrame(sgpd.default_context().sql(_COMPARED))
+    with pytest.raises(ValueError, match=f"resolving to {len(values)} values"):
+        gdf["f"] == lit(pa.array(values, pa.float64()))
+
+
 @pytest.mark.parametrize("type", [pa.float32(), pa.float64()])
 @pytest.mark.parametrize("encode", ["dictionary", "run_end"])
 def test_encoded_float_columns_compare_as_plain_ones(type, encode):

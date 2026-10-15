@@ -213,12 +213,7 @@ def _numeric_value(other):
         raw = value._value
         if isinstance(raw, int) and not -(2**63) <= raw < 2**63:
             raise OverflowError(f"{raw} overflows the signed 64-bit range")
-        arr = pa.array(value)
-        if len(arr) != 1:
-            raise ValueError(
-                f"Can't use a Literal resolving to {len(arr)} values as a single value"
-            )
-        value = arr[0].as_py()
+        value = _literal_value(value).as_py()
     if is_scalar(value):
         value = normalize_scalar(value)
     try:
@@ -227,6 +222,29 @@ def _numeric_value(other):
     except ImportError:
         pass
     return value
+
+
+def _literal_value(literal):
+    """The one value `literal` holds, as an Arrow scalar, encodings unwrapped.
+
+    Read through the literal's Arrow form, since SedonaDB accepts one-element
+    containers (an Arrow array, a pandas Series or one-cell frame) as
+    single-value literals; a literal resolving to any other number of values
+    is rejected rather than read as its first.
+    """
+    import pyarrow.compute as pc
+
+    arr = pa.array(literal)
+    if len(arr) != 1:
+        raise ValueError(
+            f"Can't use a Literal resolving to {len(arr)} values as a single value"
+        )
+    while pa.types.is_dictionary(arr.type) or pa.types.is_run_end_encoded(arr.type):
+        if pa.types.is_dictionary(arr.type):
+            arr = arr.dictionary_decode()
+        else:
+            arr = pc.run_end_decode(arr)
+    return arr[0]
 
 
 def _operand(df, other):
@@ -330,7 +348,7 @@ class Series:
 
         rhs = _operand(self._df, other)
         # A literal is missing if the value it holds is.
-        value = pa.array(other)[0] if isinstance(other, Literal) else other
+        value = _literal_value(other) if isinstance(other, Literal) else other
         if isinstance(other, Series):
             missing = self._missing() | other._missing()
         elif _is_missing(normalize_scalar(value)):
@@ -640,9 +658,7 @@ def _zero_normalized(df, expr):
             return pa.scalar(expr.as_py() + 0.0, type=expr.type)
         return expr
     if isinstance(expr, Literal):
-        # A literal holds one value (possibly in a one-element container),
-        # read through its Arrow form, as `_numeric_value` does.
-        value = pa.array(expr)[0]
+        value = _literal_value(expr)
         if pa.types.is_floating(value.type):
             return Literal(_zero_normalized(df, value), expr._ctx)
         return expr
