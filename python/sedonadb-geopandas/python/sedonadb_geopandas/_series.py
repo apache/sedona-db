@@ -180,6 +180,13 @@ def normalize_scalar(value):
     return value
 
 
+def _logical_type(dtype):
+    """`dtype` with any dictionary or run-end encoding unwrapped."""
+    while pa.types.is_dictionary(dtype) or pa.types.is_run_end_encoded(dtype):
+        dtype = dtype.value_type
+    return dtype
+
+
 def _numeric_value(other):
     """Resolve an operand to its numeric payload, unwrapping supported wrappers.
 
@@ -318,12 +325,15 @@ class Series:
         alone answers null for a null, orders floats totally (NaN above every
         number, -0.0 below 0.0), and so differs from pandas on all of these.
         """
+        from sedonadb.expr import Literal
         from sedonadb_geopandas._frame import _is_missing
 
         rhs = _operand(self._df, other)
+        # A literal is missing if the value it holds is.
+        value = pa.array(other)[0] if isinstance(other, Literal) else other
         if isinstance(other, Series):
             missing = self._missing() | other._missing()
-        elif _is_missing(normalize_scalar(other)):
+        elif _is_missing(normalize_scalar(value)):
             missing = self._expr.is_null() | lit(True)
         else:
             missing = self._missing()
@@ -428,14 +438,21 @@ class Series:
         column is integer for division purposes. Read from the projected
         schema, which is a plan build, not an execution.
         """
-        dtype = self._stored_dtype()
-        while pa.types.is_dictionary(dtype) or pa.types.is_run_end_encoded(dtype):
-            dtype = dtype.value_type
-        return dtype
+        return _logical_type(self._stored_dtype())
 
     def _stored_dtype(self):
         """This expression's Arrow type as stored, encodings included."""
         return pa.schema(self._df.select(self._expr.alias("x")).schema).field("x").type
+
+    def _decoded(self):
+        """This expression with any dictionary or run-end encoding cast away.
+
+        Some functions (`isnan()`, some aggregates) accept only the plain
+        type, not an encoded one.
+        """
+        stored = self._stored_dtype()
+        dtype = _logical_type(stored)
+        return self._expr if dtype == stored else self._expr.cast(dtype)
 
     def _is_duration(self):
         return pa.types.is_duration(self._dtype())
@@ -479,7 +496,7 @@ class Series:
         """
         expr = self._expr.is_null()
         if self._is_floating():
-            expr = expr | self._expr.funcs.isnan()
+            expr = expr | self._decoded().funcs.isnan()
         return expr.funcs.coalesce(lit(True))
 
     def isna(self):
@@ -559,7 +576,7 @@ class Series:
             if matches_null:
                 expr = expr | self._expr.is_null()
             if matches_nan:
-                expr = expr | self._expr.funcs.isnan().funcs.coalesce(lit(False))
+                expr = expr | self._decoded().funcs.isnan().funcs.coalesce(lit(False))
         return Series(self._df, expr, self._name)
 
     def astype(self, dtype):
@@ -611,20 +628,31 @@ def _zero_normalized(df, expr):
     floating.
 
     The engine orders floats totally, so -0.0 compares below 0.0, while
-    pandas (IEEE) holds them equal; adding 0.0 turns -0.0 into 0.0.
+    pandas (IEEE) holds them equal; adding 0.0 turns -0.0 into 0.0. An
+    encoded column is decoded first, since the encoding hides the float.
     """
+    from sedonadb.expr import Literal
+
     if isinstance(expr, float):
         return expr + 0.0
     if isinstance(expr, pa.Scalar):
         if pa.types.is_floating(expr.type) and expr.is_valid:
             return pa.scalar(expr.as_py() + 0.0, type=expr.type)
         return expr
+    if isinstance(expr, Literal):
+        # A literal holds one value (possibly in a one-element container),
+        # read through its Arrow form, as `_numeric_value` does.
+        value = pa.array(expr)[0]
+        if pa.types.is_floating(value.type):
+            return Literal(_zero_normalized(df, value), expr._ctx)
+        return expr
     if not isinstance(expr, Expr):
         return expr
-    dtype = pa.schema(df.select(expr.alias("x")).schema).field("x").type
-    while pa.types.is_dictionary(dtype) or pa.types.is_run_end_encoded(dtype):
-        dtype = dtype.value_type
-    return expr + lit(0.0) if pa.types.is_floating(dtype) else expr
+    stored = pa.schema(df.select(expr.alias("x")).schema).field("x").type
+    dtype = _logical_type(stored)
+    if not pa.types.is_floating(dtype):
+        return expr
+    return (expr if dtype == stored else expr.cast(dtype)) + lit(0.0)
 
 
 def _buffer_style(style, names, argument):

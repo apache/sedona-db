@@ -190,6 +190,40 @@ def test_comparisons_follow_pandas(op, left, right):
     assert got == getattr(operator, op)(frame[left], theirs_right).tolist()
 
 
+@pytest.mark.parametrize("op", ["gt", "ge", "lt", "le", "eq", "ne"])
+@pytest.mark.parametrize("value", [-0.0, 0.0, 1.5, np.nan, None])
+def test_comparisons_with_literals_follow_pandas(op, value):
+    # A lit() operand compares as the value it holds: its -0.0 equals 0.0,
+    # and a missing one compares False (True for !=).
+    gdf = GeoDataFrame(sgpd.default_context().sql(_COMPARED))
+    got = getattr(operator, op)(gdf["f"], lit(value)).to_pandas().tolist()
+    assert got == getattr(operator, op)(gdf.to_geopandas()["f"], value).tolist()
+
+
+@pytest.mark.parametrize("type", [pa.float32(), pa.float64()])
+@pytest.mark.parametrize("encode", ["dictionary", "run_end"])
+def test_encoded_float_columns_compare_as_plain_ones(type, encode):
+    # isnan(), behind the missing-value checks, accepts no encoded type.
+    values = pa.array([1.0, np.nan, None, -0.0], type)
+    if encode == "dictionary":
+        encoded = values.dictionary_encode()
+    else:
+        ends = pa.array(range(1, len(values) + 1), pa.int32())
+        encoded = pa.RunEndEncodedArray.from_arrays(ends, values)
+    ctx = sgpd.default_context()
+    ours = GeoDataFrame(ctx.create_data_frame(pa.table({"x": encoded})))["x"]
+    plain = GeoDataFrame(ctx.create_data_frame(pa.table({"x": values})))["x"]
+    for f in [
+        lambda s: s == 1.0,
+        lambda s: s != 1.0,
+        lambda s: s <= 0.0,
+        lambda s: s == s,
+        lambda s: s.isna(),
+    ]:
+        assert f(ours).to_pandas().tolist() == f(plain).to_pandas().tolist()
+    assert ours.isin([np.nan]).to_pandas().tolist() == [False, True, True, False]
+
+
 def test_string_equality_with_missing_values():
     gdf = GeoDataFrame(sgpd.default_context().sql(_COMPARED))
     assert (gdf["s"] == "a").to_pandas().tolist() == [True, False, False, True]
