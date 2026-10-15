@@ -21,6 +21,7 @@ import math
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 import pytest
 
 import sedonadb_geopandas as sgpd
@@ -41,6 +42,16 @@ FROM (VALUES
 
 def _frame():
     return sgpd.GeoDataFrame(sgpd.default_context().sql(VALUES))
+
+
+def _series(values):
+    table = pa.table({"x": values})
+    return sgpd.GeoDataFrame(sgpd.default_context().create_data_frame(table))["x"]
+
+
+def _run_end_encoded(values):
+    ends = pa.array(range(1, len(values) + 1), pa.int32())
+    return pa.RunEndEncodedArray.from_arrays(ends, values)
 
 
 def _same(got, expected):
@@ -74,6 +85,12 @@ def test_quantile_matches_pandas(q):
     for column in ("i", "f"):
         series = _frame()[column]
         assert _same(series.quantile(q), series.to_pandas().quantile(q))
+
+
+def test_quantile_of_none():
+    got = _frame()["f"].quantile([])
+    expected = _frame()["f"].to_pandas().quantile([])
+    pd.testing.assert_series_equal(got, expected)
 
 
 def test_quantile_of_several():
@@ -136,6 +153,50 @@ def test_value_counts_without_sorting_and_ties():
     )
     assert gdf["s"].value_counts().index.tolist() == ["a", "b", "c"]
     assert gdf["s"].value_counts(sort=False).index.tolist() == ["a", "b", "c"]
+
+
+def test_value_counts_of_a_dictionary_column_are_in_value_order():
+    # The aggregate rebuilt the dictionary in an arbitrary order, and sorting
+    # the categorical index followed it rather than the values.
+    series = _series(pa.array(["c", "a", "b", "a", "c", "b"]).dictionary_encode())
+    for _ in range(5):
+        assert series.value_counts(sort=False).index.tolist() == ["a", "b", "c"]
+
+
+@pytest.mark.parametrize(
+    "method", ["sum", "mean", "median", "min", "max", "count", "nunique"]
+)
+def test_every_nan_is_missing(method):
+    # A NaN with its sign bit set is still NaN; the engine's float ordering
+    # (and so an equality test against NaN) tells the two apart.
+    values = pa.array([1.0, -math.nan, 2.0, math.nan])
+    assert np.signbit(values.to_numpy()[1])
+    got = getattr(_series(values), method)()
+    assert _same(got, getattr(pd.Series(values.to_numpy()), method)())
+
+
+@pytest.mark.parametrize("encode", ["dictionary", "run_end"])
+@pytest.mark.parametrize(
+    "method", ["sum", "mean", "median", "min", "max", "count", "nunique"]
+)
+def test_reductions_of_encoded_columns(encode, method):
+    # The encoding changes how values are stored, not what they are.
+    for values in [pa.array([1, 2, None, 2]), pa.array([1.0, math.nan, 4.0, None])]:
+        if encode == "dictionary":
+            encoded = values.dictionary_encode()
+        else:
+            encoded = _run_end_encoded(values)
+        got = getattr(_series(encoded), method)()
+        assert _same(got, getattr(_series(values), method)())
+
+
+def test_signed_zeros_are_one_value():
+    series = _series(pa.array([-0.0, 0.0, 1.0], pa.float32()))
+    assert series.nunique() == 2
+    counts = series.value_counts()
+    assert counts.tolist() == [2, 1] and counts.index.tolist() == [0.0, 1.0]
+    assert counts.index.dtype == np.float32
+    assert len(series.unique()) == 2
 
 
 @pytest.mark.parametrize("column", ["i", "f", "s", "t"])

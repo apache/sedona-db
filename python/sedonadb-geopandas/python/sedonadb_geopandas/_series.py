@@ -179,6 +179,13 @@ def normalize_scalar(value):
     return value
 
 
+def _logical_type(dtype):
+    """`dtype` with any dictionary or run-end encoding unwrapped."""
+    while pa.types.is_dictionary(dtype) or pa.types.is_run_end_encoded(dtype):
+        dtype = dtype.value_type
+    return dtype
+
+
 def _numeric_value(other):
     """Resolve an operand to its numeric payload, unwrapping supported wrappers.
 
@@ -400,14 +407,21 @@ class Series:
         column is integer for division purposes. Read from the projected
         schema, which is a plan build, not an execution.
         """
-        dtype = self._stored_dtype()
-        while pa.types.is_dictionary(dtype) or pa.types.is_run_end_encoded(dtype):
-            dtype = dtype.value_type
-        return dtype
+        return _logical_type(self._stored_dtype())
 
     def _stored_dtype(self):
         """This expression's Arrow type as stored, encodings included."""
         return pa.schema(self._df.select(self._expr.alias("x")).schema).field("x").type
+
+    def _decoded(self):
+        """This expression with any dictionary or run-end encoding cast away.
+
+        Some functions (`isnan()`, some aggregates) accept only the plain
+        type, not an encoded one.
+        """
+        stored = self._stored_dtype()
+        dtype = _logical_type(stored)
+        return self._expr if dtype == stored else self._expr.cast(dtype)
 
     def _is_duration(self):
         return pa.types.is_duration(self._dtype())
@@ -570,15 +584,18 @@ class Series:
 
     # -- reductions (computed) ---------------------------------------------
     def _valued(self):
-        """This column with every missing value as SQL null.
+        """This column, decoded, with every missing value as SQL null.
 
         pandas skips missing values in reductions, and in a float column NaN
         is missing; the engine's aggregates would count it, propagate it, or
-        sort it last.
+        sort it last. `nanvl()` tests each value for NaN, where an equality
+        test against NaN would miss a NaN of another sign or payload (the
+        engine's float ordering tells them apart).
         """
+        expr = self._decoded()
         if self._is_floating():
-            return self._expr.funcs.nullif(lit(float("nan")))
-        return self._expr
+            expr = expr.funcs.nanvl(lit(None))
+        return expr
 
     def _reduce(self, aggregate):
         """Compute one aggregate over this column as a pandas scalar."""
@@ -603,9 +620,15 @@ class Series:
         raise TypeError(f"{method}() is not supported for {dtype}")
 
     def _distinct_values(self, method):
-        if isinstance(self._dtype(), pa.ExtensionType):
+        dtype = self._dtype()
+        if isinstance(dtype, pa.ExtensionType):
             raise NotImplementedError(f"{method}() is not supported for geometry")
-        return self._df.select(self._valued().alias("x"))
+        values = self._valued()
+        if pa.types.is_floating(dtype):
+            # -0.0 and 0.0 are one value to pandas, two to the engine's
+            # float ordering; adding 0.0 turns -0.0 into 0.0.
+            values = (values + lit(0.0)).cast(dtype)
+        return self._df.select(values.alias("x"))
 
     def sum(self):
         """The sum of the values, skipping missing ones; 0 when there are none.
@@ -669,18 +692,21 @@ class Series:
         if any(not 0 <= value <= 1 for value in qs):
             raise ValueError("percentiles should all be in the interval [0, 1]")
         values = self._numeric("quantile").cast(pa.float64())
-        row = self._df.agg(
-            *[
-                values.funcs.percentile_cont(lit(value)).alias(f"q{i}")
-                for i, value in enumerate(qs)
-            ]
-        ).to_pandas()
-        results = [row[f"q{i}"].iloc[0] for i in range(len(qs))]
+        results = []
+        if qs:
+            row = self._df.agg(
+                *[
+                    values.funcs.percentile_cont(lit(value)).alias(f"q{i}")
+                    for i, value in enumerate(qs)
+                ]
+            ).to_pandas()
+            results = [row[f"q{i}"].iloc[0] for i in range(len(qs))]
         if not many:
             return results[0]
         import pandas as pd
 
-        return pd.Series(results, index=pd.Index(qs), name=self._name, dtype="float64")
+        index = pd.Index(qs, dtype="float64")
+        return pd.Series(results, index=index, name=self._name, dtype="float64")
 
     def nunique(self, dropna=True):
         """The number of distinct values, a missing value counting once if
@@ -707,7 +733,8 @@ class Series:
 
         Values with the same count are ordered by value, since a lazy frame has
         no order of first appearance to break ties by (and with `sort=False`,
-        the values are in value order).
+        the values are in value order). A dictionary-encoded column's values
+        come back decoded, not as a categorical.
         """
         import pandas as pd
 
