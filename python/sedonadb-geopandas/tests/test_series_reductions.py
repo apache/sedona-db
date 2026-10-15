@@ -199,6 +199,15 @@ def test_signed_zeros_are_one_value():
     assert len(series.unique()) == 2
 
 
+def test_value_counts_of_half_floats():
+    # pandas has no float16 index, and counts such values with float32 keys.
+    values = np.array([1.0, 2.0, 2.0, np.nan], np.float16)
+    got = _series(pa.array(values, from_pandas=True)).value_counts(dropna=False)
+    pd.testing.assert_series_equal(
+        got, pd.Series(values).value_counts(dropna=False), check_names=False
+    )
+
+
 @pytest.mark.parametrize("column", ["i", "f", "s", "t"])
 def test_unique_matches_pandas_as_a_set(column):
     # Unlike pandas, not in order of first appearance.

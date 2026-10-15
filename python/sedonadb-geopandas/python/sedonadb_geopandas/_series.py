@@ -748,9 +748,13 @@ class Series:
             .agg(values._ctx.lit(1).funcs.count().alias("n"))
             .to_pandas()
         )
+        keys = counts["x"]
+        if keys.dtype == "float16":
+            # pandas has no float16 index; it promotes such keys to float32.
+            keys = keys.astype("float32")
         result = pd.Series(
             counts["n"].to_numpy(),
-            index=pd.Index(counts["x"], name=self._name),
+            index=pd.Index(keys, name=self._name),
             name="proportion" if normalize else "count",
         )
         result = result.sort_index(na_position="last", kind="stable")
