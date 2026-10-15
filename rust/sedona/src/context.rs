@@ -20,7 +20,9 @@ use std::{
 };
 
 use crate::exec::{create_plan_from_sql, resolve_sedona_catalog_ddl};
-use crate::object_storage::ensure_object_store_registered_with_options;
+use crate::object_storage::{
+    ensure_object_store_registered_with_options, register_object_store_and_config_extensions,
+};
 use crate::read::{read_provider, resolve_read_format};
 use crate::url_table::install_sedona_url_table;
 use crate::{
@@ -945,13 +947,19 @@ impl SedonaDataFrame for DataFrame {
         }
 
         // A remote output path (e.g., s3://) needs its object store registered,
-        // as reads and COPY ... TO do.
-        ensure_object_store_registered_with_options(
-            &mut ctx.ctx.state(),
-            path,
-            Some(&options.storage_options),
-        )
-        .await?;
+        // as reads and COPY ... TO do. As with COPY ... TO's OPTIONS, explicit
+        // options apply even if a store is already registered for the bucket
+        // (by an anonymous read, say); without any, that store is reused.
+        if options.storage_options.is_empty() {
+            ensure_object_store_registered_with_options(&mut ctx.ctx.state(), path, None).await?;
+        } else {
+            register_object_store_and_config_extensions(
+                ctx,
+                &path.to_string(),
+                &options.storage_options,
+            )
+            .await?;
+        }
 
         let format = if let Some(parquet_opts) = writer_options {
             Arc::new(GeoParquetFormatFactory::new_with_options(parquet_opts))
@@ -1696,6 +1704,41 @@ mod tests {
         // configuration, without any network access); without registration
         // the write found no object store at all.
         let ctx = SedonaContext::new();
+        let options = SedonaWriteOptions::new().with_storage_options(HashMap::from([(
+            "aws.not_an_option".to_string(),
+            "true".to_string(),
+        )]));
+        let err = ctx
+            .sql("SELECT 1 as one")
+            .await
+            .unwrap()
+            .write_geoparquet(&ctx, "s3://bucket/out.parquet", options, None)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("not_an_option") && err.contains("AwsOptions"),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn write_geoparquet_applies_options_to_a_registered_store() {
+        // A store registered earlier for the bucket (by an anonymous read, say)
+        // must not swallow the write's own options: the invalid one here is
+        // only rejected if they are applied.
+        let ctx = SedonaContext::new();
+        let anonymous = HashMap::from([
+            ("aws.skip_signature".to_string(), "true".to_string()),
+            ("aws.region".to_string(), "us-west-2".to_string()),
+        ]);
+        ensure_object_store_registered_with_options(
+            &mut ctx.ctx.state(),
+            "s3://bucket/in.parquet",
+            Some(&anonymous),
+        )
+        .await
+        .unwrap();
         let options = SedonaWriteOptions::new().with_storage_options(HashMap::from([(
             "aws.not_an_option".to_string(),
             "true".to_string(),
