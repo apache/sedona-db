@@ -1855,27 +1855,27 @@
 <p>Overture removes old releases. See <a href="https://docs.overturemaps.org/release-calendar/#current-release">this page</a> to see the latest version number and replace the relevant portion of the URL below.</p>
 </blockquote>
 <div class="highlight"><pre><span></span><code><span class="n">sd</span><span class="o">.</span><span class="n">read_parquet</span><span class="p">(</span>
-    <span class="s2">"s3://overturemaps-us-west-2/release/2026-02-18.0/theme=divisions/type=division_area/"</span><span class="p">,</span>
+    <span class="s2">"s3://overturemaps-us-west-2/release/2026-09-23.1/theme=divisions/type=division_area/"</span><span class="p">,</span>
     <span class="n">options</span><span class="o">=</span><span class="p">{</span><span class="s2">"aws.skip_signature"</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span> <span class="s2">"aws.region"</span><span class="p">:</span> <span class="s2">"us-west-2"</span><span class="p">},</span>
 <span class="p">)</span><span class="o">.</span><span class="n">to_view</span><span class="p">(</span><span class="s2">"divisions"</span><span class="p">)</span>
 </code></pre></div>
 <p>We can preview the first few rows using <code>.show()</code>. Because this is a lazy operation and we've already cached the schema using <code>.to_view()</code>, this only takes a few seconds.</p>
 <div class="highlight"><pre><span></span><code><span class="n">sd</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="s2">"divisions"</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>
 </code></pre></div>
-<div class="codehilite"><pre><span></span><code><span class="err">┌───────────────┬───────────────┬──────────────┬─────────┬───┬────────┬─────────────┬──────────────┐</span>
-<span class="err">│</span><span class="w">       </span><span class="n">id</span><span class="w">      </span><span class="err">┆</span><span class="w">    </span><span class="n">geometry</span><span class="w">   </span><span class="err">┆</span><span class="w">     </span><span class="n">bbox</span><span class="w">     </span><span class="err">┆</span><span class="w"> </span><span class="n">country</span><span class="w"> </span><span class="err">┆</span><span class="w"> </span><span class="err">…</span><span class="w"> </span><span class="err">┆</span><span class="w"> </span><span class="n">region</span><span class="w"> </span><span class="err">┆</span><span class="w"> </span><span class="n">admin_level</span><span class="w"> </span><span class="err">┆</span><span class="w">  </span><span class="n">division_id</span><span class="w"> </span><span class="err">│</span>
-<span class="err">│</span><span class="w">      </span><span class="n">utf8</span><span class="w">     </span><span class="err">┆</span><span class="w">    </span><span class="n">geometry</span><span class="w">   </span><span class="err">┆</span><span class="w">    </span><span class="k">struct</span><span class="w">    </span><span class="err">┆</span><span class="w">   </span><span class="n">utf8</span><span class="w">  </span><span class="err">┆</span><span class="w">   </span><span class="err">┆</span><span class="w">  </span><span class="n">utf8</span><span class="w">  </span><span class="err">┆</span><span class="w">    </span><span class="n">int32</span><span class="w">    </span><span class="err">┆</span><span class="w">     </span><span class="n">utf8</span><span class="w">     </span><span class="err">│</span>
-<span class="err">╞═══════════════╪═══════════════╪══════════════╪═════════╪═══╪════════╪═════════════╪══════════════╡</span>
-<span class="err">│</span><span class="w"> </span><span class="n">a5c573c4</span><span class="o">-</span><span class="mh">022</span><span class="err">…</span><span class="w"> </span><span class="err">┆</span><span class="w"> </span><span class="n">POLYGON</span><span class="p">((</span><span class="o">-</span><span class="mh">49</span><span class="err">…</span><span class="w"> </span><span class="err">┆</span><span class="w"> </span><span class="p">{</span><span class="nl">xmin:</span><span class="w"> </span><span class="o">-</span><span class="mf">49.</span><span class="err">…</span><span class="w"> </span><span class="err">┆</span><span class="w"> </span><span class="n">BR</span><span class="w">      </span><span class="err">┆</span><span class="w"> </span><span class="err">…</span><span class="w"> </span><span class="err">┆</span><span class="w"> </span><span class="n">BR</span><span class="o">-</span><span class="n">PR</span><span class="w">  </span><span class="err">┆</span><span class="w">             </span><span class="err">┆</span><span class="w"> </span><span class="mh">388</span><span class="n">a8056</span><span class="o">-</span><span class="n">ee</span><span class="err">…</span><span class="w"> </span><span class="err">│</span>
-<span class="err">├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤</span>
-<span class="err">│</span><span class="w"> </span><span class="n">cf523f8c</span><span class="o">-</span><span class="n">c26</span><span class="err">…</span><span class="w"> </span><span class="err">┆</span><span class="w"> </span><span class="n">POLYGON</span><span class="p">((</span><span class="o">-</span><span class="mh">49</span><span class="err">…</span><span class="w"> </span><span class="err">┆</span><span class="w"> </span><span class="p">{</span><span class="nl">xmin:</span><span class="w"> </span><span class="o">-</span><span class="mf">49.</span><span class="err">…</span><span class="w"> </span><span class="err">┆</span><span class="w"> </span><span class="n">BR</span><span class="w">      </span><span class="err">┆</span><span class="w"> </span><span class="err">…</span><span class="w"> </span><span class="err">┆</span><span class="w"> </span><span class="n">BR</span><span class="o">-</span><span class="n">PR</span><span class="w">  </span><span class="err">┆</span><span class="w">             </span><span class="err">┆</span><span class="w"> </span><span class="mh">068</span><span class="n">ef37e</span><span class="o">-</span><span class="mh">3</span><span class="n">b</span><span class="err">…</span><span class="w"> </span><span class="err">│</span>
-<span class="err">├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤</span>
-<span class="err">│</span><span class="w"> </span><span class="mh">8</span><span class="n">ace3d06</span><span class="o">-</span><span class="n">b8a</span><span class="err">…</span><span class="w"> </span><span class="err">┆</span><span class="w"> </span><span class="n">POLYGON</span><span class="p">((</span><span class="o">-</span><span class="mh">49</span><span class="err">…</span><span class="w"> </span><span class="err">┆</span><span class="w"> </span><span class="p">{</span><span class="nl">xmin:</span><span class="w"> </span><span class="o">-</span><span class="mf">49.</span><span class="err">…</span><span class="w"> </span><span class="err">┆</span><span class="w"> </span><span class="n">BR</span><span class="w">      </span><span class="err">┆</span><span class="w"> </span><span class="err">…</span><span class="w"> </span><span class="err">┆</span><span class="w"> </span><span class="n">BR</span><span class="o">-</span><span class="n">PR</span><span class="w">  </span><span class="err">┆</span><span class="w">             </span><span class="err">┆</span><span class="w"> </span><span class="mh">7238</span><span class="n">aeb3</span><span class="o">-</span><span class="n">b8</span><span class="err">…</span><span class="w"> </span><span class="err">│</span>
-<span class="err">├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤</span>
-<span class="err">│</span><span class="w"> </span><span class="n">b26d2cba</span><span class="o">-</span><span class="n">b54</span><span class="err">…</span><span class="w"> </span><span class="err">┆</span><span class="w"> </span><span class="n">POLYGON</span><span class="p">((</span><span class="o">-</span><span class="mh">49</span><span class="err">…</span><span class="w"> </span><span class="err">┆</span><span class="w"> </span><span class="p">{</span><span class="nl">xmin:</span><span class="w"> </span><span class="o">-</span><span class="mf">49.</span><span class="err">…</span><span class="w"> </span><span class="err">┆</span><span class="w"> </span><span class="n">BR</span><span class="w">      </span><span class="err">┆</span><span class="w"> </span><span class="err">…</span><span class="w"> </span><span class="err">┆</span><span class="w"> </span><span class="n">BR</span><span class="o">-</span><span class="n">PR</span><span class="w">  </span><span class="err">┆</span><span class="w">             </span><span class="err">┆</span><span class="w"> </span><span class="mh">3</span><span class="n">c2dc8fc</span><span class="o">-</span><span class="mh">79</span><span class="err">…</span><span class="w"> </span><span class="err">│</span>
-<span class="err">├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤</span>
-<span class="err">│</span><span class="w"> </span><span class="mh">20103725</span><span class="o">-</span><span class="mh">17</span><span class="n">c</span><span class="err">…</span><span class="w"> </span><span class="err">┆</span><span class="w"> </span><span class="n">POLYGON</span><span class="p">((</span><span class="o">-</span><span class="mh">49</span><span class="err">…</span><span class="w"> </span><span class="err">┆</span><span class="w"> </span><span class="p">{</span><span class="nl">xmin:</span><span class="w"> </span><span class="o">-</span><span class="mf">49.</span><span class="err">…</span><span class="w"> </span><span class="err">┆</span><span class="w"> </span><span class="n">BR</span><span class="w">      </span><span class="err">┆</span><span class="w"> </span><span class="err">…</span><span class="w"> </span><span class="err">┆</span><span class="w"> </span><span class="n">BR</span><span class="o">-</span><span class="n">PR</span><span class="w">  </span><span class="err">┆</span><span class="w">             </span><span class="err">┆</span><span class="w"> </span><span class="mf">45037e82</span><span class="o">-</span><span class="n">de</span><span class="err">…</span><span class="w"> </span><span class="err">│</span>
-<span class="err">└───────────────┴───────────────┴──────────────┴─────────┴───┴────────┴─────────────┴──────────────┘</span>
+<div class="codehilite"><pre><span></span><code>┌──────────────┬──────────────┬─────────┬──────────────┬───┬──────────────┬─────────┬──────────────┐
+│      id      ┆   geometry   ┆ country ┆    sources   ┆ … ┆  division_id ┆ version ┆     bbox     │
+│     utf8     ┆   geometry   ┆   utf8  ┆     list     ┆   ┆     utf8     ┆  int32  ┆    struct    │
+╞══════════════╪══════════════╪═════════╪══════════════╪═══╪══════════════╪═════════╪══════════════╡
+│ e2be6aeb-80… ┆ MULTIPOLYGO… ┆ CU      ┆ [{property:… ┆ … ┆ 571dfc68-c4… ┆       6 ┆ {xmin: -83.… │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ 15f9cf35-b4… ┆ POLYGON((-8… ┆ CU      ┆ [{property:… ┆ … ┆ b0cca183-05… ┆       1 ┆ {xmin: -82.… │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ 73d74f48-97… ┆ POLYGON((-8… ┆ CU      ┆ [{property:… ┆ … ┆ b267d0d1-b7… ┆       5 ┆ {xmin: -82.… │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ 9b53b7a8-13… ┆ POLYGON((-8… ┆ CU      ┆ [{property:… ┆ … ┆ c821a5eb-fd… ┆       1 ┆ {xmin: -82.… │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ 5a4c6b4f-c0… ┆ POLYGON((-8… ┆ CU      ┆ [{property:… ┆ … ┆ f1c33ec6-ae… ┆       1 ┆ {xmin: -82.… │
+└──────────────┴──────────────┴─────────┴──────────────┴───┴──────────────┴─────────┴──────────────┘
 </code></pre></div>
 
 <p>The default view of the data hides some columns to ensure the entire output can be shown. To look at all the columns with type details, use <code>.schema</code>:</p>
@@ -1884,18 +1884,18 @@
 <div class="codehilite"><pre><span></span><code><span class="n">SedonaSchema</span><span class="w"> </span><span class="n">with</span><span class="w"> </span><span class="mi">14</span><span class="w"> </span><span class="n">fields</span><span class="p">:</span>
 <span class="w">  </span><span class="n">id</span><span class="p">:</span><span class="w"> </span><span class="n">utf8</span><span class="o">&lt;</span><span class="n">Utf8View</span><span class="o">&gt;</span>
 <span class="w">  </span><span class="n">geometry</span><span class="p">:</span><span class="w"> </span><span class="n">geometry</span><span class="o">&lt;</span><span class="n">WkbView</span><span class="p">(</span><span class="n">ogc</span><span class="p">:</span><span class="n">crs84</span><span class="p">)</span><span class="o">&gt;</span>
-<span class="w">  </span><span class="n">bbox</span><span class="p">:</span><span class="w"> </span><span class="n">struct</span><span class="o">&lt;</span><span class="n">Struct</span><span class="p">(</span><span class="s2">"xmin"</span><span class="p">:</span><span class="w"> </span><span class="n">Float32</span><span class="p">,</span><span class="w"> </span><span class="s2">"xmax"</span><span class="p">:</span><span class="w"> </span><span class="n">Float32</span><span class="p">,</span><span class="w"> </span><span class="s2">"ymin"</span><span class="p">:</span><span class="w"> </span><span class="n">Float32</span><span class="p">,</span><span class="w"> </span><span class="s2">"ymax"</span><span class="p">:</span><span class="w"> </span><span class="n">Float32</span><span class="p">)</span><span class="o">&gt;</span>
 <span class="w">  </span><span class="n">country</span><span class="p">:</span><span class="w"> </span><span class="n">utf8</span><span class="o">&lt;</span><span class="n">Utf8View</span><span class="o">&gt;</span>
-<span class="w">  </span><span class="n">version</span><span class="p">:</span><span class="w"> </span><span class="n">int32</span><span class="o">&lt;</span><span class="n">Int32</span><span class="o">&gt;</span>
-<span class="w">  </span><span class="n">sources</span><span class="p">:</span><span class="w"> </span><span class="n">list</span><span class="o">&lt;</span><span class="n">List</span><span class="p">(</span><span class="n">Struct</span><span class="p">(</span><span class="s2">"property"</span><span class="p">:</span><span class="w"> </span><span class="n">Utf8</span><span class="p">,</span><span class="w"> </span><span class="s2">"dataset"</span><span class="p">:</span><span class="w"> </span><span class="n">Utf8</span><span class="p">,</span><span class="w"> </span><span class="s2">"license"</span><span class="p">:</span><span class="w"> </span><span class="n">Utf8</span><span class="p">,</span><span class="w"> </span><span class="s2">"record_id"</span><span class="p">:</span><span class="w"> </span><span class="n">Utf8</span><span class="p">,</span><span class="w"> </span><span class="s2">"update_time"</span><span class="p">:</span><span class="w"> </span><span class="n">Utf8</span><span class="p">,</span><span class="w"> </span><span class="s2">"confidence"</span><span class="p">:</span><span class="w"> </span><span class="n">Float64</span><span class="p">,</span><span class="w"> </span><span class="s2">"between"</span><span class="p">:</span><span class="w"> </span><span class="n">List</span><span class="p">(</span><span class="n">Float64</span><span class="p">,</span><span class="w"> </span><span class="n">field</span><span class="p">:</span><span class="w"> </span><span class="s1">'element'</span><span class="p">)),</span><span class="w"> </span><span class="n">field</span><span class="p">:</span><span class="w"> </span><span class="s1">'element'</span><span class="p">)</span><span class="o">&gt;</span>
+<span class="w">  </span><span class="n">sources</span><span class="p">:</span><span class="w"> </span><span class="n">list</span><span class="o">&lt;</span><span class="n">List</span><span class="p">(</span><span class="n">Struct</span><span class="p">(</span><span class="s2">"property"</span><span class="p">:</span><span class="w"> </span><span class="n">Utf8</span><span class="p">,</span><span class="w"> </span><span class="s2">"dataset"</span><span class="p">:</span><span class="w"> </span><span class="n">Utf8</span><span class="p">,</span><span class="w"> </span><span class="s2">"license"</span><span class="p">:</span><span class="w"> </span><span class="n">Utf8</span><span class="p">,</span><span class="w"> </span><span class="s2">"record_id"</span><span class="p">:</span><span class="w"> </span><span class="n">Utf8</span><span class="p">,</span><span class="w"> </span><span class="s2">"update_time"</span><span class="p">:</span><span class="w"> </span><span class="n">Utf8</span><span class="p">,</span><span class="w"> </span><span class="s2">"confidence"</span><span class="p">:</span><span class="w"> </span><span class="n">Float64</span><span class="p">,</span><span class="w"> </span><span class="s2">"between"</span><span class="p">:</span><span class="w"> </span><span class="n">List</span><span class="p">(</span><span class="n">Float64</span><span class="p">,</span><span class="w"> </span><span class="n">field</span><span class="p">:</span><span class="w"> </span><span class="s1">'element'</span><span class="p">),</span><span class="w"> </span><span class="s2">"provider"</span><span class="p">:</span><span class="w"> </span><span class="n">Utf8</span><span class="p">,</span><span class="w"> </span><span class="s2">"resource"</span><span class="p">:</span><span class="w"> </span><span class="n">Utf8</span><span class="p">,</span><span class="w"> </span><span class="s2">"version"</span><span class="p">:</span><span class="w"> </span><span class="n">Utf8</span><span class="p">),</span><span class="w"> </span><span class="n">field</span><span class="p">:</span><span class="w"> </span><span class="s1">'element'</span><span class="p">)</span><span class="o">&gt;</span>
 <span class="w">  </span><span class="n">subtype</span><span class="p">:</span><span class="w"> </span><span class="n">utf8</span><span class="o">&lt;</span><span class="n">Utf8View</span><span class="o">&gt;</span>
+<span class="w">  </span><span class="n">admin_level</span><span class="p">:</span><span class="w"> </span><span class="n">int32</span><span class="o">&lt;</span><span class="n">Int32</span><span class="o">&gt;</span>
 <span class="w">  </span><span class="k">class</span><span class="p">:</span><span class="w"> </span><span class="n">utf8</span><span class="o">&lt;</span><span class="n">Utf8View</span><span class="o">&gt;</span>
 <span class="w">  </span><span class="n">names</span><span class="p">:</span><span class="w"> </span><span class="n">struct</span><span class="o">&lt;</span><span class="n">Struct</span><span class="p">(</span><span class="s2">"primary"</span><span class="p">:</span><span class="w"> </span><span class="n">Utf8</span><span class="p">,</span><span class="w"> </span><span class="s2">"common"</span><span class="p">:</span><span class="w"> </span><span class="n">Map</span><span class="p">(</span><span class="s2">"key_value"</span><span class="p">:</span><span class="w"> </span><span class="n">non</span><span class="o">-</span><span class="nb nb-Type">null</span><span class="w"> </span><span class="n">Struct</span><span class="p">(</span><span class="s2">"key"</span><span class="p">:</span><span class="w"> </span><span class="n">non</span><span class="o">-</span><span class="nb nb-Type">null</span><span class="w"> </span><span class="n">Utf8</span><span class="p">,</span><span class="w"> </span><span class="s2">"value"</span><span class="p">:</span><span class="w"> </span><span class="n">Utf8</span><span class="p">),</span><span class="w"> </span><span class="n">unsorted</span><span class="p">),</span><span class="w"> </span><span class="s2">"rules"</span><span class="p">:</span><span class="w"> </span><span class="n">List</span><span class="p">(</span><span class="n">Struct</span><span class="p">(</span><span class="s2">"variant"</span><span class="p">:</span><span class="w"> </span><span class="n">Utf8</span><span class="p">,</span><span class="w"> </span><span class="s2">"language"</span><span class="p">:</span><span class="w"> </span><span class="n">Utf8</span><span class="p">,</span><span class="w"> </span><span class="s2">"perspectives"</span><span class="p">:</span><span class="w"> </span><span class="n">Struct</span><span class="p">(</span><span class="s2">"mode"</span><span class="p">:</span><span class="w"> </span><span class="n">Utf8</span><span class="p">,</span><span class="w"> </span><span class="s2">"countries"</span><span class="p">:</span><span class="w"> </span><span class="n">List</span><span class="p">(</span><span class="n">Utf8</span><span class="p">,</span><span class="w"> </span><span class="n">field</span><span class="p">:</span><span class="w"> </span><span class="s1">'element'</span><span class="p">)),</span><span class="w"> </span><span class="s2">"value"</span><span class="p">:</span><span class="w"> </span><span class="n">Utf8</span><span class="p">,</span><span class="w"> </span><span class="s2">"between"</span><span class="p">:</span><span class="w"> </span><span class="n">List</span><span class="p">(</span><span class="n">Float64</span><span class="p">,</span><span class="w"> </span><span class="n">field</span><span class="p">:</span><span class="w"> </span><span class="s1">'element'</span><span class="p">),</span><span class="w"> </span><span class="s2">"side"</span><span class="p">:</span><span class="w"> </span><span class="n">Utf8</span><span class="p">),</span><span class="w"> </span><span class="n">field</span><span class="p">:</span><span class="w"> </span><span class="s1">'element'</span><span class="p">))</span><span class="o">&gt;</span>
 <span class="w">  </span><span class="n">is_land</span><span class="p">:</span><span class="w"> </span><span class="n">boolean</span><span class="o">&lt;</span><span class="n">Boolean</span><span class="o">&gt;</span>
 <span class="w">  </span><span class="n">is_territorial</span><span class="p">:</span><span class="w"> </span><span class="n">boolean</span><span class="o">&lt;</span><span class="n">Boolean</span><span class="o">&gt;</span>
 <span class="w">  </span><span class="n">region</span><span class="p">:</span><span class="w"> </span><span class="n">utf8</span><span class="o">&lt;</span><span class="n">Utf8View</span><span class="o">&gt;</span>
-<span class="w">  </span><span class="n">admin_level</span><span class="p">:</span><span class="w"> </span><span class="n">int32</span><span class="o">&lt;</span><span class="n">Int32</span><span class="o">&gt;</span>
 <span class="w">  </span><span class="n">division_id</span><span class="p">:</span><span class="w"> </span><span class="n">utf8</span><span class="o">&lt;</span><span class="n">Utf8View</span><span class="o">&gt;</span>
+<span class="w">  </span><span class="n">version</span><span class="p">:</span><span class="w"> </span><span class="n">int32</span><span class="o">&lt;</span><span class="n">Int32</span><span class="o">&gt;</span>
+<span class="w">  </span><span class="n">bbox</span><span class="p">:</span><span class="w"> </span><span class="n">struct</span><span class="o">&lt;</span><span class="n">Struct</span><span class="p">(</span><span class="s2">"xmin"</span><span class="p">:</span><span class="w"> </span><span class="n">Float64</span><span class="p">,</span><span class="w"> </span><span class="s2">"xmax"</span><span class="p">:</span><span class="w"> </span><span class="n">Float64</span><span class="p">,</span><span class="w"> </span><span class="s2">"ymin"</span><span class="p">:</span><span class="w"> </span><span class="n">Float64</span><span class="p">,</span><span class="w"> </span><span class="s2">"ymax"</span><span class="p">:</span><span class="w"> </span><span class="n">Float64</span><span class="p">)</span><span class="o">&gt;</span>
 </code></pre></div>
 
 <p>Overture data makes heavy use of nested types. These can be indexed into or expanded using SQL:</p>
@@ -1903,20 +1903,20 @@
     <span class="s2">"SELECT names.primary AS name, geometry FROM divisions WHERE region = 'CA-NS'"</span>
 <span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>
 </code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌────────────────────────────────────┬─────────────────────────────────────────────────────────────┐
-│                name                ┆                           geometry                          │
-│                utf8                ┆                           geometry                          │
-╞════════════════════════════════════╪═════════════════════════════════════════════════════════════╡
-│ Sable Island National Park Reserve ┆ POLYGON((-60.178333 43.9824655,-60.1785682 43.9825425,-60.… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Sable Island                       ┆ POLYGON((-59.7744732 44.2254616,-59.7928902 44.2173253,-59… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Halifax Regional Municipality      ┆ MULTIPOLYGON(((-59.7321078 44.2390248,-59.7502166 44.23385… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ West Liscomb                       ┆ POLYGON((-62.0615594 45.0023306,-62.0621839 45.0024475,-62… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Marie Joseph                       ┆ POLYGON((-61.9911914 44.95646,-61.9912383 44.9579526,-61.9… │
-└────────────────────────────────────┴─────────────────────────────────────────────────────────────┘
+<div class="codehilite"><pre><span></span><code>┌─────────────────┬────────────────────────────────────────────────────────────────────────────────┐
+│       name      ┆                                    geometry                                    │
+│       utf8      ┆                                    geometry                                    │
+╞═════════════════╪════════════════════════════════════════════════════════════════════════════════╡
+│ Canso           ┆ POLYGON((-60.9939805 45.3523129,-60.9940236 45.3534661,-60.9940748 45.3546192… │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Pondville South ┆ POLYGON((-60.951331 45.5363495,-60.9515096 45.5366057,-60.9516036 45.536732,-… │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Boudreauville   ┆ POLYGON((-60.9694031 45.5087873,-60.9689416 45.5064224,-60.9739396 45.5059255… │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ River Bourgeois ┆ POLYGON((-61.0152528 45.6714737,-61.0152967 45.6715587,-61.0260109 45.6685926… │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Petit-de-Grat   ┆ POLYGON((-60.9519968 45.5242318,-60.9524737 45.5246381,-60.9526837 45.5249956… │
+└─────────────────┴────────────────────────────────────────────────────────────────────────────────┘
 </code></pre></div>
 
 <p>Like all remote tables, it is worth resolving a query into a concrete local table to avoid fetching unnecessary data on repeated queries. The <code>.to_memtable()</code> method can be used to resolve a remote table into memory (great for small results); <code>.to_parquet()</code> can be used to resolve a remote table to disk (great for medium to large results).</p>
@@ -1926,20 +1926,20 @@
 
 <span class="n">sd</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="s2">"divisions_ns"</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>
 </code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌────────────────────────────────────┬─────────────────────────────────────────────────────────────┐
-│                name                ┆                           geometry                          │
-│                utf8                ┆                           geometry                          │
-╞════════════════════════════════════╪═════════════════════════════════════════════════════════════╡
-│ Sable Island National Park Reserve ┆ POLYGON((-60.178333 43.9824655,-60.1785682 43.9825425,-60.… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Sable Island                       ┆ POLYGON((-59.7744732 44.2254616,-59.7928902 44.2173253,-59… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Halifax Regional Municipality      ┆ MULTIPOLYGON(((-59.7321078 44.2390248,-59.7502166 44.23385… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ West Liscomb                       ┆ POLYGON((-62.0615594 45.0023306,-62.0621839 45.0024475,-62… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Marie Joseph                       ┆ POLYGON((-61.9911914 44.95646,-61.9912383 44.9579526,-61.9… │
-└────────────────────────────────────┴─────────────────────────────────────────────────────────────┘
+<div class="codehilite"><pre><span></span><code>┌─────────────────┬────────────────────────────────────────────────────────────────────────────────┐
+│       name      ┆                                    geometry                                    │
+│       utf8      ┆                                    geometry                                    │
+╞═════════════════╪════════════════════════════════════════════════════════════════════════════════╡
+│ Seal Island     ┆ POLYGON((-65.9481828 43.4398466,-66.0528452 43.4531336,-66.0883401 43.3978188… │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Mud Island      ┆ POLYGON((-66.0216384 43.518589,-66.0222822 43.5166842,-66.0252286 43.5100071,… │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Tusket Islands  ┆ POLYGON((-66.0341854 43.5998264,-66.033595 43.5985202,-66.0330826 43.5966887,… │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Lower Wedgeport ┆ POLYGON((-65.9817164 43.7321666,-65.9825263 43.7327018,-65.9878682 43.7318659… │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Chebogue Point  ┆ POLYGON((-66.1264091 43.6848494,-66.1078926 43.6952532,-66.0932243 43.7029995… │
+└─────────────────┴────────────────────────────────────────────────────────────────────────────────┘
 </code></pre></div>
 
 <p>Importantly, Overture data is distributed using GeoParquet 1.1, for which SedonaDB has built in support! This means that spatial queries (e.g., <code>ST_Intersects()</code>) tend to execute quickly against overture. In this case, the spatial query for Nova Scotia is ~5x faster than the text-based region query.</p>
@@ -1958,20 +1958,20 @@
 
 <span class="n">sd</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="s2">"divisions_ns"</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>
 </code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌───────────────────┬──────────────────────────────────────────────────────────────────────────────┐
-│        name       ┆                                   geometry                                   │
-│        utf8       ┆                                   geometry                                   │
-╞═══════════════════╪══════════════════════════════════════════════════════════════════════════════╡
-│ Maces Bay         ┆ POLYGON((-66.4491254 45.1265729,-66.4577261 45.126933,-66.4591563 45.126991… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Gooseberry Island ┆ POLYGON((-66.2598821 45.1380421,-66.2599962 45.1381233,-66.2600591 45.13828… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Musquash Parish   ┆ POLYGON((-66.4595418 45.2215004,-66.4595406 45.221468,-66.4595396 45.221391… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Dipper Harbour    ┆ POLYGON((-66.3755086 45.118812,-66.4089711 45.1488327,-66.4284252 45.138119… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ Chance Harbour    ┆ POLYGON((-66.4089711 45.1488327,-66.3755086 45.118812,-66.3541725 45.105991… │
-└───────────────────┴──────────────────────────────────────────────────────────────────────────────┘
+<div class="codehilite"><pre><span></span><code>┌─────────────────┬────────────────────────────────────────────────────────────────────────────────┐
+│       name      ┆                                    geometry                                    │
+│       utf8      ┆                                    geometry                                    │
+╞═════════════════╪════════════════════════════════════════════════════════════════════════════════╡
+│ Mud Island      ┆ POLYGON((-66.0216384 43.518589,-66.0222822 43.5166842,-66.0252286 43.5100071,… │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Tusket Islands  ┆ POLYGON((-66.0341854 43.5998264,-66.033595 43.5985202,-66.0330826 43.5966887,… │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Lower Wedgeport ┆ POLYGON((-65.9817164 43.7321666,-65.9825263 43.7327018,-65.9878682 43.7318659… │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Chebogue Point  ┆ POLYGON((-66.1264091 43.6848494,-66.1078926 43.6952532,-66.0932243 43.7029995… │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ Comeaus Hill    ┆ POLYGON((-66.0396689 43.699741,-66.0437404 43.6954361,-66.0459004 43.6935827,… │
+└─────────────────┴────────────────────────────────────────────────────────────────────────────────┘
 </code></pre></div>
 
 <h2 id="overture-buildings-table">Overture buildings table<a class="headerlink" href="#overture-buildings-table" title="Permanent link">¶</a></h2>
@@ -1983,33 +1983,33 @@
 <div class="highlight"><pre><span></span><code><span class="n">sd</span><span class="o">.</span><span class="n">sql</span><span class="p">(</span><span class="s2">"SET datafusion.runtime.metadata_cache_limit = '900M'"</span><span class="p">)</span><span class="o">.</span><span class="n">execute</span><span class="p">()</span>
 
 <span class="n">sd</span><span class="o">.</span><span class="n">read_parquet</span><span class="p">(</span>
-    <span class="s2">"s3://overturemaps-us-west-2/release/2026-02-18.0/theme=buildings/type=building/"</span><span class="p">,</span>
+    <span class="s2">"s3://overturemaps-us-west-2/release/2026-09-23.1/theme=buildings/type=building/"</span><span class="p">,</span>
     <span class="n">options</span><span class="o">=</span><span class="p">{</span><span class="s2">"aws.skip_signature"</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span> <span class="s2">"aws.region"</span><span class="p">:</span> <span class="s2">"us-west-2"</span><span class="p">},</span>
 <span class="p">)</span><span class="o">.</span><span class="n">to_view</span><span class="p">(</span><span class="s2">"buildings"</span><span class="p">)</span>
 </code></pre></div>
 <p>Like all SedonaDB DataFrames, viewing a schema or previewing the first few rows are lazy and usually fast unless a query contains large aggregations or joins.</p>
 <div class="highlight"><pre><span></span><code><span class="n">sd</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="s2">"buildings"</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>
 </code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌──────────────────────────────────────┬─────────────────────────────────────────┬───┬─────────────┐
-│                  id                  ┆                 geometry                ┆ … ┆ roof_height │
-│                 utf8                 ┆                 geometry                ┆   ┆   float64   │
-╞══════════════════════════════════════╪═════════════════════════════════════════╪═══╪═════════════╡
-│ ab23f7ee-4c05-4246-a016-8260ce58a916 ┆ POLYGON((-67.589523 -39.0908362,-67.58… ┆ … ┆             │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ 58356258-2e80-48fc-aacf-d81fcf74074c ┆ POLYGON((-67.5896327 -39.0907868,-67.5… ┆ … ┆             │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ b50595a8-cddb-44dd-bdbf-7bbe1e858ae0 ┆ POLYGON((-67.5897117 -39.0908483,-67.5… ┆ … ┆             │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ cbabe2df-f49a-4e9f-9cbe-c527a4b3b9f1 ┆ POLYGON((-67.5898768 -39.0907073,-67.5… ┆ … ┆             │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ bcd6984b-8da4-4dfe-9212-be2b02a24b67 ┆ POLYGON((-67.5901879 -39.0908288,-67.5… ┆ … ┆             │
-└──────────────────────────────────────┴─────────────────────────────────────────┴───┴─────────────┘
+<div class="codehilite"><pre><span></span><code>┌──────────────────────────────────────┬───┬───────────────────────────────────────────────────────┐
+│                  id                  ┆ … ┆                          bbox                         │
+│                 utf8                 ┆   ┆                         struct                        │
+╞══════════════════════════════════════╪═══╪═══════════════════════════════════════════════════════╡
+│ 57663251-bddc-4327-8381-21d0b1387aad ┆ … ┆ {xmin: -72.21996307373047, xmax: -72.21990203857422,… │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ 60edbc3a-0bef-4ad1-9526-a78e4929d65b ┆ … ┆ {xmin: -72.22010803222656, xmax: -72.2200698852539, … │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ fc81281b-fa92-40fd-8e6a-a7d0af66f658 ┆ … ┆ {xmin: -72.22064971923828, xmax: -72.2205810546875, … │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ ca6e790a-9bd8-4a88-91cf-6d4a8e973931 ┆ … ┆ {xmin: -72.2198715209961, xmax: -72.21979522705078, … │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ 7ad78e04-753c-487e-a322-d5fd965832dd ┆ … ┆ {xmin: -72.21929931640625, xmax: -72.21922302246094,… │
+└──────────────────────────────────────┴───┴───────────────────────────────────────────────────────┘
 </code></pre></div>
 
 <p>Some operations like <code>.count()</code> use summary statistics and execute quickly even for large remote tables:</p>
 <div class="highlight"><pre><span></span><code><span class="n">sd</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="s2">"buildings"</span><span class="p">)</span><span class="o">.</span><span class="n">count</span><span class="p">()</span>
 </code></pre></div>
-<div class="codehilite"><pre><span></span><code><span class="mf">2541282557</span>
+<div class="codehilite"><pre><span></span><code><span class="mf">2533842612</span>
 </code></pre></div>
 
 <p>Overture buildings has a number of attributes on which we can filter. For long-running queries it may be convenient to cache a result locally using <code>.to_memtable()</code> or <code>.to_parquet()</code> before inspecting using other tools; however like all Overture tables it is optimized for spatial queries and these are usually not expensive for small areas.</p>
@@ -2044,20 +2044,20 @@
 
 <span class="n">sd</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="s2">"buildings_nyc"</span><span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>
 </code></pre></div>
-<div class="codehilite"><pre><span></span><code>┌─────────────────────────┬────────────────────┬────────────┬────────────┬─────────────────────────┐
-│            id           ┆       height       ┆ num_floors ┆ roof_shape ┆         centroid        │
-│           utf8          ┆       float64      ┆    int32   ┆    utf8    ┆         geometry        │
-╞═════════════════════════╪════════════════════╪════════════╪════════════╪═════════════════════════╡
-│ aa8e3a73-c72c-4f1a-b6e… ┆  20.38205909729004 ┆            ┆            ┆ POINT(-74.187673580307… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ efe7616b-7f7e-464c-9ce… ┆  26.18361473083496 ┆            ┆            ┆ POINT(-74.189040982134… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ b3f734a1-325b-4e8c-b1d… ┆ 27.025876998901367 ┆            ┆            ┆ POINT(-74.2558161 40.8… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ 45d88655-e2f4-4a08-926… ┆ 25.485210418701172 ┆            ┆            ┆ POINT(-74.182252194444… │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ 31e8353c-7d5b-4b20-94e… ┆ 21.294815063476562 ┆            ┆            ┆ POINT(-74.197113787905… │
-└─────────────────────────┴────────────────────┴────────────┴────────────┴─────────────────────────┘
+<div class="codehilite"><pre><span></span><code>┌───────────────────────────────┬─────────┬────────────┬────────────┬──────────────────────────────┐
+│               id              ┆  height ┆ num_floors ┆ roof_shape ┆           centroid           │
+│              utf8             ┆ float64 ┆    int32   ┆    utf8    ┆           geometry           │
+╞═══════════════════════════════╪═════════╪════════════╪════════════╪══════════════════════════════╡
+│ baa975bc-05cd-4b61-8601-ee4c… ┆    21.4 ┆            ┆            ┆ POINT(-73.90407354738332 40… │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ 0c13ed5f-7910-40a9-b0b2-bdcc… ┆    25.4 ┆            ┆            ┆ POINT(-73.8991184967379 40.… │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ d5850743-2733-4d65-ad0d-176e… ┆    21.2 ┆            ┆            ┆ POINT(-73.89783640847207 40… │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ 2c2cd855-e561-4bea-8a06-0a57… ┆    20.2 ┆            ┆            ┆ POINT(-73.89800666906386 40… │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ 2ed122f6-0f6e-48b5-acab-8b85… ┆    20.2 ┆            ┆            ┆ POINT(-73.8978977796945 40.… │
+└───────────────────────────────┴─────────┴────────────┴────────────┴──────────────────────────────┘
 </code></pre></div>
 
 
@@ -2079,7 +2079,7 @@
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"></path></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="February 23, 2026 22:14:08 UTC">February 23, 2026 22:14:08</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="October 15, 2026 18:15:23 UTC">October 15, 2026 18:15:23</span>
   </span>
 
     
