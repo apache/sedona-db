@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import operator
 import sys
 
 import geoarrow.pyarrow as ga
@@ -148,6 +149,63 @@ def test_column_subset_keeps_geometry(cities):
 def test_filter_matches_geopandas(cities):
     # Same op applied to GeoPandas and to the wrapper yields the same result.
     assert_geopandas_expr_equal(cities, lambda df: df[df["pop"] > 150], sort_by="name")
+
+
+_COMPARED = """
+SELECT f, g, CAST(i AS BIGINT) AS i, s, CAST(t AS TIMESTAMP) AS t,
+    ST_Point(0, 0) AS geometry
+FROM (VALUES
+    (1.5, 1.5, 1, 'a', '2020-01-01'),
+    (CAST('NaN' AS DOUBLE), CAST('NaN' AS DOUBLE), 2, 'b', '2020-01-02'),
+    (NULL, 2.0, NULL, NULL, NULL),
+    (CAST('-0.0' AS DOUBLE), 0.0, 0, 'a', '2020-01-01')
+) AS v(f, g, i, s, t)
+"""
+
+
+@pytest.mark.parametrize("op", ["gt", "ge", "lt", "le", "eq", "ne"])
+@pytest.mark.parametrize(
+    "left, right",
+    [
+        ("f", 1.5),
+        ("f", 0),
+        ("f", -0.0),
+        ("f", np.nan),
+        ("f", None),
+        ("f", "g"),
+        ("i", 1),
+        ("i", "f"),
+        ("t", pd.Timestamp("2020-01-01")),
+    ],
+)
+def test_comparisons_follow_pandas(op, left, right):
+    # A missing value on either side (null, or NaN in a float column) compares
+    # False, and True for !=; -0.0 equals 0.0. The engine alone answers null
+    # for a null, puts NaN above every number, and -0.0 below 0.0.
+    gdf = GeoDataFrame(sgpd.default_context().sql(_COMPARED))
+    frame = gdf.to_geopandas()
+    ours_right = gdf[right] if right in ("f", "g") else right
+    theirs_right = frame[right] if right in ("f", "g") else right
+    got = getattr(operator, op)(gdf[left], ours_right).to_pandas().tolist()
+    assert got == getattr(operator, op)(frame[left], theirs_right).tolist()
+
+
+def test_string_equality_with_missing_values():
+    gdf = GeoDataFrame(sgpd.default_context().sql(_COMPARED))
+    assert (gdf["s"] == "a").to_pandas().tolist() == [True, False, False, True]
+    assert (gdf["s"] != "a").to_pandas().tolist() == [False, True, True, False]
+
+
+def test_masks_with_missing_values_select_the_rows_pandas_does():
+    gdf = GeoDataFrame(sgpd.default_context().sql(_COMPARED))
+    frame = gdf.to_geopandas()
+    for ours, theirs in [
+        (gdf["f"] > 100, frame["f"] > 100),
+        (~(gdf["f"] > 100), ~(frame["f"] > 100)),
+        (gdf["f"] == gdf["f"], frame["f"] == frame["f"]),
+        ((gdf["f"] != 1.5) & (gdf["i"] > 0), (frame["f"] != 1.5) & (frame["i"] > 0)),
+    ]:
+        assert len(gdf[ours].to_geopandas()) == int(theirs.sum())
 
 
 def test_to_crs_matches_geopandas(cities):

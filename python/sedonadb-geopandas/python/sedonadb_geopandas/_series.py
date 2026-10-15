@@ -18,9 +18,10 @@
 
 import math
 import numbers
+import operator
 
 import pyarrow as pa
-from sedonadb.expr import lit
+from sedonadb.expr import Expr, lit
 
 from sedonadb_geopandas._temporal import (
     coerce_duration_scalar,
@@ -291,22 +292,49 @@ class Series:
 
     # -- element-wise comparisons -> boolean mask --------------------------
     def __gt__(self, other):
-        return Series(self._df, self._expr > _operand(self._df, other), self._name)
+        return self._compare(other, operator.gt)
 
     def __ge__(self, other):
-        return Series(self._df, self._expr >= _operand(self._df, other), self._name)
+        return self._compare(other, operator.ge)
 
     def __lt__(self, other):
-        return Series(self._df, self._expr < _operand(self._df, other), self._name)
+        return self._compare(other, operator.lt)
 
     def __le__(self, other):
-        return Series(self._df, self._expr <= _operand(self._df, other), self._name)
+        return self._compare(other, operator.le)
 
     def __eq__(self, other):
-        return Series(self._df, self._expr == _operand(self._df, other), self._name)
+        return self._compare(other, operator.eq)
 
     def __ne__(self, other):
-        return Series(self._df, self._expr != _operand(self._df, other), self._name)
+        return self._compare(other, operator.ne)
+
+    def _compare(self, other, op):
+        """`self <op> other`, compared as pandas compares.
+
+        A missing value on either side (null, or NaN in a float column)
+        compares False, and True for `!=`, so the result is never null and a
+        mask built from it keeps or drops the rows pandas would. The engine
+        alone answers null for a null, orders floats totally (NaN above every
+        number, -0.0 below 0.0), and so differs from pandas on all of these.
+        """
+        from sedonadb_geopandas._frame import _is_missing
+
+        rhs = _operand(self._df, other)
+        if isinstance(other, Series):
+            missing = self._missing() | other._missing()
+        elif _is_missing(normalize_scalar(other)):
+            missing = self._expr.is_null() | lit(True)
+        else:
+            missing = self._missing()
+        expr = op(
+            _zero_normalized(self._df, self._expr), _zero_normalized(self._df, rhs)
+        )
+        if op is operator.ne:
+            expr = expr | missing
+        else:
+            expr = expr & ~missing
+        return Series(self._df, expr, self._name)
 
     # -- boolean composition of masks --------------------------------------
     def __and__(self, other):
@@ -576,6 +604,27 @@ class Series:
     def __repr__(self):
         # Cheap: show the underlying expression rather than executing.
         return f"<{type(self).__name__} {self._expr!r} (lazy; call .to_pandas())>"
+
+
+def _zero_normalized(df, expr):
+    """`expr` (a column expression or a scalar), with -0.0 as 0.0 if it is
+    floating.
+
+    The engine orders floats totally, so -0.0 compares below 0.0, while
+    pandas (IEEE) holds them equal; adding 0.0 turns -0.0 into 0.0.
+    """
+    if isinstance(expr, float):
+        return expr + 0.0
+    if isinstance(expr, pa.Scalar):
+        if pa.types.is_floating(expr.type) and expr.is_valid:
+            return pa.scalar(expr.as_py() + 0.0, type=expr.type)
+        return expr
+    if not isinstance(expr, Expr):
+        return expr
+    dtype = pa.schema(df.select(expr.alias("x")).schema).field("x").type
+    while pa.types.is_dictionary(dtype) or pa.types.is_run_end_encoded(dtype):
+        dtype = dtype.value_type
+    return expr + lit(0.0) if pa.types.is_floating(dtype) else expr
 
 
 def _buffer_style(style, names, argument):
