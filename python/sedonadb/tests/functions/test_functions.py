@@ -14,8 +14,10 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+import json
 import math
 
+import pyarrow as pa
 import pytest
 import sedonadb
 import shapely
@@ -1366,6 +1368,74 @@ def test_st_makeline(eng):
 def test_st_dimension(eng, geom, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(f"SELECT ST_Dimension({geom_or_null(geom)})", expected)
+
+
+@pytest.mark.parametrize(
+    "wkt",
+    [
+        "POINT (1 2)",
+        "POINT EMPTY",
+        "LINESTRING (1 1, 2 2)",
+        "POLYGON ((1 1, 2 2, 2 1, 1 1))",
+        "MULTIPOINT (0 1, 1 2)",
+        "MULTIPOINT EMPTY",
+        "MULTILINESTRING ((1 1, 2 2), EMPTY, (3 3, 4 4))",
+        "MULTIPOLYGON (((1 1, 2 2, 2 1, 1 1)), EMPTY, ((3 3, 4 4, 4 3, 3 3)))",
+        "GEOMETRYCOLLECTION (POINT (1 2), GEOMETRYCOLLECTION (MULTILINESTRING ((1 1, 2 2), EMPTY, (3 3, 4 4)), LINESTRING (1 1, 2 2)))",
+        "GEOMETRYCOLLECTION EMPTY",
+        "MULTIPOINT Z ((0 1 2), (1 2 3))",
+    ],
+)
+def test_st_geometries(wkt):
+    # A geometry's direct members, one level deep, as shapely.get_parts gives
+    # them: a nested collection is a member, where ST_Dump recurses into it.
+    eng = SedonaDB.create_or_skip()
+    table = eng.con.sql(
+        f"SELECT ST_Geometries({geom_or_null(wkt)}) AS g"
+    ).to_arrow_table()
+    members = table.column("g").to_pylist()[0]
+    expected = shapely.get_parts(shapely.from_wkt(wkt))
+    assert [shapely.from_wkb(m).wkt for m in members] == [g.wkt for g in expected]
+
+
+def test_st_geometries_null():
+    eng = SedonaDB.create_or_skip()
+    table = eng.con.sql("SELECT ST_Geometries(NULL) AS g").to_arrow_table()
+    assert table.column("g").to_pylist() == [None]
+
+
+@pytest.mark.parametrize(
+    ("constructor", "expected"),
+    [
+        ("ST_SetSRID(ST_GeomFromText('MULTIPOINT (0 1, 1 2)'), 3857)", {"crs"}),
+        ("ST_GeogFromWKT('MULTIPOINT (0 1, 1 2)')", {"crs", "edges"}),
+    ],
+)
+def test_st_geometries_members_keep_the_input_type(constructor, expected):
+    # Each list item has the input's spatial type: its CRS, and for
+    # geography its spherical edges.
+    eng = SedonaDB.create_or_skip()
+    df = eng.con.sql(
+        f"SELECT {constructor} AS g, ST_Geometries({constructor}) AS parts"
+    )
+    schema = pa.schema(df.schema)
+    item_name, item_meta = _extension(schema.field("parts").type.value_field)
+    input_name, input_meta = _extension(schema.field("g"))
+    assert item_name == input_name == "geoarrow.wkb"
+    assert expected <= set(item_meta)
+    assert item_meta == input_meta
+
+
+def _extension(field):
+    """A field's extension name and metadata, whether or not the extension
+    type is registered with pyarrow (geoarrow-pyarrow registers it)."""
+    if isinstance(field.type, pa.ExtensionType):
+        serialized = field.type.__arrow_ext_serialize__() or b"{}"
+        return field.type.extension_name, json.loads(serialized)
+    return (
+        field.metadata[b"ARROW:extension:name"].decode(),
+        json.loads(field.metadata[b"ARROW:extension:metadata"]),
+    )
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])

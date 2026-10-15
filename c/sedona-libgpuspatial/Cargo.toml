@@ -32,7 +32,9 @@ default = []
 gpu = []
 
 [build-dependencies]
-bindgen = "0.73.2"
+# bindgen 0.73.2 allows syn 3, but prettyplease still uses syn 2, causing a
+# cross-version AST type mismatch during compilation.
+bindgen = "0.72.1"
 cmake = "0.1"
 which = "8.0"
 

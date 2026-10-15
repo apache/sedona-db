@@ -17,16 +17,35 @@
 """GeoPandas-style GeoDataFrame backed by a lazy SedonaDB frame."""
 
 import numbers
+import os
 
 import pyarrow as pa
 from sedonadb.expr import Expr, Literal, lit
 from shapely.geometry.base import BaseGeometry
 
-from sedonadb_geopandas._series import GeoSeries, Series, is_scalar, normalize_scalar
+from sedonadb_geopandas._series import (
+    GeoSeries,
+    Series,
+    _same_crs,
+    is_scalar,
+    normalize_scalar,
+)
 from sedonadb_geopandas._temporal import sanitize_temporal
 
 # Rows to collect for the Jupyter rich-text (`_repr_html_`) preview.
 _REPR_HTML_ROWS = 10
+
+# GeoPandas' compression names, at pyarrow's default levels, in the writer's
+# spelling: it needs an explicit level, and calls pyarrow's "lz4" lz4_raw.
+_PARQUET_COMPRESSION = {
+    "snappy": "snappy",
+    "gzip": "gzip(9)",
+    "brotli": "brotli(8)",
+    "zstd": "zstd(1)",
+    "lz4": "lz4_raw",
+    "none": "uncompressed",
+    None: "uncompressed",
+}
 
 # Default for the `geometry` argument, distinguishing "not specified, apply the
 # heuristic" from an explicit `None` meaning "this frame has no active geometry".
@@ -46,6 +65,17 @@ _SJOIN_PREDICATES = {
     "covered_by": "covered_by",
     "dwithin": "d_within",
 }
+
+
+def _renamed(df, mapping):
+    """`df` with columns renamed old to new, in place and order.
+
+    A projection with aliases rather than `DataFrame.rename`, whose keyword
+    arguments cannot take a name such as "self".
+    """
+    return df.select(
+        *[df[name].alias(mapping.get(name, name)) for name in df.schema.names]
+    )
 
 
 def _geometry_column_names(df):
@@ -109,6 +139,85 @@ def _is_missing(value):
     except Exception:
         # Without pandas, catch NaN via its self-inequality.
         return isinstance(value, float) and value != value
+
+
+def _explode_parts(df, column):
+    """`df` with one row per part of its geometry column `column`.
+
+    Parts are taken one level deep, as `shapely.get_parts` does. A single
+    geometry is its own one part, even when empty; a multi-geometry or
+    collection with no parts, or a missing geometry, yields no row. The
+    exploded column moves to the end. All three as in GeoPandas.
+
+    `ST_Dump` lists the parts before they are unnested, so each part is
+    stored once rather than the whole geometry being repeated per part. It
+    flattens nested collections, though, so a geometry collection's members
+    are read one level deep with `ST_GeometryN` instead, which repeats the
+    collection (only) once per member while it is exploded.
+    """
+    ctx = df._ctx
+    column_type = df.schema.field(column).type
+    crs = column_type.crs
+    spherical = "SPHERICAL" in str(getattr(column_type, "edge_type", "")).upper()
+    df = df.filter(df[column].is_not_null())
+    geometry = df[column]
+    is_collection = geometry.geo.geometry_type() == lit("ST_GeometryCollection")
+    # nvl2 needs its condition in the same type as its values, hence the
+    # binary flag (non-null on collections only), as in GeoSeries.envelope.
+    collection_flag = _binary_flag(is_collection)
+    carried = collection_flag.funcs.nvl2(geometry.geo.as_binary(), lit(None))
+    members = (
+        geometry.geo.num_geometries().cast(pa.int64()) * is_collection.cast(pa.int64())
+    ).funcs.coalesce(lit(0))
+    # A collection's parts come from its member positions, so its dumped
+    # leaves are dropped before unnesting: unnested in parallel with the
+    # positions, each leaf would carry the whole collection.
+    leaves = geometry.geo.dump()
+    leaves = leaves.funcs.array_slice(
+        lit(1),
+        leaves.funcs.cardinality().cast(pa.int64()) * (~is_collection).cast(pa.int64()),
+    )
+    others = [name for name in df.schema.names if name != column]
+    dump, position, carry = (
+        _unused_name(df, "__dump"),
+        _unused_name(df, "__member"),
+        _unused_name(df, "__collection"),
+    )
+    staged = df.select(
+        *[df[name] for name in others],
+        leaves.alias(dump),
+        ctx.lit(1).funcs.range(members + lit(1)).alias(position),
+        carried.alias(carry),
+    ).unnest(dump, position)
+
+    def from_wkb(wkb):
+        return wkb.funcs.st_geogfromwkb() if spherical else wkb.funcs.st_geomfromwkb()
+
+    member = from_wkb(staged[carry]).geo.geometry_n(staged[position]).geo.as_binary()
+    wkb = _binary_flag(staged[position].is_not_null()).funcs.nvl2(
+        member, staged[dump]["geom"].cast(pa.binary())
+    )
+    # WKB carries neither the spatial kind nor the CRS: both are restored.
+    part = from_wkb(wkb)
+    if crs is not None:
+        part = part.funcs.st_setcrs(ctx.lit(crs.to_json()))
+    elif spherical:
+        # The geography constructor assigns OGC:CRS84; SRID 0 clears it, as
+        # the column had no CRS.
+        part = part.geo.set_srid(ctx.lit(0))
+    return staged.select(*[staged[name] for name in others], part.alias(column))
+
+
+def _binary_flag(condition):
+    """A binary value that is non-null exactly where `condition` is true."""
+    return condition.funcs.nullif(lit(False)).cast(pa.string()).cast(pa.binary())
+
+
+def _unused_name(df, name):
+    """`name`, prefixed with underscores until no column of `df` has it."""
+    while name in df.schema.names:
+        name = f"_{name}"
+    return name
 
 
 class GeoDataFrame:
@@ -287,7 +396,11 @@ class GeoDataFrame:
             )
         else:
             expr = self._scalar_expr(key, value)
+        self._assign(key, expr)
 
+    def _assign(self, key, expr):
+        """Rebind this frame with `expr` as column `key`, keeping lineage and
+        the active geometry in step."""
         geometry_before = _geometry_column_names(self._df)
         if key in self._df.schema.names:
             # Replacing a column: an earlier Series may reference it and
@@ -362,16 +475,14 @@ class GeoDataFrame:
         missing = _is_missing(raw)
         replacing_geometry = key in _geometry_column_names(self._df)
 
-        # A GeoArrow-typed scalar — valid or null — is recognized from its
-        # extension name, not by resolving it: the scalar resolver drops the
-        # planar/spherical edge type and rejects non-WKB storage outright.
-        # It needs the handling below even for a brand-new or non-geometry
-        # column, so this must come before that early return.
+        # A GeoArrow-typed scalar, valid or null, carries its own spatial kind
+        # and CRS, which the literal keeps; a null of it must not be rebuilt
+        # with the destination's kind like other missing values.
         geoarrow_typed = isinstance(raw, pa.Scalar) and str(
             getattr(raw.type, "extension_name", "")
         ).startswith("geoarrow.")
 
-        if not replacing_geometry and not geoarrow_typed:
+        if not replacing_geometry:
             return lit(raw)
 
         if not missing and not geoarrow_typed:
@@ -395,50 +506,8 @@ class GeoDataFrame:
         strips_crs = False
         expr = None
         if geoarrow_typed:
-            scalar_spherical = (
-                "SPHERICAL" in str(getattr(raw.type, "edge_type", "")).upper()
-            )
-            scalar_crs = getattr(raw.type, "crs", None)
-            if str(raw.type.extension_name) == "geoarrow.wkb":
-                arr_type = raw.type
-                if pa.types.is_large_binary(arr_type.storage_type):
-                    # SedonaDB's WKB importer requires Binary storage; the
-                    # type is rebuilt on Binary with the same CRS and edge
-                    # metadata rather than passed through and rejected.
-                    import geoarrow.pyarrow as ga
-
-                    rebuilt = ga.wkb().with_edge_type(arr_type.edge_type)
-                    if arr_type.crs is not None:
-                        rebuilt = rebuilt.with_crs(arr_type.crs)
-                    arr_type = rebuilt
-                expr = ctx.lit(pa.array([raw.as_py()], type=arr_type))
-            elif missing:
-                # Non-WKB storage cannot become a literal; a null of it is
-                # rebuilt from its own metadata. Kind and CRS survive; the
-                # storage kind, which holds nothing for a null, does not.
-                if scalar_spherical:
-                    expr = ctx.lit(None).funcs.st_geogfromwkt()
-                else:
-                    expr = ctx.lit(None).funcs.st_geomfromwkt()
-                if scalar_crs:
-                    # GeoArrow CRS wrappers stringify as StringCrs(...);
-                    # to_json() is the canonical PROJJSON form ST_SetCRS
-                    # accepts.
-                    crs_text = (
-                        scalar_crs.to_json()
-                        if hasattr(scalar_crs, "to_json")
-                        else str(scalar_crs)
-                    )
-                    expr = expr.funcs.st_setcrs(ctx.lit(crs_text))
-                else:
-                    # A CRS-less carrier inherits the destination CRS like
-                    # any other, shedding any constructor-synthesized one.
-                    inherits_crs = True
-                    strips_crs = crs is None
-            else:
-                # A valid non-WKB GeoArrow scalar keeps the literal
-                # resolver's own error, which names the unsupported storage.
-                expr = ctx.lit(raw)
+            # A CRS-less one inherits the destination CRS below.
+            expr = ctx.lit(raw)
         if expr is not None:
             pass
         elif missing:
@@ -667,6 +736,191 @@ class GeoDataFrame:
         ]
         return GeoDataFrame(joined.select(*projection), geometry)
 
+    # -- geometry and CRS bookkeeping --------------------------------------
+
+    def set_geometry(self, col, inplace=False, crs=None):
+        """Make `col` the active geometry column, as in GeoPandas.
+
+        `col` is the name of a geometry column, or a `GeoSeries` of this
+        frame, which is added under its own name first. `crs` relabels the
+        new active column (overriding any CRS it has) without transforming
+        coordinates. With `inplace=True` this frame changes and None is
+        returned.
+        """
+        target = self if inplace else self._copy()
+        if isinstance(col, Series):
+            if not isinstance(col, GeoSeries):
+                raise TypeError("set_geometry() needs a GeoSeries or a column name")
+            # As in GeoPandas, an unnamed GeoSeries replaces the active
+            # geometry column, or is added as "geometry" if there is none.
+            name = col._name
+            if name is None:
+                name = target._geometry_name or "geometry"
+            target[name] = col
+        elif isinstance(col, str):
+            if col not in target.columns:
+                raise ValueError(f"Unknown column {col}")
+            if col not in _geometry_column_names(target._df):
+                raise TypeError(f"Column {col!r} is not a geometry column")
+            name = col
+        else:
+            raise TypeError(
+                f"set_geometry() takes a column name or a GeoSeries, got "
+                f"{type(col).__name__}"
+            )
+        target._geometry_name = name
+        if crs is not None:
+            target.set_crs(crs, allow_override=True, inplace=True)
+        return None if inplace else target
+
+    def rename_geometry(self, col, inplace=False):
+        """Rename the active geometry column to `col`, as in GeoPandas."""
+        if self._geometry_name is None:
+            raise AttributeError("This GeoDataFrame has no active geometry column")
+        if col in self.columns:
+            raise ValueError(f"Column named {col} already exists")
+        target = self if inplace else self._copy()
+        old = target._geometry_name
+        target._rebind(_renamed(target._df, {old: col}), renames_columns=True)
+        target._geometry_name = col
+        return None if inplace else target
+
+    def set_crs(self, crs=None, epsg=None, inplace=False, allow_override=False):
+        """Label the active geometry column with a CRS, as in GeoPandas.
+
+        Coordinates are not transformed (use `to_crs` for that). Replacing a
+        different existing CRS needs `allow_override=True`. Returns the frame,
+        this one when `inplace=True`, as GeoPandas does.
+        """
+        if self._geometry_name is None:
+            raise AttributeError("This GeoDataFrame has no active geometry column")
+        if crs is None and epsg is not None:
+            crs = int(epsg)
+        target = self if inplace else self._copy()
+        current = self.crs
+        if (current is None and crs is None) or (
+            current is not None and crs is not None and _same_crs(current, crs)
+        ):
+            # Unchanged: rebinding the column would only invalidate Series read
+            # from this frame earlier.
+            return target
+        relabeled = self.geometry.set_crs(crs, allow_override=allow_override)
+        # Not through assignment, which gives a CRS-less geometry the column's
+        # current CRS and so would undo clearing it.
+        target._assign(target._geometry_name, relabeled._expr)
+        return target
+
+    # -- columns and rows ---------------------------------------------------
+
+    def drop(self, labels=None, axis=0, columns=None, errors="raise"):
+        """Drop columns, as in `DataFrame.drop(columns=...)`.
+
+        There is no index, so only columns can be dropped: pass `columns=`,
+        or `labels` with `axis=1`. Dropping the active geometry column leaves
+        the frame without one, as in GeoPandas.
+        """
+        if columns is None:
+            if axis not in (1, "columns"):
+                raise NotImplementedError(
+                    "drop() removes columns only: there is no index to drop "
+                    "rows by; filter with a boolean mask instead"
+                )
+            columns = labels
+        names = [columns] if isinstance(columns, str) else list(columns)
+        missing = [name for name in names if name not in self.columns]
+        if missing and errors == "raise":
+            raise KeyError(f"{missing} not found in axis")
+        names = [name for name in names if name in self.columns]
+        if not names:
+            return self._copy()
+        geometry = None if self._geometry_name in names else self._geometry_name
+        return GeoDataFrame(self._df.drop(*names), geometry)
+
+    def rename(self, mapper=None, columns=None, axis=None, errors="ignore"):
+        """Rename columns, as in `DataFrame.rename(columns=...)`.
+
+        `columns` (or `mapper` with `axis=1`) is a mapping of old to new names
+        or a function of the old name. As in GeoPandas, renaming the active
+        geometry column this way leaves the frame without an active geometry;
+        `rename_geometry` renames it and keeps it active.
+        """
+        if columns is None:
+            if axis not in (1, "columns"):
+                raise NotImplementedError(
+                    "rename() renames columns only: there is no index; pass "
+                    "columns= or axis=1"
+                )
+            columns = mapper
+        if callable(columns):
+            mapping = {name: columns(name) for name in self.columns}
+        else:
+            mapping = dict(columns)
+            missing = [name for name in mapping if name not in self.columns]
+            if missing and errors == "raise":
+                raise KeyError(f"{missing} not found in axis")
+        mapping = {
+            old: new
+            for old, new in mapping.items()
+            if old in self.columns and old != new
+        }
+        if not mapping:
+            return self._copy()
+        final = [mapping.get(name, name) for name in self.columns]
+        duplicates = sorted({name for name in final if final.count(name) > 1})
+        if duplicates:
+            raise ValueError(
+                f"rename() would produce duplicate column name(s) {duplicates}, "
+                f"which a frame cannot hold"
+            )
+        renamed = _renamed(self._df, mapping)
+        geometry = None if self._geometry_name in mapping else self._geometry_name
+        return GeoDataFrame(renamed, geometry)
+
+    def sort_values(self, by, ascending=True, na_position="last"):
+        """Sort rows by one or more columns, as in `DataFrame.sort_values`.
+
+        As in pandas, NaN in a float column sorts as missing, placed by
+        `na_position`. Sorting orders the rows this frame produces; a later
+        operation that does not preserve order (a join, an aggregation) may
+        not keep it.
+        """
+        keys = [by] if isinstance(by, str) else list(by)
+        directions = (
+            [ascending] * len(keys) if isinstance(ascending, bool) else list(ascending)
+        )
+        if len(directions) != len(keys):
+            raise ValueError(
+                f"Length of ascending ({len(directions)}) != length of by ({len(keys)})"
+            )
+        if na_position not in ("first", "last"):
+            raise ValueError(f"invalid na_position: {na_position}")
+        missing = [key for key in keys if key not in self.columns]
+        if missing:
+            raise KeyError(missing[0])
+        sort_keys = []
+        for key, up in zip(keys, directions):
+            expr = self._df[key]
+            if _is_floating(self._df, key):
+                # NaN sorts as missing in pandas; the engine orders it above
+                # every number, so it becomes null for the sort key.
+                gate = expr.funcs.isnan().funcs.nullif(lit(True)).cast(pa.float64())
+                expr = expr + gate
+            first = na_position == "first"
+            sort_keys.append(expr.asc(first) if up else expr.desc(first))
+        return GeoDataFrame(self._df.sort(*sort_keys), self._geometry_name)
+
+    def _copy(self):
+        """A new frame over the same data, sharing its lineage."""
+        copy = GeoDataFrame(self._df, self._geometry_name)
+        copy._ancestors = list(self._ancestors)
+        return copy
+
+    def _rebind(self, df, renames_columns=False):
+        """Point this frame at `df`; earlier Series are stale if names moved."""
+        if renames_columns:
+            self._ancestors = []
+        self._df = df
+
     def dissolve(self, by=None, aggfunc="first", dropna=True):
         """Group rows and union each group's geometry.
 
@@ -806,6 +1060,44 @@ class GeoDataFrame:
         unioned = collected.mutate(geometry_expr.alias(self._geometry_name))
         return GeoDataFrame(unioned, self._geometry_name)
 
+    def explode(self, column=None, ignore_index=False, index_parts=False):
+        """One row per part of each multi-part geometry, as in GeoPandas.
+
+        Parts are taken one level deep, as `shapely.get_parts` does: a
+        multi-geometry or collection yields its members, a single geometry
+        stays one row, and a row whose geometry has no parts (an empty
+        multi-geometry or collection, or a missing geometry) is dropped. The
+        other columns repeat for each part, and the exploded column moves to
+        the end, as in GeoPandas.
+
+        Args:
+            column: The column to explode: only the active geometry column
+                (the default) is supported. GeoPandas explodes the active
+                geometry even when `column` names another geometry column,
+                and explodes a non-geometry column as lists.
+            ignore_index: Accepted for compatibility; there is no index.
+            index_parts: Not supported, since there is no index to number the
+                parts in.
+
+        Returns:
+            A `GeoDataFrame` with the same active geometry column.
+        """
+        if column is None:
+            if self._geometry_name is None:
+                raise AttributeError("This GeoDataFrame has no active geometry column")
+            column = self._geometry_name
+        if column not in self.columns:
+            raise KeyError(column)
+        if column != self._geometry_name:
+            raise NotImplementedError(
+                f"explode() supports the active geometry column only, not {column!r}"
+            )
+        if index_parts:
+            raise NotImplementedError(
+                "explode() cannot number parts with index_parts=True: there is no index"
+            )
+        return GeoDataFrame(_explode_parts(self._df, column), self._geometry_name)
+
     def to_geopandas(self):
         """Execute and return a `geopandas.GeoDataFrame` (or plain DataFrame).
 
@@ -839,6 +1131,110 @@ class GeoDataFrame:
 
     # Alias: results carry geometry, so this returns a GeoDataFrame too.
     to_pandas = to_geopandas
+
+    def to_parquet(
+        self,
+        path,
+        index=None,
+        compression="snappy",
+        geometry_encoding="WKB",
+        write_covering_bbox=False,
+        schema_version=None,
+        **kwargs,
+    ):
+        """Write one GeoParquet file, as `GeoDataFrame.to_parquet` does.
+
+        **EXPERIMENTAL.** Computes the frame and writes it to `path`, a local
+        file (or `file://` URI) with an extension such as `.parquet`: SedonaDB
+        writes a directory of files to a path without one, and cannot write to
+        a remote URL yet (apache/sedona-db#1440).
+
+        Args:
+            path: The file to write; an existing file is replaced.
+            index: There is no index to write; only None or False is accepted.
+            compression: `"snappy"`, `"gzip"`, `"brotli"`, `"zstd"`, `"lz4"`, or
+                None for no compression, at pyarrow's default levels.
+            geometry_encoding: Only `"WKB"` is supported.
+            write_covering_bbox: Add a bounding-box column per geometry column
+                (`bbox` for `geometry`, `<name>_bbox` otherwise) and declare it
+                as the GeoParquet 1.1 covering, which readers can use to skip row
+                groups. An existing column of that name raises, as in
+                GeoPandas: `read_parquet` leaves a file's coverings out, so
+                this is an ordinary column.
+            schema_version: The GeoParquet version: `"1.0.0"` without a covering
+                bbox, `"1.1.0"` with one (SedonaDB writes a covering exactly
+                when writing 1.1.0). Defaults to the one that fits
+                `write_covering_bbox`.
+
+        Every geometry column needs a CRS: SedonaDB's GeoParquet writer does not
+        write an unknown one. The file's `primary_column` is chosen by SedonaDB's
+        heuristic (a column named `geometry`, `geography`, `geom` or `geog`, else
+        the first geometry column), not by the active geometry column.
+        """
+        if kwargs:
+            raise NotImplementedError(
+                f"to_parquet() does not support {', '.join(sorted(kwargs))}"
+            )
+        if index:
+            raise NotImplementedError("to_parquet() has no index to write")
+        if str(geometry_encoding).upper() != "WKB":
+            raise NotImplementedError(
+                f"to_parquet() supports geometry_encoding='WKB' only, got "
+                f"{geometry_encoding!r}"
+            )
+        codec = None if compression is None else str(compression).lower()
+        if codec not in _PARQUET_COMPRESSION:
+            raise ValueError(
+                f"to_parquet() `compression` must be one of "
+                f"{sorted(c for c in _PARQUET_COMPRESSION if c)} or None, got "
+                f"{compression!r}"
+            )
+        version = "1.1" if write_covering_bbox else "1.0"
+        if schema_version not in (None, "1.0.0", "1.1.0"):
+            raise NotImplementedError(
+                f"to_parquet() writes schema_version '1.0.0' or '1.1.0', got "
+                f"{schema_version!r}"
+            )
+        if schema_version is not None and schema_version[:3] != version:
+            raise NotImplementedError(
+                "to_parquet() writes a covering bbox exactly with GeoParquet 1.1.0: "
+                "pass write_covering_bbox=True with schema_version='1.1.0', or "
+                "neither"
+            )
+        location = os.fspath(path)
+        if "://" in location and not location.startswith("file:"):
+            raise NotImplementedError(
+                f"to_parquet() writes local files only for now, got {location!r}: "
+                f"SedonaDB's DataFrame writer cannot write to a remote URL yet "
+                f"(apache/sedona-db#1440)"
+            )
+        if not os.path.splitext(location)[1]:
+            raise ValueError(
+                f"to_parquet() needs a file name with an extension (such as "
+                f"'.parquet'), got {os.fspath(path)!r}: SedonaDB writes a "
+                f"directory of files to a path without one"
+            )
+        for name in _geometry_column_names(self._df):
+            if self._df.schema.field(name).type.crs is None:
+                raise ValueError(
+                    f"to_parquet() cannot write geometry column {name!r} without a "
+                    f"CRS: SedonaDB's GeoParquet writer does not write an unknown "
+                    f"one. Assign one with set_crs() first."
+                )
+        if write_covering_bbox:
+            for name in _geometry_column_names(self._df):
+                covering = "bbox" if name == "geometry" else f"{name}_bbox"
+                if covering in self.columns:
+                    raise ValueError(
+                        f"to_parquet() cannot write a covering bbox: a column named "
+                        f"{covering!r} already exists. Rename or drop it first."
+                    )
+        self._df.to_parquet(
+            path,
+            single_file_output=True,
+            geoparquet_version=version,
+            compression=_PARQUET_COMPRESSION[codec],
+        )
 
     def __len__(self):
         return self._df.count()

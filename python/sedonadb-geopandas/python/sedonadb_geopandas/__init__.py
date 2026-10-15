@@ -25,9 +25,18 @@ change without notice.
 
 from sedonadb_geopandas._context import default_context
 from sedonadb_geopandas._frame import GeoDataFrame
+from sedonadb_geopandas._io import read_file, read_parquet
 from sedonadb_geopandas._series import GeoSeries, Series
 
-__all__ = ["GeoDataFrame", "GeoSeries", "Series", "from_geopandas", "sjoin"]
+__all__ = [
+    "GeoDataFrame",
+    "GeoSeries",
+    "Series",
+    "from_geopandas",
+    "read_file",
+    "read_parquet",
+    "sjoin",
+]
 
 
 def from_geopandas(data, *, context=None, geometry=None):

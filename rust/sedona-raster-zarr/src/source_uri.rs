@@ -30,7 +30,9 @@
 //!    is the original group URI verbatim (whatever scheme that uses);
 //!    array path and chunk indices both live in the fragment so the
 //!    store URI is unambiguous even when both contain `/` (e.g.
-//!    `s3://bucket/foo.zarr/2024` + `subgroup/B01`).
+//!    `s3://bucket/foo.zarr/2024` + `subgroup/B01`). For an array stored
+//!    with the `sharding_indexed` codec the indices are on the
+//!    inner-chunk grid, not the shard grid.
 //!
 //!    The "this is a zarr anchor" signal lives in the band's
 //!    `outdb_format = "zarr"` field, not in a URI scheme prefix — matches

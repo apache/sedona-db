@@ -38,6 +38,7 @@ web = gdf.to_crs("EPSG:3857")              # reproject (CRS tracked through)
 
 joined = gdf.sjoin(regions, predicate="within")  # spatial join
 zones = joined.dissolve(by="region")              # group and union geometry
+parts = zones.explode()                           # one row per geometry part
 
 result = zones.to_geopandas()               # back to a real GeoDataFrame
 ```
@@ -94,9 +95,23 @@ GeoPandas' `align=False`; there is no index to align on. `touches` inherits
 an engine issue with geometry collections that mix dimensions
 (apache/sedona-db#1383).
 
+`explode()` takes parts one level deep and drops rows whose geometry has no
+parts, as GeoPandas does. Without an index it cannot number the parts
+(`index_parts=True`), and it explodes the active geometry column only:
+GeoPandas explodes the active geometry even when `column=` names another
+geometry column, and explodes non-geometry columns as lists.
+
 `sjoin()` requires both geometry columns to share a CRS: GeoPandas warns on a
 mismatch and joins anyway, which is almost always a mistake, so this raises and
 points at `to_crs()`. `on_attribute` is not supported yet.
+
+Without an index, `drop()` and `rename()` work on columns only, `rename()`
+raises rather than producing duplicate column names, and a sort from
+`sort_values()` holds until an operation that does not preserve row order (a
+join or an aggregation). `astype()` to a string keeps missing values missing,
+like pandas' `"string"` dtype rather than `str`, and formats floats the way
+Arrow does (`"1"`, `"NaN"`); `astype(object)` leaves the values as they are,
+since an Arrow-backed column has no object type.
 
 `dissolve()` aggregates non-geometry columns with `"first"`, which is an
 unordered aggregate: it returns *some* value from the group rather than the one
@@ -109,6 +124,32 @@ being promoted to 3D. Grouping is observed-only: unused categories of a
 categorical key do not produce empty groups the way GeoPandas' default
 `observed=False` does, because the category domain does not survive a relational
 aggregation.
+
+`read_parquet()`, `read_file()` and `to_parquet()` follow GeoPandas, with
+differences that come from SedonaDB's readers and GeoParquet writer:
+
+- The active geometry column of a file that is read, and the `primary_column`
+  written to one, follow SedonaDB's heuristic (a column named `geometry`,
+  `geography`, `geom` or `geog`, else the first geometry column) rather than the
+  file's metadata or the frame's active geometry. This matters only for files
+  with several geometry columns (apache/sedona-db#1404).
+- A file that declares an unknown CRS (`"crs": null`, which GeoPandas writes for
+  a frame without one) reads back as OGC:CRS84, and `to_parquet()` refuses a
+  geometry column without a CRS (apache/sedona-db#1404). EPSG:4326 is written as
+  OGC:CRS84.
+- The covering (bounding-box) columns a file's metadata declares are left out
+  on read, as in GeoPandas, for local files only: a remote file's metadata is
+  not read, so its coverings stay. A covering is written for every geometry
+  column, not only the active one, and exactly with `schema_version="1.1.0"`.
+- `read_file()` keeps the source's name for the geometry column (`geom` in a
+  GeoPackage) where GeoPandas renames it to `geometry`: renaming it would break
+  later column selections (apache/sedona-db#1405).
+- `to_parquet()` writes one local file and needs a file extension such as
+  `.parquet`, since SedonaDB writes a directory of files to a path without one.
+  It cannot write to a remote URL (`s3://`, `gs://`) yet
+  (apache/sedona-db#1440); reading one works, with the object store's options
+  passed as `storage_options` using SedonaDB's keys (for example
+  `{"aws.skip_signature": True, "aws.region": "us-west-2"}`), not fsspec's.
 
 See the SedonaDB "Migrating from GeoPandas" guide for the relational model that
 underlies each method.

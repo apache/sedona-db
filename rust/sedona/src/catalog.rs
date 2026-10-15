@@ -37,7 +37,9 @@ use sedona_catalog::{CatalogObjectType, SedonaCatalogList};
 /// register object stores dynamically for file locations.
 #[derive(Debug)]
 pub struct SedonaCatalogRegistry {
-    foreign: RwLock<Vec<Arc<dyn SedonaCatalogList>>>,
+    /// Registered foreign catalog lists, oldest first. Registration replaces the
+    /// slice so readers can take a snapshot without copying it.
+    foreign: RwLock<Arc<[Arc<dyn SedonaCatalogList>]>>,
     fallback: Arc<dyn CatalogProviderList>,
     state: Weak<RwLock<SessionState>>,
     dynamic_object_store: bool,
@@ -51,7 +53,7 @@ impl SedonaCatalogRegistry {
         dynamic_object_store: bool,
     ) -> Self {
         Self {
-            foreign: RwLock::new(Vec::new()),
+            foreign: RwLock::new(Vec::new().into()),
             fallback,
             state,
             dynamic_object_store,
@@ -60,12 +62,13 @@ impl SedonaCatalogRegistry {
 
     /// Add a foreign catalog list. Later registrations take precedence.
     pub fn register_foreign(&self, catalogs: Arc<dyn SedonaCatalogList>) {
-        self.foreign.write().push(catalogs);
+        let mut foreign = self.foreign.write();
+        *foreign = foreign.iter().cloned().chain([catalogs]).collect();
     }
 
     /// Resolve catalog ownership asynchronously, newest registration first.
     pub async fn foreign_catalog(&self, name: &str) -> Result<Option<Arc<dyn SedonaCatalogList>>> {
-        let foreign = self.foreign.read().clone();
+        let foreign = self.foreign_lists();
         for catalogs in foreign.iter().rev() {
             if catalogs
                 .list_identifiers(&[name], Some(0))
@@ -81,9 +84,16 @@ impl SedonaCatalogRegistry {
         Ok(None)
     }
 
-    /// Destination for new top-level catalogs.
+    /// The most recently registered foreign catalog list.
     pub fn latest_foreign(&self) -> Option<Arc<dyn SedonaCatalogList>> {
         self.foreign.read().last().cloned()
+    }
+
+    /// The registered foreign catalog lists in registration order, oldest
+    /// first. Later registrations take precedence, so callers that pick an
+    /// owner iterate this slice in reverse.
+    pub fn foreign_lists(&self) -> Arc<[Arc<dyn SedonaCatalogList>]> {
+        self.foreign.read().clone()
     }
 }
 

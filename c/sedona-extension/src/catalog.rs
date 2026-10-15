@@ -274,7 +274,13 @@ unsafe fn write_plan(
         }
         Err(error) => {
             set_ffi_error!(err, "{}", error);
-            libc::EINVAL
+            // ENOTSUP tells the caller that this catalog list doesn't support the
+            // operation, so CREATE DATABASE can try the next one.
+            if matches!(error.find_root(), DataFusionError::NotImplemented(_)) {
+                libc::ENOTSUP
+            } else {
+                libc::EINVAL
+            }
         }
     }
 }
@@ -465,6 +471,8 @@ impl SedonaCatalogList for ImportedCatalogProviderList {
 fn check_error(code: c_int, err: &SedonaCError) -> Result<()> {
     if code == ERRNO_OK {
         Ok(())
+    } else if code == libc::ENOTSUP {
+        datafusion_common::not_impl_err!("Catalog callback is not supported ({code}): {err}")
     } else {
         datafusion_common::exec_err!("Catalog callback failed ({code}): {err}")
     }
@@ -565,6 +573,7 @@ mod tests {
         calls: Mutex<Vec<String>>,
         mutations: Arc<AtomicUsize>,
         fail: bool,
+        unsupported: bool,
     }
 
     #[async_trait]
@@ -615,6 +624,9 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(1)).await;
             if self.fail {
                 return datafusion_common::exec_err!("create failed");
+            }
+            if self.unsupported {
+                return datafusion_common::not_impl_err!("create not supported");
             }
             self.calls.lock().unwrap().push(format!(
                 "create:{identifier:?}:{options:?}:{}",
@@ -774,6 +786,52 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("drop failed"));
+        Ok(())
+    }
+
+    #[test]
+    fn unsupported_create_returns_enotsup() {
+        let raw = raw(Arc::new(TestCatalog {
+            unsupported: true,
+            ..Default::default()
+        }));
+        let args = CString::new(r#"{"identifier":["catalog"],"options":{}}"#).unwrap();
+        let mut out = SedonaCExecutionPlan::default();
+        let mut err = SedonaCError::default();
+        let code = unsafe {
+            raw.create_object.unwrap()(&raw, args.as_ptr(), null_mut(), &mut out, &mut err)
+        };
+        assert_eq!(code, libc::ENOTSUP);
+        assert!(out.release.is_none());
+        assert!(err.to_string().contains("create not supported"));
+    }
+
+    #[tokio::test]
+    async fn imported_unsupported_create_is_not_implemented() -> Result<()> {
+        // A NotImplemented error survives the round trip through the C interface, so an
+        // imported catalog list can decline CREATE DATABASE and let the next one handle it.
+        let catalog = Arc::new(TestCatalog {
+            unsupported: true,
+            ..Default::default()
+        });
+        let imported = ImportedCatalogProviderList::try_new(raw(catalog), runtime())?;
+        let error = imported
+            .create_object(
+                &SessionContext::new().state(),
+                &["catalog"],
+                &CreateObjectOptions::default(),
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error.find_root(), DataFusionError::NotImplemented(_)),
+            "{error}"
+        );
+        assert!(
+            error.to_string().contains("create not supported"),
+            "{error}"
+        );
         Ok(())
     }
 
