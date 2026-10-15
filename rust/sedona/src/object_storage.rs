@@ -773,26 +773,28 @@ pub(crate) fn register_table_options_extension_from_scheme(ctx: &SessionContext,
 
 pub(crate) async fn register_object_store_and_config_extensions(
     ctx: &SedonaContext,
-    location: &String,
+    locations: &[&str],
     options: &HashMap<String, String>,
 ) -> Result<()> {
     // Parse the location URL to extract the scheme and other components
-    let table_path = ListingTableUrl::parse(location)?;
+    for location in locations {
+        let table_path = ListingTableUrl::parse(location)?;
 
-    // Extract the scheme (e.g., "s3", "gcs") from the parsed URL
-    let scheme = table_path.scheme();
+        // Extract the scheme (e.g., "s3", "gcs") from the parsed URL
+        let scheme = table_path.scheme();
 
-    // Obtain a reference to the URL
-    let url = table_path.as_ref();
+        // Obtain a reference to the URL
+        let url = table_path.as_ref();
 
-    register_table_options_extension_from_scheme(&ctx.ctx, scheme);
-    let table_options = object_store_table_options(&ctx.ctx.state(), scheme, Some(options))?;
+        register_table_options_extension_from_scheme(&ctx.ctx, scheme);
+        let table_options = object_store_table_options(&ctx.ctx.state(), scheme, Some(options))?;
 
-    // Retrieve the appropriate object store based on the scheme, URL, and modified table options
-    let store = get_object_store(&ctx.ctx.state(), scheme, url, &table_options).await?;
+        // Retrieve the appropriate object store based on the scheme, URL, and modified table options
+        let store = get_object_store(&ctx.ctx.state(), scheme, url, &table_options).await?;
 
-    // Register the retrieved object store in the session context's runtime environment
-    ctx.ctx.register_object_store(url, store);
+        // Register the retrieved object store in the session context's runtime environment
+        ctx.ctx.register_object_store(url, store);
+    }
 
     Ok(())
 }

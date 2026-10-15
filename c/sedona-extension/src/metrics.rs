@@ -307,6 +307,10 @@ pub enum KnownMetricValue {
     CurrentMemoryUsage {
         value: usize,
     },
+    PeakMemoryUsage {
+        name: String,
+        value: usize,
+    },
     Count {
         name: String,
         value: usize,
@@ -370,6 +374,7 @@ impl KnownMetricValue {
                 | "output_batches"
                 | "spilled_rows"
                 | "current_memory_usage"
+                | "peak_memory_usage"
                 | "count"
                 | "gauge"
                 | "time"
@@ -455,6 +460,10 @@ impl SerializableMetricValue {
                 merge_strategy: ratio_metrics.merge_strategy().into(),
                 display_raw_values: ratio_metrics.display_raw_values(),
             },
+            MetricValue::PeakMemoryUsage { name, gauge } => KnownMetricValue::PeakMemoryUsage {
+                name: name.to_string(),
+                value: gauge.value(),
+            },
             MetricValue::Custom { name, value } => KnownMetricValue::Custom {
                 name: name.to_string(),
                 display: value.to_string(),
@@ -483,6 +492,10 @@ impl From<SerializableMetricValue> for MetricValue {
             KnownMetricValue::CurrentMemoryUsage { value } => {
                 Self::CurrentMemoryUsage(gauge(value))
             }
+            KnownMetricValue::PeakMemoryUsage { name, value } => Self::PeakMemoryUsage {
+                name: name.into(),
+                gauge: gauge(value),
+            },
             KnownMetricValue::Count { name, value } => Self::Count {
                 name: name.into(),
                 count: count(value),
@@ -831,6 +844,10 @@ mod tests {
             KnownMetricValue::OutputBatches { value: 6 },
             KnownMetricValue::SpilledRows { value: 7 },
             KnownMetricValue::CurrentMemoryUsage { value: 8 },
+            KnownMetricValue::PeakMemoryUsage {
+                name: "peak_memory".to_owned(),
+                value: 18,
+            },
             KnownMetricValue::Count {
                 name: "count".to_owned(),
                 value: 9,
@@ -894,6 +911,33 @@ mod tests {
         let metrics = decoded.into_execution_plan_metrics_set();
         let reconstructed = SerializableExecutionPlanMetricsSet::new(&metrics);
         assert_eq!(reconstructed, snapshot);
+    }
+
+    #[test]
+    fn peak_memory_usage_roundtrips_through_json_and_metric_value() {
+        let original = MetricValue::PeakMemoryUsage {
+            name: "sort_peak_memory".into(),
+            gauge: gauge(1_048_576),
+        };
+
+        let serialized = SerializableMetricValue::from(&original);
+        let json = serde_json::to_value(&serialized).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "type": "peak_memory_usage",
+                "name": "sort_peak_memory",
+                "value": 1_048_576
+            })
+        );
+
+        let decoded: SerializableMetricValue = serde_json::from_value(json).unwrap();
+        let reconstructed = MetricValue::from(decoded);
+        assert!(matches!(
+            reconstructed,
+            MetricValue::PeakMemoryUsage { ref name, ref gauge }
+                if name == "sort_peak_memory" && gauge.value() == 1_048_576
+        ));
     }
 
     #[test]

@@ -23,7 +23,7 @@ use async_trait::async_trait;
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_plan::execution_plan::{Boundedness, EmissionType};
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
-use datafusion::physical_plan::{Partitioning, SendableRecordBatchStream};
+use datafusion::physical_plan::{Partitioning, PhysicalExpr, SendableRecordBatchStream};
 use datafusion::{
     catalog::{Session, TableProvider},
     common::Result,
@@ -221,6 +221,15 @@ impl DisplayAs for RecordBatchReaderExec {
 }
 
 impl ExecutionPlan for RecordBatchReaderExec {
+    fn apply_expressions(
+        &self,
+        _f: &mut dyn FnMut(
+            &Arc<dyn PhysicalExpr>,
+        ) -> Result<datafusion_common::tree_node::TreeNodeRecursion>,
+    ) -> Result<datafusion_common::tree_node::TreeNodeRecursion> {
+        Ok(datafusion_common::tree_node::TreeNodeRecursion::Continue)
+    }
+
     fn name(&self) -> &str {
         "RecordBatchReaderExec"
     }

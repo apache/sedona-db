@@ -24,11 +24,12 @@ use async_trait::async_trait;
 
 use arrow_schema::Schema;
 
+use datafusion::catalog::Session;
 use datafusion::config::ConfigOptions;
-use datafusion::execution::session_state::SessionState;
 use datafusion::physical_planner::{ExtensionPlanner, PhysicalPlanner};
 use datafusion_common::{DFSchema, Result, plan_err};
 use datafusion_expr::logical_plan::UserDefinedLogicalNode;
+use datafusion_expr::physical_planning_context::PhysicalPlanningContext;
 use datafusion_expr::{JoinType, LogicalPlan};
 use datafusion_physical_expr::create_physical_expr;
 use datafusion_physical_plan::ExecutionPlan;
@@ -49,7 +50,7 @@ pub struct PlanSpatialJoinArgs<'a> {
     pub remainder: Option<&'a JoinFilter>,
     pub join_type: &'a JoinType,
     pub join_options: &'a SpatialJoinOptions,
-    pub options: &'a Arc<ConfigOptions>,
+    pub options: &'a ConfigOptions,
 }
 
 /// Factory trait for creating spatial join physical plans.
@@ -101,7 +102,8 @@ impl ExtensionPlanner for SpatialJoinExtensionPlanner {
         node: &dyn UserDefinedLogicalNode,
         logical_inputs: &[&LogicalPlan],
         physical_inputs: &[Arc<dyn ExecutionPlan>],
-        session_state: &SessionState,
+        session_state: &dyn Session,
+        planning_ctx: &PhysicalPlanningContext,
     ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
         let Some(spatial_node) = node.as_any().downcast_ref::<SpatialJoinPlanNode>() else {
             return Ok(None);
@@ -131,6 +133,7 @@ impl ExtensionPlanner for SpatialJoinExtensionPlanner {
         let join_filter = logical_join_filter_to_physical(
             spatial_node,
             session_state,
+            planning_ctx,
             &physical_left,
             &physical_right,
         )?;
@@ -179,7 +182,8 @@ impl ExtensionPlanner for SpatialJoinExtensionPlanner {
 /// https://github.com/apache/datafusion/blob/51.0.0/datafusion/core/src/physical_planner.rs#L1144-L1245
 fn logical_join_filter_to_physical(
     plan_node: &SpatialJoinPlanNode,
-    session_state: &SessionState,
+    session_state: &dyn Session,
+    planning_ctx: &PhysicalPlanningContext,
     physical_left: &Arc<dyn ExecutionPlan>,
     physical_right: &Arc<dyn ExecutionPlan>,
 ) -> Result<JoinFilter> {
@@ -243,8 +247,12 @@ fn logical_join_filter_to_physical(
     let filter_df_schema = DFSchema::new_with_metadata(filter_df_fields, metadata.clone())?;
     let filter_schema = Schema::new_with_metadata(filter_fields, metadata);
 
-    let filter_expr =
-        create_physical_expr(filter, &filter_df_schema, session_state.execution_props())?;
+    let filter_expr = create_physical_expr(
+        filter,
+        &filter_df_schema,
+        session_state.execution_props(),
+        planning_ctx,
+    )?;
     let column_indices = JoinFilter::build_column_indices(left_field_indices, right_field_indices);
 
     let join_filter = JoinFilter::new(filter_expr, column_indices, Arc::new(filter_schema));

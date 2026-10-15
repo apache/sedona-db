@@ -261,6 +261,15 @@ impl DisplayAs for RandomGeometryExec {
 }
 
 impl ExecutionPlan for RandomGeometryExec {
+    fn apply_expressions(
+        &self,
+        _f: &mut dyn FnMut(
+            &Arc<dyn PhysicalExpr>,
+        ) -> Result<datafusion_common::tree_node::TreeNodeRecursion>,
+    ) -> Result<datafusion_common::tree_node::TreeNodeRecursion> {
+        Ok(datafusion_common::tree_node::TreeNodeRecursion::Continue)
+    }
+
     fn name(&self) -> &str {
         "RandomGeometryExec"
     }

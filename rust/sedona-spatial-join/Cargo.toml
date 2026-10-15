@@ -73,6 +73,7 @@ fastrand = { workspace = true }
 log = { workspace = true }
 
 [dev-dependencies]
+bytes = { workspace = true }
 criterion = { workspace = true }
 datafusion = { workspace = true }
 rstest = { workspace = true }

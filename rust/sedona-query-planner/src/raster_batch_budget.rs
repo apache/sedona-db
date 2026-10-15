@@ -70,7 +70,7 @@ use arrow_array::{Array, ArrayRef, RecordBatch, StructArray};
 use arrow_schema::{Field, Schema, SchemaRef};
 use datafusion::physical_optimizer::PhysicalOptimizerRule;
 use datafusion_common::config::ConfigOptions;
-use datafusion_common::tree_node::{Transformed, TransformedResult, TreeNode};
+use datafusion_common::tree_node::{Transformed, TransformedResult, TreeNode, TreeNodeRecursion};
 use datafusion_common::{Result, internal_err};
 use datafusion_execution::{SendableRecordBatchStream, TaskContext};
 use datafusion_physical_expr::async_scalar_function::AsyncFuncExpr;
@@ -81,7 +81,9 @@ use datafusion_physical_plan::execution_plan::CardinalityEffect;
 use datafusion_physical_plan::filter::FilterExec;
 use datafusion_physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
 use datafusion_physical_plan::stream::RecordBatchStreamAdapter;
-use datafusion_physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties};
+use datafusion_physical_plan::{
+    DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties, apply_expression_roots,
+};
 use futures::{StreamExt, stream};
 use sedona_common::option::{DEFAULT_RASTER_MAX_BATCH_BYTES, SedonaOptions};
 use sedona_common::sedona_internal_datafusion_err;
@@ -133,7 +135,9 @@ impl PhysicalOptimizerRule for RasterBatchBudgetRule {
                 node.downcast_ref::<FilterExec>(),
             ) {
                 (Some(async_exec), _)
-                    if async_exec.async_exprs().iter().any(|e| is_ensure_loaded(e)) =>
+                    if async_expressions(async_exec)?
+                        .iter()
+                        .any(|e| is_ensure_loaded(e)) =>
                 {
                     Ok(Transformed::yes(Arc::new(
                         EnsureLoadedExec::from_async_func_exec(async_exec)?,
@@ -181,6 +185,20 @@ fn scalar_function(expr: &AsyncFuncExpr) -> Option<&ScalarFunctionExpr> {
 
 fn is_ensure_loaded(expr: &AsyncFuncExpr) -> bool {
     scalar_function(expr).is_some_and(|f| f.fun().name() == ENSURE_LOADED_NAME)
+}
+
+/// Recover the async wrappers, including their output names, through the
+/// execution plan's expression visitor rather than the deprecated accessor.
+fn async_expressions(exec: &AsyncFuncExec) -> Result<Vec<Arc<AsyncFuncExpr>>> {
+    let mut expressions = Vec::new();
+    exec.apply_expressions(&mut |expr| {
+        let Some(expr) = expr.downcast_ref::<AsyncFuncExpr>() else {
+            return internal_err!("AsyncFuncExec contains a non-async expression: {expr}");
+        };
+        expressions.push(Arc::new(expr.clone()));
+        Ok(TreeNodeRecursion::Continue)
+    })?;
+    Ok(expressions)
 }
 
 /// The raster argument of an `rs_ensureloaded` call.
@@ -278,7 +296,7 @@ impl EnsureLoadedExec {
     /// properties verbatim — including the `__async_fn_N` output column
     /// names DataFusion's planner projects on top of this node.
     pub fn from_async_func_exec(exec: &AsyncFuncExec) -> Result<Self> {
-        let async_exprs = exec.async_exprs().to_vec();
+        let async_exprs = async_expressions(exec)?;
         let sized_by: Vec<usize> = async_exprs
             .iter()
             .enumerate()
@@ -484,6 +502,27 @@ impl ExecutionPlan for EnsureLoadedExec {
 
     fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
         vec![&self.input]
+    }
+
+    fn apply_expressions(
+        &self,
+        f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> Result<TreeNodeRecursion>,
+    ) -> Result<TreeNodeRecursion> {
+        // Non-column raster arguments are evaluated before slicing. The async
+        // calls then use the hoisted column references against the extended batch.
+        let mut roots = Vec::new();
+        for (&idx, source) in self.sized_by.iter().zip(&self.sized_args) {
+            if matches!(source, RasterArgSource::Appended(_)) {
+                roots.push(Arc::clone(raster_arg(&self.async_exprs[idx])?));
+            }
+        }
+        roots.extend(
+            self.hoisted
+                .iter()
+                .cloned()
+                .map(|expr| expr as Arc<dyn PhysicalExpr>),
+        );
+        apply_expression_roots(roots, f)
     }
 
     fn with_new_children(
@@ -962,6 +1001,33 @@ mod tests {
             .optimize(Arc::clone(&stock), &ConfigOptions::default())
             .unwrap();
 
+        let mut roots = Vec::new();
+        bounded
+            .apply_expressions(&mut |expr| {
+                roots.push(Arc::clone(expr));
+                Ok(TreeNodeRecursion::Continue)
+            })
+            .unwrap();
+        assert_eq!(roots.len(), 2);
+        assert_eq!(
+            roots[0]
+                .downcast_ref::<ScalarFunctionExpr>()
+                .unwrap()
+                .fun()
+                .name(),
+            "counted_raster"
+        );
+        let hoisted = roots[1].downcast_ref::<AsyncFuncExpr>().unwrap();
+        assert_eq!(hoisted.name(), "__async_fn_0");
+        assert_eq!(
+            raster_arg(hoisted)
+                .unwrap()
+                .downcast_ref::<Column>()
+                .unwrap()
+                .index(),
+            1
+        );
+
         // Three 16-byte rows under a 16-byte budget: the bounded plan cuts
         // three slices, and the argument must still be evaluated once.
         for (name, plan, rows) in [
@@ -1017,10 +1083,39 @@ mod tests {
                 &schema,
             ),
         ];
-        let async_exec = Arc::new(AsyncFuncExec::try_new(exprs, input).unwrap());
+        let async_exec = Arc::new(AsyncFuncExec::try_new(exprs.clone(), input).unwrap());
         let plan = RasterBatchBudgetRule
             .optimize(async_exec, &ConfigOptions::default())
             .unwrap();
+        // Expression visitation preserves wrappers, names, and order and is
+        // shallow: Jump still visits the next root, while Stop ends iteration.
+        for recursion in [TreeNodeRecursion::Continue, TreeNodeRecursion::Jump] {
+            let mut visited = Vec::new();
+            plan.apply_expressions(&mut |expr| {
+                visited.push(expr.downcast_ref::<AsyncFuncExpr>().unwrap().clone());
+                Ok(recursion)
+            })
+            .unwrap();
+            assert_eq!(
+                visited,
+                exprs.iter().map(|e| e.as_ref().clone()).collect::<Vec<_>>()
+            );
+        }
+        let mut visited = 0;
+        assert_eq!(
+            plan.apply_expressions(&mut |_| {
+                visited += 1;
+                Ok(TreeNodeRecursion::Stop)
+            })
+            .unwrap(),
+            TreeNodeRecursion::Stop
+        );
+        assert_eq!(visited, 1);
+        let error = plan
+            .apply_expressions(&mut |_| internal_err!("visitor failed"))
+            .unwrap_err();
+        assert!(error.to_string().contains("visitor failed"));
+
         let batches = collect(plan.execute(0, task_context(512)).unwrap())
             .await
             .unwrap();

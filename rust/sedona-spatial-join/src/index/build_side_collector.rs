@@ -262,7 +262,7 @@ impl BuildSideBatchesCollector {
                     );
                 }
                 Box::pin(ExternalEvaluatedBatchStream::try_from_spill_file(
-                    Arc::new(spill_file),
+                    spill_file,
                 )?)
             }
             None => {
