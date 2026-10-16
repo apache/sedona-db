@@ -39,6 +39,7 @@ geo = ["dep:sedona-geo"]
 geos = ["dep:sedona-geos"]
 tg = ["dep:sedona-tg"]
 http = ["object_store/http"]
+fgb = ["dep:sedona-flatgeobuf"]
 pointcloud = ["dep:sedona-pointcloud"]
 proj = ["sedona-proj/proj-sys"]
 gdal = ["sedona-gdal/gdal-sys"]
@@ -82,6 +83,7 @@ regex = { workspace = true }
 sedona-common = { workspace = true }
 sedona-catalog = { workspace = true }
 sedona-datasource = { workspace = true }
+sedona-flatgeobuf = { workspace = true, optional = true }
 sedona-expr = { workspace = true }
 sedona-functions = { workspace = true }
 sedona-geo = { workspace = true, optional = true }
