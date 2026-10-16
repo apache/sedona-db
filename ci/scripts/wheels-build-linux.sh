@@ -30,8 +30,13 @@ ARCH="$1"
 
 if [ "${ARCH}" = "aarch64" ]; then
     VCPKG_DEFAULT_TRIPLET=arm64-linux-dynamic-release
+    # Full LTO exhausts the memory available on GitHub's ARM64 runner during
+    # the final sedonadb link. ThinLTO retains cross-crate optimization while
+    # keeping peak linker memory within the runner's limit.
+    SEDONADB_RELEASE_PROFILE_ENV="CARGO_PROFILE_RELEASE_LTO=thin"
 elif [ "${ARCH}" = "x86_64" ]; then
     VCPKG_DEFAULT_TRIPLET=x86-linux-dynamic-release
+    SEDONADB_RELEASE_PROFILE_ENV=""
 else
     echo "Unknown arch: $ARCH"
     exit 1
@@ -48,7 +53,7 @@ BEFORE_ALL_MANYLINUX="yum install -y curl zip unzip tar clang perl"
 # add quite a bit of complexity but could save time if we build wheels for linux frequently.
 # The native and Rust builds are cached on each image such that compile work is effectively
 # cached between Python versions (just not between invocations of this script).
-export CIBW_ENVIRONMENT_LINUX="VCPKG_ROOT=/vcpkg VCPKG_REF=$VCPKG_REF VCPKG_DEFAULT_TRIPLET=$VCPKG_DEFAULT_TRIPLET CMAKE_TOOLCHAIN_FILE=/vcpkg/scripts/buildsystems/vcpkg.cmake PKG_CONFIG_PATH=/vcpkg/installed/$VCPKG_DEFAULT_TRIPLET/lib/pkgconfig LD_LIBRARY_PATH=/vcpkg/installed/$VCPKG_DEFAULT_TRIPLET/lib MATURIN_PEP517_ARGS='--features s2geography,pyo3/extension-module'"
+export CIBW_ENVIRONMENT_LINUX="VCPKG_ROOT=/vcpkg VCPKG_REF=$VCPKG_REF VCPKG_DEFAULT_TRIPLET=$VCPKG_DEFAULT_TRIPLET CMAKE_TOOLCHAIN_FILE=/vcpkg/scripts/buildsystems/vcpkg.cmake PKG_CONFIG_PATH=/vcpkg/installed/$VCPKG_DEFAULT_TRIPLET/lib/pkgconfig LD_LIBRARY_PATH=/vcpkg/installed/$VCPKG_DEFAULT_TRIPLET/lib $SEDONADB_RELEASE_PROFILE_ENV MATURIN_PEP517_ARGS='--features s2geography,pyo3/extension-module,pyo3/abi3-py39'"
 
 # Host directories to bind-mount into the build container. cibuildwheel copies
 # the project into the container rather than bind-mounting it, so anything the

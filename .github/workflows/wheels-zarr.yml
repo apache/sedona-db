@@ -58,7 +58,7 @@ jobs:
           cd ci/scripts
           .\wheels-build-zarr-windows.ps1
         env:
-          CIBW_BUILD: "*-win_amd64"
+          CIBW_BUILD: "cp39-win_amd64"
           # Install the sedonadb dev wheel downloaded into the package dir
           # above: first sedonadb itself (--no-deps --pre, since the dev
           # version is a prerelease), then its dependencies without --pre so
@@ -70,7 +70,8 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: release-zarr-wheels-windows-x86_64
-          path: python/sedonadb-zarr/dist/*.whl
+          path: python/sedonadb-zarr/dist/*-cp39-abi3-*.whl
+          if-no-files-found: error
 
   zarr-macOS-arm64:
     runs-on: macOS-latest
@@ -103,7 +104,8 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: release-zarr-wheels-macOS-arm64
-          path: python/sedonadb-zarr/dist/*.whl
+          path: python/sedonadb-zarr/dist/*-cp39-abi3-*.whl
+          if-no-files-found: error
 
   zarr-macOS-amd64:
     runs-on: macos-15-intel
@@ -137,7 +139,8 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: release-zarr-wheels-macOS-amd64
-          path: python/sedonadb-zarr/dist/*.whl
+          path: python/sedonadb-zarr/dist/*-cp39-abi3-*.whl
+          if-no-files-found: error
 
   zarr-linux:
     name: zarr-${{ matrix.config.label }}
@@ -175,7 +178,8 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: release-zarr-wheels-${{ matrix.config.label }}
-          path: python/sedonadb-zarr/dist/*.whl
+          path: python/sedonadb-zarr/dist/*-cp39-abi3-*.whl
+          if-no-files-found: error
 
   upload_nightly:
     needs: ["zarr-linux", "zarr-macOS-arm64", "zarr-macOS-amd64", "zarr-windows-x86_64"]

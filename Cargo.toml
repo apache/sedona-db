@@ -54,6 +54,13 @@ members = [
 ]
 resolver = "2"
 
+[profile.release]
+# Optimize distributable binaries for size and runtime performance. This makes
+# release builds slower, but lets the linker eliminate code across crate
+# boundaries and is especially valuable for the sedonadb Python extension.
+codegen-units = 1
+lto = true
+
 [workspace.package]
 version = "0.6.0"
 authors = ["Apache Sedona <dev@sedona.apache.org>"]
