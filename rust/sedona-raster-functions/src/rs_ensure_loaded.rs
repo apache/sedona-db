@@ -54,8 +54,12 @@ use sedona_schema::raster::BandDataType;
 
 /// `SedonaScalarUDF` metadata key marking a UDF whose kernels read raster
 /// pixel bytes. A raster function sets it (value `"true"`) via
-/// `with_metadata`; the `RS_EnsureLoaded` optimizer rule keys off it to
-/// decide whether to wrap raster arguments with byte materialisation.
+/// `with_metadata`; the `RS_EnsureLoaded` optimizer rule then wraps each of
+/// its raster arguments in `RS_EnsureLoaded`, unless the argument is already
+/// loaded (a loader, a [`RETURNS_BYTES_METADATA_KEY`] call, or a column holding
+/// either). An argument with a loader further down is wrapped as well; the
+/// planner moves the inner loader into a projection below, since DataFusion
+/// can't evaluate one async call inside another (apache/datafusion#20031).
 ///
 /// This crate owns the key. The optimizer rule lives in
 /// `sedona-query-planner`, which can't depend on this crate, so it carries
@@ -65,9 +69,8 @@ pub const NEEDS_PIXELS_METADATA_KEY: &str = "needs_pixels";
 /// `SedonaScalarUDF` metadata key marking a UDF whose returned raster is
 /// already fully materialised in-database. A raster function sets it (value
 /// `"true"`) via `with_metadata`; the `RS_EnsureLoaded` optimizer rule keys
-/// off it to skip wrapping an argument that is itself such a call (its result
-/// is already loaded, so a wrap would be redundant — and, being async, would
-/// nest unhoistably; see apache/datafusion#20031).
+/// off it to skip wrapping an argument that is itself such a call, whose
+/// result is already loaded.
 ///
 /// Only set this on functions that guarantee in-database output for loaded
 /// input. Like [`NEEDS_PIXELS_METADATA_KEY`], the optimizer rule carries a
