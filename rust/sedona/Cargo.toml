@@ -58,7 +58,6 @@ arrow-schema = { workspace = true }
 arrow-array = { workspace = true }
 arrow-buffer = { workspace = true }
 async-trait = { workspace = true }
-bytes = { workspace = true }
 aws-config = { version = "1.5.17", optional = true }
 aws-credential-types = { version = "1.2.0", optional = true }
 comfy-table = { workspace = true }

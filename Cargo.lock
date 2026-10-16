@@ -5624,7 +5624,6 @@ dependencies = [
  "async-trait",
  "aws-config",
  "aws-credential-types",
- "bytes",
  "comfy-table 8.0.0",
  "datafusion",
  "datafusion-catalog",

@@ -18,11 +18,7 @@
 use std::any::Any;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display};
-use std::ops::Range;
 use std::sync::Arc;
-
-use async_trait::async_trait;
-use bytes::Bytes;
 
 use datafusion::common::config::{
     ConfigEntry, ConfigExtension, ConfigField, ExtensionOptions, TableOptions, Visit,
@@ -34,14 +30,9 @@ use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::SessionState;
 use datafusion::prelude::SessionContext;
 use dirs::home_dir;
-use futures::stream::BoxStream;
-use object_store::path::Path as StorePath;
 #[cfg(any(feature = "aws", feature = "azure", feature = "gcp", feature = "http"))]
 use object_store::CredentialProvider;
-use object_store::{
-    CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
-    PutMultipartOptions, PutOptions, PutPayload, PutResult, RenameOptions, Result as StoreResult,
-};
+use object_store::ObjectStore;
 use url::Url;
 
 #[cfg(feature = "aws")]
@@ -816,133 +807,6 @@ pub(crate) async fn register_object_store_and_config_extensions(
     Ok(())
 }
 
-/// Register the object store a write to `location` goes through, configured
-/// with `options`
-///
-/// A store already registered for the location's bucket keeps serving reads
-/// (see [ReadWriteObjectStore]).
-pub(crate) async fn register_output_object_store(
-    ctx: &SedonaContext,
-    location: &str,
-    options: &HashMap<String, String>,
-) -> Result<()> {
-    let table_path = ListingTableUrl::parse(location)?;
-    let scheme = table_path.scheme();
-    let url = table_path.as_ref();
-
-    let table_options = object_store_table_options(&ctx.ctx.state(), scheme, Some(options))?;
-    let writes = get_object_store(&ctx.ctx.state(), scheme, url, &table_options).await?;
-    let store: Arc<dyn ObjectStore> =
-        match ctx.ctx.runtime_env().object_store_registry.get_store(url) {
-            // A local path's store is the registered one itself
-            Ok(reads) if !Arc::ptr_eq(&reads, &writes) => {
-                Arc::new(ReadWriteObjectStore { reads, writes })
-            }
-            _ => writes,
-        };
-    ctx.ctx.register_object_store(url, store);
-
-    Ok(())
-}
-
-/// An object store that reads through one store and writes through another
-///
-/// The registry holds one store per bucket, shared by every scan of and write
-/// to that bucket in the session. A write given its own options (e.g.,
-/// credentials allowed to write) may have as input a lazy scan of the same
-/// bucket, planned with an earlier read's options, that only executes with the
-/// write; so the bucket's store becomes this one. Reads keep going through the
-/// store registered before, and writes (and deletes, copies, and renames)
-/// through the one configured with the write's options.
-#[derive(Debug)]
-struct ReadWriteObjectStore {
-    reads: Arc<dyn ObjectStore>,
-    writes: Arc<dyn ObjectStore>,
-}
-
-impl Display for ReadWriteObjectStore {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "ReadWriteObjectStore(reads: {}, writes: {})",
-            self.reads, self.writes
-        )
-    }
-}
-
-#[async_trait]
-impl ObjectStore for ReadWriteObjectStore {
-    async fn put_opts(
-        &self,
-        location: &StorePath,
-        payload: PutPayload,
-        opts: PutOptions,
-    ) -> StoreResult<PutResult> {
-        self.writes.put_opts(location, payload, opts).await
-    }
-
-    async fn put_multipart_opts(
-        &self,
-        location: &StorePath,
-        opts: PutMultipartOptions,
-    ) -> StoreResult<Box<dyn MultipartUpload>> {
-        self.writes.put_multipart_opts(location, opts).await
-    }
-
-    async fn get_opts(&self, location: &StorePath, options: GetOptions) -> StoreResult<GetResult> {
-        self.reads.get_opts(location, options).await
-    }
-
-    async fn get_ranges(
-        &self,
-        location: &StorePath,
-        ranges: &[Range<u64>],
-    ) -> StoreResult<Vec<Bytes>> {
-        self.reads.get_ranges(location, ranges).await
-    }
-
-    fn delete_stream(
-        &self,
-        locations: BoxStream<'static, StoreResult<StorePath>>,
-    ) -> BoxStream<'static, StoreResult<StorePath>> {
-        self.writes.delete_stream(locations)
-    }
-
-    fn list(&self, prefix: Option<&StorePath>) -> BoxStream<'static, StoreResult<ObjectMeta>> {
-        self.reads.list(prefix)
-    }
-
-    fn list_with_offset(
-        &self,
-        prefix: Option<&StorePath>,
-        offset: &StorePath,
-    ) -> BoxStream<'static, StoreResult<ObjectMeta>> {
-        self.reads.list_with_offset(prefix, offset)
-    }
-
-    async fn list_with_delimiter(&self, prefix: Option<&StorePath>) -> StoreResult<ListResult> {
-        self.reads.list_with_delimiter(prefix).await
-    }
-
-    async fn copy_opts(
-        &self,
-        from: &StorePath,
-        to: &StorePath,
-        options: CopyOptions,
-    ) -> StoreResult<()> {
-        self.writes.copy_opts(from, to, options).await
-    }
-
-    async fn rename_opts(
-        &self,
-        from: &StorePath,
-        to: &StorePath,
-        options: RenameOptions,
-    ) -> StoreResult<()> {
-        self.writes.rename_opts(from, to, options).await
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use datafusion::common::plan_err;
@@ -1278,110 +1142,5 @@ mod tests {
             ),
             None => env::remove_var(if cfg!(windows) { "USERPROFILE" } else { "HOME" }),
         }
-    }
-
-    #[tokio::test]
-    async fn read_write_object_store_routes_each_operation() {
-        use futures::TryStreamExt;
-        use object_store::{memory::InMemory, ObjectStoreExt};
-
-        let reads = Arc::new(InMemory::new());
-        let writes = Arc::new(InMemory::new());
-        reads
-            .put(&StorePath::from("in"), PutPayload::from_static(b"source"))
-            .await
-            .unwrap();
-        let store = ReadWriteObjectStore {
-            reads: reads.clone(),
-            writes: writes.clone(),
-        };
-
-        let read = store.get(&StorePath::from("in")).await.unwrap();
-        assert_eq!(read.bytes().await.unwrap(), Bytes::from_static(b"source"));
-        let listed: Vec<_> = store.list(None).try_collect().await.unwrap();
-        assert_eq!(listed.len(), 1);
-
-        store
-            .put(&StorePath::from("out"), PutPayload::from_static(b"result"))
-            .await
-            .unwrap();
-        assert!(writes.head(&StorePath::from("out")).await.is_ok());
-        assert!(reads.head(&StorePath::from("out")).await.is_err());
-        store
-            .copy(&StorePath::from("out"), &StorePath::from("copy"))
-            .await
-            .unwrap();
-        store.delete(&StorePath::from("out")).await.unwrap();
-        assert!(writes.head(&StorePath::from("copy")).await.is_ok());
-        assert!(writes.head(&StorePath::from("out")).await.is_err());
-    }
-
-    #[cfg(feature = "aws")]
-    #[tokio::test]
-    async fn output_store_keeps_serving_reads_of_the_bucket() {
-        use object_store::{memory::InMemory, ObjectStoreExt};
-
-        let options = HashMap::from([
-            ("aws.skip_signature".to_string(), "true".to_string()),
-            ("aws.region".to_string(), "us-west-2".to_string()),
-        ]);
-        let bucket = Url::parse("s3://bucket").unwrap();
-
-        // Nothing registered yet: the output store is the bucket's store
-        let ctx = SedonaContext::new();
-        register_output_object_store(&ctx, "s3://bucket/out.parquet", &options)
-            .await
-            .unwrap();
-        let store = ctx
-            .ctx
-            .runtime_env()
-            .object_store_registry
-            .get_store(&bucket)
-            .unwrap();
-        assert!(store.to_string().starts_with("AmazonS3"), "{store}");
-
-        // A store registered for the bucket (by a read, say) keeps serving reads
-        let ctx = SedonaContext::new();
-        let reads = Arc::new(InMemory::new());
-        reads
-            .put(
-                &StorePath::from("in.parquet"),
-                PutPayload::from_static(b"source"),
-            )
-            .await
-            .unwrap();
-        ctx.ctx.register_object_store(&bucket, reads);
-        register_output_object_store(&ctx, "s3://bucket/out.parquet", &options)
-            .await
-            .unwrap();
-        let store = ctx
-            .ctx
-            .runtime_env()
-            .object_store_registry
-            .get_store(&bucket)
-            .unwrap();
-        assert!(store.to_string().contains("writes: AmazonS3"), "{store}");
-        let read = store.get(&StorePath::from("in.parquet")).await.unwrap();
-        assert_eq!(read.bytes().await.unwrap(), Bytes::from_static(b"source"));
-
-        // A local path's store is not wrapped
-        let ctx = SedonaContext::new();
-        let local = Url::parse("file:///").unwrap();
-        let before = ctx
-            .ctx
-            .runtime_env()
-            .object_store_registry
-            .get_store(&local)
-            .unwrap();
-        register_output_object_store(&ctx, "/tmp/out.parquet", &options)
-            .await
-            .unwrap();
-        let after = ctx
-            .ctx
-            .runtime_env()
-            .object_store_registry
-            .get_store(&local)
-            .unwrap();
-        assert!(Arc::ptr_eq(&before, &after));
     }
 }
