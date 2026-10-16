@@ -19,6 +19,7 @@
 
 from typing import List, Optional
 
+import numpy as np
 import pyarrow as pa
 
 import sedonadb
@@ -115,6 +116,62 @@ def test_py_raster_loader_registration():
     assert req.uri == "test://mock/data"
     assert req.source_shape == [4, 4]
     assert req.data_type.name == "uint8"
+
+
+def test_rs_ensureloaded_input_is_partitioned_by_raster_source():
+    """A small catalog's rows are hash-partitioned by raster source below
+    rs_ensureloaded, so loading is not confined to the partitions a
+    whole-batch round-robin reaches, rows of one raster stay together (each
+    raster loaded once), and results match a single-partition run."""
+    # 32 rows reading two bands of 8 files (URIs that differ only by
+    # `#band=`), plus in-db and null rows that have no file to group by. One
+    # batch, which a round-robin would deal to a single partition.
+    lazy = [
+        Raster.lazy(
+            uri=f"test://mock/r{i % 8}.tif#band={i // 8 % 2 + 1}",
+            shape=(4, 4),
+            dtype="UInt8",
+            format="test_format",
+        )._array
+        for i in range(32)
+    ]
+    in_db = [
+        Raster.from_numpy(np.full((4, 4), i, dtype=np.uint8))._array for i in range(2)
+    ]
+    rasters = pa.concat_arrays([*lazy, *in_db, pa.nulls(1, lazy[0].type)])
+    table = pa.table(
+        {"id": pa.array(range(len(rasters)), pa.int32()), "raster": rasters}
+    )
+    sql = "SELECT id, RS_EnsureLoaded(raster) AS raster FROM catalog"
+
+    results = {}
+    for target_partitions in (1, 4):
+        loader = MockRasterLoader(name="mock_loader", supported_formats=["test_format"])
+        sd = sedonadb.connect()
+        sd.register(loader)
+        sd.sql(
+            f"SET datafusion.execution.target_partitions TO {target_partitions}"
+        ).execute()
+        sd.create_data_frame(table).to_view("catalog")
+
+        plan = "\n".join(
+            sd.sql(f"EXPLAIN {sql}").to_pandas().iloc[:, 1].astype(str).tolist()
+        )
+        spread = f"partitioning=Hash([raster_source(raster@1)], {target_partitions})"
+        assert (spread in plan) == (target_partitions > 1), plan
+        # The spread replaces the planner's round-robin instead of stacking.
+        assert "RoundRobinBatch" not in plan, plan
+
+        rows = sd.sql(sql).to_arrow_table().to_pylist()
+        results[target_partitions] = sorted(rows, key=lambda row: row["id"])
+        assert len(rows) == 35
+        assert results[target_partitions][-1]["raster"] is None
+        uris = [req.uri for requests in loader._load_calls for req in requests]
+        assert sorted(uris) == sorted(
+            f"test://mock/r{i}.tif#band={band}" for i in range(8) for band in (1, 2)
+        )
+
+    assert results[4] == results[1]
 
 
 def test_raster_loader_sedonadb_raster_loader_method():

@@ -917,6 +917,24 @@ impl<'a> RasterStructArray<'a> {
         self.raster_array.is_null(index)
     }
 
+    /// The `outdb_uri` of band `band_idx` of raster `raster_idx`, borrowed
+    /// from the array rather than from a [`RasterRefImpl`], so it can
+    /// outlive the per-row accessor (e.g. to compare consecutive rows).
+    /// `None` for a null raster, a band index out of range, or an in-db band.
+    pub fn band_outdb_uri(&self, raster_idx: usize, band_idx: usize) -> Option<&'a str> {
+        if raster_idx >= self.len() || self.is_null(raster_idx) {
+            return None;
+        }
+        let offsets = self.bands_list.value_offsets();
+        let band_row = offsets[raster_idx] as usize + band_idx;
+        if band_row >= offsets[raster_idx + 1] as usize
+            || self.band_outdb_uri_array.is_null(band_row)
+        {
+            return None;
+        }
+        Some(self.band_outdb_uri_array.value(band_row))
+    }
+
     /// The flattened band `data` column (BinaryView) shared by every raster
     /// in this array. Pair with [`Self::band_data_row`] to address a single
     /// band's bytes — e.g. for zero-copy passthrough into a
@@ -1701,6 +1719,12 @@ mod tests {
         assert!(r.band_outdb_uri(1).is_none());
         assert!(r.band_outdb_format(1).is_none());
         assert!(r.band_nodata(1).is_none());
+
+        // The array-level accessor agrees, and is bounded by raster and band.
+        assert_eq!(rasters.band_outdb_uri(0, 0), Some("s3://bucket/a.tif"));
+        assert!(rasters.band_outdb_uri(0, 1).is_none());
+        assert!(rasters.band_outdb_uri(0, 2).is_none());
+        assert!(rasters.band_outdb_uri(1, 0).is_none());
 
         // Cross-check against the BandRef slow path.
         let band0 = r.band(0).unwrap();
