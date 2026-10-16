@@ -656,7 +656,10 @@ fn normalize_field_for_geoparquet(
                 field.as_ref().clone().with_metadata(HashMap::new()),
             )),
             // For GeoParquet 2.0 and None, ensure we have projjson CRS output
+            // With an upgrade to DataFusion 55 / >= Arrow 58.1, preserving an unknown CRS
+            // happens automatically. Until then, force unknown CRS output.
             GeoParquetVersion::V2_0 | GeoParquetVersion::Omitted => {
+                let preserve_unknown_crs = crs.is_none();
                 let normalized_crs_value =
                     normalize_crs_for_geoparquet(field.name(), &crs, sedona_runtime)?;
                 let normalized_crs =
@@ -665,6 +668,7 @@ fn normalize_field_for_geoparquet(
                     field,
                     &normalized_crs,
                     edges,
+                    preserve_unknown_crs,
                 ))
             }
         },
@@ -681,10 +685,17 @@ fn serialize_edges_and_crs_with_parquet_bug(
     original_field: &FieldRef,
     crs: &Crs,
     edges: Edges,
+    preserve_unknown_crs: bool,
 ) -> FieldRef {
     let crs_component = crs
         .as_ref()
-        .map(|crs| format!(r#""crs":{}"#, crs.to_json()));
+        .map(|crs| format!(r#""crs":{}"#, crs.to_json()))
+        // A missing CRS in the native Parquet logical type means CRS84. Until
+        // Arrow can write a native unknown CRS directly, use its supported
+        // `srid:0` spelling when there is no GeoParquet metadata to carry the
+        // distinction. Arrow 58 JSON-encodes string CRSes in the logical type;
+        // the read path handles that representation.
+        .or_else(|| preserve_unknown_crs.then(|| r#""crs":"srid:0""#.to_string()));
 
     let edges_component = match edges {
         Edges::Planar => None,
@@ -758,8 +769,8 @@ mod test {
         execution::SessionStateBuilder,
         prelude::{SessionContext, col, lit},
     };
+    use datafusion_common::ScalarValue;
     use datafusion_common::cast::{as_float32_array, as_struct_array};
-    use datafusion_common::{ScalarValue, metadata::FieldMetadata};
     use datafusion_expr::{Cast, Expr, LogicalPlanBuilder};
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
     use parquet::basic::{EdgeInterpolationAlgorithm, LogicalType};
@@ -815,8 +826,13 @@ mod test {
             .unwrap()
     }
 
-    async fn write_dataframe_to_path(ctx: &SessionContext, src: DataFrame, path: &Path) {
-        let format = GeoParquetFormatFactory::new();
+    async fn write_dataframe_to_path(
+        ctx: &SessionContext,
+        src: DataFrame,
+        path: &Path,
+        options: TableGeoParquetOptions,
+    ) {
+        let format = GeoParquetFormatFactory::new_with_options(options);
         let file_type = format_as_file_type(Arc::new(format));
         let plan = LogicalPlanBuilder::copy_to(
             src.into_unoptimized_plan(),
@@ -993,10 +1009,42 @@ mod test {
             ))
             .unwrap();
 
-        write_dataframe_to_path(&ctx, source, &path).await;
+        write_dataframe_to_path(
+            &ctx,
+            source.clone(),
+            &path,
+            TableGeoParquetOptions::default(),
+        )
+        .await;
         let metadata = read_geoparquet_metadata(&path);
         assert_eq!(metadata.columns["geometry"].crs, Some(Value::Null));
 
+        let read_back = ctx
+            .table(path.to_string_lossy().into_owned())
+            .await
+            .unwrap();
+        assert_eq!(
+            read_back
+                .schema()
+                .sedona_types()
+                .collect::<Result<Vec<_>>>()
+                .unwrap(),
+            vec![WKB_VIEW_GEOMETRY]
+        );
+
+        let path = tmpdir.path().join("null_crs_native.parquet");
+        let options = TableGeoParquetOptions {
+            geoparquet_version: GeoParquetVersion::Omitted,
+            ..Default::default()
+        };
+        write_dataframe_to_path(&ctx, source, &path, options).await;
+
+        assert_eq!(
+            read_parquet_logical_types(&path)["geometry"],
+            Some(LogicalType::Geometry {
+                crs: Some(r#""srid:0""#.to_string())
+            })
+        );
         let read_back = ctx
             .table(path.to_string_lossy().into_owned())
             .await
@@ -1287,7 +1335,9 @@ mod test {
         let logical_type = logical_types.get("geometry").unwrap().clone().unwrap();
         match logical_type {
             LogicalType::Geometry { crs } => {
-                assert!(crs.is_none());
+                // Arrow 58 JSON-encodes string-valued CRSes when converting
+                // GeoArrow metadata to the native Parquet logical type.
+                assert_eq!(crs.as_deref(), Some(r#""srid:0""#));
             }
             unknown => panic!("Unexpected logical type {unknown:?}"),
         }
@@ -1354,14 +1404,22 @@ mod test {
         let lnglat_field = SedonaType::WkbView(Edges::Planar, lnglat())
             .to_storage_field("geometry", true)
             .unwrap();
-        let df = df
-            .select(vec![
-                col("wkt"),
-                col("geometry").alias_with_metadata(
-                    "geometry",
-                    Some(FieldMetadata::from(lnglat_field.metadata().clone())),
-                ),
-            ])
+        let batches = df
+            .collect()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|batch| {
+                let schema = Arc::new(Schema::new(vec![
+                    batch.schema().field(0).clone(),
+                    lnglat_field.clone(),
+                ]));
+                RecordBatch::try_new(schema, batch.columns().to_vec()).unwrap()
+            })
+            .collect::<Vec<_>>();
+        let schema = batches[0].schema();
+        let df = ctx
+            .read_table(Arc::new(MemTable::try_new(schema, vec![batches]).unwrap()))
             .unwrap();
 
         let options = TableGeoParquetOptions {

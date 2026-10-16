@@ -734,6 +734,14 @@ fn geoparquet_crs_from_logical_type(
         // Try to parse the output as JSON such that the resulting column metadata is closer
         // to what would have been in the GeoParquet metadata (e.g., where PROJJSON is parsed).
         if let Ok(value) = crs_str.parse::<Value>() {
+            // Arrow 58 serializes a string-valued GeoArrow CRS as a JSON
+            // string in the Parquet logical type. Apply the same `srid:`
+            // normalization after removing that JSON layer.
+            if let Value::String(value_str) = &value
+                && let Some(srid_string) = value_str.strip_prefix("srid:")
+            {
+                return Some(Value::String(srid_string.to_string()));
+            }
             Some(value)
         } else {
             Some(Value::String(crs_str.to_string()))
@@ -992,6 +1000,13 @@ mod test {
         assert_eq!(
             geoparquet_crs_from_logical_type(Some(&"srid:1234".to_string()), kv_metadata.as_ref()),
             Some(Value::String("1234".to_string()))
+        );
+        assert_eq!(
+            geoparquet_crs_from_logical_type(
+                Some(&r#""srid:0""#.to_string()),
+                kv_metadata.as_ref()
+            ),
+            Some(Value::String("0".to_string()))
         );
 
         // strings should get passed through verbatim
