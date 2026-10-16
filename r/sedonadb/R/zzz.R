@@ -25,6 +25,24 @@
   ns <- asNamespace("sedonadb")
   call <- call("check_interrupts")
   init_r_runtime_interrupts(call, ns)
+
+  bundled_proj <- system.file("proj", package = "sedonadb")
+  if (nzchar(bundled_proj)) {
+    configure_proj_shared(
+      database_path = file.path(bundled_proj, "proj.db"),
+      search_path = bundled_proj
+    )
+  } else {
+    sd_configure_proj("auto")
+  }
+
+  bundled_gdal <- system.file("gdal", package = "sedonadb")
+  if (nzchar(bundled_gdal)) {
+    Sys.setenv(GDAL_DATA = bundled_gdal)
+    configure_gdal_shared()
+  } else {
+    sd_configure_gdal("auto")
+  }
 }
 
 # The function we call from Rust to check for interrupts. R checks for

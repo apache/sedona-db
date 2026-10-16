@@ -20,6 +20,7 @@ pub mod context;
 pub mod context_builder;
 mod exec;
 pub mod memory_pool;
+pub mod native_library;
 mod object_storage;
 pub mod pool_type;
 pub mod projected_reader;

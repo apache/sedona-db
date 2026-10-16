@@ -47,13 +47,18 @@ pak::pkg_install("apache/sedona-db/r/sedonadb")
 ```
 
 Installing a development version of sedonadb requires a [Rust
-compiler](https://rustup.rs), CMake, Git, and a GEOS system dependency
-(e.g., `brew install geos` or `apt-get install libgeos-dev`). Install
-instructions for GEOS on other platforms can be found on the [sf package
-homepage](https://r-spatial.github.io/sf). The install automatically sets
-up a pinned vcpkg checkout for the S2, Abseil, and OpenSSL dependencies.
-Set `SEDONADB_USE_VCPKG=false` to disable automatic setup and use
-dependencies provided through `VCPKG_ROOT` or the system instead.
+compiler](https://rustup.rs), CMake, Git, pkg-config, curl, and GEOS. GDAL
+and PROJ shared libraries are also required to use raster and coordinate
+transformation functions. For example, on Ubuntu use `apt-get install
+libgeos-dev libgdal-dev libproj-dev pkg-config curl`, or on macOS use
+`brew install geos gdal proj pkg-config`.
+
+The Windows build automatically sets up a pinned vcpkg checkout and
+builds and statically links GDAL, PROJ, S2, Abseil, and OpenSSL with the
+Rtools compiler. The matching GDAL/PROJ data files are bundled in the
+installed package. Set
+`SEDONADB_USE_VCPKG=false` to disable automatic setup and provide a
+bootstrapped checkout through `VCPKG_ROOT` instead.
 
 ## Example
 

@@ -6564,6 +6564,7 @@ dependencies = [
  "sedona-adbc",
  "sedona-expr",
  "sedona-extension",
+ "sedona-gdal",
  "sedona-geometry",
  "sedona-geoparquet",
  "sedona-proj",

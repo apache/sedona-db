@@ -27,6 +27,8 @@ VCPKG_MANIFEST_MODE = OFF
 CMAKE_TOOLCHAIN_FILE = @CMAKE_TOOLCHAIN_FILE@
 CMAKE_PREFIX_PATH = @CMAKE_PREFIX_PATH@
 OPENSSL_ROOT_DIR = @OPENSSL_ROOT_DIR@
+SPATIAL_VCPKG_PREFIX = @SPATIAL_VCPKG_PREFIX@
+GDAL_VERSION = @GDAL_VERSION@
 SEDONADB_R_CC = $(strip $(CC))
 SEDONADB_R_CXX = $(strip $(CXX17))
 SEDONADB_R_CFLAGS = $(CPPFLAGS) $(CFLAGS)
@@ -81,7 +83,7 @@ PKG_CONFIG_SYSROOT_DIR = /x86_64-w64-mingw32.static.posix/
 # also incompatible with aws-lc-sys.
 CFLAGS_TWEAKED = $(filter-out -O%,$(CFLAGS)) -Wno-pedantic
 
-all: $(SHLIB) clean_intermediate
+all: $(SHLIB) copy_native_data clean_intermediate
 
 $(SHLIB): $(STATLIB)
 
@@ -94,6 +96,16 @@ $(STATLIB):
 	export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER="$(CARGO_LINKER)" && \
 	  export LIBRARY_PATH="$${LIBRARY_PATH};$(LIBDIR)/libgcc_mock" && \
 	  export PKG_CONFIG_SYSROOT_DIR="$(PKG_CONFIG_SYSROOT_DIR)" && \
+	  if [ -n "$(SPATIAL_VCPKG_PREFIX)" ]; then \
+	    export PKG_CONFIG_ALLOW_CROSS=1; \
+	    export PKG_CONFIG_ALL_STATIC=1; \
+	    export PKG_CONFIG_SYSROOT_DIR=""; \
+	    export PKG_CONFIG_PATH="$(SPATIAL_VCPKG_PREFIX)/lib/pkgconfig:$(SPATIAL_VCPKG_PREFIX)/share/pkgconfig$${PKG_CONFIG_PATH:+:$${PKG_CONFIG_PATH}}"; \
+	    export GDAL_STATIC=1; \
+	    export GDAL_INCLUDE_DIR="$(SPATIAL_VCPKG_PREFIX)/include"; \
+	    export GDAL_LIB_DIR="$(SPATIAL_VCPKG_PREFIX)/lib"; \
+	    export GDAL_VERSION="$(GDAL_VERSION)"; \
+	  fi && \
 	  if [ -n "$(VCPKG_ROOT)" ]; then \
 	    export VCPKG_ROOT="$(VCPKG_ROOT)"; \
 	    export VCPKG_DEFAULT_TRIPLET="$(VCPKG_TARGET_TRIPLET)"; \
@@ -119,7 +131,18 @@ $(STATLIB):
 clean_intermediate: $(SHLIB)
 	rm -f $(STATLIB)
 
+# GDAL and PROJ runtime data must match the vcpkg libraries bundled above.
+# Copying these trees follows the Windows packaging pattern used by sf/vapour.
+copy_native_data:
+	if [ -n "$(SPATIAL_VCPKG_PREFIX)" ]; then \
+	  test -d "$(SPATIAL_VCPKG_PREFIX)/share/gdal"; \
+	  test -d "$(SPATIAL_VCPKG_PREFIX)/share/proj"; \
+	  rm -rf ../inst/gdal ../inst/proj; \
+	  cp -R "$(SPATIAL_VCPKG_PREFIX)/share/gdal" ../inst/gdal; \
+	  cp -R "$(SPATIAL_VCPKG_PREFIX)/share/proj" ../inst/proj; \
+	fi
+
 clean:
 	rm -Rf $(SHLIB) $(OBJECTS) $(STATLIB) ./rust/target
 
-.PHONY: all clean_intermediate clean
+.PHONY: all copy_native_data clean_intermediate clean

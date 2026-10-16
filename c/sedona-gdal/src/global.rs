@@ -92,28 +92,27 @@ impl GdalApiBuilder {
     /// Build a [`GdalApi`] with the configured options.
     ///
     /// When `shared_library` is set, loads GDAL from that path. Otherwise,
-    /// resolves symbols from the current process (with an optional
-    /// compile-time version check when the `gdal-sys` feature is enabled).
+    /// uses the linked `gdal-sys` function table when supported, otherwise
+    /// resolves symbols from the current process.
     pub fn build(&self) -> Result<GdalApi, GdalInitLibraryError> {
         let api = if let Some(shared_library) = &self.shared_library {
             GdalApi::try_from_shared_library(shared_library.clone())?
         } else {
-            GdalApi::try_from_current_process()?
+            #[cfg(all(feature = "gdal-sys", any(unix, all(windows, target_env = "gnu"))))]
+            {
+                GdalApi::from_gdal_sys()
+            }
+            #[cfg(not(all(feature = "gdal-sys", any(unix, all(windows, target_env = "gnu")))))]
+            {
+                GdalApi::try_from_current_process().map_err(|e| {
+                    GdalInitLibraryError::LibraryError(format!(
+                        "GDAL is not configured; call configure_gdal() or \
+                         sd_configure_gdal() before using GDAL-backed functions: {e}"
+                    ))
+                })?
+            }
         };
 
-        #[cfg(feature = "gdal-sys")]
-        let get_gdal_version_info = |arg: &str| unsafe {
-            // Calling into `gdal-sys` also forces the linker to include GDAL
-            // symbols, so that `try_from_current_process` (which resolves function pointers
-            // via `dlsym` on the current process) can find them at runtime.
-            let c_arg = std::ffi::CString::new(arg).unwrap();
-            let c_version = gdal_sys::GDALVersionInfo(c_arg.as_ptr());
-            std::ffi::CStr::from_ptr(c_version)
-                .to_string_lossy()
-                .into_owned()
-        };
-
-        #[cfg(not(feature = "gdal-sys"))]
         let get_gdal_version_info = |arg: &str| api.version_info(arg);
 
         check_gdal_version(get_gdal_version_info)?;
@@ -272,12 +271,15 @@ mod test {
     use super::*;
 
     /// Building with default options (no shared library) should succeed when
-    /// `gdal-sys` is linked, loading symbols from the current process.
+    /// `gdal-sys` is linked, using its function table on supported platforms.
     #[test]
     fn test_builder_default() {
         let api = GdalApiBuilder::default()
             .build()
             .expect("GdalApiBuilder::default().build() should succeed with gdal-sys");
+        #[cfg(any(unix, all(windows, target_env = "gnu")))]
+        assert_eq!(api.name(), "gdal_sys");
+        #[cfg(not(any(unix, all(windows, target_env = "gnu"))))]
         assert_eq!(api.name(), "current_process");
     }
 
