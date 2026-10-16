@@ -16,6 +16,7 @@
 // under the License.
 
 pub mod ensure_loaded;
+pub mod hoist_async_join_filter;
 // DF-22662 workaround (remove when async UDF return-field metadata is
 // preserved upstream): see wrap_async_udf.rs.
 mod logical_plan_node;

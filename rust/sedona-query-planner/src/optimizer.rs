@@ -17,6 +17,7 @@
 use std::sync::Arc;
 
 use crate::ensure_loaded::EnsureLoadedOptimizerRule;
+use crate::hoist_async_join_filter::HoistAsyncJoinFilterRule;
 use crate::logical_plan_node::SpatialJoinPlanNode;
 use crate::push_down_leaf_projections::PushDownLeafProjections;
 use crate::spatial_expr_utils::{
@@ -160,13 +161,16 @@ pub fn register_spatial_join_logical_optimizer(
     Ok(session_state_builder)
 }
 
-/// Register the `RS_EnsureLoaded`-wrapping logical optimizer rule and the
-/// DF-22662 workaround rule that preserves async UDF return-field metadata.
+/// Register the `RS_EnsureLoaded`-wrapping logical optimizer rule, the
+/// DF-22662 workaround rule that preserves async UDF return-field metadata,
+/// and the rule that keeps async UDF calls out of inner join filters.
 ///
-/// Inserts [`EnsureLoadedOptimizerRule`] and [`WrapAsyncUdfRule`] immediately
-/// before DataFusion's `common_sub_expression_eliminate` so that, in the same
-/// optimizer pass, CSE can dedupe the `RS_EnsureLoaded(col)` wraps and the
-/// `sd_restore_metadata(...)` wrappers this rule injects.
+/// Inserts [`EnsureLoadedOptimizerRule`], [`WrapAsyncUdfRule`] and
+/// [`HoistAsyncJoinFilterRule`] immediately before DataFusion's
+/// `common_sub_expression_eliminate` so that, in the same optimizer pass, CSE
+/// can dedupe the `RS_EnsureLoaded(col)` wraps and the
+/// `sd_restore_metadata(...)` wrappers these rules inject, including in the
+/// `Filter` the hoist rule lifts out of a join.
 /// Falls back to appending if CSE isn't present.
 pub fn register_ensure_loaded_optimizer(
     mut session_state_builder: SessionStateBuilder,
@@ -178,6 +182,8 @@ pub fn register_ensure_loaded_optimizer(
     let ensure_loaded_rule = Arc::new(EnsureLoadedOptimizerRule);
     // DF-22662: wrap async UDFs with sd_restore_metadata to preserve field metadata.
     let wrap_async_rule = Arc::new(WrapAsyncUdfRule);
+    // Async calls PushDownFilter moved into a join filter go back above the join.
+    let hoist_async_join_filter_rule = Arc::new(HoistAsyncJoinFilterRule);
 
     match optimizer
         .rules
@@ -188,13 +194,18 @@ pub fn register_ensure_loaded_optimizer(
             // Insert in reverse order so the effective order is:
             // 1. EnsureLoadedOptimizerRule (wraps raster args with rs_ensureloaded)
             // 2. WrapAsyncUdfRule (wraps async UDFs with sd_restore_metadata)
-            // 3. CSE (dedupes common subexpressions)
+            // 3. HoistAsyncJoinFilterRule (lifts async conjuncts out of join filters)
+            // 4. CSE (dedupes common subexpressions)
+            optimizer
+                .rules
+                .insert(cse_pos, hoist_async_join_filter_rule);
             optimizer.rules.insert(cse_pos, wrap_async_rule);
             optimizer.rules.insert(cse_pos, ensure_loaded_rule);
         }
         None => {
             optimizer.rules.push(ensure_loaded_rule);
             optimizer.rules.push(wrap_async_rule);
+            optimizer.rules.push(hoist_async_join_filter_rule);
         }
     }
 
