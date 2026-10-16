@@ -46,7 +46,7 @@ use sedona_raster::builder::{RasterBuilder, RasterOverrides};
 use sedona_raster::chunk_cache::{CachedChunk, ChunkKey, NoChunkCache, RasterChunkCache};
 use sedona_raster::raster_loader::{
     AsyncRasterLoader, RasterLoadRequest, RasterLoadResult, RasterLoaderConfig,
-    RasterLoaderRegistry,
+    RasterLoaderRegistry, io_budget_from_config,
 };
 use sedona_raster::traits::{BandOverrides, Override, RasterRef};
 use sedona_raster::view_entries::ViewEntries;
@@ -254,6 +254,9 @@ impl AsyncScalarUDFImpl for RsEnsureLoaded {
         let input_array = args.args[0].to_array(args.number_rows)?;
         let registry = registry_handle_from_config(&args.config_options)?;
         let cache = chunk_cache_from_config(&args.config_options);
+        // Apply `sedona.raster.io_concurrency` to the session's I/O budget
+        // before the loaders below take permits from it.
+        io_budget_from_config(&args.config_options);
         let output = ensure_loaded(
             &input_array,
             |format| lookup_loader(&registry, format),

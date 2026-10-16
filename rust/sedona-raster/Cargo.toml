@@ -36,14 +36,16 @@ arrow-array = { workspace = true }
 arrow-buffer = { workspace = true, features = ["pool"] }
 async-trait = { workspace = true }
 datafusion-common = { workspace = true }
+futures = { workspace = true }
 lru = { workspace = true }
 sedona-common = { workspace = true }
 sedona-schema = { workspace = true }
 thiserror = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
 
 [dev-dependencies]
 sedona-testing = { workspace = true }
 approx = { workspace = true }
 arrow-data = { workspace = true }
 arrow-ipc = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt"] }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time"] }

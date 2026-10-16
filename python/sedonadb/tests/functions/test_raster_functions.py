@@ -20,6 +20,7 @@ import math
 import numpy as np
 import pandas as pd
 import pytest
+import sedonadb
 from shapely import wkt
 
 from sedonadb.testing import SedonaDB
@@ -108,6 +109,47 @@ def test_rs_ensureloaded(con, sedona_testing):
     assert arr.shape == (512, 512)
     assert arr.dtype == "uint16"
     assert arr[0, 0] == 2324
+
+
+def test_rs_ensureloaded_many_files_in_one_batch(con, sedona_testing):
+    """A batch of OutDb rasters from many different files is read file by
+    file in parallel; every row must still get its own file's pixels.
+
+    Each fixture's mean is computed alone, then all of them are loaded
+    together, repeated and interleaved, in one batch and compared row by row.
+    """
+    names = ["test1.tiff", "test2.tif", "test3.tif", "test4.tiff", "test5.tiff"]
+    paths = [str(sedona_testing / "data/raster" / name) for name in names]
+
+    def mean_of(path):
+        return (
+            con.sql(
+                "SELECT RS_SummaryStats(RS_FromPath($1), 'mean', 1) AS m",
+                params=(path,),
+            )
+            .to_arrow_table()["m"][0]
+            .as_py()
+        )
+
+    expected = {path: mean_of(path) for path in paths}
+    assert len(set(expected.values())) > 1, "fixtures should be distinguishable"
+
+    rows = [paths[(i * 3) % len(paths)] for i in range(40)]
+    df = pd.DataFrame({"i": range(len(rows)), "path": rows})
+    con.create_data_frame(df).to_view("ensureloaded_many_files", overwrite=True)
+    result = (
+        con.sql(
+            """
+            SELECT i, path, RS_SummaryStats(RS_FromPath(path), 'mean', 1) AS m
+            FROM ensureloaded_many_files ORDER BY i
+            """
+        )
+        .to_arrow_table()
+        .to_pylist()
+    )
+    assert len(result) == len(rows)
+    for row in result:
+        assert row["m"] == expected[row["path"]], row
 
 
 # Point sampling. RS_Example fills band `b` with the constant value `b`, except
@@ -798,3 +840,153 @@ def test_rs_as_raster_sets_output_nodata(con, sedona_testing):
     expected = np.full((10, 10), 9, dtype="uint8")
     expected[0, 0] = 5
     np.testing.assert_array_equal(raster.bands[0].to_numpy(), expected)
+
+
+# RS_FromPath opens a batch's files concurrently. These run many rows through
+# one batch (interleaved files, repeats and NULLs) and check every row against
+# the same file read on its own.
+FROMPATH_FILES = ["test1.tiff", "test4.tiff", "test5.tiff", "sentinel2.tif"]
+
+
+def _frompath_rows(sedona_testing, n=40):
+    files = [str(sedona_testing / "data/raster" / f) for f in FROMPATH_FILES]
+    return [None if i % 7 == 3 else files[(i * 3) % len(files)] for i in range(n)]
+
+
+def _frompath_view(con, rows, name):
+    df = pd.DataFrame({"id": range(len(rows)), "path": pd.array(rows, dtype="string")})
+    con.create_data_frame(df).to_view(name, overwrite=True)
+
+
+def test_rs_frompath_many_files_in_one_batch(con, sedona_testing):
+    rows = _frompath_rows(sedona_testing)
+    _frompath_view(con, rows, "frompath_many")
+    metadata = """
+        RS_Width(r) AS width, RS_Height(r) AS height, RS_NumBands(r) AS bands,
+        RS_GeoReference(r) AS georef, RS_SRID(r) AS srid,
+        RS_BandPixelType(r, 1) AS dtype, RS_BandNoDataValue(r, 1) AS nodata
+    """
+    got = con.sql(
+        f"SELECT id, {metadata} FROM (SELECT id, RS_FromPath(path) AS r FROM frompath_many) ORDER BY id"
+    ).to_pandas()
+    assert len(got) == len(rows)
+
+    for i, path in enumerate(rows):
+        row = got.iloc[i]
+        if path is None:
+            assert pd.isna(row["width"])
+            continue
+        alone = (
+            con.sql(
+                f"SELECT {metadata} FROM (SELECT RS_FromPath($1) AS r)", params=(path,)
+            )
+            .to_pandas()
+            .iloc[0]
+        )
+        for col in alone.index:
+            if pd.isna(alone[col]):
+                assert pd.isna(row[col]), (i, col)
+            else:
+                assert row[col] == alone[col], (i, col)
+
+
+def test_rs_frompath_batch_reports_first_missing_file(con, sedona_testing):
+    rows = _frompath_rows(sedona_testing, 12)
+    rows[5] = "/definitely/missing/first.tif"
+    rows[9] = "/definitely/missing/second.tif"
+    _frompath_view(con, rows, "frompath_missing")
+    with pytest.raises(
+        Exception, match="Failed to open raster file '/definitely/missing/first.tif'"
+    ):
+        con.sql(
+            "SELECT RS_Width(RS_FromPath(path)) FROM frompath_missing"
+        ).to_arrow_table()
+
+
+def test_rs_summarystats_of_rs_frompath_many_rows(con, sedona_testing):
+    # A pixel-reading function directly over RS_FromPath: the planner wraps
+    # the argument in RS_EnsureLoaded, so this checks that shape still plans
+    # and loads every row.
+    rows = _frompath_rows(sedona_testing)
+    _frompath_view(con, rows, "frompath_stats")
+    got = con.sql(
+        """
+        SELECT id, RS_SummaryStats(RS_FromPath(path), 'mean', 1) AS m
+        FROM frompath_stats ORDER BY id
+        """
+    ).to_pandas()
+
+    means = {}
+    for path in set(p for p in rows if p is not None):
+        means[path] = (
+            con.sql(
+                "SELECT RS_SummaryStats(RS_FromPath($1), 'mean', 1) AS m",
+                params=(path,),
+            )
+            .to_pandas()["m"]
+            .iloc[0]
+        )
+    for i, path in enumerate(rows):
+        if path is None:
+            assert pd.isna(got["m"].iloc[i])
+        else:
+            assert got["m"].iloc[i] == means[path], i
+
+
+@pytest.mark.parametrize("io_concurrency", [1, 4])
+def test_rs_frompath_and_loads_under_a_small_io_budget(sedona_testing, io_concurrency):
+    # RS_FromPath's opens and the pixel loads after them share the session's
+    # I/O budget. At a budget of 1 they take turns; the results must match
+    # the default budget's. A connection of its own, so the setting does not
+    # outlive the test.
+    con = sedonadb.connect()
+    rows = _frompath_rows(sedona_testing)
+    _frompath_view(con, rows, "frompath_budget")
+    query = """
+        SELECT id, RS_Width(RS_FromPath(path)) AS w,
+               RS_SummaryStats(RS_FromPath(path), 'mean', 1) AS m
+        FROM frompath_budget ORDER BY id
+    """
+    expected = con.sql(query).to_pandas()
+    con.sql(f"SET sedona.raster.io_concurrency = {io_concurrency}").execute()
+    got = con.sql(query).to_pandas()
+    pd.testing.assert_frame_equal(got, expected)
+
+
+def test_rs_intersects_rs_frompath_in_join(con, sedona_testing):
+    # RS_FromPath as the raster side of a spatial join predicate. Each point
+    # is the centre of one file's footprint, so it matches that file (and
+    # any other file whose footprint covers it).
+    rows = [p for p in _frompath_rows(sedona_testing, 12) if p is not None]
+    _frompath_view(con, rows, "frompath_join_rasters")
+    # Points in one CRS (the files use three), so they fit one geometry column.
+    centres = con.sql(
+        """
+        SELECT path AS point_path,
+               ST_AsText(ST_Transform(
+                   ST_Centroid(RS_Envelope(RS_FromPath(path))), 'EPSG:4326'
+               )) AS wkt
+        FROM (SELECT DISTINCT path FROM frompath_join_rasters)
+        """
+    ).to_pandas()
+    con.create_data_frame(centres).to_view("frompath_join_centres", overwrite=True)
+    con.sql(
+        """
+        SELECT point_path, ST_SetSRID(ST_GeomFromText(wkt), 4326) AS geom
+        FROM frompath_join_centres
+        """
+    ).to_view("frompath_join_points", overwrite=True)
+
+    query = """
+        SELECT r.id, p.point_path
+        FROM frompath_join_rasters r
+        JOIN frompath_join_points p
+          ON RS_Intersects(RS_FromPath(r.path), p.geom)
+    """
+    plan = con.sql(f"EXPLAIN {query}").to_pandas().to_string()
+    assert "SpatialJoin" in plan, plan
+
+    got = con.sql(query).to_pandas()
+    matched = set(zip(got["id"], got["point_path"]))
+    for i, path in enumerate(rows):
+        assert (i, path) in matched, (i, path)

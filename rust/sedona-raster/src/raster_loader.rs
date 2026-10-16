@@ -32,12 +32,14 @@ use std::sync::{Arc, RwLock};
 use arrow_buffer::Buffer;
 use arrow_schema::ArrowError;
 use datafusion_common::config::{
-    ConfigEntry, ConfigExtension, ConfigField, ExtensionOptions, Visit,
+    ConfigEntry, ConfigExtension, ConfigField, ConfigOptions, ExtensionOptions, Visit,
 };
 use datafusion_common::{Result as DFResult, config_err};
+use sedona_common::option::SedonaOptions;
 use sedona_schema::raster::BandDataType;
 
 use crate::chunk_cache::{NoChunkCache, RasterChunkCache};
+use crate::io_budget::RasterIoBudget;
 use crate::view_entries::ViewEntries;
 
 /// Everything a backend needs to materialise a single OutDb band's bytes.
@@ -308,6 +310,9 @@ pub struct RasterLoaderConfig {
     /// The session's [`RasterChunkCache`], a [`NoChunkCache`] until one is
     /// attached. Read by `RS_EnsureLoaded` before dispatching to a loader.
     pub cache: RasterChunkCacheOption,
+    /// The session's [`RasterIoBudget`], shared with the session's GDAL
+    /// loader and read by `RS_FromPath`.
+    pub io_budget: RasterIoBudgetOption,
 }
 
 impl RasterLoaderConfig {
@@ -317,6 +322,7 @@ impl RasterLoaderConfig {
         Self {
             registry: RasterLoaderRegistryOption::new(registry),
             cache: RasterChunkCacheOption::default(),
+            io_budget: RasterIoBudgetOption::default(),
         }
     }
 
@@ -329,6 +335,64 @@ impl RasterLoaderConfig {
     /// The session's chunk cache.
     pub fn cache(&self) -> Arc<dyn RasterChunkCache> {
         Arc::clone(&self.cache.0)
+    }
+
+    /// Attach the session's I/O budget. Pass the same budget to every
+    /// blocking raster I/O user of the session (the GDAL loader).
+    pub fn with_io_budget(mut self, budget: RasterIoBudget) -> Self {
+        self.io_budget = RasterIoBudgetOption(budget);
+        self
+    }
+
+    /// The session's I/O budget.
+    pub fn io_budget(&self) -> RasterIoBudget {
+        self.io_budget.0.clone()
+    }
+}
+
+/// The session's [`RasterIoBudget`], with `sedona.raster.io_concurrency`
+/// applied so a `SET` takes effect on the next call, or `None` when the
+/// session carries no [`RasterLoaderConfig`] (a bare DataFusion context).
+/// Every user of the budget calls this before taking a permit.
+pub fn io_budget_from_config(config: &ConfigOptions) -> Option<RasterIoBudget> {
+    let budget = config.extensions.get::<RasterLoaderConfig>()?.io_budget();
+    if let Some(opts) = config.extensions.get::<SedonaOptions>() {
+        let limit = opts.raster.io_concurrency.max(1);
+        if budget.limit() != limit {
+            budget.set_limit(limit);
+        }
+    }
+    Some(budget)
+}
+
+/// `ConfigField`-shaped handle to the session's [`RasterIoBudget`], so it
+/// rides in the same `ConfigOptions` extension as the loader registry.
+/// Compares by identity; SQL cannot set it (the limit is
+/// `sedona.raster.io_concurrency`, applied by [`io_budget_from_config`]).
+#[derive(Debug, Clone, Default)]
+pub struct RasterIoBudgetOption(RasterIoBudget);
+
+impl PartialEq for RasterIoBudgetOption {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.ptr_eq(&other.0)
+    }
+}
+
+impl ConfigField for RasterIoBudgetOption {
+    fn visit<V: Visit>(&self, v: &mut V, key: &str, description: &'static str) {
+        v.some(
+            key,
+            format!(
+                "RasterIoBudget {{ limit: {}, in_use: {} }}",
+                self.0.limit(),
+                self.0.in_use()
+            ),
+            description,
+        )
+    }
+
+    fn set(&mut self, key: &str, _value: &str) -> DFResult<()> {
+        config_err!("Can't set {key} from SQL")
     }
 }
 
@@ -401,6 +465,16 @@ impl ConfigField for RasterLoaderConfig {
         };
         self.cache
             .visit(v, &cache_key, "Session cache of loaded OutDb band bytes");
+        let io_budget_key = if key_prefix.is_empty() {
+            "io_budget".to_string()
+        } else {
+            format!("{key_prefix}.io_budget")
+        };
+        self.io_budget.visit(
+            v,
+            &io_budget_key,
+            "Session budget of blocking raster file operations in flight",
+        );
     }
 
     fn set(&mut self, key: &str, _value: &str) -> DFResult<()> {
@@ -635,5 +709,44 @@ mod tests {
         // Caller (RS_EnsureLoaded) sees None and can build a diagnostic
         // listing the registered loaders.
         assert!(r.get(Some("nonexistent")).is_none());
+    }
+
+    #[test]
+    fn io_budget_from_config_applies_the_session_setting() {
+        let mut config = ConfigOptions::new();
+        assert!(io_budget_from_config(&config).is_none());
+
+        let budget = RasterIoBudget::new(32);
+        config.extensions.insert(
+            RasterLoaderConfig::from_handle(Arc::new(RwLock::new(RasterLoaderRegistry::new())))
+                .with_io_budget(budget.clone()),
+        );
+        // Without SedonaOptions the budget keeps its size.
+        let found = io_budget_from_config(&config).unwrap();
+        assert!(found.ptr_eq(&budget));
+        assert_eq!(budget.limit(), 32);
+
+        config.extensions.insert(SedonaOptions::default());
+        config.set("sedona.raster.io_concurrency", "5").unwrap();
+        assert!(io_budget_from_config(&config).unwrap().ptr_eq(&budget));
+        assert_eq!(budget.limit(), 5);
+        assert_eq!(budget.available(), 5);
+
+        config.set("sedona.raster.io_concurrency", "0").unwrap();
+        io_budget_from_config(&config).unwrap();
+        assert_eq!(budget.limit(), 1);
+
+        // The budget shows up among the extension's entries.
+        let entries = config
+            .extensions
+            .get::<RasterLoaderConfig>()
+            .unwrap()
+            .entries();
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.key == "sedona.raster_loader.io_budget"
+                    && e.value.as_deref() == Some("RasterIoBudget { limit: 1, in_use: 0 }"))
+        );
     }
 }
