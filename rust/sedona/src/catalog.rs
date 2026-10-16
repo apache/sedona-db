@@ -91,13 +91,11 @@ impl SedonaCatalogRegistry {
                 .await;
         }
 
-        let Some(catalog) = self.catalog(&resolved.catalog) else {
-            return Ok(None);
-        };
-        let Some(schema) = catalog.schema(&resolved.schema) else {
-            return Ok(None);
-        };
-        schema.table(&resolved.table).await
+        if let Ok(schema) = state.schema_for_ref(resolved.clone()) {
+            schema.table(&resolved.table).await
+        } else {
+            Ok(None)
+        }
     }
 
     /// Resolve catalog ownership asynchronously, newest registration first.

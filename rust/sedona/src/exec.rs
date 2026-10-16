@@ -928,6 +928,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn information_schema_uses_builtin_fallback() -> Result<()> {
+        let ctx = SedonaContext::new();
+        ctx.ctx
+            .state_ref()
+            .write()
+            .config_mut()
+            .options_mut()
+            .catalog
+            .information_schema = true;
+        ctx.table_provider("information_schema.tables").await?;
+        ctx.table("information_schema.tables")
+            .await?
+            .collect()
+            .await?;
+
+        // Registering a foreign catalog enables the custom SQL planner. Its
+        // built-in fallback must retain DataFusion's virtual information schema.
+        let (ctx, _) = test_context();
+        ctx.ctx
+            .state_ref()
+            .write()
+            .config_mut()
+            .options_mut()
+            .catalog
+            .information_schema = true;
+        ctx.table("information_schema.tables")
+            .await?
+            .collect()
+            .await?;
+        ctx.sql("SELECT table_name FROM information_schema.tables")
+            .await?
+            .collect()
+            .await?;
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn foreign_quoted_identifiers_and_listing() -> Result<()> {
         let (ctx, catalog) = test_context();
         ctx.sql("CREATE SCHEMA foreign.\"schema.with.dot\"")
