@@ -113,6 +113,14 @@ like pandas' `"string"` dtype rather than `str`, and formats floats the way
 Arrow does (`"1"`, `"NaN"`); `astype(object)` leaves the values as they are,
 since an Arrow-backed column has no object type.
 
+Reductions (`sum()`, `mean()`, `min()`, `max()`, `count()`, `median()`,
+`std()`, `var()`, `quantile()`, `nunique()`) compute their result, skipping
+missing values (NaN included) as pandas does by default; an integer column keeps
+its integer type where pandas, having turned its missing values into NaN, would
+report a float. `unique()` and `value_counts()` cannot follow the order of first
+appearance, since a lazy frame has no row order: `value_counts()` breaks ties by
+value.
+
 `dissolve()` aggregates non-geometry columns with `"first"`, which is an
 unordered aggregate: it returns *some* value from the group rather than the one
 from the first row, and unlike GeoPandas it does not skip missing values, so a
