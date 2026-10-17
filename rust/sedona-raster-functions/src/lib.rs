@@ -49,6 +49,7 @@ pub mod rs_slice;
 pub mod rs_spatial_predicates;
 pub mod rs_srid;
 pub mod rs_stack;
+pub mod rs_stack_aggr;
 pub mod rs_summarystats;
 pub mod rs_value;
 pub mod rs_values;
