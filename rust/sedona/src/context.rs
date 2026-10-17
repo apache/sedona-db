@@ -20,7 +20,9 @@ use std::{
 };
 
 use crate::exec::{create_plan_from_sql, resolve_sedona_catalog_ddl};
-use crate::object_storage::ensure_object_store_registered_with_options;
+use crate::object_storage::{
+    ensure_object_store_registered_with_options, register_object_store_and_config_extensions,
+};
 use crate::read::{read_provider, resolve_read_format};
 use crate::url_table::install_sedona_url_table;
 use crate::{
@@ -974,6 +976,17 @@ impl SedonaDataFrame for DataFrame {
             );
         }
 
+        // A remote output path (e.g., s3://) needs its object store registered.
+        // SQL COPY ... TO registers it while planning the statement
+        // (create_plan_from_sql); this plan is built directly, so the store is
+        // registered here, the same way.
+        register_object_store_and_config_extensions(
+            ctx,
+            &path.to_string(),
+            &options.storage_options,
+        )
+        .await?;
+
         let format = if let Some(parquet_opts) = writer_options {
             Arc::new(GeoParquetFormatFactory::new_with_options(parquet_opts))
         } else {
@@ -1070,6 +1083,9 @@ pub struct SedonaWriteOptions {
     /// Sets which columns should be used for sorting the output by name.
     /// Can be set to empty vec![] for non-sorted writes.
     pub sort_by: Vec<SortExpr>,
+    /// Options for the object store a remote output path is written to (e.g.,
+    /// `aws.region`), as for reading
+    pub storage_options: HashMap<String, String>,
 }
 
 impl From<SedonaWriteOptions> for DataFrameWriteOptions {
@@ -1090,6 +1106,7 @@ impl SedonaWriteOptions {
             single_file_output: false,
             partition_by: vec![],
             sort_by: vec![],
+            storage_options: HashMap::new(),
         }
     }
 
@@ -1114,6 +1131,12 @@ impl SedonaWriteOptions {
     /// Sets the sort_by columns for output sorting
     pub fn with_sort_by(mut self, sort_by: Vec<SortExpr>) -> Self {
         self.sort_by = sort_by;
+        self
+    }
+
+    /// Sets the options for the object store a remote output path is written to
+    pub fn with_storage_options(mut self, storage_options: HashMap<String, String>) -> Self {
+        self.storage_options = storage_options;
         self
     }
 }
@@ -1675,6 +1698,85 @@ mod tests {
             )
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn write_geoparquet_local_and_file_url() {
+        let tmpdir = tempdir().unwrap();
+        let ctx = SedonaContext::new();
+        let path = tmpdir.path().join("local.parquet");
+        let url = format!("file://{}", tmpdir.path().join("url.parquet").display());
+        for target in [path.to_string_lossy().to_string(), url] {
+            ctx.sql("SELECT 1 as one")
+                .await
+                .unwrap()
+                .write_geoparquet(&ctx, &target, SedonaWriteOptions::new(), None)
+                .await
+                .unwrap();
+        }
+        assert!(path.exists());
+        assert!(tmpdir.path().join("url.parquet").exists());
+    }
+
+    #[cfg(feature = "aws")]
+    #[tokio::test]
+    async fn write_geoparquet_registers_the_remote_object_store() {
+        // The store for a remote output path is registered with the given
+        // options before writing (an invalid one is rejected by the store's
+        // configuration, without any network access); without registration
+        // the write found no object store at all.
+        let ctx = SedonaContext::new();
+        let options = SedonaWriteOptions::new().with_storage_options(HashMap::from([(
+            "aws.not_an_option".to_string(),
+            "true".to_string(),
+        )]));
+        let err = ctx
+            .sql("SELECT 1 as one")
+            .await
+            .unwrap()
+            .write_geoparquet(&ctx, "s3://bucket/out.parquet", options, None)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("not_an_option") && err.contains("AwsOptions"),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn write_geoparquet_applies_options_to_a_registered_store() {
+        // A store registered earlier for the bucket (by an anonymous read, say)
+        // must not swallow the write's own options: the invalid one here is
+        // only rejected if they are applied.
+        let ctx = SedonaContext::new();
+        let anonymous = HashMap::from([
+            ("aws.skip_signature".to_string(), "true".to_string()),
+            ("aws.region".to_string(), "us-west-2".to_string()),
+        ]);
+        ensure_object_store_registered_with_options(
+            &mut ctx.ctx.state(),
+            "s3://bucket/in.parquet",
+            Some(&anonymous),
+        )
+        .await
+        .unwrap();
+        let options = SedonaWriteOptions::new().with_storage_options(HashMap::from([(
+            "aws.not_an_option".to_string(),
+            "true".to_string(),
+        )]));
+        let err = ctx
+            .sql("SELECT 1 as one")
+            .await
+            .unwrap()
+            .write_geoparquet(&ctx, "s3://bucket/out.parquet", options, None)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("not_an_option") && err.contains("AwsOptions"),
+            "{err}"
+        );
     }
 
     #[tokio::test]

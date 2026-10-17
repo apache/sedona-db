@@ -16,6 +16,7 @@
 # under the License.
 
 import io
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Literal, Optional, Union
 
@@ -1552,12 +1553,16 @@ class DataFrame:
         subset of the file is needed for a given query.
 
         Args:
-            path: A filename or directory to which parquet file(s) should be written.
+            path: A filename, directory, or URL (e.g., `s3://bucket/path.parquet`) to
+                which parquet file(s) should be written.
             options: Key/value options to be used when constructing a parquet writer.
                 Common options are exposed as other arguments to `to_parquet()`; however,
                 this argument allows setting any DataFusion Parquet writer option. If
                 an option is specified here and by an argument to this function, the
-                value specified as a keyword argument takes precedence.
+                value specified as a keyword argument takes precedence. Options for
+                the object store a remote `path` is written to are passed here too,
+                as for `read_parquet()` (e.g., `{"aws.region": "us-west-2"}`); their
+                keys start with `aws.`, `gcp.`, or `azure.`.
             partition_by: A vector of column names to partition by. If non-empty,
                 applies hive-style partitioning to the output.
             sort_by: A vector of column names to sort by. Currently only ascending
@@ -1601,7 +1606,8 @@ class DataFrame:
 
         """
 
-        path = Path(path)
+        # A str, not a Path: Path() collapses the `//` of a URL like s3://...
+        path = os.fspath(path)
 
         if options is not None:
             options = {k: str(v) for k, v in options.items()}
