@@ -143,7 +143,7 @@ class DataFrame:
         │  geometry  │
         │  geometry  │
         ╞════════════╡
-        │ POINT(1 2) │
+        │ POINT (1 2) │
         ├╌╌╌╌╌╌╌╌╌╌╌╌┤
         │ POINT(2 3) │
         ├╌╌╌╌╌╌╌╌╌╌╌╌┤

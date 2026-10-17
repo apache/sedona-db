@@ -331,5 +331,5 @@ def test_native_scalar_udf_register_appends_overload(con):
     # ...and the WKT-string -> geometry overload appended second dispatches too.
     pd.testing.assert_frame_equal(
         con.sql(f"SELECT ST_AsText({name}('POINT (1 2)')) AS col").to_pandas(),
-        pd.DataFrame({"col": ["POINT(1 2)"]}),
+        pd.DataFrame({"col": ["POINT (1 2)"]}),
     )

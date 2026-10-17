@@ -16,13 +16,17 @@
 // under the License.
 use std::{sync::Arc, vec};
 
+use arrow_array::{Array, StringArray, builder::StringBuilder, new_null_array};
 use arrow_schema::DataType;
-use datafusion_common::error::Result;
+use datafusion_common::{cast::as_int64_array, error::Result, scalar::ScalarValue};
 use datafusion_expr::ColumnarValue;
-use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel};
+use sedona_expr::{
+    item_crs::ItemCrsKernel,
+    scalar_udf::{ScalarKernelRef, SedonaScalarKernel},
+};
 use sedona_functions::executor::WkbExecutor;
 use sedona_schema::{
-    datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY},
+    datatypes::{SedonaType, WKB_GEOGRAPHY_WGS84, WKB_GEOMETRY},
     matchers::ArgMatcher,
 };
 
@@ -44,9 +48,9 @@ pub fn st_geomfromwkt_impl() -> ScalarKernelRef {
 /// An implementation of WKT reading using geoarrow-c's WKT reader
 pub fn st_geogfromwkt_impl() -> ScalarKernelRef {
     Arc::new(GeoArrowCCast::new(
-        ArgMatcher::new(vec![ArgMatcher::is_string()], WKB_GEOGRAPHY),
-        Some(WKB_GEOGRAPHY),
-        WKB_GEOGRAPHY,
+        ArgMatcher::new(vec![ArgMatcher::is_string()], WKB_GEOGRAPHY_WGS84.clone()),
+        Some(WKB_GEOGRAPHY_WGS84.clone()),
+        WKB_GEOGRAPHY_WGS84.clone(),
     ))
 }
 
@@ -66,9 +70,9 @@ pub fn st_geomfromwkb_impl() -> ScalarKernelRef {
 /// An implementation of WKB validation using geoarrow-c's WKB reader
 pub fn st_geogfromwkb_impl() -> ScalarKernelRef {
     Arc::new(GeoArrowCCast::new(
-        ArgMatcher::new(vec![ArgMatcher::is_binary()], WKB_GEOGRAPHY),
+        ArgMatcher::new(vec![ArgMatcher::is_binary()], WKB_GEOGRAPHY_WGS84.clone()),
         None,
-        WKB_GEOGRAPHY,
+        WKB_GEOGRAPHY_WGS84.clone(),
     ))
 }
 
@@ -84,6 +88,115 @@ pub fn st_astext_impl() -> ScalarKernelRef {
         Some(SedonaType::Arrow(DataType::Utf8)),
         SedonaType::Arrow(DataType::Utf8),
     ))
+}
+
+/// ST_AsText(geometry, precision) implementation using geoarrow-c.
+///
+/// geoarrow-c is bundled with Ryu enabled, so coordinate formatting does not
+/// depend on the platform locale or libc's `snprintf()` implementation.
+pub fn st_astext_precision_impl() -> Vec<ScalarKernelRef> {
+    ItemCrsKernel::wrap_impl(vec![Arc::new(GeoArrowCAsTextPrecision {
+        matcher: ArgMatcher::new(
+            vec![
+                ArgMatcher::is_geometry_or_geography(),
+                ArgMatcher::is_integer(),
+            ],
+            SedonaType::Arrow(DataType::Utf8),
+        ),
+    })])
+}
+
+#[derive(Debug)]
+struct GeoArrowCAsTextPrecision {
+    matcher: ArgMatcher,
+}
+
+impl SedonaScalarKernel for GeoArrowCAsTextPrecision {
+    fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
+        self.matcher.match_args(args)
+    }
+
+    fn invoke_batch(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+    ) -> Result<ColumnarValue> {
+        let executor = WkbExecutor::new(arg_types, args);
+
+        if arg_types[0] == SedonaType::Arrow(DataType::Null) {
+            return executor.finish(new_null_array(&DataType::Utf8, executor.num_iterations()));
+        }
+
+        let array_in = args[0].to_array(executor.num_iterations())?;
+        let precision_value = args[1].cast_to(&DataType::Int64, None)?;
+
+        match precision_value {
+            ColumnarValue::Scalar(ScalarValue::Int64(Some(precision))) => {
+                let precision = validate_precision(precision)?;
+                let array_out = write_wkt(&array_in, &arg_types[0], precision)?;
+                executor.finish(array_out)
+            }
+            ColumnarValue::Scalar(ScalarValue::Int64(None)) => {
+                executor.finish(new_null_array(&DataType::Utf8, executor.num_iterations()))
+            }
+            ColumnarValue::Array(precision_array) => {
+                let precision_array = as_int64_array(&precision_array)?;
+                let mut builder = StringBuilder::with_capacity(
+                    executor.num_iterations(),
+                    executor.num_iterations() * 25,
+                );
+                let mut reader = ArrayReader::try_new(&arg_types[0])?;
+                let mut error = CError::new();
+
+                for index in 0..executor.num_iterations() {
+                    if array_in.is_null(index) || precision_array.is_null(index) {
+                        builder.append_null();
+                        continue;
+                    }
+
+                    let precision = validate_precision(precision_array.value(index))?;
+                    let mut writer = ArrayWriter::try_new(&SedonaType::Arrow(DataType::Utf8))?;
+                    writer.set_precision(precision)?;
+                    let visitor = writer.visitor_mut();
+                    reader.visit_range(&array_in, index, 1, visitor, &mut error)?;
+
+                    let value = writer.finish()?;
+                    let value = value
+                        .as_any()
+                        .downcast_ref::<StringArray>()
+                        .expect("WKT writer must return a StringArray");
+                    builder.append_value(value.value(0));
+                }
+
+                executor.finish(Arc::new(builder.finish()))
+            }
+            _ => unreachable!("precision was cast to Int64"),
+        }
+    }
+}
+
+fn validate_precision(precision: i64) -> Result<i32> {
+    if !(0..=16).contains(&precision) {
+        return Err(datafusion_common::DataFusionError::Execution(format!(
+            "ST_AsText precision must be between 0 and 16, got {precision}"
+        )));
+    }
+
+    Ok(precision as i32)
+}
+
+fn write_wkt(
+    array: &Arc<dyn Array>,
+    input_type: &SedonaType,
+    precision: i32,
+) -> Result<Arc<dyn Array>> {
+    let mut error = CError::new();
+    let mut reader = ArrayReader::try_new(input_type)?;
+    let mut writer = ArrayWriter::try_new(&SedonaType::Arrow(DataType::Utf8))?;
+    writer.set_precision(precision)?;
+    let visitor = writer.visitor_mut();
+    reader.visit(array, visitor, &mut error)?;
+    Ok(writer.finish()?)
 }
 
 #[derive(Debug)]
@@ -109,6 +222,15 @@ impl GeoArrowCCast {
 
 impl SedonaScalarKernel for GeoArrowCCast {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
+        // Let the existing generic kernels handle untyped NULL literals. The
+        // GeoArrow reader needs a concrete physical input type.
+        if args
+            .iter()
+            .any(|arg| arg == &SedonaType::Arrow(DataType::Null))
+        {
+            return Ok(None);
+        }
+
         self.matcher.match_args(args)
     }
 
@@ -147,7 +269,7 @@ impl SedonaScalarKernel for GeoArrowCCast {
 
 #[cfg(test)]
 mod tests {
-    use arrow_array::StringArray;
+    use arrow_array::{Int64Array, StringArray};
     use arrow_schema::DataType;
     use datafusion_common::scalar::ScalarValue;
     use rstest::rstest;
@@ -209,6 +331,81 @@ mod tests {
     }
 
     #[test]
+    fn cast_kernels_defer_untyped_nulls() {
+        let null_type = [SedonaType::Arrow(DataType::Null)];
+        assert_eq!(st_astext_impl().return_type(&null_type).unwrap(), None);
+        assert_eq!(st_geomfromwkt_impl().return_type(&null_type).unwrap(), None);
+        assert_eq!(st_geomfromwkb_impl().return_type(&null_type).unwrap(), None);
+    }
+
+    #[test]
+    fn astext_precision() {
+        let udf = SedonaScalarUDF::from_impl("st_astext", st_astext_precision_impl());
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![WKB_GEOMETRY, SedonaType::Arrow(DataType::Int64)],
+        );
+        tester.assert_return_type(DataType::Utf8);
+
+        let result = tester
+            .invoke_scalar_scalar("POINT (1.123456789 2.5)", 6_i64)
+            .unwrap();
+        assert_eq!(
+            result,
+            ScalarValue::Utf8(Some("POINT (1.123457 2.5)".to_string()))
+        );
+
+        let result = tester
+            .invoke_scalar_scalar("POINT (1.9 2.1)", 0_i64)
+            .unwrap();
+        assert_eq!(result, ScalarValue::Utf8(Some("POINT (2 2)".to_string())));
+
+        let result = tester
+            .invoke_scalar_scalar("POINT (1.123456789 2.5)", ScalarValue::Int64(None))
+            .unwrap();
+        assert_eq!(result, ScalarValue::Utf8(None));
+    }
+
+    #[test]
+    fn astext_precision_array() {
+        let udf = SedonaScalarUDF::from_impl("st_astext", st_astext_precision_impl());
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![WKB_GEOMETRY, SedonaType::Arrow(DataType::Int64)],
+        );
+        let geometry = create_array(
+            &[
+                Some("POINT (1.123456789 2.5)"),
+                Some("POINT (1.123456789 2.5)"),
+                None,
+            ],
+            &WKB_GEOMETRY,
+        );
+        let precision = Arc::new(Int64Array::from(vec![Some(3), None, Some(6)]));
+        let result = tester.invoke_array_array(geometry, precision).unwrap();
+        let expected: StringArray = [Some("POINT (1.123 2.5)"), None, None]
+            .into_iter()
+            .collect();
+        assert_eq!(result.as_ref(), &expected);
+    }
+
+    #[test]
+    fn astext_precision_rejects_out_of_range_values() {
+        let udf = SedonaScalarUDF::from_impl("st_astext", st_astext_precision_impl());
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![WKB_GEOMETRY, SedonaType::Arrow(DataType::Int64)],
+        );
+        let error = tester
+            .invoke_scalar_scalar("POINT (1 2)", 17_i64)
+            .unwrap_err();
+        assert_eq!(
+            error.strip_backtrace(),
+            "Execution error: ST_AsText precision must be between 0 and 16, got 17"
+        );
+    }
+
+    #[test]
     fn errors() {
         let udf = SedonaScalarUDF::from_impl("st_geomfromwkt", st_geomfromwkt_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![SedonaType::Arrow(DataType::Utf8)]);
@@ -224,14 +421,14 @@ mod tests {
     fn geog() {
         let udf = SedonaScalarUDF::from_impl("st_geogfromwkt", st_geogfromwkt_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![SedonaType::Arrow(DataType::Utf8)]);
-        tester.assert_return_type(WKB_GEOGRAPHY);
+        tester.assert_return_type(WKB_GEOGRAPHY_WGS84.clone());
 
         let result = tester.invoke_scalar("POINT (1 2)").unwrap();
         tester.assert_scalar_result_equals(result, "POINT (1 2)");
 
         let udf = SedonaScalarUDF::from_impl("st_geogfromwkb", st_geogfromwkb_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![SedonaType::Arrow(DataType::Binary)]);
-        tester.assert_return_type(WKB_GEOGRAPHY);
+        tester.assert_return_type(WKB_GEOGRAPHY_WGS84.clone());
 
         let result = tester
             .invoke_scalar(create_scalar_storage(Some("POINT (1 2)"), &WKB_GEOGRAPHY))

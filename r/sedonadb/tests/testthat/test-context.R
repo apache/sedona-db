@@ -214,6 +214,6 @@ test_that("sd_sql() applies params to query", {
 
   expect_identical(
     df |> sd_collect(),
-    data.frame(geom = "POINT(2 3)")
+    data.frame(geom = "POINT (2 3)")
   )
 })

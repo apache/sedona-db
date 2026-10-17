@@ -103,7 +103,7 @@ def test_to_csv_geometry_as_text_ok(con):
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / "wkt.csv"
         con.sql("SELECT ST_AsText(ST_Point(1.0, 2.0)) AS geometry").to_csv(p)
-        assert p.read_text() == "geometry\nPOINT(1 2)\n"
+        assert p.read_text() == "geometry\nPOINT (1 2)\n"
 
 
 def test_to_json_round_trip(con):

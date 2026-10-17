@@ -5711,6 +5711,7 @@ dependencies = [
  "sedona-functions",
  "sedona-gdal",
  "sedona-geo",
+ "sedona-geoarrow-c",
  "sedona-geometry",
  "sedona-geoparquet",
  "sedona-geos",

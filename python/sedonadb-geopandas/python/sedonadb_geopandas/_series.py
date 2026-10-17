@@ -1300,8 +1300,8 @@ class GeoSeries(Series):
     def to_wkt(self):
         """Each geometry as WKT text (`ST_AsText`).
 
-        The text is equivalent to GeoPandas' but not character-identical:
-        SedonaDB writes `POINT(1 2)` where Shapely writes `POINT (1 2)`.
+        The text uses GeoArrow's canonical WKT formatting, including a space
+        between the geometry type and its coordinates (`POINT (1 2)`).
         """
         return Series(self._df, self._expr.geo.as_text(), self._name)
 

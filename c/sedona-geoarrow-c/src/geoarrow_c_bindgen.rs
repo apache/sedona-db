@@ -124,6 +124,11 @@ unsafe extern "C" {
         v: *mut GeoArrowVisitor,
     ) -> GeoArrowErrorCode;
 
+    pub fn SedonaDBGeoArrowArrayWriterSetPrecision(
+        writer: *mut GeoArrowArrayWriter,
+        precision: c_int,
+    ) -> GeoArrowErrorCode;
+
     pub fn SedonaDBGeoArrowArrayWriterFinish(
         writer: *mut GeoArrowArrayWriter,
         array: *mut ArrowArray,
