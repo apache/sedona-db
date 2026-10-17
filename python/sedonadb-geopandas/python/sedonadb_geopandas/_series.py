@@ -18,9 +18,10 @@
 
 import math
 import numbers
+import operator
 
 import pyarrow as pa
-from sedonadb.expr import lit
+from sedonadb.expr import Expr, lit
 
 from sedonadb_geopandas._temporal import (
     coerce_duration_scalar,
@@ -179,6 +180,13 @@ def normalize_scalar(value):
     return value
 
 
+def _logical_type(dtype):
+    """`dtype` with any dictionary or run-end encoding unwrapped."""
+    while pa.types.is_dictionary(dtype) or pa.types.is_run_end_encoded(dtype):
+        dtype = dtype.value_type
+    return dtype
+
+
 def _numeric_value(other):
     """Resolve an operand to its numeric payload, unwrapping supported wrappers.
 
@@ -205,12 +213,7 @@ def _numeric_value(other):
         raw = value._value
         if isinstance(raw, int) and not -(2**63) <= raw < 2**63:
             raise OverflowError(f"{raw} overflows the signed 64-bit range")
-        arr = pa.array(value)
-        if len(arr) != 1:
-            raise ValueError(
-                f"Can't use a Literal resolving to {len(arr)} values as a single value"
-            )
-        value = arr[0].as_py()
+        value = _literal_value(value).as_py()
     if is_scalar(value):
         value = normalize_scalar(value)
     try:
@@ -219,6 +222,29 @@ def _numeric_value(other):
     except ImportError:
         pass
     return value
+
+
+def _literal_value(literal):
+    """The one value `literal` holds, as an Arrow scalar, encodings unwrapped.
+
+    Read through the literal's Arrow form, since SedonaDB accepts one-element
+    containers (an Arrow array, a pandas Series or one-cell frame) as
+    single-value literals; a literal resolving to any other number of values
+    is rejected rather than read as its first.
+    """
+    import pyarrow.compute as pc
+
+    arr = pa.array(literal)
+    if len(arr) != 1:
+        raise ValueError(
+            f"Can't use a Literal resolving to {len(arr)} values as a single value"
+        )
+    while pa.types.is_dictionary(arr.type) or pa.types.is_run_end_encoded(arr.type):
+        if pa.types.is_dictionary(arr.type):
+            arr = arr.dictionary_decode()
+        else:
+            arr = pc.run_end_decode(arr)
+    return arr[0]
 
 
 def _operand(df, other):
@@ -291,22 +317,52 @@ class Series:
 
     # -- element-wise comparisons -> boolean mask --------------------------
     def __gt__(self, other):
-        return Series(self._df, self._expr > _operand(self._df, other), self._name)
+        return self._compare(other, operator.gt)
 
     def __ge__(self, other):
-        return Series(self._df, self._expr >= _operand(self._df, other), self._name)
+        return self._compare(other, operator.ge)
 
     def __lt__(self, other):
-        return Series(self._df, self._expr < _operand(self._df, other), self._name)
+        return self._compare(other, operator.lt)
 
     def __le__(self, other):
-        return Series(self._df, self._expr <= _operand(self._df, other), self._name)
+        return self._compare(other, operator.le)
 
     def __eq__(self, other):
-        return Series(self._df, self._expr == _operand(self._df, other), self._name)
+        return self._compare(other, operator.eq)
 
     def __ne__(self, other):
-        return Series(self._df, self._expr != _operand(self._df, other), self._name)
+        return self._compare(other, operator.ne)
+
+    def _compare(self, other, op):
+        """`self <op> other`, compared as pandas compares.
+
+        A missing value on either side (null, or NaN in a float column)
+        compares False, and True for `!=`, so the result is never null and a
+        mask built from it keeps or drops the rows pandas would. The engine
+        alone answers null for a null, orders floats totally (NaN above every
+        number, -0.0 below 0.0), and so differs from pandas on all of these.
+        """
+        from sedonadb.expr import Literal
+        from sedonadb_geopandas._frame import _is_missing
+
+        rhs = _operand(self._df, other)
+        # A literal is missing if the value it holds is.
+        value = _literal_value(other) if isinstance(other, Literal) else other
+        if isinstance(other, Series):
+            missing = self._missing() | other._missing()
+        elif _is_missing(normalize_scalar(value)):
+            missing = self._expr.is_null() | lit(True)
+        else:
+            missing = self._missing()
+        expr = op(
+            _zero_normalized(self._df, self._expr), _zero_normalized(self._df, rhs)
+        )
+        if op is operator.ne:
+            expr = expr | missing
+        else:
+            expr = expr & ~missing
+        return Series(self._df, expr, self._name)
 
     # -- boolean composition of masks --------------------------------------
     def __and__(self, other):
@@ -400,14 +456,21 @@ class Series:
         column is integer for division purposes. Read from the projected
         schema, which is a plan build, not an execution.
         """
-        dtype = self._stored_dtype()
-        while pa.types.is_dictionary(dtype) or pa.types.is_run_end_encoded(dtype):
-            dtype = dtype.value_type
-        return dtype
+        return _logical_type(self._stored_dtype())
 
     def _stored_dtype(self):
         """This expression's Arrow type as stored, encodings included."""
         return pa.schema(self._df.select(self._expr.alias("x")).schema).field("x").type
+
+    def _decoded(self):
+        """This expression with any dictionary or run-end encoding cast away.
+
+        Some functions (`isnan()`, some aggregates) accept only the plain
+        type, not an encoded one.
+        """
+        stored = self._stored_dtype()
+        dtype = _logical_type(stored)
+        return self._expr if dtype == stored else self._expr.cast(dtype)
 
     def _is_duration(self):
         return pa.types.is_duration(self._dtype())
@@ -451,7 +514,7 @@ class Series:
         """
         expr = self._expr.is_null()
         if self._is_floating():
-            expr = expr | self._expr.funcs.isnan()
+            expr = expr | self._decoded().funcs.isnan()
         return expr.funcs.coalesce(lit(True))
 
     def isna(self):
@@ -531,7 +594,7 @@ class Series:
             if matches_null:
                 expr = expr | self._expr.is_null()
             if matches_nan:
-                expr = expr | self._expr.funcs.isnan().funcs.coalesce(lit(False))
+                expr = expr | self._decoded().funcs.isnan().funcs.coalesce(lit(False))
         return Series(self._df, expr, self._name)
 
     def astype(self, dtype):
@@ -576,6 +639,36 @@ class Series:
     def __repr__(self):
         # Cheap: show the underlying expression rather than executing.
         return f"<{type(self).__name__} {self._expr!r} (lazy; call .to_pandas())>"
+
+
+def _zero_normalized(df, expr):
+    """`expr` (a column expression or a scalar), with -0.0 as 0.0 if it is
+    floating.
+
+    The engine orders floats totally, so -0.0 compares below 0.0, while
+    pandas (IEEE) holds them equal; adding 0.0 turns -0.0 into 0.0. An
+    encoded column is decoded first, since the encoding hides the float.
+    """
+    from sedonadb.expr import Literal
+
+    if isinstance(expr, float):
+        return expr + 0.0
+    if isinstance(expr, pa.Scalar):
+        if pa.types.is_floating(expr.type) and expr.is_valid:
+            return pa.scalar(expr.as_py() + 0.0, type=expr.type)
+        return expr
+    if isinstance(expr, Literal):
+        value = _literal_value(expr)
+        if pa.types.is_floating(value.type):
+            return Literal(_zero_normalized(df, value), expr._ctx)
+        return expr
+    if not isinstance(expr, Expr):
+        return expr
+    stored = pa.schema(df.select(expr.alias("x")).schema).field("x").type
+    dtype = _logical_type(stored)
+    if not pa.types.is_floating(dtype):
+        return expr
+    return (expr if dtype == stored else expr.cast(dtype)) + lit(0.0)
 
 
 def _buffer_style(style, names, argument):
