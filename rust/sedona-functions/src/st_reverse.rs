@@ -19,7 +19,8 @@ use std::io::Write;
 use std::sync::Arc;
 
 use arrow_array::builder::BinaryBuilder;
-use datafusion_common::{Result, exec_datafusion_err};
+use arrow_array::{BinaryArray, BinaryViewArray, LargeBinaryArray};
+use datafusion_common::{Result, ScalarValue, exec_datafusion_err};
 use datafusion_expr::ColumnarValue;
 use datafusion_expr::Volatility;
 use geo_traits::Dimensions;
@@ -32,7 +33,7 @@ use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::{
     error::SedonaGeometryError,
     wkb_factory::{
-        WKB_MIN_PROBABLE_BYTES, write_wkb_geometrycollection_header, write_wkb_linestring_header,
+        write_wkb_geometrycollection_header, write_wkb_linestring_header,
         write_wkb_multilinestring_header, write_wkb_multipolygon_header, write_wkb_polygon_header,
         write_wkb_polygon_ring_header,
     },
@@ -80,10 +81,8 @@ impl SedonaScalarKernel for STReverse {
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
         let executor = WkbExecutor::new(arg_types, args);
-        let mut builder = BinaryBuilder::with_capacity(
-            executor.num_iterations(),
-            WKB_MIN_PROBABLE_BYTES * executor.num_iterations(),
-        );
+        let mut builder =
+            BinaryBuilder::with_capacity(executor.num_iterations(), input_wkb_bytes(&args[0]));
 
         executor.execute_wkb_void(|maybe_wkb| {
             match maybe_wkb {
@@ -98,6 +97,37 @@ impl SedonaScalarKernel for STReverse {
         })?;
 
         executor.finish(Arc::new(builder.finish()))
+    }
+}
+
+/// Total number of WKB bytes in the visible values of an input argument
+///
+/// The output is ISO WKB, so it is the same size as the input except for EWKB with an SRID on
+/// non-point geometries, where the SRID is dropped. In that case this is an upper bound.
+fn input_wkb_bytes(arg: &ColumnarValue) -> usize {
+    match arg {
+        ColumnarValue::Scalar(
+            ScalarValue::Binary(Some(wkb))
+            | ScalarValue::LargeBinary(Some(wkb))
+            | ScalarValue::BinaryView(Some(wkb)),
+        ) => wkb.len(),
+        ColumnarValue::Array(array) => {
+            let array = array.as_any();
+            // Offsets start at the slice's first value, so sliced arrays only count visible rows
+            if let Some(binary) = array.downcast_ref::<BinaryArray>() {
+                let offsets = binary.offsets();
+                (offsets[offsets.len() - 1] - offsets[0]) as usize
+            } else if let Some(binary) = array.downcast_ref::<LargeBinaryArray>() {
+                let offsets = binary.offsets();
+                (offsets[offsets.len() - 1] - offsets[0]) as usize
+            } else if let Some(binary) = array.downcast_ref::<BinaryViewArray>() {
+                // The low 32 bits of each view hold the value length, inline or not
+                binary.views().iter().map(|v| *v as u32 as usize).sum()
+            } else {
+                0
+            }
+        }
+        _ => 0,
     }
 }
 
@@ -215,7 +245,7 @@ fn write_reversed_coords(
 
 #[cfg(test)]
 mod tests {
-    use datafusion_common::ScalarValue;
+    use arrow_array::ArrayRef;
     use rstest::rstest;
     use sedona_schema::datatypes::{WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY_ITEM_CRS};
     use sedona_testing::compare::assert_array_equal;
@@ -499,5 +529,43 @@ mod tests {
             .invoke_scalar("LINESTRING (30 10, 10 30, 40 40)")
             .unwrap();
         tester.assert_scalar_result_equals(result, "LINESTRING (40 40, 10 30, 30 10)");
+    }
+
+    #[test]
+    fn input_wkb_bytes_counts_visible_values() {
+        let values = vec![
+            Some(&b"abc"[..]),
+            None,
+            Some(&b"0123456789abcdefg"[..]),
+            Some(&b""[..]),
+        ];
+        let binary = BinaryArray::from_iter(values.clone());
+        let large = LargeBinaryArray::from_iter(values.clone());
+        let view = BinaryViewArray::from_iter(values);
+        let array = |a: ArrayRef| ColumnarValue::Array(a);
+
+        assert_eq!(input_wkb_bytes(&array(Arc::new(binary.clone()))), 20);
+        assert_eq!(input_wkb_bytes(&array(Arc::new(large.clone()))), 20);
+        assert_eq!(input_wkb_bytes(&array(Arc::new(view.clone()))), 20);
+
+        // Slices keep only the visible rows: [None, 17 bytes]
+        assert_eq!(input_wkb_bytes(&array(Arc::new(binary.slice(1, 2)))), 17);
+        assert_eq!(input_wkb_bytes(&array(Arc::new(large.slice(1, 2)))), 17);
+        assert_eq!(input_wkb_bytes(&array(Arc::new(view.slice(1, 2)))), 17);
+
+        let scalar = |v: ScalarValue| ColumnarValue::Scalar(v);
+        assert_eq!(
+            input_wkb_bytes(&scalar(ScalarValue::Binary(Some(vec![1, 2, 3])))),
+            3
+        );
+        assert_eq!(
+            input_wkb_bytes(&scalar(ScalarValue::LargeBinary(Some(vec![1, 2, 3, 4])))),
+            4
+        );
+        assert_eq!(
+            input_wkb_bytes(&scalar(ScalarValue::BinaryView(Some(vec![1; 17])))),
+            17
+        );
+        assert_eq!(input_wkb_bytes(&scalar(ScalarValue::Binary(None))), 0);
     }
 }
