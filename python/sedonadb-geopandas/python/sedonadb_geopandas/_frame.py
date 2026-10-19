@@ -1166,10 +1166,10 @@ class GeoDataFrame:
                 when writing 1.1.0). Defaults to the one that fits
                 `write_covering_bbox`.
 
-        Every geometry column needs a CRS: SedonaDB's GeoParquet writer does not
-        write an unknown one. The file's `primary_column` is chosen by SedonaDB's
-        heuristic (a column named `geometry`, `geography`, `geom` or `geog`, else
-        the first geometry column), not by the active geometry column.
+        Geometry columns without a CRS are written with an explicit null CRS.
+        The file's `primary_column` is chosen by SedonaDB's heuristic (a column
+        named `geometry`, `geography`, `geom` or `geog`, else the first geometry
+        column), not by the active geometry column.
         """
         if kwargs:
             raise NotImplementedError(
@@ -1214,13 +1214,6 @@ class GeoDataFrame:
                 f"'.parquet'), got {os.fspath(path)!r}: SedonaDB writes a "
                 f"directory of files to a path without one"
             )
-        for name in _geometry_column_names(self._df):
-            if self._df.schema.field(name).type.crs is None:
-                raise ValueError(
-                    f"to_parquet() cannot write geometry column {name!r} without a "
-                    f"CRS: SedonaDB's GeoParquet writer does not write an unknown "
-                    f"one. Assign one with set_crs() first."
-                )
         if write_covering_bbox:
             for name in _geometry_column_names(self._df):
                 covering = "bbox" if name == "geometry" else f"{name}_bbox"

@@ -55,6 +55,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_force_dim::st_force3dm_udf,
         crate::st_force_dim::st_force4d_udf,
         crate::st_geohash::st_geohash_udf,
+        crate::st_geometries::st_geometries_udf,
         crate::st_geometryn::st_geometryn_udf,
         crate::st_geometrytype::st_geometry_type_udf,
         crate::st_geomfromewkb::st_geomfromewkb_udf,

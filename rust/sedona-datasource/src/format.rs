@@ -345,10 +345,19 @@ impl FileSource for ExternalFileSource {
         &self,
         projection: &ProjectionExprs,
     ) -> Result<Option<Arc<dyn FileSource>>> {
+        // A projection pushed down onto one already pushed down refers to that
+        // projection's output, not to the file schema (e.g., a rename on top of
+        // column pruning), so the two are merged first, as DataFusion's own
+        // file sources do.
+        let projection = match &self.split_projection {
+            Some(existing) => existing.source.try_merge(projection)?,
+            None => projection.clone(),
+        };
+
         // Use SplitProjection to handle any projection:
         // - file_indices provides column pruning (always works)
         // - ProjectionOpener handles reordering/expressions/renames after reading
-        let split_projection = SplitProjection::new(self.table_schema.file_schema(), projection);
+        let split_projection = SplitProjection::new(self.table_schema.file_schema(), &projection);
 
         Ok(Some(Arc::new(Self {
             split_projection: Some(split_projection),
@@ -763,6 +772,44 @@ mod test {
         assert_eq!(batches.len(), 2);
         assert_eq!(batches[0].num_rows(), 1);
         assert_eq!(batches[1].num_rows(), 1);
+    }
+
+    #[tokio::test]
+    async fn projection_with_a_subset_and_a_rename() {
+        // Column pruning narrows the scan first; a projection that renames a
+        // column is then pushed down on top of it, and its column indices refer
+        // to the narrowed output rather than to the file schema.
+        let spec = Arc::new(EchoSpec::default());
+        let ctx = SessionContext::new();
+        let (_temp_dir, files) = create_echo_spec_temp_dir();
+        let provider = external_table(
+            spec,
+            &ctx,
+            files
+                .iter()
+                .map(|f| ListingTableUrl::parse(f.to_string_lossy()).unwrap())
+                .collect(),
+            true,
+            None,
+        )
+        .await
+        .unwrap();
+        let batches = ctx
+            .read_table(provider)
+            .unwrap()
+            .select(vec![
+                datafusion::prelude::col("filter_count"),
+                datafusion::prelude::col("option_value").alias("renamed"),
+            ])
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        let schema = batches[0].schema();
+        assert_eq!(schema.field(0).name(), "filter_count");
+        assert_eq!(schema.field(0).data_type(), &DataType::Int32);
+        assert_eq!(schema.field(1).name(), "renamed");
+        assert_eq!(schema.field(1).data_type(), &DataType::Utf8);
     }
 
     #[tokio::test]

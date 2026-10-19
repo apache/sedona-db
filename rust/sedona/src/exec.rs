@@ -886,6 +886,16 @@ mod tests {
     #[tokio::test]
     async fn foreign_async_lookup_and_builtin_fallback() -> Result<()> {
         let (ctx, catalog) = test_context();
+        let foreign = ctx.table_provider("foreign.public.existing").await?;
+        assert_eq!(foreign.schema().field(0).name(), "value");
+        assert_eq!(
+            ctx.table("foreign.public.existing")
+                .await?
+                .collect()
+                .await?
+                .len(),
+            0
+        );
         ctx.sql("SELECT value FROM foreign.public.existing")
             .await?
             .collect()
@@ -894,6 +904,8 @@ mod tests {
             .await?
             .collect()
             .await?;
+        assert!(ctx.catalog_registry().table("builtin").await?.is_some());
+        assert!(ctx.table_provider("missing").await.is_err());
         ctx.sql("SELECT * FROM builtin JOIN foreign.public.existing USING (value)")
             .await?
             .collect()
@@ -912,6 +924,43 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("foreign catalog lookup failed"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn information_schema_uses_builtin_fallback() -> Result<()> {
+        let ctx = SedonaContext::new();
+        ctx.ctx
+            .state_ref()
+            .write()
+            .config_mut()
+            .options_mut()
+            .catalog
+            .information_schema = true;
+        ctx.table_provider("information_schema.tables").await?;
+        ctx.table("information_schema.tables")
+            .await?
+            .collect()
+            .await?;
+
+        // Registering a foreign catalog enables the custom SQL planner. Its
+        // built-in fallback must retain DataFusion's virtual information schema.
+        let (ctx, _) = test_context();
+        ctx.ctx
+            .state_ref()
+            .write()
+            .config_mut()
+            .options_mut()
+            .catalog
+            .information_schema = true;
+        ctx.table("information_schema.tables")
+            .await?
+            .collect()
+            .await?;
+        ctx.sql("SELECT table_name FROM information_schema.tables")
+            .await?
+            .collect()
+            .await?;
         Ok(())
     }
 

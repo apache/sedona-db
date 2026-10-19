@@ -133,10 +133,7 @@ differences that come from SedonaDB's readers and GeoParquet writer:
   `geography`, `geom` or `geog`, else the first geometry column) rather than the
   file's metadata or the frame's active geometry. This matters only for files
   with several geometry columns (apache/sedona-db#1404).
-- A file that declares an unknown CRS (`"crs": null`, which GeoPandas writes for
-  a frame without one) reads back as OGC:CRS84, and `to_parquet()` refuses a
-  geometry column without a CRS (apache/sedona-db#1404). EPSG:4326 is written as
-  OGC:CRS84.
+- EPSG:4326 is written as OGC:CRS84.
 - The covering (bounding-box) columns a file's metadata declares are left out
   on read, as in GeoPandas, for local files only: a remote file's metadata is
   not read, so its coverings stay. A covering is written for every geometry
