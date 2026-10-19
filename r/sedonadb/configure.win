@@ -108,6 +108,10 @@ if [ -z "${SAVVY_FEATURES+x}" ]; then
   SAVVY_FEATURES="s2geography gdal proj"
 fi
 
+# Cargo accepts comma- or space-separated feature lists. Normalize to spaces so
+# the feature checks below handle both forms consistently.
+SAVVY_FEATURES="$(printf '%s' "${SAVVY_FEATURES}" | tr ',' ' ')"
+
 # e.g. SAVVY_FEATURES="a b"  -->  "--features 'a b'"
 if [ -n "${SAVVY_FEATURES}" ]; then
   FEATURE_FLAGS="--features '${SAVVY_FEATURES}'"
@@ -151,18 +155,17 @@ S2_CMAKE_PREFIX_PATH=""
 S2_OPENSSL_ROOT_DIR=""
 SPATIAL_VCPKG_PREFIX=""
 GDAL_VERSION=""
-SAVVY_FEATURE_WORDS="$(printf '%s' "${SAVVY_FEATURES}" | tr ',' ' ')"
 
 NEEDS_S2=false
 NEEDS_GDAL=false
 NEEDS_PROJ=false
-case " ${SAVVY_FEATURE_WORDS} " in
+case " ${SAVVY_FEATURES} " in
   *" s2geography "*) NEEDS_S2=true ;;
 esac
-case " ${SAVVY_FEATURE_WORDS} " in
+case " ${SAVVY_FEATURES} " in
   *" gdal "*) NEEDS_GDAL=true ;;
 esac
-case " ${SAVVY_FEATURE_WORDS} " in
+case " ${SAVVY_FEATURES} " in
   *" proj "*) NEEDS_PROJ=true ;;
 esac
 
