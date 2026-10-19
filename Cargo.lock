@@ -6472,7 +6472,6 @@ name = "sedonadb-zarr"
 version = "0.6.0"
 dependencies = [
  "arrow-array",
- "arrow-buffer",
  "object_store",
  "pyo3",
  "sedona-raster",
