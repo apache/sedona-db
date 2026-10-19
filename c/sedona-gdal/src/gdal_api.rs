@@ -45,6 +45,22 @@ unsafe extern "C" {
     ) -> i32;
 }
 
+// gdal-sys 0.12 does not expose MEMCreate, even when its bindgen feature is
+// enabled: gdal_mem.h is not included in its wrapper and MEM functions are not
+// in its allowlist. Declare the stable C ABI locally when the linked GDAL has
+// the symbol.
+#[cfg(all(feature = "gdal-sys", gdal_has_mem_create))]
+unsafe extern "C" {
+    #[link_name = "MEMCreate"]
+    fn gdal_sys_mem_create(
+        x_size: i32,
+        y_size: i32,
+        bands: i32,
+        data_type: crate::gdal_dyn_bindgen::GDALDataType,
+        options: *const *const std::ffi::c_char,
+    ) -> *mut std::ffi::c_void;
+}
+
 // GDAL 3.12 and earlier predate the public MEMCreate C API. Unix and MinGW use
 // the Itanium C++ ABI, so referencing the private constructor preserves the
 // fast path and makes static linkers retain its object from libgdal.a.
@@ -221,7 +237,9 @@ impl GdalApi {
         set_fn!(GDALGetDataTypeSizeBytes);
 
         #[cfg(gdal_has_mem_create)]
-        set_fn!(MEMCreate);
+        {
+            inner.MEMCreate = Some(gdal_sys_mem_create);
+        }
 
         #[cfg(not(gdal_has_mem_create))]
         {
