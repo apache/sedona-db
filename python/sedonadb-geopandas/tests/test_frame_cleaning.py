@@ -223,6 +223,23 @@ def test_drop_duplicates_by_geometry_keeps_the_crs():
     assert result.crs == "EPSG:3857"
 
 
+def test_drop_duplicates_with_names_like_its_own():
+    # The keys are added under unused names, all at once, so none may take
+    # another's or a column's name.
+    ours = _frame_of(
+        b=pa.array([1, 1, 2]),
+        _b=pa.array([5, 5, 5]),
+        __b=pa.array([7, 8, 9]),
+        ___b=pa.array([0, 0, 0]),
+    )
+    frame = ours.to_geopandas()
+    for subset in (["b", "_b"], ["b", "_b", "__b"], None):
+        got = ours.drop_duplicates(subset=subset).to_geopandas()
+        expected = frame.drop_duplicates(subset=subset)
+        assert list(got.columns) == list(expected.columns)
+        assert len(got) == len(expected)
+
+
 def test_drop_duplicates_validates():
     ours = sgpd.from_geopandas(_duplicated())
     with pytest.raises(ValueError, match="keep must be either"):
@@ -248,6 +265,16 @@ def test_assign_matches_pandas():
         assert _rows(got, by="geometry") == _rows(expected, by="geometry")
     # The frame itself is unchanged.
     assert list(ours.columns) == ["f", "i", "s", "geometry"]
+
+
+def test_assign_keeps_values_aside_under_names_no_other_takes():
+    # With a column named __b, "b" is kept aside as ___b, which "_b" would
+    # take too if names were not reserved among the values kept aside.
+    ours = _frame_of(x=pa.array([1, 2]), __b=pa.array([0, 0]))
+    frame = ours.to_geopandas()
+    got = ours.assign(x=0, b=ours["x"], _b=ours["x"] + 10).to_geopandas()
+    expected = frame.assign(x=0, b=frame["x"], _b=frame["x"] + 10)
+    assert got.to_dict("list") == expected.to_dict("list")
 
 
 def test_assign_keeps_values_aside_under_names_no_keyword_takes():

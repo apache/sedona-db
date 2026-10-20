@@ -591,7 +591,7 @@ class GeoDataFrame:
             # A Series value was computed from this frame before assign() ran,
             # as pandas sees it; kept aside under unused names, it can't be
             # changed by an earlier keyword replacing a column it reads.
-            df = self._df
+            kept = []
             for key, value in kwargs.items():
                 if isinstance(value, Series):
                     if not self._accepts(value):
@@ -600,11 +600,13 @@ class GeoDataFrame:
                             "DataFrame: there is no row alignment, so the result "
                             "would be silently wrong."
                         )
-                    # Nor any name a keyword assigns, which would overwrite it.
-                    stashed[key] = _unused_name(df, f"__{key}", reserved=kwargs)
-                    df = df.mutate(value._expr.alias(stashed[key]))
+                    # Nor a name a keyword assigns, which would overwrite it,
+                    # or another value kept aside.
+                    reserved = [*kwargs, *stashed.values()]
+                    stashed[key] = _unused_name(self._df, f"__{key}", reserved)
+                    kept.append(value._expr.alias(stashed[key]))
             if stashed:
-                result._df = df
+                result._df = self._df.mutate(*kept)
                 result._ancestors = [self._df, *self._ancestors]
         visible = list(self.columns)
         for key, value in kwargs.items():
@@ -733,8 +735,7 @@ class GeoDataFrame:
         names = self._labels(subset)
         if not names:
             raise ValueError("drop_duplicates() needs at least one column to compare")
-        df = self._df
-        keys = []
+        keys, exprs = [], []
         for name in names:
             column = self[name]
             if isinstance(column, GeoSeries):
@@ -745,9 +746,11 @@ class GeoDataFrame:
                     # The engine groups NaN apart from null and -0.0 apart
                     # from 0.0; pandas' duplicate test holds them equal.
                     key = key.funcs.nanvl(lit(None)) + lit(0.0)
-            alias = _unused_name(df, f"__{name}")
-            keys.append(alias)
-            df = df.mutate(key.alias(alias))
+            keys.append(_unused_name(self._df, f"__{name}", reserved=keys))
+            exprs.append(key.alias(keys[-1]))
+        # One projection for all keys: one per key makes the plan, and the
+        # time to plan it, grow with every column.
+        df = self._df.mutate(*exprs)
         # first_value() takes every column from the same row of a group.
         aggregates = [df[name].funcs.first_value().alias(name) for name in self.columns]
         count = _unused_name(df, "__count")
