@@ -187,6 +187,71 @@ def test_where_and_mask_replace_where_the_condition_is_missing():
     _check(gdf["x"].mask(gdf["c"], 0), frame["x"].mask(cond, 0))
 
 
+def _frame_of(**columns):
+    table = pa.table(columns)
+    return sgpd.GeoDataFrame(sgpd.default_context().create_data_frame(table))
+
+
+def test_where_keeps_nested_values_exactly():
+    # A replaced value is replaced whatever its type, a missing one included.
+    gdf = _frame_of(
+        l=pa.array([[1], None, [3]]),
+        st=pa.array([{"a": 1}, None, {"a": 3}]),
+        k=pa.array([False, True, True]),
+    )
+    assert gdf["l"].where(gdf["k"]).to_pandas().isna().tolist() == [True, True, False]
+    two = lit(pa.scalar([2], pa.list_(pa.int64())))
+    got = gdf["l"].where(gdf["k"], two).to_pandas().tolist()
+    assert [list(v) if v is not None else None for v in got] == [[2], None, [3]]
+    struct = lit(pa.scalar({"a": 2}, pa.struct([("a", pa.int64())])))
+    assert gdf["st"].where(gdf["k"], struct).to_pandas().tolist() == [
+        {"a": 2},
+        None,
+        {"a": 3},
+    ]
+
+
+def test_where_keeps_temporal_precision():
+    # The engine would unify two timestamps at the coarser unit, truncating,
+    # and two durations as an interval.
+    times = [pd.Timestamp("2020-01-01 00:00:00.123456"), pd.Timestamp("2020-01-02")]
+    gdf = _frame_of(
+        t=pa.array(times, pa.timestamp("us")),
+        tz=pa.array(times, pa.timestamp("us", "UTC")),
+        d=pa.array([1500, 2000], pa.duration("ms")),
+        k=pa.array([True, False]),
+    )
+    got = gdf["t"].where(gdf["k"], pd.Timestamp("2021-01-01")).to_pandas()
+    assert got.tolist() == [times[0], pd.Timestamp("2021-01-01")]
+    got = gdf["d"].where(gdf["k"], pd.Timedelta(seconds=3)).to_pandas()
+    assert got.tolist() == [pd.Timedelta(milliseconds=1500), pd.Timedelta(seconds=3)]
+    # Another time zone is the same instant, in this column's time zone.
+    other = pd.Timestamp("2021-01-01 09:00", tz="Asia/Tokyo")
+    got = gdf["tz"].where(gdf["k"], other).to_pandas()
+    assert got.tolist()[1] == other and str(got.dt.tz) == "UTC"
+    with pytest.raises(TypeError, match="one kind of value"):
+        gdf["t"].where(gdf["k"], other)
+
+
+def test_where_with_encoded_conditions():
+    for condition in [
+        pa.RunEndEncodedArray.from_arrays(
+            pa.array([1, 2, 3], pa.int32()), pa.array([True, False, None])
+        ),
+        pa.array([True, False, None]).dictionary_encode(),
+    ]:
+        gdf = _frame_of(x=pa.array([10, 20, 30]), c=condition)
+        assert gdf["x"].where(gdf["c"], 0).to_pandas().tolist() == [10, 0, 0]
+        assert gdf["x"].mask(gdf["c"], 0).to_pandas().tolist() == [0, 20, 0]
+
+
+def test_where_on_a_column_of_the_null_type():
+    # Such a column holds no kind of value yet, so it takes the other's.
+    gdf = _frame_of(z=pa.array([None, None]), k=pa.array([True, False]))
+    assert gdf["z"].where(gdf["k"], 0).to_pandas().tolist()[1] == 0
+    assert gdf["z"].where(gdf["k"]).to_pandas().isna().all()
+
+
 def test_where_validates_its_arguments():
     gdf = _frame()
     with pytest.raises(ValueError, match="same shape"):

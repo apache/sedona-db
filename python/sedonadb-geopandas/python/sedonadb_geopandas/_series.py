@@ -668,36 +668,55 @@ class Series:
                 f"condition, not a {type(cond).__name__} (there is no row "
                 f"alignment)"
             )
-        expr = _operand(self._df, cond)
+        _operand(self._df, cond)
         dtype = cond._dtype()
         if not pa.types.is_boolean(dtype):
             raise ValueError(f"Boolean array expected for the condition, not {dtype}")
-        return expr
+        return cond._decoded()
 
     def _replace(self, keep, other, method):
         """This column where `keep` (never null) is true, and `other` elsewhere."""
+        chosen = self._decoded()
+        dtype = self._dtype()
+        replacement = self._replacement(other, method)
+        if replacement is None:
+            if pa.types.is_null(dtype):
+                # Nothing but missing values either way.
+                return Series(self._df, chosen, self._name)
+            replacement = lit(pa.scalar(None, dtype))
+        else:
+            replacement, other_dtype = replacement
+            target = _common_type(dtype, other_dtype)
+            if target is not None:
+                chosen, replacement = _cast(chosen, target), _cast(replacement, target)
+        return Series(self._df, _choose(keep, chosen, replacement), self._name)
+
+    def _replacement(self, other, method):
+        """`other`, to put in this column, with its type (None if missing); a
+        TypeError if it is another kind of value than the column holds."""
         from sedonadb.expr import Literal
 
         if _absent(other):
-            replacement = lit(None)
-        else:
-            replacement = _operand(self._df, other)
-            if not isinstance(replacement, (Expr, Literal)):
-                replacement = lit(replacement)
-            dtype = self._dtype()
-            other_dtype = _logical_type(
-                pa.schema(self._df.select(replacement.alias("x")).schema)
-                .field("x")
-                .type
-            )
-            if _value_kind(dtype) != _value_kind(other_dtype):
-                raise TypeError(
-                    f"{method}() can't put a {other_dtype} value in a {dtype} "
-                    f"column: a column holds one kind of value"
-                )
-        return Series(
-            self._df, _choose(self._df, keep, self._decoded(), replacement), self._name
+            return None
+        replacement = _operand(self._df, other)
+        if not isinstance(replacement, (Expr, Literal)):
+            replacement = lit(replacement)
+        dtype = self._dtype()
+        other_dtype = _logical_type(
+            pa.schema(self._df.select(replacement.alias("x")).schema).field("x").type
         )
+        # A column of the null type holds no kind of value yet, and a null of
+        # the null type fits any column.
+        if (
+            not pa.types.is_null(dtype)
+            and not pa.types.is_null(other_dtype)
+            and _value_kind(dtype) != _value_kind(other_dtype)
+        ):
+            raise TypeError(
+                f"{method}() can't put a {other_dtype} value in a {dtype} "
+                f"column: a column holds one kind of value"
+            )
+        return replacement, other_dtype
 
     def clip(self, lower=None, upper=None):
         """Each value limited to the range from `lower` to `upper`, as in pandas.
@@ -1272,22 +1291,51 @@ def _fail_where(condition, message):
     return text.funcs.coalesce(lit("0")).cast(pa.int64())
 
 
-def _choose(df, keep, chosen, other):
+def _choose(keep, chosen, other):
     """`chosen` where `keep` (never null) is true, and `other` elsewhere.
 
-    The engine has no CASE expression here. nvl2 picks its second argument
-    where its first is not null, but needs that first argument in the type of
-    the values, so `keep` becomes a flag of that type: 1, cast to it, where
-    `keep` is true, and null elsewhere (as text first for a binary type, which
-    no number casts to).
+    The engine has no CASE expression here, so the two are put in a list and
+    the one wanted is taken from it by position (1 for `chosen`, 2 for
+    `other`), which keeps either exactly as it is, whatever its type. `other`
+    has to be typed (a null included) for the list to unify.
     """
-    dtype = pa.schema(df.select(chosen.alias("x")).schema).field("x").type
-    flag = keep.funcs.nullif(lit(False))
-    if pa.types.is_binary(dtype) or pa.types.is_large_binary(dtype):
-        flag = flag.cast(pa.string())
-    else:
-        flag = flag.cast(pa.int64())
-    return flag.cast(dtype).funcs.nvl2(chosen, other)
+    position = keep.cast(pa.int64()) * lit(-1) + lit(2)
+    return chosen.funcs.make_array(other).funcs.array_element(position)
+
+
+_TIME_UNITS = ["s", "ms", "us", "ns"]
+
+
+def _common_type(dtype, other):
+    """The type to give both sides of a selection where the engine's own
+    unification would lose something, or None where it would not.
+
+    Two timestamps or two durations take the finer of their units (and this
+    column's time zone): the engine takes the coarser unit of two timestamps,
+    truncating, and turns two durations into an interval. A column of the
+    null type takes the other's type, and a null of the null type this
+    column's.
+    """
+    if pa.types.is_null(dtype):
+        return other
+    if pa.types.is_null(other):
+        return dtype
+    for test, build in (
+        (pa.types.is_timestamp, lambda unit: pa.timestamp(unit, dtype.tz)),
+        (pa.types.is_duration, pa.duration),
+    ):
+        if test(dtype) and test(other):
+            return build(max(dtype.unit, other.unit, key=_TIME_UNITS.index))
+    return None
+
+
+def _cast(value, dtype):
+    """An expression or literal, cast to `dtype`."""
+    from sedonadb.expr import Literal
+
+    if isinstance(value, Literal):
+        return lit(_literal_value(value).cast(dtype))
+    return value.cast(dtype)
 
 
 def _half_even(value, dtype):
@@ -1343,11 +1391,10 @@ def _value_kind(dtype):
     kind = _kind(dtype)
     if kind != "other":
         return kind
-    for name, test in (
-        ("timestamp", pa.types.is_timestamp),
-        ("date", pa.types.is_date),
-        ("duration", pa.types.is_duration),
-    ):
+    if pa.types.is_timestamp(dtype):
+        # Time zone-aware and naive times don't mix, as in pandas.
+        return "timestamp" if dtype.tz is None else "timestamp with a time zone"
+    for name, test in (("date", pa.types.is_date), ("duration", pa.types.is_duration)):
         if test(dtype):
             return name
     return str(dtype)
@@ -1964,31 +2011,40 @@ class GeoSeries(Series):
         with this column's spatial kind and CRS. A replacement in another CRS
         is refused, as the engine refuses mixing CRS in an operation.
         """
+        replacement = self._replacement(other, method)
+        if replacement is None:
+            replacement = lit(pa.scalar(None, pa.binary()))
+        else:
+            replacement = replacement[0].cast(pa.binary())
+        wkb = _choose(keep, self._expr.geo.as_binary().cast(pa.binary()), replacement)
+        rebuilt = self._as_column_kind(wkb.funcs.st_geomfromwkb(), own_crs=None)
+        return self._geo(rebuilt)
+
+    def _replacement(self, other, method):
+        """`other` as WKB, to put in this column, with its type (None if
+        missing); a TypeError if it is not a geometry, and a ValueError if it
+        is in another CRS."""
         from sedonadb.expr import Literal
 
         if _absent(other):
-            replacement = lit(None)
-        else:
-            expr = self._other(other)
-            projected = None
-            if isinstance(expr, (Expr, Literal)):
-                projected = self._df.select(expr.alias("x")).schema
-            if projected is None or not projected.geometry_column_indices:
-                raise TypeError(
-                    f"GeoSeries.{method}() takes a geometry, not {type(other).__name__}"
-                )
-            crs, other_crs = self.crs, projected.field("x").type.crs
-            if (crs is None) != (other_crs is None) or (
-                crs is not None and not _same_crs(crs, other_crs.to_json())
-            ):
-                raise ValueError(
-                    f"GeoSeries.{method}() can't take a geometry in another CRS "
-                    f"({other_crs}) than this column's ({crs})"
-                )
-            replacement = expr.geo.as_binary()
-        wkb = _choose(self._df, keep, self._expr.geo.as_binary(), replacement)
-        rebuilt = self._as_column_kind(wkb.funcs.st_geomfromwkb(), own_crs=None)
-        return self._geo(rebuilt)
+            return None
+        expr = self._other(other)
+        projected = None
+        if isinstance(expr, (Expr, Literal)):
+            projected = self._df.select(expr.alias("x")).schema
+        if projected is None or not projected.geometry_column_indices:
+            raise TypeError(
+                f"GeoSeries.{method}() takes a geometry, not {type(other).__name__}"
+            )
+        crs, other_crs = self.crs, projected.field("x").type.crs
+        if (crs is None) != (other_crs is None) or (
+            crs is not None and not _same_crs(crs, other_crs.to_json())
+        ):
+            raise ValueError(
+                f"GeoSeries.{method}() can't take a geometry in another CRS "
+                f"({other_crs}) than this column's ({crs})"
+            )
+        return expr.geo.as_binary(), pa.binary()
 
     def to_geopandas(self):
         """Execute and return this column as a `geopandas.GeoSeries`."""
