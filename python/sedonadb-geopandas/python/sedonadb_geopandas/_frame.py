@@ -16,7 +16,9 @@
 # under the License.
 """GeoPandas-style GeoDataFrame backed by a lazy SedonaDB frame."""
 
+import functools
 import numbers
+import operator
 import os
 
 import pyarrow as pa
@@ -50,6 +52,7 @@ _PARQUET_COMPRESSION = {
 # Default for the `geometry` argument, distinguishing "not specified, apply the
 # heuristic" from an explicit `None` meaning "this frame has no active geometry".
 _DERIVE = object()
+_NO_DEFAULT = object()
 
 
 # GeoPandas' sjoin predicates, each mapped to the `.geo` method the engine's
@@ -563,6 +566,210 @@ class GeoDataFrame:
                 f"frame has no row order to count back from)"
             )
         return GeoDataFrame(self._df.limit(n), self._geometry_name)
+
+    def copy(self, deep=True):
+        """A copy of this frame, as in pandas.
+
+        The data is never changed in place, so `deep` changes nothing; a
+        Series of this frame works with the copy too.
+        """
+        return self._copy()
+
+    def assign(self, **kwargs):
+        """A copy of this frame with columns added or replaced, as in pandas.
+
+        Each keyword names a column. Its value is a Series from this frame, a
+        scalar, or a callable that takes the frame being built and returns
+        one of those, so that a later column can build on an earlier one. As
+        in pandas, a value that is not a callable is this frame's as it was,
+        even if an earlier keyword replaced a column it reads.
+        """
+        result = self._copy()
+        stashed = {}
+        if any(key in self.columns for key in kwargs):
+            # A Series value was computed from this frame before assign() ran,
+            # as pandas sees it; kept aside under unused names, it can't be
+            # changed by an earlier keyword replacing a column it reads.
+            df = self._df
+            for key, value in kwargs.items():
+                if isinstance(value, Series):
+                    if not self._accepts(value):
+                        raise ValueError(
+                            "Cannot assign a Series that comes from a different "
+                            "DataFrame: there is no row alignment, so the result "
+                            "would be silently wrong."
+                        )
+                    stashed[key] = _unused_name(df, f"__{key}")
+                    df = df.mutate(value._expr.alias(stashed[key]))
+            if stashed:
+                result._df = df
+                result._ancestors = [self._df, *self._ancestors]
+        visible = list(self.columns)
+        for key, value in kwargs.items():
+            if key in stashed:
+                value = result[stashed[key]]
+            elif callable(value) and not isinstance(value, Series):
+                if stashed:
+                    # The callable sees the frame being built, without the
+                    # values kept aside; what it reads resolves the same way
+                    # against the frame that has them.
+                    view = GeoDataFrame(
+                        result._df.select(*visible), result._geometry_name
+                    )
+                    value = value(view)
+                    if isinstance(value, Series) and value._df is view._df:
+                        value = type(value)(result._df, value._expr, value._name)
+                else:
+                    value = value(result)
+            result[key] = value
+            if key not in visible:
+                visible.append(key)
+        if stashed:
+            result._df = result._df.select(*visible)
+            result._ancestors = []
+        return result
+
+    def dropna(
+        self,
+        *,
+        axis=0,
+        how=_NO_DEFAULT,
+        thresh=_NO_DEFAULT,
+        subset=None,
+        inplace=False,
+        ignore_index=False,
+    ):
+        """Drop the rows that have missing values, as in pandas.
+
+        A row is dropped if any (`how="any"`, the default) or all
+        (`how="all"`) of the `subset` columns (every column by default) hold a
+        missing value: null, NaN in a float column, or a missing geometry (an
+        empty one is not missing). With `thresh` instead, a row is kept if at
+        least `thresh` of them hold a value. Rows only: choosing columns to
+        drop (`axis=1`) would take computing the data first. There is no
+        index, so `ignore_index` changes nothing.
+        """
+        if axis not in (0, "index"):
+            raise NotImplementedError(
+                "dropna() drops rows only (axis=0): choosing columns to drop "
+                "would take computing the data first"
+            )
+        if how is not _NO_DEFAULT and thresh is not _NO_DEFAULT:
+            raise TypeError(
+                "You cannot set both the how and thresh arguments at the same time."
+            )
+        if how is _NO_DEFAULT:
+            how = "any"
+        if how not in ("any", "all"):
+            raise ValueError(f"invalid how option: {how}")
+        names = self._labels(subset)
+        if not names:
+            # No column to look at, so no value present: as in pandas, every
+            # row is kept by how="any" and dropped by how="all".
+            kept = how == "any" if thresh is _NO_DEFAULT else thresh <= 0
+            df = self._df if kept else self._df.limit(0)
+            return self._finish(GeoDataFrame(df, self._geometry_name), inplace)
+        counts = [(~self[name]._missing()).cast(pa.int64()) for name in names]
+        present = functools.reduce(operator.add, counts)
+        if thresh is not _NO_DEFAULT:
+            keep = present >= lit(thresh)
+        elif how == "any":
+            keep = present == lit(len(names))
+        else:
+            keep = present > lit(0)
+        result = GeoDataFrame(self._df.filter(keep), self._geometry_name)
+        return self._finish(result, inplace)
+
+    def fillna(self, value=None, *, inplace=False):
+        """Fill missing values, as in pandas.
+
+        `value` is a scalar, filled into every column that holds its kind of
+        value, or a dict from column names to values (names of no column are
+        ignored, as in pandas). A column holds one kind of value, so a scalar
+        leaves columns of another kind as they are, where pandas would turn
+        them into Python objects (and GeoPandas refuses a non-geometry value
+        for a geometry column), while a dict value of another kind raises. A
+        geometry column is filled as `GeoSeries.fillna()` fills it.
+        """
+        if value is None:
+            raise ValueError("Must specify a fill 'value'")
+        if isinstance(value, dict):
+            fills = {name: fill for name, fill in value.items() if name in self.columns}
+        elif is_scalar(value):
+            fills = {name: value for name in self.columns if self[name]._holds(value)}
+        else:
+            raise TypeError(
+                f"fillna() takes a scalar or a dict of column names to values, "
+                f"not a {type(value).__name__}"
+            )
+        result = self._copy()
+        for name, fill in fills.items():
+            result[name] = result[name].fillna(fill)
+        return self._finish(result, inplace)
+
+    def drop_duplicates(
+        self, subset=None, *, keep="first", inplace=False, ignore_index=False
+    ):
+        """Drop rows that duplicate others in the `subset` columns (every
+        column by default), as in pandas.
+
+        Values compare as pandas compares them for duplicates: NaN and a
+        missing value are one value, as are -0.0 and 0.0, and geometries
+        compare by their WKB. The frame has no row order, so `keep="first"`
+        and `keep="last"` both keep one of the duplicate rows, whichever the
+        engine meets first; `keep=False` drops every row that has a duplicate.
+        There is no index, so `ignore_index` changes nothing.
+        """
+        if not (keep is False or keep in ("first", "last")):
+            raise ValueError('keep must be either "first", "last" or False')
+        names = self._labels(subset)
+        if not names:
+            raise ValueError("drop_duplicates() needs at least one column to compare")
+        df = self._df
+        keys = []
+        for name in names:
+            column = self[name]
+            if isinstance(column, GeoSeries):
+                key = column._expr.geo.as_binary()
+            else:
+                key = column._decoded()
+                if column._is_floating():
+                    # The engine groups NaN apart from null and -0.0 apart
+                    # from 0.0; pandas' duplicate test holds them equal.
+                    key = key.funcs.nanvl(lit(None)) + lit(0.0)
+            alias = _unused_name(df, f"__{name}")
+            keys.append(alias)
+            df = df.mutate(key.alias(alias))
+        # first_value() takes every column from the same row of a group.
+        aggregates = [df[name].funcs.first_value().alias(name) for name in self.columns]
+        count = _unused_name(df, "__count")
+        if keep is False:
+            aggregates.append(df._ctx.lit(1).funcs.count().alias(count))
+        grouped = df.group_by(*keys).agg(*aggregates)
+        if keep is False:
+            grouped = grouped.filter(grouped[count] == lit(1))
+        result = GeoDataFrame(grouped.select(*self.columns), self._geometry_name)
+        return self._finish(result, inplace)
+
+    def _labels(self, subset):
+        """The column names `subset` lists (a name or names; every column if
+        None); a KeyError for names of no column, as in pandas."""
+        if subset is None:
+            return self.columns
+        names = [subset] if isinstance(subset, str) else list(subset)
+        unknown = [name for name in names if name not in self.columns]
+        if unknown:
+            raise KeyError(unknown)
+        return names
+
+    def _finish(self, result, inplace):
+        """`result`, or with `inplace`, None, this frame having become it."""
+        if not inplace:
+            return result
+        self._df = result._df
+        self._geometry_name = result._geometry_name
+        self._ancestors = result._ancestors
+        return None
 
     def to_crs(self, crs):
         """Reproject the geometry column to `crs` (`ST_Transform`)."""

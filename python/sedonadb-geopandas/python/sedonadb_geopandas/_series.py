@@ -533,19 +533,32 @@ class Series:
     notnull = notna
 
     def fillna(self, value):
-        """Replace missing values (null, or NaN in a float column) with `value`."""
+        """Replace missing values (null, or NaN in a float column) with `value`.
+
+        `value` is a scalar or a Series from this frame, of the same kind of
+        value as this column (a column holds one kind of value).
+        """
         if value is None:
             raise ValueError("Must specify a fill 'value'")
-        if not is_scalar(value):
+        if not isinstance(value, Series) and not is_scalar(value):
             raise TypeError(
-                f"fillna() takes a single value, got {type(value).__name__}"
+                f"fillna() takes a single value or a Series of this frame, got "
+                f"{type(value).__name__}"
             )
-        fill = _operand(self._df, value)
-        expr = self._expr
-        if self._is_floating():
-            # NaN is missing in pandas; nanvl replaces it, coalesce the nulls.
-            expr = expr.funcs.nanvl(fill)
-        return Series(self._df, expr.funcs.coalesce(fill), self._name)
+        return self._replace(~self._missing(), value, "fillna")
+
+    def _holds(self, value):
+        """Whether a scalar `value` is the kind of value this column holds."""
+        try:
+            self._replacement(value, "fillna")
+        except TypeError:
+            return False
+        return True
+
+    def copy(self, deep=True):
+        """This column. Its data is never changed in place, so `deep` changes
+        nothing."""
+        return type(self)(self._df, self._expr, self._name)
 
     def isin(self, values):
         """Whether each value is one of `values`.

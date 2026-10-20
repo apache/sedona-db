@@ -130,6 +130,16 @@ a column of a new frame, which, like any column of another frame, can't be
 combined with the original's; `head()` takes no negative count, since there is
 no row order to count back from.
 
+`fillna()` follows the same rule: a scalar fills the columns that hold its kind
+of value and leaves the others as they are (pandas would turn them into Python
+objects, and GeoPandas refuses a non-geometry value for a geometry column), and
+a dict value of another kind raises. `drop_duplicates()` keeps one row of each
+group of duplicates, but with no row order, `keep="first"` and `keep="last"`
+cannot say which. `dropna()` drops rows only (`axis=0`), since choosing columns
+would take computing the data first. `assign()` evaluates a value that is not a
+callable on the frame as it was, even if an earlier keyword replaced a column it
+reads, as pandas does.
+
 `dissolve()` aggregates non-geometry columns with `"first"`, which is an
 unordered aggregate: it returns *some* value from the group rather than the one
 from the first row, and unlike GeoPandas it does not skip missing values, so a
