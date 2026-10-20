@@ -631,6 +631,201 @@ class Series:
 
     __hash__ = None
 
+    # -- selection, bounds, and rounding -----------------------------------
+    def where(self, cond, other=None):
+        """This column where `cond` is true, and `other` elsewhere, as in pandas.
+
+        `cond` is a boolean Series from this frame, or a callable that takes
+        this Series and returns one; a value is kept only where `cond` is
+        true, so a missing condition replaces it, as in pandas. `other` is a
+        scalar or a Series from this frame, of the same kind of value as this
+        column (a column holds one kind of value); by default, the replaced
+        values are missing.
+        """
+        keep = self._condition(cond, "where").funcs.coalesce(lit(False))
+        return self._replace(keep, other, "where")
+
+    def mask(self, cond, other=None):
+        """This column, with `other` where `cond` is true, as in pandas.
+
+        The inverse of `where()`: a value is kept only where `cond` is false,
+        so a missing condition replaces it here too.
+        """
+        keep = (~self._condition(cond, "mask")).funcs.coalesce(lit(False))
+        return self._replace(keep, other, "mask")
+
+    def _condition(self, cond, method):
+        """`cond` (or what a callable `cond` returns for this Series) as a
+        boolean expression over this frame."""
+        if callable(cond) and not isinstance(cond, Series):
+            cond = cond(self)
+        if not isinstance(cond, Series):
+            if is_scalar(cond):
+                # pandas' message: a single value is not a condition per row.
+                raise ValueError("Array conditional must be same shape as self")
+            raise TypeError(
+                f"{method}() takes a boolean Series from this frame as its "
+                f"condition, not a {type(cond).__name__} (there is no row "
+                f"alignment)"
+            )
+        expr = _operand(self._df, cond)
+        dtype = cond._dtype()
+        if not pa.types.is_boolean(dtype):
+            raise ValueError(f"Boolean array expected for the condition, not {dtype}")
+        return expr
+
+    def _replace(self, keep, other, method):
+        """This column where `keep` (never null) is true, and `other` elsewhere."""
+        from sedonadb.expr import Literal
+
+        if _absent(other):
+            replacement = lit(None)
+        else:
+            replacement = _operand(self._df, other)
+            if not isinstance(replacement, (Expr, Literal)):
+                replacement = lit(replacement)
+            dtype = self._dtype()
+            other_dtype = _logical_type(
+                pa.schema(self._df.select(replacement.alias("x")).schema)
+                .field("x")
+                .type
+            )
+            if _value_kind(dtype) != _value_kind(other_dtype):
+                raise TypeError(
+                    f"{method}() can't put a {other_dtype} value in a {dtype} "
+                    f"column: a column holds one kind of value"
+                )
+        return Series(
+            self._df, _choose(self._df, keep, self._decoded(), replacement), self._name
+        )
+
+    def clip(self, lower=None, upper=None):
+        """Each value limited to the range from `lower` to `upper`, as in pandas.
+
+        A bound is a scalar or a Series from this frame. A missing bound (None
+        or NaN, or a missing value of a Series bound) is no bound, and a
+        missing value stays missing. Two scalar bounds in the wrong order are
+        swapped, as pandas does.
+        """
+        if not isinstance(lower, Series) and not isinstance(upper, Series):
+            if not _absent(lower) and not _absent(upper):
+                try:
+                    if _plain(lower) > _plain(upper):
+                        lower, upper = upper, lower
+                except TypeError:
+                    pass
+        result = self
+        if not _absent(lower):
+            result = result._bounded(lower, operator.ge)
+        if not _absent(upper):
+            result = result._bounded(upper, operator.le)
+        return result
+
+    def _bounded(self, bound, op):
+        """This column, with `bound` wherever a value fails `value <op> bound`.
+
+        As in pandas, a missing value is kept, as is any value where a Series
+        bound is missing; comparisons follow pandas (-0.0 meets a bound of 0.0).
+        """
+        keep = self._compare(bound, op)._expr | self._missing()
+        if isinstance(bound, Series):
+            keep = keep | bound._missing()
+        return self._replace(keep, bound, "clip")
+
+    def between(self, left, right, inclusive="both"):
+        """Whether each value lies between `left` and `right`, as in pandas.
+
+        `inclusive` is "both", "neither", "left", or "right". A bound is a
+        scalar or a Series from this frame; a missing value or bound compares
+        False.
+        """
+        operators = {
+            "both": (operator.ge, operator.le),
+            "left": (operator.ge, operator.lt),
+            "right": (operator.gt, operator.le),
+            "neither": (operator.gt, operator.lt),
+        }
+        if not isinstance(inclusive, str) or inclusive not in operators:
+            raise ValueError(
+                "Inclusive has to be either string of 'both','left', 'right', "
+                "or 'neither'."
+            )
+        above, below = operators[inclusive]
+        return self._compare(left, above) & self._compare(right, below)
+
+    def round(self, decimals=0):
+        """Each value rounded to `decimals` places, half to even, as in pandas.
+
+        A negative `decimals` rounds to tens, hundreds, and so on. As in pandas
+        (NumPy), a float is scaled, rounded half to even, and scaled back in its
+        own precision; an integer is unchanged unless `decimals` is negative,
+        and a boolean is unchanged.
+        """
+        if not isinstance(decimals, numbers.Integral) or isinstance(decimals, bool):
+            raise TypeError(f"decimals must be an integer, got {decimals!r}")
+        dtype = self._dtype()
+        expr = self._decoded()
+        if pa.types.is_boolean(dtype) or (pa.types.is_integer(dtype) and decimals >= 0):
+            return Series(self._df, expr, self._name)
+        if pa.types.is_integer(dtype):
+            factor = lit(10.0**-decimals)
+            rounded = _half_even(expr.cast(pa.float64()) / factor, pa.float64())
+            return Series(self._df, (rounded * factor).cast(dtype), self._name)
+        if not pa.types.is_floating(dtype):
+            raise TypeError(f"round() needs an integer or float column, not {dtype}")
+        # float16 has no Arrow literal of its own; it is rounded as float32.
+        precision = pa.float32() if pa.types.is_float16(dtype) else dtype
+        value = expr.cast(precision)
+        factor = lit(pa.scalar(10.0 ** abs(decimals), precision))
+        if decimals >= 0:
+            rounded = _half_even(value * factor, precision) / factor
+        else:
+            rounded = _half_even(value / factor, precision) * factor
+        return Series(self._df, rounded.cast(dtype), self._name)
+
+    def abs(self):
+        """The absolute value of each element, as in pandas.
+
+        Numbers and timedeltas; a boolean column is returned unchanged.
+        """
+        dtype = self._dtype()
+        expr = self._decoded()
+        if pa.types.is_boolean(dtype):
+            return Series(self._df, expr, self._name)
+        if _kind(dtype) == "number":
+            return Series(self._df, expr.funcs.abs(), self._name)
+        if pa.types.is_duration(dtype):
+            # The engine's abs() takes numbers only; a duration's magnitude is
+            # that of its count of units.
+            magnitude = expr.cast(pa.int64()).funcs.abs().cast(dtype)
+            return Series(self._df, magnitude, self._name)
+        raise TypeError(f"abs() needs a numeric or timedelta column, not {dtype}")
+
+    def __abs__(self):
+        return self.abs()
+
+    # -- row selection -----------------------------------------------------
+    def dropna(self):
+        """This column without its missing values.
+
+        Dropping rows makes a new frame: the result can't be combined with a
+        Series of the original one (there is no row alignment).
+        """
+        return type(self)(self._df.filter(~self._missing()), self._expr, self._name)
+
+    def head(self, n=5):
+        """At most `n` values of this column, as a Series of a new frame.
+
+        Which values come back isn't guaranteed: the frame has no inherent
+        row order.
+        """
+        if not isinstance(n, numbers.Integral) or n < 0:
+            raise ValueError(
+                f"head() needs a non-negative number of rows, got {n!r} (this "
+                f"frame has no row order to count back from)"
+            )
+        return type(self)(self._df.limit(n), self._expr, self._name)
+
     # -- reductions (computed) ---------------------------------------------
     def _valued(self):
         """This column, decoded, with every missing value as SQL null.
@@ -1075,6 +1270,87 @@ def _fail_where(condition, message):
     flag = passing.funcs.nullif(lit(True)).cast(pa.string())
     text = flag.funcs.replace(lit("false"), lit(message))
     return text.funcs.coalesce(lit("0")).cast(pa.int64())
+
+
+def _choose(df, keep, chosen, other):
+    """`chosen` where `keep` (never null) is true, and `other` elsewhere.
+
+    The engine has no CASE expression here. nvl2 picks its second argument
+    where its first is not null, but needs that first argument in the type of
+    the values, so `keep` becomes a flag of that type: 1, cast to it, where
+    `keep` is true, and null elsewhere (as text first for a binary type, which
+    no number casts to).
+    """
+    dtype = pa.schema(df.select(chosen.alias("x")).schema).field("x").type
+    flag = keep.funcs.nullif(lit(False))
+    if pa.types.is_binary(dtype) or pa.types.is_large_binary(dtype):
+        flag = flag.cast(pa.string())
+    else:
+        flag = flag.cast(pa.int64())
+    return flag.cast(dtype).funcs.nvl2(chosen, other)
+
+
+def _half_even(value, dtype):
+    """`value` (of floating `dtype`) rounded to an integer, half to even, as
+    NumPy's `rint`.
+
+    The engine's round() sends halves away from zero. The magnitude is
+    rounded (up above a half, and at a half when its floor is odd), then the
+    sign restored, which also keeps a negative value that rounds to zero at
+    -0.0, as NumPy does. NaN and infinities pass through.
+    """
+
+    def number(v):
+        return lit(pa.scalar(v, dtype))
+
+    magnitude = value.funcs.abs()
+    floor = magnitude.funcs.floor()
+    fraction = magnitude - floor
+    odd = (floor / number(2.0)).funcs.floor() * number(2.0) != floor
+    up = (fraction > number(0.5)) | ((fraction == number(0.5)) & odd)
+    rounded = floor + up.cast(dtype)
+    # The engine orders -0.0 (and a negative NaN) below 0.0.
+    negative = value < number(0.0)
+    return rounded * (number(1.0) - number(2.0) * negative.cast(dtype))
+
+
+def _absent(value):
+    """Whether `value` is a missing scalar: None, NaN, pandas.NA, or a literal
+    holding one."""
+    from sedonadb.expr import Literal
+    from sedonadb_geopandas._frame import _is_missing
+
+    if isinstance(value, Series):
+        return False
+    if isinstance(value, Literal):
+        value = _literal_value(value)
+    return is_scalar(value) and _is_missing(normalize_scalar(value))
+
+
+def _plain(value):
+    """A scalar operand as a plain Python value, for comparing two bounds."""
+    from sedonadb.expr import Literal
+
+    if isinstance(value, Literal):
+        value = _literal_value(value)
+    value = normalize_scalar(value)
+    return value.as_py() if isinstance(value, pa.Scalar) else value
+
+
+def _value_kind(dtype):
+    """The kind of value an Arrow type holds, for telling which values a
+    column can take: number, bool, string, a temporal kind, or the type."""
+    kind = _kind(dtype)
+    if kind != "other":
+        return kind
+    for name, test in (
+        ("timestamp", pa.types.is_timestamp),
+        ("date", pa.types.is_date),
+        ("duration", pa.types.is_duration),
+    ):
+        if test(dtype):
+            return name
+    return str(dtype)
 
 
 def _same_crs(current, crs):
@@ -1676,6 +1952,41 @@ class GeoSeries(Series):
         # coalesce() drops the geometry type, so the choice is made on WKB
         # and the result rebuilt with this column's spatial kind and CRS.
         wkb = self._expr.geo.as_binary().funcs.coalesce(ctx.lit(value.wkb))
+        rebuilt = self._as_column_kind(wkb.funcs.st_geomfromwkb(), own_crs=None)
+        return self._geo(rebuilt)
+
+    def _replace(self, keep, other, method):
+        """As for any column, on geometry: `other` is a geometry (bare Shapely
+        or wrapped in `lit()`), a GeoSeries from this frame, or missing (the
+        default, as in GeoPandas).
+
+        The choice is made on WKB, as in `fillna()`, and the result rebuilt
+        with this column's spatial kind and CRS. A replacement in another CRS
+        is refused, as the engine refuses mixing CRS in an operation.
+        """
+        from sedonadb.expr import Literal
+
+        if _absent(other):
+            replacement = lit(None)
+        else:
+            expr = self._other(other)
+            projected = None
+            if isinstance(expr, (Expr, Literal)):
+                projected = self._df.select(expr.alias("x")).schema
+            if projected is None or not projected.geometry_column_indices:
+                raise TypeError(
+                    f"GeoSeries.{method}() takes a geometry, not {type(other).__name__}"
+                )
+            crs, other_crs = self.crs, projected.field("x").type.crs
+            if (crs is None) != (other_crs is None) or (
+                crs is not None and not _same_crs(crs, other_crs.to_json())
+            ):
+                raise ValueError(
+                    f"GeoSeries.{method}() can't take a geometry in another CRS "
+                    f"({other_crs}) than this column's ({crs})"
+                )
+            replacement = expr.geo.as_binary()
+        wkb = _choose(self._df, keep, self._expr.geo.as_binary(), replacement)
         rebuilt = self._as_column_kind(wkb.funcs.st_geomfromwkb(), own_crs=None)
         return self._geo(rebuilt)
 

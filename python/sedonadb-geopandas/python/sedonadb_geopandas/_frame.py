@@ -557,6 +557,11 @@ class GeoDataFrame:
         Note that this applies a limit without an ordering, so *which* rows come
         back isn't guaranteed — the frame has no inherent row order.
         """
+        if not isinstance(n, numbers.Integral) or n < 0:
+            raise ValueError(
+                f"head() needs a non-negative number of rows, got {n!r} (this "
+                f"frame has no row order to count back from)"
+            )
         return GeoDataFrame(self._df.limit(n), self._geometry_name)
 
     def to_crs(self, crs):

@@ -121,6 +121,15 @@ report a float. `unique()` and `value_counts()` cannot follow the order of first
 appearance, since a lazy frame has no row order: `value_counts()` breaks ties by
 value.
 
+`where()`, `mask()`, and `clip()` keep a column to one kind of value: a
+replacement or bound of another kind (text in a number column, say) raises,
+where pandas would turn the column into Python objects. `round()` rounds half to
+even as pandas (NumPy) does, and raises for a non-numeric column, as pandas 2
+does (pandas 3 returns it unchanged). `dropna()` and `head()` on a column return
+a column of a new frame, which, like any column of another frame, can't be
+combined with the original's; `head()` takes no negative count, since there is
+no row order to count back from.
+
 `dissolve()` aggregates non-geometry columns with `"first"`, which is an
 unordered aggregate: it returns *some* value from the group rather than the one
 from the first row, and unlike GeoPandas it does not skip missing values, so a
