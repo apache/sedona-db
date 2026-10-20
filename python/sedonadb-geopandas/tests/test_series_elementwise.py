@@ -91,6 +91,20 @@ def test_round_keeps_the_column_type():
         _frame()["f"].round(1.5)
 
 
+@pytest.mark.parametrize("decimals", [0, 1, 2, 3, -1, -2])
+def test_round_half_floats_matches_pandas(decimals):
+    # In float16 arithmetic, as NumPy rounds them: 0.55 to one place is 0.6,
+    # and 1000.5 scaled by 100 overflows float16.
+    values = np.array(
+        [0.55, 1.45, 2.675, 0.125, -0.55, 3.14159, 65.5, 1000.5], np.float16
+    )
+    got = _series(values).round(decimals).to_pandas()
+    assert got.dtype == np.float16
+    with np.errstate(over="ignore"):
+        expected = pd.Series(values).round(decimals)
+    assert np.array_equal(got.to_numpy(), expected.to_numpy(), equal_nan=True)
+
+
 def test_abs_matches_pandas():
     gdf = _frame()
     frame = gdf.to_geopandas()
@@ -231,6 +245,28 @@ def test_where_keeps_temporal_precision():
     assert got.tolist()[1] == other and str(got.dt.tz) == "UTC"
     with pytest.raises(TypeError, match="one kind of value"):
         gdf["t"].where(gdf["k"], other)
+
+
+def test_where_keeps_the_column_unit_for_an_exact_scalar():
+    # A nanosecond scalar that seconds hold exactly doesn't make the column
+    # nanoseconds, which can't hold year 3000; one that seconds can't hold
+    # does.
+    far = pd.Timestamp("3000-01-01")
+    gdf = _frame_of(
+        t=pa.array([far.to_pydatetime(), None], pa.timestamp("s")),
+        d=pa.array([10**12, None], pa.duration("s")),
+        k=pa.array([True, False]),
+    )
+    exact = pd.Timestamp("2021-01-01").as_unit("ns")
+    assert gdf["t"].where(gdf["k"], exact).to_pandas().tolist() == [far, exact]
+    assert gdf["t"].mask(~gdf["k"], exact).to_pandas().tolist() == [far, exact]
+    assert gdf["t"].clip(upper=exact).to_pandas().tolist()[0] == exact
+    seconds = pd.Timedelta(seconds=3).as_unit("ns")
+    got = gdf["d"].where(gdf["k"], seconds).to_pandas().tolist()
+    assert got[0].total_seconds() == 10**12 and got[1] == seconds
+    finer = pd.Timestamp("2021-01-01 00:00:00.5").as_unit("ns")
+    near = _frame_of(t=pa.array([1], pa.timestamp("s")), k=pa.array([False]))
+    assert near["t"].where(near["k"], finer).to_pandas().tolist() == [finer]
 
 
 def test_where_with_encoded_conditions():

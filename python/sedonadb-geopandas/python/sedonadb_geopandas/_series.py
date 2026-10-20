@@ -687,6 +687,10 @@ class Series:
         else:
             replacement, other_dtype = replacement
             target = _common_type(dtype, other_dtype)
+            if target is not None and target != dtype and _fits(replacement, dtype):
+                # A scalar this column's own type holds exactly leaves the
+                # column as it is: a finer unit could overflow its values.
+                target = dtype
             if target is not None:
                 chosen, replacement = _cast(chosen, target), _cast(replacement, target)
         return Series(self._df, _choose(keep, chosen, replacement), self._name)
@@ -792,14 +796,33 @@ class Series:
             return Series(self._df, (rounded * factor).cast(dtype), self._name)
         if not pa.types.is_floating(dtype):
             raise TypeError(f"round() needs an integer or float column, not {dtype}")
-        # float16 has no Arrow literal of its own; it is rounded as float32.
-        precision = pa.float32() if pa.types.is_float16(dtype) else dtype
-        value = expr.cast(precision)
-        factor = lit(pa.scalar(10.0 ** abs(decimals), precision))
-        if decimals >= 0:
-            rounded = _half_even(value * factor, precision) / factor
+        scale = 10.0 ** abs(decimals)
+        if pa.types.is_float16(dtype):
+            import numpy as np
+
+            # The engine has no float16 arithmetic, so each step is computed
+            # in float32 and rounded to float16, which, float32 having more
+            # than twice the precision, is what float16 arithmetic gives. The
+            # scale is a float16 too (infinite if it overflows), as in NumPy.
+            precision = pa.float32()
+
+            def step(v):
+                return v.cast(pa.float16()).cast(pa.float32())
+
+            with np.errstate(over="ignore"):
+                scale = float(np.float16(scale))
         else:
-            rounded = _half_even(value / factor, precision) * factor
+            precision = dtype
+
+            def step(v):
+                return v
+
+        value = expr.cast(precision)
+        factor = lit(pa.scalar(scale, precision))
+        if decimals >= 0:
+            rounded = step(_half_even(step(value * factor), precision) / factor)
+        else:
+            rounded = step(_half_even(step(value / factor), precision) * factor)
         return Series(self._df, rounded.cast(dtype), self._name)
 
     def abs(self):
@@ -1327,6 +1350,20 @@ def _common_type(dtype, other):
         if test(dtype) and test(other):
             return build(max(dtype.unit, other.unit, key=_TIME_UNITS.index))
     return None
+
+
+def _fits(value, dtype):
+    """Whether `value`, if a literal, converts to `dtype` exactly."""
+    from sedonadb.expr import Literal
+
+    if not isinstance(value, Literal):
+        return False
+    try:
+        # A safe cast refuses to lose anything (a finer unit's remainder).
+        _literal_value(value).cast(dtype)
+    except (pa.ArrowInvalid, pa.ArrowNotImplementedError):
+        return False
+    return True
 
 
 def _cast(value, dtype):
