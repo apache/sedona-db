@@ -216,9 +216,10 @@ def _binary_flag(condition):
     return condition.funcs.nullif(lit(False)).cast(pa.string()).cast(pa.binary())
 
 
-def _unused_name(df, name):
-    """`name`, prefixed with underscores until no column of `df` has it."""
-    while name in df.schema.names:
+def _unused_name(df, name, reserved=()):
+    """`name`, prefixed with underscores until no column of `df` has it, nor
+    is it one of the `reserved` names."""
+    while name in df.schema.names or name in reserved:
         name = f"_{name}"
     return name
 
@@ -599,7 +600,8 @@ class GeoDataFrame:
                             "DataFrame: there is no row alignment, so the result "
                             "would be silently wrong."
                         )
-                    stashed[key] = _unused_name(df, f"__{key}")
+                    # Nor any name a keyword assigns, which would overwrite it.
+                    stashed[key] = _unused_name(df, f"__{key}", reserved=kwargs)
                     df = df.mutate(value._expr.alias(stashed[key]))
             if stashed:
                 result._df = df
@@ -702,10 +704,16 @@ class GeoDataFrame:
                 f"fillna() takes a scalar or a dict of column names to values, "
                 f"not a {type(value).__name__}"
             )
-        result = self._copy()
-        for name, fill in fills.items():
-            result[name] = result[name].fillna(fill)
-        return self._finish(result, inplace)
+        if not fills:
+            return self._finish(self._copy(), inplace)
+        # Every fill is built on this frame as it is, as pandas evaluates a
+        # dict's values beforehand, so that filling one column cannot change
+        # what another is filled with; then all are applied at once.
+        filled = {name: self[name].fillna(fill)._expr for name, fill in fills.items()}
+        df = self._df.select(
+            *[filled.get(name, self._df[name]).alias(name) for name in self.columns]
+        )
+        return self._finish(GeoDataFrame(df, self._geometry_name), inplace)
 
     def drop_duplicates(
         self, subset=None, *, keep="first", inplace=False, ignore_index=False

@@ -21,7 +21,9 @@ import math
 
 import geopandas as gpd
 import numpy as np
+import pyarrow as pa
 import pytest
+from sedonadb.expr import lit
 from shapely.geometry import Point
 
 import sedonadb_geopandas as sgpd
@@ -148,6 +150,38 @@ def test_series_fillna_takes_a_series_of_the_frame():
     assert got == frame["f"].fillna(frame["i"] * 10).tolist()
 
 
+def _frame_of(**columns):
+    table = pa.table(columns)
+    return sgpd.GeoDataFrame(sgpd.default_context().create_data_frame(table))
+
+
+def test_fillna_reads_every_value_from_the_frame_as_it_was():
+    # Filling one column does not change what another is filled with, as in
+    # pandas, where a dict's values are evaluated beforehand.
+    ours = _frame_of(a=pa.array([1.0, None]), b=pa.array([None, 2.0]))
+    frame = ours.to_geopandas()
+    got = ours.fillna({"a": ours["b"], "b": ours["a"]}).to_geopandas()
+    expected = frame.fillna({"a": frame["b"], "b": frame["a"]})
+    assert got["a"].tolist() == expected["a"].tolist()
+    assert got["b"].tolist() == expected["b"].tolist()
+
+
+def test_fillna_of_nested_and_null_columns():
+    ours = _frame_of(
+        l=pa.array([[1], None]),
+        st=pa.array([{"a": 1}, None]),
+        z=pa.array([None, None]),
+    )
+    two = lit(pa.scalar([2], pa.list_(pa.int64())))
+    assert [list(v) for v in ours["l"].fillna(two).to_pandas()] == [[1], [2]]
+    struct = lit(pa.scalar({"a": 2}, pa.struct([("a", pa.int64())])))
+    assert ours["st"].fillna(struct).to_pandas().tolist() == [{"a": 1}, {"a": 2}]
+    # A column of the null type holds no kind of value yet, so it takes the
+    # fill's, from a frame-level scalar too.
+    assert ours["z"].fillna(0).to_pandas().tolist() == [0, 0]
+    assert ours.fillna(0).to_geopandas()["z"].tolist() == [0, 0]
+
+
 def _duplicated():
     return gpd.GeoDataFrame(
         {
@@ -214,6 +248,15 @@ def test_assign_matches_pandas():
         assert _rows(got, by="geometry") == _rows(expected, by="geometry")
     # The frame itself is unchanged.
     assert list(ours.columns) == ["f", "i", "s", "geometry"]
+
+
+def test_assign_keeps_values_aside_under_names_no_keyword_takes():
+    ours = _frame_of(x=pa.array([1, 2]))
+    frame = ours.to_geopandas()
+    got = ours.assign(x=0, __y=99, y=ours["x"]).to_geopandas()
+    expected = frame.assign(x=0, __y=99, y=frame["x"])
+    assert list(got.columns) == list(expected.columns)
+    assert got.to_dict("list") == expected.to_dict("list")
 
 
 def test_assign_geometry_and_lineage():
