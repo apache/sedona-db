@@ -6159,7 +6159,8 @@ subset of the file is needed for a given query.</p>
               (<code><a class="autorefs autorefs-external" title="typing.Union" href="https://docs.python.org/3/library/typing.html#typing.Union">Union</a>[<a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/stdtypes.html#str">str</a>, <a class="autorefs autorefs-external" title="pathlib.Path" href="https://docs.python.org/3/library/pathlib.html#pathlib.Path">Path</a>]</code>)
           –
           <div class="doc-md-description">
-            <p>A filename or directory to which parquet file(s) should be written.</p>
+            <p>A filename, directory, or URL (e.g., <code>s3://bucket/path.parquet</code>) to
+which parquet file(s) should be written.</p>
           </div>
         </li>
         <li class="doc-section-item field-body">
@@ -6173,7 +6174,10 @@ subset of the file is needed for a given query.</p>
 Common options are exposed as other arguments to <code>to_parquet()</code>; however,
 this argument allows setting any DataFusion Parquet writer option. If
 an option is specified here and by an argument to this function, the
-value specified as a keyword argument takes precedence.</p>
+value specified as a keyword argument takes precedence. Options for
+the object store a remote <code>path</code> is written to are passed here too,
+as for <code>read_parquet()</code> (e.g., <code>{"aws.region": "us-west-2"}</code>); their
+keys start with <code>aws.</code>, <code>gcp.</code>, or <code>azure.</code>.</p>
           </div>
         </li>
         <li class="doc-section-item field-body">

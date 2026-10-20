@@ -82,7 +82,9 @@ a parquet writer. Common options are exposed as other arguments to
 <code>sd_write_parquet()</code>; however, this argument allows setting any DataFusion
 Parquet writer option. If an option is specified here and by another
 argument to this function, the value specified as an explicit argument
-takes precedence.</p></dd>
+takes precedence. Options whose names start with <code>aws.</code>, <code>gcp.</code>, or
+<code>azure.</code> (e.g., <code>aws.region</code>) instead configure the object store for a
+remote <code>path</code> (e.g., <code>s3://</code>), as the <code>options</code> of <code><a href="sd_read_parquet.html">sd_read_parquet()</a></code> do.</p></dd>
 
 
 <dt id="arg-partition-by">partition_by<a class="anchor" aria-label="anchor" href="#arg-partition-by"></a></dt>
