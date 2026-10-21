@@ -24,6 +24,7 @@ pub mod probe_shuffle_exec;
 pub mod push_down_leaf_projections;
 pub mod query_planner;
 pub mod raster_materialization;
+pub mod raster_source_spread;
 mod spatial_expr_utils;
 pub mod spatial_join_physical_planner;
 pub mod spatial_predicate;
