@@ -49,26 +49,14 @@ pub(crate) async fn statement_to_plan(
         type_planner: builder.type_planner().clone(),
     };
     for reference in state.resolve_table_references(&statement)? {
-        let resolved = reference.resolve(
+        let resolved = reference.clone().resolve(
             &state.config_options().catalog.default_catalog,
             &state.config_options().catalog.default_schema,
         );
         if provider.tables.contains_key(&resolved) {
             continue;
         }
-        let table = if let Some(catalog) = ctx
-            .catalog_registry()
-            .foreign_catalog(&resolved.catalog)
-            .await?
-        {
-            catalog
-                .table(&[&resolved.catalog, &resolved.schema, &resolved.table])
-                .await?
-        } else if let Ok(schema) = state.schema_for_ref(resolved.clone()) {
-            schema.table(&resolved.table).await?
-        } else {
-            None
-        };
+        let table = ctx.catalog_registry().table(reference).await?;
         if let Some(table) = table {
             provider.tables.insert(resolved, provider_as_source(table));
         }

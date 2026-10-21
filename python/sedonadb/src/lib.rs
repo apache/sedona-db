@@ -21,6 +21,7 @@ use crate::{
     udf::{sedona_aggregate_udf, sedona_native_scalar_udf, sedona_scalar_udf},
 };
 use pyo3::{exceptions::PyValueError, ffi::Py_uintptr_t, prelude::*};
+use sedona::native_library::NativeLibrary;
 use sedona_adbc::AdbcSedonadbDriverInit;
 use sedona_gdal::global::{configure_global_gdal_api, with_global_gdal, GdalApiBuilder};
 use sedona_proj::register::{configure_global_proj_engine, ProjCrsEngineBuilder};
@@ -98,6 +99,9 @@ fn configure_proj_shared(
         builder = builder.with_search_paths(vec![search_path.into()]);
     }
 
+    builder
+        .build()
+        .map_err(|e| PySedonaError::SedonaPython(e.to_string()))?;
     configure_global_proj_engine(builder)
         .map_err(|e| PySedonaError::SedonaPython(e.to_string()))?;
     Ok(())
@@ -106,10 +110,63 @@ fn configure_proj_shared(
 #[pyfunction]
 fn configure_gdal_shared(shared_library_path: String) -> Result<(), PySedonaError> {
     let builder = GdalApiBuilder::default().with_shared_library(shared_library_path.into());
+    builder.build().map_err(|e| {
+        PySedonaError::SedonaPython(format!("Failed to load GDAL shared library: {e}"))
+    })?;
     configure_global_gdal_api(builder).map_err(|e| {
         PySedonaError::SedonaPython(format!("Failed to configure GDAL shared library: {e}"))
     })?;
     Ok(())
+}
+
+#[pyfunction]
+fn configure_proj_prefix_native(prefix: String) -> Result<(), PySedonaError> {
+    let installation = NativeLibrary::Proj
+        .from_prefix(prefix.as_ref())
+        .map_err(PySedonaError::SedonaPython)?;
+    configure_proj_shared(
+        Some(installation.shared_library.to_string_lossy().into_owned()),
+        Some(
+            installation
+                .data_dir
+                .join("proj.db")
+                .to_string_lossy()
+                .into_owned(),
+        ),
+        Some(installation.data_dir.to_string_lossy().into_owned()),
+    )
+}
+
+#[pyfunction]
+fn configure_proj_system_native() -> Result<(), PySedonaError> {
+    let mut errors = Vec::new();
+    for candidate in NativeLibrary::Proj.system_candidates() {
+        match configure_proj_shared(Some(candidate.to_string_lossy().into_owned()), None, None) {
+            Ok(()) => return Ok(()),
+            Err(e) => errors.push(e.to_string()),
+        }
+    }
+    Err(PySedonaError::SedonaPython(errors.join("; ")))
+}
+
+#[pyfunction]
+fn configure_gdal_prefix_native(prefix: String) -> Result<(), PySedonaError> {
+    let installation = NativeLibrary::Gdal
+        .from_prefix(prefix.as_ref())
+        .map_err(PySedonaError::SedonaPython)?;
+    configure_gdal_shared(installation.shared_library.to_string_lossy().into_owned())
+}
+
+#[pyfunction]
+fn configure_gdal_system_native() -> Result<(), PySedonaError> {
+    let mut errors = Vec::new();
+    for candidate in NativeLibrary::Gdal.system_candidates() {
+        match configure_gdal_shared(candidate.to_string_lossy().into_owned()) {
+            Ok(()) => return Ok(()),
+            Err(e) => errors.push(e.to_string()),
+        }
+    }
+    Err(PySedonaError::SedonaPython(errors.join("; ")))
 }
 
 /// Derive a north-up, GDAL-order geotransform from a spatial bounding box and
@@ -156,7 +213,11 @@ fn _lib(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     m.add_function(wrap_pyfunction!(begin_gdal_shutdown, m)?)?;
     m.add_function(wrap_pyfunction!(configure_gdal_shared, m)?)?;
+    m.add_function(wrap_pyfunction!(configure_gdal_prefix_native, m)?)?;
+    m.add_function(wrap_pyfunction!(configure_gdal_system_native, m)?)?;
     m.add_function(wrap_pyfunction!(configure_proj_shared, m)?)?;
+    m.add_function(wrap_pyfunction!(configure_proj_prefix_native, m)?)?;
+    m.add_function(wrap_pyfunction!(configure_proj_system_native, m)?)?;
     m.add_function(wrap_pyfunction!(expr::expr_binary, m)?)?;
     m.add_function(wrap_pyfunction!(expr::expr_col, m)?)?;
     m.add_function(wrap_pyfunction!(expr::expr_lit, m)?)?;

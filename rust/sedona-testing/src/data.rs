@@ -141,6 +141,21 @@ pub fn test_raster(name: &str) -> Result<String> {
     }
 }
 
+/// Get the path to a Zarr test fixture from the sedona-testing data directory.
+pub fn test_zarr(name: &str) -> Result<String> {
+    let base = sedona_testing_dir()?;
+    let path = format!("{}/data/zarr/{}", base, name);
+    if fs::exists(&path)? {
+        Ok(path)
+    } else {
+        sedona_internal_err!(
+            "sedona-testing Zarr fixture '{}' not found at '{}'",
+            name,
+            path
+        )
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -213,5 +228,22 @@ mod test {
         // Test that non-existent files return an error
         let err = test_raster("nonexistent.tiff");
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_zarr_resolves() {
+        let _guard = SERIAL_TEST.lock().unwrap();
+
+        let path = test_zarr("v3-geozarr-consolidated.zarr");
+        assert!(
+            path.is_ok(),
+            "Failed to find Zarr fixture: {:?}",
+            path.err()
+        );
+        let path_str = path.unwrap();
+        assert!(path_str.ends_with("v3-geozarr-consolidated.zarr"));
+        assert!(fs::exists(&path_str).unwrap());
+
+        assert!(test_zarr("nonexistent.zarr").is_err());
     }
 }

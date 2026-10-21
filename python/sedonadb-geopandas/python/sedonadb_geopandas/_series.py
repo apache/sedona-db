@@ -18,8 +18,10 @@
 
 import math
 import numbers
+import operator
 
 import pyarrow as pa
+from sedonadb.expr import Expr, lit
 
 from sedonadb_geopandas._temporal import (
     coerce_duration_scalar,
@@ -55,26 +57,17 @@ def is_scalar(value):
 
 
 def normalize_scalar(value):
-    """Normalize an accepted scalar into something a literal can hold.
+    """Normalize an accepted scalar into the value a literal should hold.
 
-    Passing the classifier is not the same as being constructible: a 0-d NumPy
-    array is a scalar but `lit()` cannot take it, and `pandas.NA` is a missing
-    sentinel `lit()` does not recognize. Unwrap the former to its Python value
-    and convert missing sentinels to `None` (SQL null). Callers apply this only
-    after `is_scalar` has accepted the value.
+    A 0-d NumPy array is unwrapped (and its content normalized in turn),
+    masked values and `pandas.NA` become `None` (SQL null), and NumPy scalars
+    become typed Arrow scalars, which keeps their dtype and lets callers such
+    as `isin` tell kinds apart. Callers apply this only after `is_scalar` has
+    accepted the value.
 
     Temporal scalars are handed to `_temporal.normalize_temporal_scalar`,
     which chooses units losslessly and keeps timezones.
     """
-    # lit() rejects a typed-null *nested* scalar (list, map, struct); a
-    # one-element typed Arrow array is the resolver's supported spelling of
-    # the same broadcast value.
-    if (
-        isinstance(value, pa.Scalar)
-        and not value.is_valid
-        and pa.types.is_nested(value.type)
-    ):
-        return pa.array([None], type=value.type)
     try:
         import numpy as np
 
@@ -187,6 +180,13 @@ def normalize_scalar(value):
     return value
 
 
+def _logical_type(dtype):
+    """`dtype` with any dictionary or run-end encoding unwrapped."""
+    while pa.types.is_dictionary(dtype) or pa.types.is_run_end_encoded(dtype):
+        dtype = dtype.value_type
+    return dtype
+
+
 def _numeric_value(other):
     """Resolve an operand to its numeric payload, unwrapping supported wrappers.
 
@@ -213,12 +213,7 @@ def _numeric_value(other):
         raw = value._value
         if isinstance(raw, int) and not -(2**63) <= raw < 2**63:
             raise OverflowError(f"{raw} overflows the signed 64-bit range")
-        arr = pa.array(value)
-        if len(arr) != 1:
-            raise ValueError(
-                f"Can't use a Literal resolving to {len(arr)} values as a single value"
-            )
-        value = arr[0].as_py()
+        value = _literal_value(value).as_py()
     if is_scalar(value):
         value = normalize_scalar(value)
     try:
@@ -227,6 +222,29 @@ def _numeric_value(other):
     except ImportError:
         pass
     return value
+
+
+def _literal_value(literal):
+    """The one value `literal` holds, as an Arrow scalar, encodings unwrapped.
+
+    Read through the literal's Arrow form, since SedonaDB accepts one-element
+    containers (an Arrow array, a pandas Series or one-cell frame) as
+    single-value literals; a literal resolving to any other number of values
+    is rejected rather than read as its first.
+    """
+    import pyarrow.compute as pc
+
+    arr = pa.array(literal)
+    if len(arr) != 1:
+        raise ValueError(
+            f"Can't use a Literal resolving to {len(arr)} values as a single value"
+        )
+    while pa.types.is_dictionary(arr.type) or pa.types.is_run_end_encoded(arr.type):
+        if pa.types.is_dictionary(arr.type):
+            arr = arr.dictionary_decode()
+        else:
+            arr = pc.run_end_decode(arr)
+    return arr[0]
 
 
 def _operand(df, other):
@@ -299,22 +317,52 @@ class Series:
 
     # -- element-wise comparisons -> boolean mask --------------------------
     def __gt__(self, other):
-        return Series(self._df, self._expr > _operand(self._df, other), self._name)
+        return self._compare(other, operator.gt)
 
     def __ge__(self, other):
-        return Series(self._df, self._expr >= _operand(self._df, other), self._name)
+        return self._compare(other, operator.ge)
 
     def __lt__(self, other):
-        return Series(self._df, self._expr < _operand(self._df, other), self._name)
+        return self._compare(other, operator.lt)
 
     def __le__(self, other):
-        return Series(self._df, self._expr <= _operand(self._df, other), self._name)
+        return self._compare(other, operator.le)
 
     def __eq__(self, other):
-        return Series(self._df, self._expr == _operand(self._df, other), self._name)
+        return self._compare(other, operator.eq)
 
     def __ne__(self, other):
-        return Series(self._df, self._expr != _operand(self._df, other), self._name)
+        return self._compare(other, operator.ne)
+
+    def _compare(self, other, op):
+        """`self <op> other`, compared as pandas compares.
+
+        A missing value on either side (null, or NaN in a float column)
+        compares False, and True for `!=`, so the result is never null and a
+        mask built from it keeps or drops the rows pandas would. The engine
+        alone answers null for a null, orders floats totally (NaN above every
+        number, -0.0 below 0.0), and so differs from pandas on all of these.
+        """
+        from sedonadb.expr import Literal
+        from sedonadb_geopandas._frame import _is_missing
+
+        rhs = _operand(self._df, other)
+        # A literal is missing if the value it holds is.
+        value = _literal_value(other) if isinstance(other, Literal) else other
+        if isinstance(other, Series):
+            missing = self._missing() | other._missing()
+        elif _is_missing(normalize_scalar(value)):
+            missing = self._expr.is_null() | lit(True)
+        else:
+            missing = self._missing()
+        expr = op(
+            _zero_normalized(self._df, self._expr), _zero_normalized(self._df, rhs)
+        )
+        if op is operator.ne:
+            expr = expr | missing
+        else:
+            expr = expr & ~missing
+        return Series(self._df, expr, self._name)
 
     # -- boolean composition of masks --------------------------------------
     def __and__(self, other):
@@ -408,10 +456,21 @@ class Series:
         column is integer for division purposes. Read from the projected
         schema, which is a plan build, not an execution.
         """
-        dtype = pa.schema(self._df.select(self._expr.alias("x")).schema).field("x").type
-        while pa.types.is_dictionary(dtype) or pa.types.is_run_end_encoded(dtype):
-            dtype = dtype.value_type
-        return dtype
+        return _logical_type(self._stored_dtype())
+
+    def _stored_dtype(self):
+        """This expression's Arrow type as stored, encodings included."""
+        return pa.schema(self._df.select(self._expr.alias("x")).schema).field("x").type
+
+    def _decoded(self):
+        """This expression with any dictionary or run-end encoding cast away.
+
+        Some functions (`isnan()`, some aggregates) accept only the plain
+        type, not an encoded one.
+        """
+        stored = self._stored_dtype()
+        dtype = _logical_type(stored)
+        return self._expr if dtype == stored else self._expr.cast(dtype)
 
     def _is_duration(self):
         return pa.types.is_duration(self._dtype())
@@ -443,7 +502,566 @@ class Series:
             self._name,
         )
 
+    # -- missing values, membership, and casting ---------------------------
+
+    def _is_floating(self):
+        return pa.types.is_floating(self._dtype())
+
+    def _missing(self):
+        """True where this column holds a missing value.
+
+        pandas treats NaN in a float column as missing too, not only null.
+        """
+        expr = self._expr.is_null()
+        if self._is_floating():
+            expr = expr | self._decoded().funcs.isnan()
+        return expr.funcs.coalesce(lit(True))
+
+    def isna(self):
+        """Whether each value is missing (null, or NaN in a float column).
+
+        As in GeoPandas, an empty geometry is not missing.
+        """
+        return Series(self._df, self._missing(), self._name)
+
+    isnull = isna
+
+    def notna(self):
+        """Whether each value is present: the inverse of `isna()`."""
+        return Series(self._df, ~self._missing(), self._name)
+
+    notnull = notna
+
+    def fillna(self, value):
+        """Replace missing values (null, or NaN in a float column) with `value`.
+
+        `value` is a scalar or a Series from this frame, of the same kind of
+        value as this column (a column holds one kind of value).
+        """
+        if value is None:
+            raise ValueError("Must specify a fill 'value'")
+        if not isinstance(value, Series) and not is_scalar(value):
+            raise TypeError(
+                f"fillna() takes a single value or a Series of this frame, got "
+                f"{type(value).__name__}"
+            )
+        return self._replace(~self._missing(), value, "fillna")
+
+    def _holds(self, value):
+        """Whether a scalar `value` is the kind of value this column holds."""
+        try:
+            self._replacement(value, "fillna")
+        except TypeError:
+            return False
+        return True
+
+    def copy(self, deep=True):
+        """This column. Its data is never changed in place, so `deep` changes
+        nothing."""
+        return type(self)(self._df, self._expr, self._name)
+
+    def isin(self, values):
+        """Whether each value is one of `values`.
+
+        As in pandas, values compare without coercion across kinds (a number
+        never matches a string, while True matches 1 and 1 matches 1.0), and a
+        missing value is a member only when `values` holds a missing marker
+        that pandas matches for this column's type: NaN but not None in a float
+        column, for instance.
+        """
+        if isinstance(values, (str, bytes)) or not hasattr(values, "__iter__"):
+            raise TypeError(
+                f"only list-like objects are allowed to be passed to isin(), you "
+                f"passed a {type(values).__name__!r}"
+            )
+        if isinstance(values, Series):
+            raise TypeError(
+                "isin() takes plain values, not a lazy Series; collect it first"
+            )
+        from sedonadb_geopandas._frame import _is_missing
+
+        given = list(values)
+        present, any_missing = [], False
+        for value in given:
+            normalized = normalize_scalar(value)
+            if _is_missing(normalized):
+                any_missing = True
+            else:
+                present.append(normalized)
+        dtype = self._dtype()
+        present = _comparable(dtype, present)
+        # False, as an expression over this column: a bare literal is not an
+        # expression, so `~`, `isna()` or `astype()` on the result would fail.
+        expr = self._expr.is_null() & lit(False)
+        if present:
+            expr = self._expr.isin(present).funcs.coalesce(lit(False))
+        if any_missing:
+            # The stored type, since an encoding can change the pandas dtype:
+            # a dictionary column becomes a categorical, whose missing value
+            # is NaN. The values as given, all of them: pandas' answer for a
+            # missing value can depend on the whole list (NumPy's NaT matches
+            # a missing geometry only on its own).
+            matches_null, matches_nan = _missing_members(
+                self._stored_dtype(), dtype, given
+            )
+            if matches_null:
+                expr = expr | self._expr.is_null()
+            if matches_nan:
+                expr = expr | self._decoded().funcs.isnan().funcs.coalesce(lit(False))
+        return Series(self._df, expr, self._name)
+
+    def astype(self, dtype):
+        """Cast to `dtype` (a NumPy/pandas dtype name, Python type, or Arrow type).
+
+        As in pandas, casting a missing value to an integer type raises, and a
+        float's fractional part is truncated. Casting to `bool` follows
+        truthiness: a number is True unless it is zero (NaN is True), a string
+        unless it is empty, and a missing value as pandas treats the missing
+        value of this column's type. Casting to a string keeps missing values
+        missing (pandas' `"string"` dtype, not `str`, which writes the text
+        "nan"), and a float's text is Arrow's formatting ("1" and "NaN" rather
+        than "1.0" and "nan"). Casting to `object` leaves the values as they
+        are: an Arrow-backed column has no object type.
+        """
+        if _is_object_dtype(dtype):
+            return Series(self._df, self._expr, self._name)
+        target = _arrow_type(dtype)
+        source = self._dtype()
+        if pa.types.is_boolean(target):
+            truth = _truthiness(self._expr, source)
+            if truth is not None:
+                return Series(self._df, truth, self._name)
+        expr = self._expr.cast(target)
+        if pa.types.is_integer(target):
+            # The engine casts a null to a null silently (and NaN with its own
+            # message); pandas raises for any missing value, an integer
+            # column's included.
+            expr = expr + _fail_where(
+                self._missing(),
+                "Cannot convert non-finite values (NA or inf) to integer",
+            ).cast(target)
+        return Series(self._df, expr, self._name)
+
     __hash__ = None
+
+    # -- selection, bounds, and rounding -----------------------------------
+    def where(self, cond, other=None):
+        """This column where `cond` is true, and `other` elsewhere, as in pandas.
+
+        `cond` is a boolean Series from this frame, or a callable that takes
+        this Series and returns one; a value is kept only where `cond` is
+        true, so a missing condition replaces it, as in pandas. `other` is a
+        scalar or a Series from this frame, of the same kind of value as this
+        column (a column holds one kind of value); by default, the replaced
+        values are missing.
+        """
+        keep = self._condition(cond, "where").funcs.coalesce(lit(False))
+        return self._replace(keep, other, "where")
+
+    def mask(self, cond, other=None):
+        """This column, with `other` where `cond` is true, as in pandas.
+
+        The inverse of `where()`: a value is kept only where `cond` is false,
+        so a missing condition replaces it here too.
+        """
+        keep = (~self._condition(cond, "mask")).funcs.coalesce(lit(False))
+        return self._replace(keep, other, "mask")
+
+    def _condition(self, cond, method):
+        """`cond` (or what a callable `cond` returns for this Series) as a
+        boolean expression over this frame."""
+        if callable(cond) and not isinstance(cond, Series):
+            cond = cond(self)
+        if not isinstance(cond, Series):
+            if is_scalar(cond):
+                # pandas' message: a single value is not a condition per row.
+                raise ValueError("Array conditional must be same shape as self")
+            raise TypeError(
+                f"{method}() takes a boolean Series from this frame as its "
+                f"condition, not a {type(cond).__name__} (there is no row "
+                f"alignment)"
+            )
+        _operand(self._df, cond)
+        dtype = cond._dtype()
+        if not pa.types.is_boolean(dtype):
+            raise ValueError(f"Boolean array expected for the condition, not {dtype}")
+        return cond._decoded()
+
+    def _replace(self, keep, other, method):
+        """This column where `keep` (never null) is true, and `other` elsewhere."""
+        chosen = self._decoded()
+        dtype = self._dtype()
+        replacement = self._replacement(other, method)
+        if replacement is None:
+            if pa.types.is_null(dtype):
+                # Nothing but missing values either way.
+                return Series(self._df, chosen, self._name)
+            replacement = lit(pa.scalar(None, dtype))
+        else:
+            replacement, other_dtype = replacement
+            target = _common_type(dtype, other_dtype)
+            if target is not None and target != dtype and _fits(replacement, dtype):
+                # A scalar this column's own type holds exactly leaves the
+                # column as it is: a finer unit could overflow its values.
+                target = dtype
+            if target is not None:
+                chosen, replacement = _cast(chosen, target), _cast(replacement, target)
+        return Series(self._df, _choose(keep, chosen, replacement), self._name)
+
+    def _replacement(self, other, method):
+        """`other`, to put in this column, with its type (None if missing); a
+        TypeError if it is another kind of value than the column holds."""
+        from sedonadb.expr import Literal
+
+        if _absent(other):
+            return None
+        replacement = _operand(self._df, other)
+        if not isinstance(replacement, (Expr, Literal)):
+            replacement = lit(replacement)
+        dtype = self._dtype()
+        other_dtype = _logical_type(
+            pa.schema(self._df.select(replacement.alias("x")).schema).field("x").type
+        )
+        # A column of the null type holds no kind of value yet, and a null of
+        # the null type fits any column.
+        if (
+            not pa.types.is_null(dtype)
+            and not pa.types.is_null(other_dtype)
+            and _value_kind(dtype) != _value_kind(other_dtype)
+        ):
+            raise TypeError(
+                f"{method}() can't put a {other_dtype} value in a {dtype} "
+                f"column: a column holds one kind of value"
+            )
+        return replacement, other_dtype
+
+    def clip(self, lower=None, upper=None):
+        """Each value limited to the range from `lower` to `upper`, as in pandas.
+
+        A bound is a scalar or a Series from this frame. A missing bound (None
+        or NaN, or a missing value of a Series bound) is no bound, and a
+        missing value stays missing. Two scalar bounds in the wrong order are
+        swapped, as pandas does.
+        """
+        if not isinstance(lower, Series) and not isinstance(upper, Series):
+            if not _absent(lower) and not _absent(upper):
+                try:
+                    if _plain(lower) > _plain(upper):
+                        lower, upper = upper, lower
+                except TypeError:
+                    pass
+        result = self
+        if not _absent(lower):
+            result = result._bounded(lower, operator.ge)
+        if not _absent(upper):
+            result = result._bounded(upper, operator.le)
+        return result
+
+    def _bounded(self, bound, op):
+        """This column, with `bound` wherever a value fails `value <op> bound`.
+
+        As in pandas, a missing value is kept, as is any value where a Series
+        bound is missing; comparisons follow pandas (-0.0 meets a bound of 0.0).
+        """
+        keep = self._compare(bound, op)._expr | self._missing()
+        if isinstance(bound, Series):
+            keep = keep | bound._missing()
+        return self._replace(keep, bound, "clip")
+
+    def between(self, left, right, inclusive="both"):
+        """Whether each value lies between `left` and `right`, as in pandas.
+
+        `inclusive` is "both", "neither", "left", or "right". A bound is a
+        scalar or a Series from this frame; a missing value or bound compares
+        False.
+        """
+        operators = {
+            "both": (operator.ge, operator.le),
+            "left": (operator.ge, operator.lt),
+            "right": (operator.gt, operator.le),
+            "neither": (operator.gt, operator.lt),
+        }
+        if not isinstance(inclusive, str) or inclusive not in operators:
+            raise ValueError(
+                "Inclusive has to be either string of 'both','left', 'right', "
+                "or 'neither'."
+            )
+        above, below = operators[inclusive]
+        return self._compare(left, above) & self._compare(right, below)
+
+    def round(self, decimals=0):
+        """Each value rounded to `decimals` places, half to even, as in pandas.
+
+        A negative `decimals` rounds to tens, hundreds, and so on. As in pandas
+        (NumPy), a float is scaled, rounded half to even, and scaled back in its
+        own precision; an integer is unchanged unless `decimals` is negative,
+        and a boolean is unchanged.
+        """
+        if not isinstance(decimals, numbers.Integral) or isinstance(decimals, bool):
+            raise TypeError(f"decimals must be an integer, got {decimals!r}")
+        dtype = self._dtype()
+        expr = self._decoded()
+        if pa.types.is_boolean(dtype) or (pa.types.is_integer(dtype) and decimals >= 0):
+            return Series(self._df, expr, self._name)
+        if pa.types.is_integer(dtype):
+            factor = lit(10.0**-decimals)
+            rounded = _half_even(expr.cast(pa.float64()) / factor, pa.float64())
+            return Series(self._df, (rounded * factor).cast(dtype), self._name)
+        if not pa.types.is_floating(dtype):
+            raise TypeError(f"round() needs an integer or float column, not {dtype}")
+        scale = 10.0 ** abs(decimals)
+        if pa.types.is_float16(dtype):
+            import numpy as np
+
+            # The engine has no float16 arithmetic, so each step is computed
+            # in float32 and rounded to float16, which, float32 having more
+            # than twice the precision, is what float16 arithmetic gives. The
+            # scale is a float16 too (infinite if it overflows), as in NumPy.
+            precision = pa.float32()
+
+            def step(v):
+                return v.cast(pa.float16()).cast(pa.float32())
+
+            with np.errstate(over="ignore"):
+                scale = float(np.float16(scale))
+        else:
+            precision = dtype
+
+            def step(v):
+                return v
+
+        value = expr.cast(precision)
+        factor = lit(pa.scalar(scale, precision))
+        if decimals >= 0:
+            rounded = step(_half_even(step(value * factor), precision) / factor)
+        else:
+            rounded = step(_half_even(step(value / factor), precision) * factor)
+        return Series(self._df, rounded.cast(dtype), self._name)
+
+    def abs(self):
+        """The absolute value of each element, as in pandas.
+
+        Numbers and timedeltas; a boolean column is returned unchanged.
+        """
+        dtype = self._dtype()
+        expr = self._decoded()
+        if pa.types.is_boolean(dtype):
+            return Series(self._df, expr, self._name)
+        if _kind(dtype) == "number":
+            return Series(self._df, expr.funcs.abs(), self._name)
+        if pa.types.is_duration(dtype):
+            # The engine's abs() takes numbers only; a duration's magnitude is
+            # that of its count of units.
+            magnitude = expr.cast(pa.int64()).funcs.abs().cast(dtype)
+            return Series(self._df, magnitude, self._name)
+        raise TypeError(f"abs() needs a numeric or timedelta column, not {dtype}")
+
+    def __abs__(self):
+        return self.abs()
+
+    # -- row selection -----------------------------------------------------
+    def dropna(self):
+        """This column without its missing values.
+
+        Dropping rows makes a new frame: the result can't be combined with a
+        Series of the original one (there is no row alignment).
+        """
+        return type(self)(self._df.filter(~self._missing()), self._expr, self._name)
+
+    def head(self, n=5):
+        """At most `n` values of this column, as a Series of a new frame.
+
+        Which values come back isn't guaranteed: the frame has no inherent
+        row order.
+        """
+        if not isinstance(n, numbers.Integral) or n < 0:
+            raise ValueError(
+                f"head() needs a non-negative number of rows, got {n!r} (this "
+                f"frame has no row order to count back from)"
+            )
+        return type(self)(self._df.limit(n), self._expr, self._name)
+
+    # -- reductions (computed) ---------------------------------------------
+    def _valued(self):
+        """This column, decoded, with every missing value as SQL null.
+
+        pandas skips missing values in reductions, and in a float column NaN
+        is missing; the engine's aggregates would count it, propagate it, or
+        sort it last. `nanvl()` tests each value for NaN, where an equality
+        test against NaN would miss a NaN of another sign or payload (the
+        engine's float ordering tells them apart).
+        """
+        expr = self._decoded()
+        if self._is_floating():
+            expr = expr.funcs.nanvl(lit(None))
+        return expr
+
+    def _reduce(self, aggregate):
+        """Compute one aggregate over this column as a pandas scalar."""
+        return self._df.agg(aggregate.alias("x")).to_pandas()["x"].iloc[0]
+
+    def _numeric(self, method):
+        """This column's values for an arithmetic reduction, booleans as 0/1."""
+        kind = _kind(self._dtype())
+        if kind == "bool":
+            return self._valued().cast(pa.int64())
+        if kind == "number":
+            return self._valued()
+        raise TypeError(
+            f"{method}() needs a numeric or boolean column, not {self._dtype()}"
+        )
+
+    def _ordered(self, method):
+        kind = _kind(self._dtype())
+        dtype = self._dtype()
+        if kind in ("number", "bool", "string") or _is_temporal(dtype):
+            return self._valued()
+        raise TypeError(f"{method}() is not supported for {dtype}")
+
+    def _distinct_values(self, method):
+        dtype = self._dtype()
+        if isinstance(dtype, pa.ExtensionType):
+            raise NotImplementedError(f"{method}() is not supported for geometry")
+        values = self._valued()
+        if pa.types.is_floating(dtype):
+            # -0.0 and 0.0 are one value to pandas, two to the engine's
+            # float ordering; adding 0.0 turns -0.0 into 0.0.
+            values = (values + lit(0.0)).cast(dtype)
+        return self._df.select(values.alias("x"))
+
+    def sum(self):
+        """The sum of the values, skipping missing ones; 0 when there are none.
+
+        Computes the result. As in pandas, booleans count as 0 and 1.
+        """
+        return self._reduce(self._numeric("sum").funcs.sum().funcs.coalesce(lit(0)))
+
+    def mean(self):
+        """The mean of the values, skipping missing ones; NaN when there are none."""
+        return self._reduce(self._numeric("mean").cast(pa.float64()).funcs.avg())
+
+    def median(self):
+        """The median of the values, skipping missing ones; NaN when there are none."""
+        return self._reduce(self._numeric("median").cast(pa.float64()).funcs.median())
+
+    def std(self, ddof=1):
+        """The standard deviation, skipping missing values (`ddof` 1 or 0)."""
+        return self._reduce(self._spread("std", ddof, "stddev", "stddev_pop"))
+
+    def var(self, ddof=1):
+        """The variance, skipping missing values (`ddof` 1 or 0)."""
+        return self._reduce(self._spread("var", ddof, "var_samp", "var_pop"))
+
+    def _spread(self, method, ddof, sample, population):
+        if ddof not in (0, 1):
+            raise NotImplementedError(
+                f"{method}() supports ddof=1 or ddof=0, got {ddof!r}"
+            )
+        values = self._numeric(method).cast(pa.float64())
+        return getattr(values.funcs, sample if ddof == 1 else population)()
+
+    def min(self):
+        """The smallest value, skipping missing ones; NaN when there are none."""
+        return self._extreme("min")
+
+    def max(self):
+        """The largest value, skipping missing ones; NaN when there are none."""
+        return self._extreme("max")
+
+    def _extreme(self, method):
+        result = self._reduce(getattr(self._ordered(method).funcs, method)())
+        return math.nan if result is None else result
+
+    def count(self):
+        """The number of values that are not missing (NaN counts as missing)."""
+        return self._reduce(self._valued().funcs.count())
+
+    def quantile(self, q=0.5, interpolation="linear"):
+        """The `q` quantile(s), skipping missing values, interpolated linearly.
+
+        A single `q` gives a number; a list gives a pandas Series indexed by
+        `q`, as in pandas.
+        """
+        if interpolation != "linear":
+            raise NotImplementedError(
+                f"quantile() supports interpolation='linear' only, got {interpolation!r}"
+            )
+        many = not isinstance(q, numbers.Real)
+        qs = [float(value) for value in (q if many else [q])]
+        if any(not 0 <= value <= 1 for value in qs):
+            raise ValueError("percentiles should all be in the interval [0, 1]")
+        values = self._numeric("quantile").cast(pa.float64())
+        results = []
+        if qs:
+            row = self._df.agg(
+                *[
+                    values.funcs.percentile_cont(lit(value)).alias(f"q{i}")
+                    for i, value in enumerate(qs)
+                ]
+            ).to_pandas()
+            results = [row[f"q{i}"].iloc[0] for i in range(len(qs))]
+        if not many:
+            return results[0]
+        import pandas as pd
+
+        index = pd.Index(qs, dtype="float64")
+        return pd.Series(results, index=index, name=self._name, dtype="float64")
+
+    def nunique(self, dropna=True):
+        """The number of distinct values, a missing value counting once if
+        `dropna=False`."""
+        distinct = self._distinct_values("nunique").distinct()
+        if dropna:
+            return self._reduce_on(distinct, distinct["x"].funcs.count())
+        return distinct.count()
+
+    def _reduce_on(self, df, aggregate):
+        return df.agg(aggregate.alias("n")).to_pandas()["n"].iloc[0]
+
+    def unique(self):
+        """The distinct values, as pandas' `unique()` returns them.
+
+        A missing value appears once. Unlike pandas, the values are not in
+        order of first appearance: a lazy frame has no row order.
+        """
+        distinct = self._distinct_values("unique").distinct()
+        return distinct.to_pandas()["x"].unique()
+
+    def value_counts(self, normalize=False, sort=True, ascending=False, dropna=True):
+        """How often each distinct value occurs, as a pandas Series, as in pandas.
+
+        Values with the same count are ordered by value, since a lazy frame has
+        no order of first appearance to break ties by (and with `sort=False`,
+        the values are in value order). A dictionary-encoded column's values
+        come back decoded, not as a categorical.
+        """
+        import pandas as pd
+
+        values = self._distinct_values("value_counts")
+        if dropna:
+            values = values.filter(values["x"].is_not_null())
+        # Rows per value, a missing one included (count of the value would
+        # skip it).
+        counts = (
+            values.group_by("x")
+            .agg(values._ctx.lit(1).funcs.count().alias("n"))
+            .to_pandas()
+        )
+        keys = counts["x"]
+        if keys.dtype == "float16":
+            # pandas has no float16 index; it promotes such keys to float32.
+            keys = keys.astype("float32")
+        result = pd.Series(
+            counts["n"].to_numpy(),
+            index=pd.Index(keys, name=self._name),
+            name="proportion" if normalize else "count",
+        )
+        result = result.sort_index(na_position="last", kind="stable")
+        if sort:
+            result = result.sort_values(ascending=ascending, kind="stable")
+        if normalize:
+            result = result / result.sum()
+        return result
 
     # -- materialization ---------------------------------------------------
     def to_pandas(self):
@@ -453,6 +1071,36 @@ class Series:
     def __repr__(self):
         # Cheap: show the underlying expression rather than executing.
         return f"<{type(self).__name__} {self._expr!r} (lazy; call .to_pandas())>"
+
+
+def _zero_normalized(df, expr):
+    """`expr` (a column expression or a scalar), with -0.0 as 0.0 if it is
+    floating.
+
+    The engine orders floats totally, so -0.0 compares below 0.0, while
+    pandas (IEEE) holds them equal; adding 0.0 turns -0.0 into 0.0. An
+    encoded column is decoded first, since the encoding hides the float.
+    """
+    from sedonadb.expr import Literal
+
+    if isinstance(expr, float):
+        return expr + 0.0
+    if isinstance(expr, pa.Scalar):
+        if pa.types.is_floating(expr.type) and expr.is_valid:
+            return pa.scalar(expr.as_py() + 0.0, type=expr.type)
+        return expr
+    if isinstance(expr, Literal):
+        value = _literal_value(expr)
+        if pa.types.is_floating(value.type):
+            return Literal(_zero_normalized(df, value), expr._ctx)
+        return expr
+    if not isinstance(expr, Expr):
+        return expr
+    stored = pa.schema(df.select(expr.alias("x")).schema).field("x").type
+    dtype = _logical_type(stored)
+    if not pa.types.is_floating(dtype):
+        return expr
+    return (expr if dtype == stored else expr.cast(dtype)) + lit(0.0)
 
 
 def _buffer_style(style, names, argument):
@@ -469,6 +1117,337 @@ def _buffer_style(style, names, argument):
     elif value in names:
         return value
     raise ValueError(f"{argument} must be one of {list(names)}, got {style!r}")
+
+
+def _kind(arrow_type):
+    """ "number", "bool", "string", or "other", for comparing kinds."""
+    if pa.types.is_boolean(arrow_type):
+        return "bool"
+    if (
+        pa.types.is_integer(arrow_type)
+        or pa.types.is_floating(arrow_type)
+        or pa.types.is_decimal(arrow_type)
+    ):
+        return "number"
+    if (
+        pa.types.is_string(arrow_type)
+        or pa.types.is_large_string(arrow_type)
+        or pa.types.is_string_view(arrow_type)
+    ):
+        return "string"
+    return "other"
+
+
+def _is_temporal(arrow_type):
+    return (
+        pa.types.is_timestamp(arrow_type)
+        or pa.types.is_date(arrow_type)
+        or pa.types.is_duration(arrow_type)
+        or pa.types.is_time(arrow_type)
+    )
+
+
+def _comparable(dtype, values):
+    """The `values` an `isin` on a column of `dtype` can match, in its terms.
+
+    pandas matches by value without coercing across kinds: a number never
+    equals a string, while True equals 1 and 1 equals 1.0. SQL would coerce a
+    string to a number (or fail to), and refuses to compare a boolean with a
+    number, so values of another kind are dropped and booleans and numbers
+    are converted to the column's kind. Other column types take every value.
+    """
+    column = _kind(dtype)
+    if column == "other":
+        return values
+    comparable = []
+    for value in values:
+        plain = value
+        if isinstance(value, pa.Scalar):
+            kind, plain = _kind(value.type), value.as_py()
+        elif isinstance(value, bool):
+            kind = "bool"
+        elif isinstance(value, numbers.Number):
+            kind = "number"
+        elif isinstance(value, str):
+            kind = "string"
+        else:
+            kind = "other"
+        if kind == column:
+            # A typed scalar is kept as given: unwrapping a large unsigned
+            # value would leave an integer no literal can hold. A plain one
+            # beyond int64 is typed as the column, and dropped if it cannot be
+            # exactly: then it matches nothing (pandas compares exactly, so
+            # 2**64 + 1 does not match the float 2**64).
+            if isinstance(value, int) and not -(2**63) <= value < 2**63:
+                try:
+                    if pa.types.is_floating(dtype):
+                        if float(value) != value:
+                            continue
+                        value = float(value)
+                    else:
+                        value = pa.scalar(value, type=dtype)
+                except (pa.ArrowException, OverflowError):
+                    continue
+            comparable.append(value)
+        elif column == "number" and kind == "bool":
+            comparable.append(int(plain))
+        elif column == "bool" and kind == "number" and plain in (0, 1):
+            comparable.append(bool(plain))
+    return comparable
+
+
+def _pandas_missing(dtype, nan=False):
+    """A one-element pandas Series holding this type's missing value (or NaN),
+    converted as `to_pandas()` converts it, or None without pandas.
+
+    Which missing marker matches a missing value, and whether that value is
+    truthy, depends on its pandas dtype: a float column holds NaN, a string
+    column None in pandas 2 and NaN in pandas 3, a dictionary column a
+    categorical's NaN. Asking the installed pandas keeps the answers in step
+    with what `to_pandas()` returns. Geometry (an extension type here) is a
+    missing GeoSeries element, so GeoPandas answers for it.
+    """
+    if isinstance(dtype, pa.ExtensionType):
+        if nan:
+            return None
+        try:
+            import geopandas
+        except ImportError:
+            return None
+        return geopandas.GeoSeries([None])
+    try:
+        import pandas  # noqa: F401
+    except ImportError:
+        return None
+    try:
+        return pa.array([float("nan") if nan else None], type=dtype).to_pandas()
+    except (pa.ArrowException, TypeError, ValueError):
+        return None
+
+
+def _is_null_marker(marker):
+    """Whether Arrow reads `marker` as a null: None, NumPy's NaT, or a null
+    Arrow scalar."""
+    import numpy as np
+
+    if marker is None:
+        return True
+    if isinstance(marker, (np.datetime64, np.timedelta64)):
+        return bool(np.isnat(marker))
+    return isinstance(marker, pa.Scalar) and not marker.is_valid
+
+
+def _is_nan_marker(marker):
+    """A floating-point NaN, NumPy's included (np.float32 is not a float)."""
+    if isinstance(marker, pa.Scalar):
+        marker = marker.as_py() if marker.is_valid else None
+    return isinstance(marker, numbers.Real) and marker != marker
+
+
+def _missing_members(stored, dtype, values):
+    """Whether a null, and a NaN, of a column are members of `values`.
+
+    pandas (GeoPandas, for geometry) decides when it is installed, given the
+    whole list as passed to `isin`: `stored` is the column's type as stored,
+    `dtype` without encodings. Without it, Arrow's reading applies: a null
+    is matched by what Arrow reads as a null, and a NaN by a NaN.
+    """
+    floating = pa.types.is_floating(dtype)
+    answers = []
+    for nan in (False, True):
+        if nan and not floating:
+            answers.append(False)
+            continue
+        series = _pandas_missing(stored, nan)
+        if series is not None:
+            answers.append(bool(series.isin(values).iloc[0]))
+        elif nan:
+            answers.append(any(_is_nan_marker(value) for value in values))
+        else:
+            answers.append(any(_is_null_marker(value) for value in values))
+    return tuple(answers)
+
+
+def _truthiness(expr, dtype):
+    """`expr` as a boolean the way Python's `bool()` reads it, or None if this
+    type has no truthiness here (the engine's cast then applies).
+    """
+    kind = _kind(dtype)
+    if kind == "bool":
+        truth = expr
+    elif kind == "number":
+        truth = expr != lit(0)
+    elif kind == "string":
+        truth = expr != lit("")
+    else:
+        return None
+    # A missing value is as truthy as pandas reads it; without pandas, as
+    # Python reads None.
+    missing = _pandas_missing(dtype)
+    return truth.funcs.coalesce(
+        lit(bool(missing is not None and missing.astype(bool).iloc[0]))
+    )
+
+
+def _is_object_dtype(dtype):
+    import numpy as np
+
+    try:
+        return np.dtype(dtype) == np.dtype(object)
+    except TypeError:
+        return False
+
+
+def _arrow_type(dtype):
+    """The Arrow type for a pandas-style `astype` target."""
+    if isinstance(dtype, pa.DataType):
+        return dtype
+    if dtype in (str, "str", "string"):
+        return pa.string()
+    import numpy as np
+
+    try:
+        return pa.from_numpy_dtype(np.dtype(dtype))
+    except (TypeError, pa.ArrowNotImplementedError) as err:
+        raise TypeError(f"astype() does not support dtype {dtype!r}") from err
+
+
+def _fail_where(condition, message):
+    """An int64 expression that is 0 where `condition` is not true and raises
+    `message` where it is.
+
+    A lazy expression has no way to raise for a particular row except by
+    failing to evaluate there, so the failure is a cast: rows that pass cast
+    the string "0", and failing rows cast `message`, which fails with that
+    message in the error. Adding the result leaves passing values unchanged.
+    """
+    passing = (~condition).funcs.coalesce(lit(True))
+    flag = passing.funcs.nullif(lit(True)).cast(pa.string())
+    text = flag.funcs.replace(lit("false"), lit(message))
+    return text.funcs.coalesce(lit("0")).cast(pa.int64())
+
+
+def _choose(keep, chosen, other):
+    """`chosen` where `keep` (never null) is true, and `other` elsewhere.
+
+    The engine has no CASE expression here, so the two are put in a list and
+    the one wanted is taken from it by position (1 for `chosen`, 2 for
+    `other`), which keeps either exactly as it is, whatever its type. `other`
+    has to be typed (a null included) for the list to unify.
+    """
+    position = keep.cast(pa.int64()) * lit(-1) + lit(2)
+    return chosen.funcs.make_array(other).funcs.array_element(position)
+
+
+_TIME_UNITS = ["s", "ms", "us", "ns"]
+
+
+def _common_type(dtype, other):
+    """The type to give both sides of a selection where the engine's own
+    unification would lose something, or None where it would not.
+
+    Two timestamps or two durations take the finer of their units (and this
+    column's time zone): the engine takes the coarser unit of two timestamps,
+    truncating, and turns two durations into an interval. A column of the
+    null type takes the other's type, and a null of the null type this
+    column's.
+    """
+    if pa.types.is_null(dtype):
+        return other
+    if pa.types.is_null(other):
+        return dtype
+    for test, build in (
+        (pa.types.is_timestamp, lambda unit: pa.timestamp(unit, dtype.tz)),
+        (pa.types.is_duration, pa.duration),
+    ):
+        if test(dtype) and test(other):
+            return build(max(dtype.unit, other.unit, key=_TIME_UNITS.index))
+    return None
+
+
+def _fits(value, dtype):
+    """Whether `value`, if a literal, converts to `dtype` exactly."""
+    from sedonadb.expr import Literal
+
+    if not isinstance(value, Literal):
+        return False
+    try:
+        # A safe cast refuses to lose anything (a finer unit's remainder).
+        _literal_value(value).cast(dtype)
+    except (pa.ArrowInvalid, pa.ArrowNotImplementedError):
+        return False
+    return True
+
+
+def _cast(value, dtype):
+    """An expression or literal, cast to `dtype`."""
+    from sedonadb.expr import Literal
+
+    if isinstance(value, Literal):
+        return lit(_literal_value(value).cast(dtype))
+    return value.cast(dtype)
+
+
+def _half_even(value, dtype):
+    """`value` (of floating `dtype`) rounded to an integer, half to even, as
+    NumPy's `rint`.
+
+    The engine's round() sends halves away from zero. The magnitude is
+    rounded (up above a half, and at a half when its floor is odd), then the
+    sign restored, which also keeps a negative value that rounds to zero at
+    -0.0, as NumPy does. NaN and infinities pass through.
+    """
+
+    def number(v):
+        return lit(pa.scalar(v, dtype))
+
+    magnitude = value.funcs.abs()
+    floor = magnitude.funcs.floor()
+    fraction = magnitude - floor
+    odd = (floor / number(2.0)).funcs.floor() * number(2.0) != floor
+    up = (fraction > number(0.5)) | ((fraction == number(0.5)) & odd)
+    rounded = floor + up.cast(dtype)
+    # The engine orders -0.0 (and a negative NaN) below 0.0.
+    negative = value < number(0.0)
+    return rounded * (number(1.0) - number(2.0) * negative.cast(dtype))
+
+
+def _absent(value):
+    """Whether `value` is a missing scalar: None, NaN, pandas.NA, or a literal
+    holding one."""
+    from sedonadb.expr import Literal
+    from sedonadb_geopandas._frame import _is_missing
+
+    if isinstance(value, Series):
+        return False
+    if isinstance(value, Literal):
+        value = _literal_value(value)
+    return is_scalar(value) and _is_missing(normalize_scalar(value))
+
+
+def _plain(value):
+    """A scalar operand as a plain Python value, for comparing two bounds."""
+    from sedonadb.expr import Literal
+
+    if isinstance(value, Literal):
+        value = _literal_value(value)
+    value = normalize_scalar(value)
+    return value.as_py() if isinstance(value, pa.Scalar) else value
+
+
+def _value_kind(dtype):
+    """The kind of value an Arrow type holds, for telling which values a
+    column can take: number, bool, string, a temporal kind, or the type."""
+    kind = _kind(dtype)
+    if kind != "other":
+        return kind
+    if pa.types.is_timestamp(dtype):
+        # Time zone-aware and naive times don't mix, as in pandas.
+        return "timestamp" if dtype.tz is None else "timestamp with a time zone"
+    for name, test in (("date", pa.types.is_date), ("duration", pa.types.is_duration)):
+        if test(dtype):
+            return name
+    return str(dtype)
 
 
 def _same_crs(current, crs):
@@ -773,6 +1752,27 @@ class GeoSeries(Series):
         """A point guaranteed to lie on each geometry (`ST_PointOnSurface`)."""
         return self._geo(self._expr.geo.point_on_surface())
 
+    def explode(self, ignore_index=False, index_parts=False):
+        """One element per part of each multi-part geometry, as in GeoPandas.
+
+        Parts are taken one level deep, and a geometry with no parts (or a
+        missing one) yields none; see `GeoDataFrame.explode`. The result has a
+        different number of rows, so it belongs to a new frame and cannot be
+        combined with columns of this one. `ignore_index` is accepted for
+        compatibility; `index_parts=True` is not supported, since there is no
+        index.
+        """
+        from sedonadb_geopandas._frame import _explode_parts
+
+        if index_parts:
+            raise NotImplementedError(
+                "explode() cannot number parts with index_parts=True: there is no index"
+            )
+        exploded = _explode_parts(
+            self._df.select(self._expr.alias(self._name)), self._name
+        )
+        return GeoSeries(exploded, exploded[self._name], self._name)
+
     # -- binary operations -----------------------------------------------
 
     def _other(self, other):
@@ -1028,6 +2028,73 @@ class GeoSeries(Series):
     def length(self):
         """The length/perimeter of each geometry (`ST_Length`)."""
         return Series(self._df, self._expr.geo.length(), "length")
+
+    def fillna(self, value=None):
+        """Replace missing geometries with `value`, as in GeoPandas.
+
+        `value` is a Shapely geometry, or None for an empty geometry
+        collection (GeoPandas' default). It takes this column's spatial kind
+        and CRS. Empty geometries are not missing and stay as they are.
+        """
+        import shapely
+        from shapely.geometry.base import BaseGeometry
+
+        if value is None:
+            value = shapely.GeometryCollection()
+        if not isinstance(value, BaseGeometry):
+            raise TypeError(
+                f"GeoSeries.fillna() takes a geometry, got {type(value).__name__}"
+            )
+        ctx = self._df._ctx
+        # coalesce() drops the geometry type, so the choice is made on WKB
+        # and the result rebuilt with this column's spatial kind and CRS.
+        wkb = self._expr.geo.as_binary().funcs.coalesce(ctx.lit(value.wkb))
+        rebuilt = self._as_column_kind(wkb.funcs.st_geomfromwkb(), own_crs=None)
+        return self._geo(rebuilt)
+
+    def _replace(self, keep, other, method):
+        """As for any column, on geometry: `other` is a geometry (bare Shapely
+        or wrapped in `lit()`), a GeoSeries from this frame, or missing (the
+        default, as in GeoPandas).
+
+        The choice is made on WKB, as in `fillna()`, and the result rebuilt
+        with this column's spatial kind and CRS. A replacement in another CRS
+        is refused, as the engine refuses mixing CRS in an operation.
+        """
+        replacement = self._replacement(other, method)
+        if replacement is None:
+            replacement = lit(pa.scalar(None, pa.binary()))
+        else:
+            replacement = replacement[0].cast(pa.binary())
+        wkb = _choose(keep, self._expr.geo.as_binary().cast(pa.binary()), replacement)
+        rebuilt = self._as_column_kind(wkb.funcs.st_geomfromwkb(), own_crs=None)
+        return self._geo(rebuilt)
+
+    def _replacement(self, other, method):
+        """`other` as WKB, to put in this column, with its type (None if
+        missing); a TypeError if it is not a geometry, and a ValueError if it
+        is in another CRS."""
+        from sedonadb.expr import Literal
+
+        if _absent(other):
+            return None
+        expr = self._other(other)
+        projected = None
+        if isinstance(expr, (Expr, Literal)):
+            projected = self._df.select(expr.alias("x")).schema
+        if projected is None or not projected.geometry_column_indices:
+            raise TypeError(
+                f"GeoSeries.{method}() takes a geometry, not {type(other).__name__}"
+            )
+        crs, other_crs = self.crs, projected.field("x").type.crs
+        if (crs is None) != (other_crs is None) or (
+            crs is not None and not _same_crs(crs, other_crs.to_json())
+        ):
+            raise ValueError(
+                f"GeoSeries.{method}() can't take a geometry in another CRS "
+                f"({other_crs}) than this column's ({crs})"
+            )
+        return expr.geo.as_binary(), pa.binary()
 
     def to_geopandas(self):
         """Execute and return this column as a `geopandas.GeoSeries`."""

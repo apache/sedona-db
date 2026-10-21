@@ -90,8 +90,8 @@ impl PySedonaSchema {
             } else {
                 Err(PyIndexError::new_err(format!("Field index {index} out of range")).into())
             }
-        } else if let Ok(name) = index_or_name.extract::<&str>(py) {
-            match self.field_by_name(name) {
+        } else if let Ok(name) = index_or_name.extract::<String>(py) {
+            match self.field_by_name(&name) {
                 Some(field) => Ok(field),
                 None => Err(PyKeyError::new_err(format!("No field named '{name}'")).into()),
             }

@@ -72,10 +72,12 @@ type(df)
 
 For most production applications, you will create SedonaDB DataFrames by reading data from a file.  Let's see how to read GeoParquet files in AWS S3 into a SedonaDB DataFrame.
 
+> Overture removes old releases. See [this page](https://docs.overturemaps.org/release-calendar/#current-release) to see the latest version number and replace the relevant portion of the URL below.
+
 
 ```python
 sd.read_parquet(
-    "s3://overturemaps-us-west-2/release/2025-11-19.0/theme=divisions/type=division_area/",
+    "s3://overturemaps-us-west-2/release/2026-09-23.1/theme=divisions/type=division_area/",
     options={"aws.skip_signature": True, "aws.region": "us-west-2"},
 ).to_view("division_area")
 ```
@@ -143,11 +145,11 @@ ns.show(3)
     │ country ┆ region ┆                                    geometry                                   │
     │   utf8  ┆  utf8  ┆                                    geometry                                   │
     ╞═════════╪════════╪═══════════════════════════════════════════════════════════════════════════════╡
-    │ CA      ┆ CA-NB  ┆ MULTIPOLYGON(((-67.1074147 44.4817314,-67.1058772 44.4815007,-67.104319 44.4… │
+    │ CA      ┆ CA-NS  ┆ POLYGON((-65.9481828 43.4398466,-66.0528452 43.4531336,-66.0883401 43.397818… │
     ├╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ CA      ┆ CA-NB  ┆ POLYGON((-66.2598821 45.1380421,-66.2599962 45.1381233,-66.2600591 45.138285… │
+    │ CA      ┆ CA-NS  ┆ POLYGON((-66.0216384 43.518589,-66.0222822 43.5166842,-66.0252286 43.5100071… │
     ├╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-    │ CA      ┆ CA-NB  ┆ POLYGON((-66.4595418 45.2215004,-66.4595406 45.221468,-66.4595396 45.2213915… │
+    │ CA      ┆ CA-NS  ┆ POLYGON((-66.0341854 43.5998264,-66.033595 43.5985202,-66.0330826 43.5966887… │
     └─────────┴────────┴───────────────────────────────────────────────────────────────────────────────┘
 
 

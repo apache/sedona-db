@@ -753,13 +753,14 @@ fn parquet_geo_stats_to_sedona_geo_stats(
 /// Calculates column indices for top-level columns of file_schema
 ///
 /// We need to build a list of top-level indices, where the indices refer to the
-/// flattened list of columns (e.g., `.column(i)` in row group metadata).
+/// flattened list of columns (e.g., `.column(i)` in row group metadata). Each
+/// top-level field contributes the index of its first leaf, so a nested field
+/// (several leaves) keeps its place and the list lines up with file_schema.
 fn top_level_column_indices(parquet_metadata: &ParquetMetaData) -> Vec<usize> {
     let mut top_level_indices = Vec::new();
     let schema_descr = parquet_metadata.file_metadata().schema_descr();
-    for (i, col) in schema_descr.columns().iter().enumerate() {
-        let path_vec = col.path().parts();
-        if path_vec.len() == 1 {
+    for i in 0..schema_descr.num_columns() {
+        if schema_descr.get_column_root_idx(i) == top_level_indices.len() {
             top_level_indices.push(i);
         }
     }
@@ -977,6 +978,83 @@ mod test {
                 GeoStatistics::unspecified()
             ]
         );
+    }
+
+    #[test]
+    fn native_geo_stats_nested_column_before_geometry() {
+        // Parquet columns: not_geo (0), bbox.xmin..bbox.ymax (1..=4), some_geo (5)
+        let file_schema: SchemaRef = Arc::new(Schema::new(vec![
+            Field::new("not_geo", DataType::Binary, true),
+            Field::new(
+                "bbox",
+                DataType::Struct(
+                    vec![
+                        Field::new("xmin", DataType::Float64, true),
+                        Field::new("ymin", DataType::Float64, true),
+                        Field::new("xmax", DataType::Float64, true),
+                        Field::new("ymax", DataType::Float64, true),
+                    ]
+                    .into(),
+                ),
+                true,
+            ),
+            WKB_GEOMETRY.to_storage_field("some_geo", true).unwrap(),
+        ]));
+        let parquet_schema = Arc::new(
+            ArrowSchemaConverter::new()
+                .convert(file_schema.as_ref())
+                .unwrap(),
+        );
+
+        let mut columns: Vec<_> = (0..5)
+            .map(|i| {
+                ColumnChunkMetaData::builder(parquet_schema.column(i))
+                    .build()
+                    .unwrap()
+            })
+            .collect();
+        columns.push(
+            ColumnChunkMetaData::builder(parquet_schema.column(5))
+                .set_geo_statistics(Box::new(GeospatialStatistics::new(
+                    Some(parquet::geospatial::bounding_box::BoundingBox::new(
+                        1.0, 2.0, 3.0, 4.0,
+                    )),
+                    None,
+                )))
+                .build()
+                .unwrap(),
+        );
+        let row_group_metadata = RowGroupMetaData::builder(parquet_schema.clone())
+            .set_column_metadata(columns)
+            .build()
+            .unwrap();
+        let parquet_metadata = ParquetMetaDataBuilder::new(FileMetaData::new(
+            0,
+            0,
+            None,
+            None,
+            parquet_schema.clone(),
+            None,
+        ))
+        .add_row_group(row_group_metadata)
+        .build();
+
+        // One index per top-level field; the struct contributes its first leaf
+        let indices = top_level_column_indices(&parquet_metadata);
+        assert_eq!(indices, vec![0, 1, 5]);
+
+        // The statistics line up with file_schema, so the geometry column resolves
+        let column_geo_stats = row_group_native_geo_stats(parquet_metadata.row_group(0), &indices);
+        assert_eq!(
+            column_geo_stats,
+            vec![
+                GeoStatistics::unspecified(),
+                GeoStatistics::unspecified(),
+                GeoStatistics::unspecified()
+                    .with_bbox(Some(BoundingBox::xy((1.0, 2.0), (3.0, 4.0)))),
+            ]
+        );
+        TableGeoStatistics::try_from_stats_and_schema(&column_geo_stats, &file_schema).unwrap();
     }
 
     #[test]
