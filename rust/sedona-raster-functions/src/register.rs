@@ -70,6 +70,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::rs_rastercoordinate::rs_worldtorastercoord_udf,
         crate::rs_rastercoordinate::rs_worldtorastercoordx_udf,
         crate::rs_rastercoordinate::rs_worldtorastercoordy_udf,
+        crate::rs_replace_band_nodata::rs_replace_band_nodata_value_udf,
         crate::rs_set_band_nodata::rs_set_band_nodata_value_udf,
         crate::rs_set_georeference::rs_set_georeference_udf,
         crate::rs_setsrid::rs_set_crs_udf,
@@ -94,7 +95,7 @@ pub fn default_function_set() -> FunctionSet {
         crate::rs_worldcoordinate::rs_rastertoworldcoordy_udf,
     );
 
-    register_aggregate_udfs!(function_set,);
+    register_aggregate_udfs!(function_set, crate::rs_stack_aggr::rs_stack_aggr_udf,);
 
     function_set
 }

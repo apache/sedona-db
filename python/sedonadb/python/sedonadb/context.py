@@ -37,7 +37,11 @@ if TYPE_CHECKING:
 from sedonadb._lib import (
     InternalContext,
     configure_gdal_shared,
+    configure_gdal_prefix_native,
+    configure_gdal_system_native,
+    configure_proj_prefix_native,
     configure_proj_shared,
+    configure_proj_system_native,
     gdal_version as _gdal_version,
 )
 from sedonadb._options import Options
@@ -442,6 +446,8 @@ class SedonaContext:
 
         - Python UDFs annotated with arrow_aggregate_udf or arrow_udf
         - An ExternalFormatSpec implementing a custom datasource type
+        - A native catalog list whose __sedonadb_catalog_list__ method returns
+          a sedonadb_catalog_list PyCapsule
         - An object implementing __sedonadb_extension__(ctx, **kwargs), which
           is called with this context and any keyword arguments passed.
         - A single function object implementing __sedonadb_scalar_udf__(self),
@@ -504,6 +510,7 @@ class SedonaContext:
             "__sedonadb_internal_udf__",
             "__sedonadb_internal_aggregate_udf__",
             "__sedonadb_external_format__",
+            "__sedonadb_catalog_list__",
             "__sedonadb_raster_loader__",
             "__sedonadb_scalar_udf__",
         )
@@ -812,52 +819,11 @@ def _find_proj_shared_library_near_data(data_dir: Path) -> Optional[Path]:
 
 
 def _configure_proj_system():
-    # For system installs, try common library names that might be on PATH/LD_LIBRARY_PATH
-    import ctypes
-
-    names_to_try = []
-    if sys.platform == "win32":
-        names_to_try = ["proj.dll", "proj_9.dll"]
-    elif sys.platform == "darwin":
-        names_to_try = ["libproj.dylib"]
-    else:
-        names_to_try = ["libproj.so"]
-
-    for name in names_to_try:
-        try:
-            ctypes.CDLL(name)
-            configure_proj(shared_library=name)
-            return
-        except OSError:
-            continue
-
-    raise ValueError(
-        f"Can't load PROJ shared library '{names_to_try[0]}': "
-        "Could not find module (or one of its dependencies). "
-        "Try using the full path with constructor syntax."
-    )
+    configure_proj_system_native()
 
 
 def _configure_proj_prefix(prefix: str):
-    prefix = Path(prefix)
-    if not prefix.exists():
-        raise ValueError(f"Can't configure PROJ from prefix '{prefix}': does not exist")
-
-    if sys.platform == "win32":
-        # Windows conda uses Library/bin for DLLs and Library/share for data
-        lib_dir = prefix / "Library" / "bin"
-        data_dir = prefix / "Library" / "share" / "proj"
-    else:
-        lib_dir = prefix / "lib"
-        data_dir = prefix / "share" / "proj"
-
-    shared_library = _find_proj_shared_library(lib_dir)
-
-    configure_proj(
-        shared_library=shared_library,
-        database_path=data_dir / "proj.db",
-        search_path=data_dir,
-    )
+    configure_proj_prefix_native(str(prefix))
 
 
 def configure_gdal(
@@ -914,9 +880,11 @@ def configure_gdal(
             return
         elif preset == "homebrew":
             prefix = os.environ.get("HOMEBREW_PREFIX", "/opt/homebrew")
-            shared_library = Path(prefix) / "lib" / _gdal_lib_name()
+            configure_gdal_prefix_native(prefix)
+            return
         elif preset == "system":
-            shared_library = _gdal_lib_name()
+            configure_gdal_system_native()
+            return
         elif preset == "auto":
             # The GDAL library bundled with rasterio has more features enabled by default
             # (e.g., more compression codecs) than the one bundled with pyogrio, so try
@@ -960,15 +928,6 @@ def configure_gdal(
         raise ValueError(f"Can't load GDAL shared library '{shared_library}': {e}")
 
     configure_gdal_shared(str(shared_library))
-
-
-def _gdal_lib_name() -> str:
-    if sys.platform == "win32":
-        return "gdal.dll"
-    elif sys.platform == "darwin":
-        return "libgdal.dylib"
-    else:
-        return "libgdal.so"
 
 
 def _find_gdal_in_package(pkg_name: str) -> Path:
@@ -1024,42 +983,6 @@ def _configure_gdal_rasterio():
     configure_gdal(shared_library=_find_gdal_in_package("rasterio"))
 
 
-def _gdal_lib_pattern() -> str:
-    """Return a glob pattern for finding GDAL shared libraries."""
-    if sys.platform == "win32":
-        return "gdal*.dll"
-    elif sys.platform == "darwin":
-        return "libgdal*.dylib"
-    else:
-        return "libgdal.so*"
-
-
-def _find_gdal_shared_library(lib_dir: Path) -> Path:
-    """Find the GDAL shared library in the given directory.
-
-    Raises ValueError if not found or multiple matches.
-    """
-    pattern = _gdal_lib_pattern()
-    possible_files = list(lib_dir.glob(pattern))
-
-    # Filter out debug/test variants if multiple matches
-    if len(possible_files) > 1:
-        # Prefer exact matches or versioned libraries without suffixes like _d
-        filtered = [f for f in possible_files if "_d." not in f.name]
-        if filtered:
-            possible_files = filtered
-
-    if len(possible_files) == 0:
-        raise ValueError(
-            f"Can't find GDAL shared library matching '{pattern}' in '{lib_dir}'"
-        )
-    if len(possible_files) > 1:
-        # Pick the one with shortest name (usually the main library)
-        possible_files.sort(key=lambda p: len(p.name))
-
-    return possible_files[0]
-
-
 def _configure_gdal_conda():
     # Try CONDA_PREFIX first, then fall back to sys.prefix
     conda_prefix = os.environ.get("CONDA_PREFIX")
@@ -1070,19 +993,7 @@ def _configure_gdal_conda():
         # may not be set, but sys.prefix points to the environment
         prefix = Path(sys.prefix)
 
-    if not prefix.exists():
-        raise ValueError(f"Can't configure GDAL from prefix '{prefix}': does not exist")
-
-    if sys.platform == "win32":
-        lib_dir = prefix / "Library" / "bin"
-    else:
-        lib_dir = prefix / "lib"
-
-    if not lib_dir.exists():
-        raise ValueError(f"Can't find GDAL library directory '{lib_dir}'")
-
-    shared_library = _find_gdal_shared_library(lib_dir)
-    configure_gdal(shared_library=shared_library)
+    configure_gdal_prefix_native(str(prefix))
 
 
 def gdal_version() -> Optional[str]:

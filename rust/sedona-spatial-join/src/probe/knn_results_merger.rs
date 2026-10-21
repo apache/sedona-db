@@ -15,7 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use core::f64;
 use std::ops::Range;
 use std::sync::Arc;
 

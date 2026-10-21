@@ -27,6 +27,8 @@ VCPKG_MANIFEST_MODE = OFF
 CMAKE_TOOLCHAIN_FILE = @CMAKE_TOOLCHAIN_FILE@
 CMAKE_PREFIX_PATH = @CMAKE_PREFIX_PATH@
 OPENSSL_ROOT_DIR = @OPENSSL_ROOT_DIR@
+SPATIAL_VCPKG_PREFIX = @SPATIAL_VCPKG_PREFIX@
+GDAL_VERSION = @GDAL_VERSION@
 SEDONADB_R_CC = $(strip $(CC))
 SEDONADB_R_CXX = $(strip $(CXX17))
 SEDONADB_R_CFLAGS = $(CPPFLAGS) $(CFLAGS)
@@ -42,7 +44,26 @@ LIBDIR = $(TARGET_DIR)/$(TARGET)/$(subst dev,debug,$(PROFILE))
 STATLIB = $(LIBDIR)/libsedonadbr.a
 S2_R_LINK_FLAGS = $(LIBDIR)/sedonadb-s2-r-link-flags.txt
 S2_NATIVE_LIBS = $(if $(findstring s2geography,$(FEATURE_FLAGS)),$(shell test ! -f "$(S2_R_LINK_FLAGS)" || cat "$(S2_R_LINK_FLAGS)"))
-PKG_LIBS = -L$(LIBDIR) -lsedonadbr $(S2_NATIVE_LIBS) -lws2_32 -ladvapi32 -luserenv -lbcrypt -lntdll -lole32 @PKG_LIBS@
+# Supplement the generated flags with the leaf archives missing from the
+# Rtools DLL link. This fallback is specific to R's pinned vcpkg package: keep
+# Abseil implementation details here, outside the shared CMake/Rust builder.
+# Keep these archives in the same rescan group as the generated flags.
+S2_WINDOWS_ABSL_LIBS = -L$(CMAKE_PREFIX_PATH)/lib \
+	-labsl_base \
+	-labsl_log_internal_fnmatch \
+	-labsl_raw_logging_internal \
+	-labsl_spinlock_wait \
+	-labsl_strings_internal \
+	-labsl_throw_delegate \
+	-labsl_time \
+	-labsl_time_zone \
+	-labsl_civil_time \
+	-labsl_malloc_internal \
+	-labsl_kernel_timeout_internal
+S2_LINK_GROUP_START = -Wl,--start-group
+S2_LINK_GROUP_END = -Wl,--end-group
+S2_LINK_LIBS = $(if $(findstring s2geography,$(FEATURE_FLAGS)),$(S2_LINK_GROUP_START) $(S2_NATIVE_LIBS) $(S2_WINDOWS_ABSL_LIBS) $(S2_LINK_GROUP_END))
+PKG_LIBS = -L$(LIBDIR) -lsedonadbr $(S2_LINK_LIBS) -lws2_32 -ladvapi32 -luserenv -lbcrypt -lntdll -lole32 @PKG_LIBS@
 
 # Rtools doesn't have the linker in the location that cargo expects, so we need
 # to overwrite it via configuration.
@@ -53,12 +74,16 @@ CARGO_LINKER = x86_64-w64-mingw32.static.posix-gcc.exe
 # cf. https://stackoverflow.com/a/68979087
 PKG_CONFIG_SYSROOT_DIR = /x86_64-w64-mingw32.static.posix/
 
-# "-Wno-pedantic" is to override the "-pedantic" flag passed by pkgbuild, which
-# makes the compilation of aws-lc-sys fail. Hopefully, such C code will be fixed
-# on upstream so that we can remove this.
-CFLAGS_TWEAKED = $(CFLAGS) -Wno-pedantic
+# cc appends environment CFLAGS after a crate's source-specific flags. Do not
+# let R's optimization setting override aws-lc-sys's required -O0 for its
+# jitterentropy source. Cargo still supplies the release-profile optimization
+# level for other native dependencies.
+#
+# "-Wno-pedantic" overrides the "-pedantic" flag passed by pkgbuild, which is
+# also incompatible with aws-lc-sys.
+CFLAGS_TWEAKED = $(filter-out -O%,$(CFLAGS)) -Wno-pedantic
 
-all: $(SHLIB) clean_intermediate
+all: $(SHLIB) copy_native_data clean_intermediate
 
 $(SHLIB): $(STATLIB)
 
@@ -71,6 +96,16 @@ $(STATLIB):
 	export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER="$(CARGO_LINKER)" && \
 	  export LIBRARY_PATH="$${LIBRARY_PATH};$(LIBDIR)/libgcc_mock" && \
 	  export PKG_CONFIG_SYSROOT_DIR="$(PKG_CONFIG_SYSROOT_DIR)" && \
+	  if [ -n "$(SPATIAL_VCPKG_PREFIX)" ]; then \
+	    export PKG_CONFIG_ALLOW_CROSS=1; \
+	    export PKG_CONFIG_ALL_STATIC=1; \
+	    export PKG_CONFIG_SYSROOT_DIR=""; \
+	    export PKG_CONFIG_PATH="$(SPATIAL_VCPKG_PREFIX)/lib/pkgconfig:$(SPATIAL_VCPKG_PREFIX)/share/pkgconfig$${PKG_CONFIG_PATH:+:$${PKG_CONFIG_PATH}}"; \
+	    export GDAL_STATIC=1; \
+	    export GDAL_INCLUDE_DIR="$(SPATIAL_VCPKG_PREFIX)/include"; \
+	    export GDAL_LIB_DIR="$(SPATIAL_VCPKG_PREFIX)/lib"; \
+	    export GDAL_VERSION="$(GDAL_VERSION)"; \
+	  fi && \
 	  if [ -n "$(VCPKG_ROOT)" ]; then \
 	    export VCPKG_ROOT="$(VCPKG_ROOT)"; \
 	    export VCPKG_DEFAULT_TRIPLET="$(VCPKG_TARGET_TRIPLET)"; \
@@ -96,7 +131,18 @@ $(STATLIB):
 clean_intermediate: $(SHLIB)
 	rm -f $(STATLIB)
 
+# GDAL and PROJ runtime data must match the vcpkg libraries bundled above.
+# Copying these trees follows the Windows packaging pattern used by sf/vapour.
+copy_native_data:
+	if [ -n "$(SPATIAL_VCPKG_PREFIX)" ]; then \
+	  test -d "$(SPATIAL_VCPKG_PREFIX)/share/gdal"; \
+	  test -d "$(SPATIAL_VCPKG_PREFIX)/share/proj"; \
+	  rm -rf ../inst/gdal ../inst/proj; \
+	  cp -R "$(SPATIAL_VCPKG_PREFIX)/share/gdal" ../inst/gdal; \
+	  cp -R "$(SPATIAL_VCPKG_PREFIX)/share/proj" ../inst/proj; \
+	fi
+
 clean:
 	rm -Rf $(SHLIB) $(OBJECTS) $(STATLIB) ./rust/target
 
-.PHONY: all clean_intermediate clean
+.PHONY: all copy_native_data clean_intermediate clean

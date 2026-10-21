@@ -36,8 +36,11 @@ use pyo3::{
 use sedona::record_batch_reader_provider::RecordBatchReaderProvider;
 use sedona_expr::scalar_udf::ScalarKernelRef;
 use sedona_extension::{
-    extension::SedonaCScalarKernel, extension::SedonaCTableProvider,
-    scalar_kernel::ImportedScalarKernel, table_provider::ImportedTableProvider,
+    catalog::ImportedCatalogProviderList,
+    extension::{SedonaCCatalogProviderList, SedonaCScalarKernel, SedonaCTableProvider},
+    runtime::RuntimeHandle,
+    scalar_kernel::ImportedScalarKernel,
+    table_provider::ImportedTableProvider,
 };
 use sedona_schema::{
     datatypes::SedonaType,
@@ -45,6 +48,25 @@ use sedona_schema::{
 };
 
 use crate::error::PySedonaError;
+
+pub fn import_sedona_ffi_catalog_list(
+    obj: &Bound<PyAny>,
+    runtime: Arc<RuntimeHandle>,
+) -> Result<ImportedCatalogProviderList, PySedonaError> {
+    let capsule = obj.getattr("__sedonadb_catalog_list__")?.call0()?;
+    let contents =
+        check_pycapsule(&capsule, "sedonadb_catalog_list")? as *mut SedonaCCatalogProviderList;
+
+    // Move the catalog list into the imported wrapper and clear the capsule to
+    // prevent its destructor from releasing the same value a second time.
+    let catalog_list = unsafe {
+        let catalog_list = std::ptr::read(contents);
+        std::ptr::write_bytes(contents, 0, 1);
+        catalog_list
+    };
+
+    Ok(ImportedCatalogProviderList::try_new(catalog_list, runtime)?)
+}
 
 pub fn import_table_provider_from_any<'py>(
     py: Python<'py>,
@@ -264,8 +286,97 @@ pub fn check_pycapsule(obj: &Bound<PyAny>, name: &str) -> Result<*mut c_void, Py
 mod tests {
     use super::*;
     use arrow_schema::DataType;
+    use pyo3::types::PyDict;
     use sedona_expr::scalar_udf::SimpleSedonaScalarKernel;
-    use sedona_extension::{extension::SedonaCScalarKernel, scalar_kernel::ExportedScalarKernel};
+    use sedona_extension::{
+        extension::{SedonaCError, SedonaCExecutionPlan, SedonaCScalarKernel},
+        scalar_kernel::ExportedScalarKernel,
+    };
+
+    unsafe extern "C" fn catalog_list_property_schema(
+        _self_: *const SedonaCCatalogProviderList,
+        _property: *const std::ffi::c_char,
+        out: *mut FFI_ArrowSchema,
+        error: *mut SedonaCError,
+    ) -> std::ffi::c_int {
+        sedona_extension::utils::write_utf8_property_schema(out, error)
+    }
+
+    unsafe extern "C" fn catalog_list_property(
+        _self_: *const SedonaCCatalogProviderList,
+        _property: *const std::ffi::c_char,
+        _args: *const std::ffi::c_char,
+        out: *mut FFI_ArrowArray,
+        error: *mut SedonaCError,
+    ) -> std::ffi::c_int {
+        sedona_extension::utils::write_json_property(&"test", out, error)
+    }
+
+    unsafe extern "C" fn catalog_list_table(
+        _self_: *const SedonaCCatalogProviderList,
+        _identifier: *const std::ffi::c_char,
+        _out: *mut SedonaCTableProvider,
+        _error: *mut SedonaCError,
+    ) -> std::ffi::c_int {
+        0
+    }
+
+    unsafe extern "C" fn catalog_list_create(
+        _self_: *const SedonaCCatalogProviderList,
+        _args: *const std::ffi::c_char,
+        _input: *mut SedonaCExecutionPlan,
+        _out: *mut SedonaCExecutionPlan,
+        _error: *mut SedonaCError,
+    ) -> std::ffi::c_int {
+        0
+    }
+
+    unsafe extern "C" fn catalog_list_drop(
+        _self_: *const SedonaCCatalogProviderList,
+        _args: *const std::ffi::c_char,
+        _out: *mut SedonaCExecutionPlan,
+        _error: *mut SedonaCError,
+    ) -> std::ffi::c_int {
+        0
+    }
+
+    unsafe extern "C" fn catalog_list_release(self_: *mut SedonaCCatalogProviderList) {
+        (*self_).release = None;
+    }
+
+    #[test]
+    fn import_sedona_ffi_catalog_list_accepts_the_register_protocol() {
+        Python::initialize();
+        Python::attach(|py| {
+            let raw = SedonaCCatalogProviderList {
+                get_property_schema: Some(catalog_list_property_schema),
+                get_property: Some(catalog_list_property),
+                table: Some(catalog_list_table),
+                create_object: Some(catalog_list_create),
+                drop_object: Some(catalog_list_drop),
+                reserved: std::ptr::null_mut(),
+                release: Some(catalog_list_release),
+                private_data: std::ptr::null_mut(),
+            };
+            let capsule = PyCapsule::new_with_value(py, raw, c"sedonadb_catalog_list").unwrap();
+            let locals = PyDict::new(py);
+            locals.set_item("catalog_list", capsule).unwrap();
+            let exporter = py
+                .eval(
+                    c"type('Exporter', (), {'__sedonadb_catalog_list__': lambda self: catalog_list})()",
+                    Some(&locals),
+                    Some(&locals),
+                )
+                .unwrap();
+            let runtime = Arc::new(RuntimeHandle::new(
+                tokio::runtime::Builder::new_current_thread()
+                    .build()
+                    .unwrap(),
+            ));
+
+            import_sedona_ffi_catalog_list(&exporter, runtime).unwrap();
+        });
+    }
 
     /// A trivial real kernel (matches any single numeric arg, returns it
     /// unchanged), exported to a `SedonaCScalarKernel` and wrapped in a real

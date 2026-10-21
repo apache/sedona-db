@@ -96,7 +96,9 @@ mod tests {
     use geos::{Geom, Geometry};
     use rstest::rstest;
     use sedona_expr::scalar_udf::SedonaScalarUDF;
-    use sedona_schema::datatypes::{WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY_ITEM_CRS};
+    use sedona_schema::datatypes::{
+        WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY,
+    };
     use sedona_testing::testers::ScalarUdfTester;
 
     use super::*;
@@ -169,6 +171,26 @@ mod tests {
         let already_normal = "POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))";
         let result = tester.invoke_scalar(already_normal).unwrap();
         tester.assert_scalar_result_equals(result, already_normal);
+    }
+
+    #[rstest]
+    fn udf_empty_simple_geometry_dimensions(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+        #[values("POINT", "LINESTRING", "POLYGON")] geometry_type: &str,
+        #[values("", " Z", " M", " ZM")] dimension: &str,
+    ) {
+        let udf = SedonaScalarUDF::from_impl("st_normalize", st_normalize_impl());
+        let tester = ScalarUdfTester::new(udf.into(), vec![sedona_type.clone()]);
+        let wkt = format!("{geometry_type}{dimension} EMPTY");
+        let result = tester.invoke_scalar(wkt.as_str()).unwrap();
+        tester.assert_scalar_result_equals(result, wkt.as_str());
+
+        let result = tester
+            .invoke_wkb_array(vec![Some(wkt.as_str()), None])
+            .unwrap();
+        let expected =
+            sedona_testing::create::create_array(&[Some(wkt.as_str()), None], &WKB_GEOMETRY);
+        sedona_testing::compare::assert_array_equal(&result, &expected);
     }
 
     #[test]

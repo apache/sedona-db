@@ -85,6 +85,31 @@ NULL
 }
 
 
+`configure_gdal_prefix_native` <- function(`prefix`) {
+  invisible(.Call(savvy_configure_gdal_prefix_native__impl, `prefix`))
+}
+
+
+`configure_gdal_shared` <- function(`shared_library_path` = NULL) {
+  invisible(.Call(savvy_configure_gdal_shared__impl, `shared_library_path`))
+}
+
+
+`configure_gdal_system_native` <- function() {
+  invisible(.Call(savvy_configure_gdal_system_native__impl))
+}
+
+
+`configure_proj_prefix_native` <- function(`prefix`) {
+  invisible(.Call(savvy_configure_proj_prefix_native__impl, `prefix`))
+}
+
+
+`configure_proj_system_native` <- function() {
+  invisible(.Call(savvy_configure_proj_system_native__impl))
+}
+
+
 `init_r_runtime_interrupts` <- function(`interrupts_call`, `pkg_env`) {
   invisible(.Call(savvy_init_r_runtime_interrupts__impl, `interrupts_call`, `pkg_env`))
 }

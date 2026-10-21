@@ -429,6 +429,7 @@ global_ctx$ctx <- NULL
 #' not linked at build time.
 #'
 #' @param preset One of:
+#'   - `"conda"`: Look for PROJ in `CONDA_PREFIX`.
 #'   - `"homebrew"`: Look for PROJ installed by Homebrew. This is the easiest
 #'     option on MacOS.
 #'   - `"system"`: Look for PROJ in the platform library load path (e.g.,
@@ -456,6 +457,10 @@ sd_configure_proj <- function(
   if (!is.null(preset)) {
     switch(
       preset,
+      conda = {
+        configure_proj_prefix(Sys.getenv("CONDA_PREFIX"))
+        return(invisible(NULL))
+      },
       homebrew = {
         configure_proj_prefix(Sys.getenv("HOMEBREW_PREFIX", "/opt/homebrew"))
         return(invisible(NULL))
@@ -465,7 +470,7 @@ sd_configure_proj <- function(
         return(invisible(NULL))
       },
       auto = {
-        presets <- c("homebrew", "system")
+        presets <- c("conda", "homebrew", "system")
         errors <- c()
         for (preset in presets) {
           maybe_err <- try(sd_configure_proj(preset), silent = TRUE)
@@ -513,30 +518,66 @@ sd_configure_proj <- function(
 }
 
 configure_proj_system <- function() {
-  sd_configure_proj(shared_library = proj_dll_name())
+  configure_proj_system_native()
 }
 
 configure_proj_prefix <- function(prefix) {
-  if (!dir.exists(prefix)) {
-    stop(sprintf("Can't configure PROJ from prefix '%s': does not exist", prefix))
-  }
-
-  sd_configure_proj(
-    shared_library = file.path(prefix, "lib", proj_dll_name()),
-    database_path = file.path(prefix, "share", "proj", "proj.db"),
-    search_path = file.path(prefix, "share", "proj")
-  )
+  configure_proj_prefix_native(prefix)
 }
 
-proj_dll_name <- function() {
-  switch(
-    tolower(Sys.info()[["sysname"]]),
-    windows = "proj.dll",
-    darwin = "libproj.dylib",
-    linux = "libproj.so",
-    stop(sprintf(
-      "Can't determine system PROJ shared library name for OS: %s",
-      Sys.info()[["sysname"]]
-    ))
-  )
+#' Configure GDAL
+#'
+#' SedonaDB loads GDAL dynamically at runtime. Windows binary packages bundle
+#' the GDAL DLL and matching data files built by vcpkg. Automatic configuration
+#' is attempted when the package is loaded.
+#'
+#' @param preset One of `"conda"`, `"homebrew"`, `"system"`, or `"auto"`.
+#' @param shared_library A path or platform library name for GDAL.
+#'
+#' @returns NULL, invisibly.
+#' @export
+sd_configure_gdal <- function(preset = NULL, shared_library = NULL) {
+  if (!is.null(preset)) {
+    switch(
+      preset,
+      conda = {
+        configure_gdal_prefix_native(Sys.getenv("CONDA_PREFIX"))
+        return(invisible(NULL))
+      },
+      homebrew = {
+        configure_gdal_prefix_native(Sys.getenv("HOMEBREW_PREFIX", "/opt/homebrew"))
+        return(invisible(NULL))
+      },
+      system = {
+        configure_gdal_system_native()
+        return(invisible(NULL))
+      },
+      auto = {
+        presets <- c("conda", "homebrew", "system")
+        errors <- character()
+        for (candidate in presets) {
+          maybe_err <- try(sd_configure_gdal(candidate), silent = TRUE)
+          if (!inherits(maybe_err, "try-error")) {
+            return(invisible(NULL))
+          }
+          errors <- c(errors, sprintf("%s: %s", candidate, maybe_err))
+        }
+
+        packageStartupMessage(sprintf(
+          "Failed to configure GDAL (tried %s):\n%s",
+          paste0("'", presets, "'", collapse = ", "),
+          paste0(errors, collapse = "\n")
+        ))
+        return(invisible(NULL))
+      },
+      stop(sprintf("Unknown preset: '%s'", preset))
+    )
+  }
+
+  if (is.null(shared_library)) {
+    stop("Must provide `shared_library` or `preset`")
+  }
+
+  configure_gdal_shared(shared_library)
+  invisible(NULL)
 }

@@ -21,43 +21,137 @@ use crate::object_storage::ensure_object_store_registered;
 use datafusion::catalog::{CatalogProvider, CatalogProviderList, SchemaProvider};
 
 use async_trait::async_trait;
-use datafusion::common::plan_datafusion_err;
+use datafusion::common::{plan_datafusion_err, TableReference};
 use datafusion::datasource::TableProvider;
 use datafusion::error::Result;
 use datafusion::execution::context::SessionState;
 use parking_lot::RwLock;
+use sedona_catalog::{CatalogObjectType, SedonaCatalogList};
 
-/// Wraps another catalog, automatically register require object stores for the file locations
+/// Owns the catalog composition for a Sedona session.
+///
+/// Foreign Sedona catalogs are searched newest-first and take precedence over
+/// DataFusion's built-in catalogs during Sedona SQL planning. Foreign catalogs
+/// are never exposed through the synchronous DataFusion API. Registration continues
+/// to target the built-in list. When enabled, built-in schemas are wrapped to
+/// register object stores dynamically for file locations.
 #[derive(Debug)]
-pub struct DynamicObjectStoreCatalog {
-    inner: Arc<dyn CatalogProviderList>,
+pub struct SedonaCatalogRegistry {
+    /// Registered foreign catalog lists, oldest first. Registration replaces the
+    /// slice so readers can take a snapshot without copying it.
+    foreign: RwLock<Arc<[Arc<dyn SedonaCatalogList>]>>,
+    fallback: Arc<dyn CatalogProviderList>,
     state: Weak<RwLock<SessionState>>,
+    dynamic_object_store: bool,
 }
 
-impl DynamicObjectStoreCatalog {
-    pub fn new(inner: Arc<dyn CatalogProviderList>, state: Weak<RwLock<SessionState>>) -> Self {
-        Self { inner, state }
+impl SedonaCatalogRegistry {
+    /// Create a registry that layers foreign catalogs over `fallback`.
+    pub fn new(
+        fallback: Arc<dyn CatalogProviderList>,
+        state: Weak<RwLock<SessionState>>,
+        dynamic_object_store: bool,
+    ) -> Self {
+        Self {
+            foreign: RwLock::new(Vec::new().into()),
+            fallback,
+            state,
+            dynamic_object_store,
+        }
+    }
+
+    /// Add a foreign catalog list. Later registrations take precedence.
+    pub fn register_foreign(&self, catalogs: Arc<dyn SedonaCatalogList>) {
+        let mut foreign = self.foreign.write();
+        *foreign = foreign.iter().cloned().chain([catalogs]).collect();
+    }
+
+    /// Look up a table using the same catalog precedence as Sedona SQL.
+    ///
+    /// Bare and partially qualified references are resolved against the
+    /// session's default catalog and schema. Foreign catalogs are searched
+    /// newest-first before falling back to DataFusion's built-in catalogs.
+    pub async fn table(
+        &self,
+        table_ref: impl Into<TableReference>,
+    ) -> Result<Option<Arc<dyn TableProvider>>> {
+        let state = self
+            .state
+            .upgrade()
+            .ok_or_else(|| plan_datafusion_err!("session state is no longer available"))?
+            .read()
+            .clone();
+        let defaults = &state.config_options().catalog;
+        let resolved = table_ref
+            .into()
+            .resolve(&defaults.default_catalog, &defaults.default_schema);
+        if let Some(catalog) = self.foreign_catalog(&resolved.catalog).await? {
+            return catalog
+                .table(&[&resolved.catalog, &resolved.schema, &resolved.table])
+                .await;
+        }
+
+        if let Ok(schema) = state.schema_for_ref(resolved.clone()) {
+            schema.table(&resolved.table).await
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Resolve catalog ownership asynchronously, newest registration first.
+    pub async fn foreign_catalog(&self, name: &str) -> Result<Option<Arc<dyn SedonaCatalogList>>> {
+        let foreign = self.foreign_lists();
+        for catalogs in foreign.iter().rev() {
+            if catalogs
+                .list_identifiers(&[name], Some(0))
+                .await?
+                .iter()
+                .any(|object| {
+                    object.identifier == [name] && object.object_type == CatalogObjectType::Catalog
+                })
+            {
+                return Ok(Some(catalogs.clone()));
+            }
+        }
+        Ok(None)
+    }
+
+    /// The most recently registered foreign catalog list.
+    pub fn latest_foreign(&self) -> Option<Arc<dyn SedonaCatalogList>> {
+        self.foreign.read().last().cloned()
+    }
+
+    /// The registered foreign catalog lists in registration order, oldest
+    /// first. Later registrations take precedence, so callers that pick an
+    /// owner iterate this slice in reverse.
+    pub fn foreign_lists(&self) -> Arc<[Arc<dyn SedonaCatalogList>]> {
+        self.foreign.read().clone()
     }
 }
 
-impl CatalogProviderList for DynamicObjectStoreCatalog {
+impl CatalogProviderList for SedonaCatalogRegistry {
     fn register_catalog(
         &self,
         name: String,
         catalog: Arc<dyn CatalogProvider>,
     ) -> Option<Arc<dyn CatalogProvider>> {
-        self.inner.register_catalog(name, catalog)
+        self.fallback.register_catalog(name, catalog)
     }
 
     fn catalog_names(&self) -> Vec<String> {
-        self.inner.catalog_names()
+        self.fallback.catalog_names()
     }
 
     fn catalog(&self, name: &str) -> Option<Arc<dyn CatalogProvider>> {
+        let catalog = self.fallback.catalog(name)?;
+        if !self.dynamic_object_store {
+            return Some(catalog);
+        }
+
         let state = self.state.clone();
-        self.inner
-            .catalog(name)
-            .map(|catalog| Arc::new(DynamicObjectStoreCatalogProvider::new(catalog, state)) as _)
+        Some(Arc::new(DynamicObjectStoreCatalogProvider::new(
+            catalog, state,
+        )))
     }
 }
 
@@ -161,18 +255,19 @@ mod tests {
     use super::*;
 
     use datafusion::{catalog::SchemaProvider, datasource::listing::ListingTableUrl};
-
     fn setup_context() -> (SedonaContext, Arc<dyn SchemaProvider>) {
         let ctx = SedonaContext::new();
         ctx.ctx
-            .register_catalog_list(Arc::new(DynamicObjectStoreCatalog::new(
+            .register_catalog_list(Arc::new(SedonaCatalogRegistry::new(
                 ctx.ctx.state().catalog_list().clone(),
                 ctx.ctx.state_weak_ref(),
+                true,
             )));
 
-        let provider = &DynamicObjectStoreCatalog::new(
+        let provider = &SedonaCatalogRegistry::new(
             ctx.ctx.state().catalog_list().clone(),
             ctx.ctx.state_weak_ref(),
+            true,
         ) as &dyn CatalogProviderList;
         let catalog = provider
             .catalog(provider.catalog_names().first().unwrap())

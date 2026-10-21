@@ -86,6 +86,7 @@ class SedonaSpark(DBEngine):
                 .master("local[2]")
                 .appName("sedonadb-spark-parity")
                 .config("spark.jars.packages", cls._packages())
+                .config("spark.jars", cls._jars())
                 .config("spark.jars.ivy", cls._ivy_dir())
                 .config("spark.ui.enabled", "false")
                 .getOrCreate()
@@ -118,6 +119,18 @@ class SedonaSpark(DBEngine):
                 f"DataFrame.toArrow; found {pyspark.__version__}. Run "
                 f"`pip install 'pyspark>={minimum}'`"
             )
+
+    @staticmethod
+    def _jars() -> str:
+        """Local jar paths to put ahead of the resolved packages, or "".
+
+        Sedona publishes no snapshot builds to Maven, so testing against
+        unreleased fixes means a jar built by its CI. Point
+        SEDONADB_SEDONA_SPARK_JARS at one and narrow
+        SEDONADB_SEDONA_SPARK_PACKAGES to the dependencies the shaded jar does
+        not bundle (geotools-wrapper, for raster).
+        """
+        return os.environ.get("SEDONADB_SEDONA_SPARK_JARS", "")
 
     @classmethod
     def _packages(cls) -> str:
