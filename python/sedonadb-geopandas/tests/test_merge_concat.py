@@ -1,0 +1,280 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+"""merge() and concat(), compared against pandas/GeoPandas."""
+
+import math
+
+import geopandas as gpd
+import numpy as np
+import pandas as pd
+import pytest
+from shapely.geometry import Point
+
+import sedonadb_geopandas as sgpd
+
+
+def _left():
+    return gpd.GeoDataFrame(
+        {
+            "k": [1.0, np.nan, None, -0.0, 2.0],
+            "v": list("abcde"),
+            "geometry": [Point(i, i) for i in range(5)],
+        },
+        crs="EPSG:4326",
+    )
+
+
+def _right():
+    return pd.DataFrame(
+        {"k": [np.nan, 0.0, 2.0, 3.0], "v": list("WXYZ"), "w": [10, 20, 30, 40]}
+    )
+
+
+def _plain(value):
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return None
+    if hasattr(value, "wkt"):
+        return value.wkt
+    return value
+
+
+def _same(ours, theirs):
+    """The same columns, in order, and the same rows, in any order (a lazy
+    frame has none)."""
+    if hasattr(ours, "to_geopandas"):
+        ours = ours.to_geopandas()
+    assert list(ours.columns) == list(theirs.columns)
+
+    def rows(frame):
+        found = [tuple(_plain(v) for v in row) for row in frame.itertuples(index=False)]
+        return sorted(found, key=repr)
+
+    assert rows(ours) == rows(theirs)
+
+
+@pytest.mark.parametrize("how", ["inner", "left", "right", "outer"])
+def test_merge_matches_pandas(how):
+    # As in pandas, and unlike SQL, a missing key (NaN or None) matches a
+    # missing one, and -0.0 matches 0.0.
+    ours = sgpd.from_geopandas(_left()).merge(_right(), on="k", how=how)
+    _same(ours, _left().merge(_right(), on="k", how=how))
+
+
+def test_merge_keys_and_names():
+    left, right = sgpd.from_geopandas(_left()), sgpd.from_geopandas(_right())
+    theirs_left, theirs_right = _left(), _right()
+    renamed = _right().rename(columns={"k": "kk"})
+    for ours, theirs in [
+        # The columns both frames have, by default.
+        (left.merge(right), theirs_left.merge(theirs_right)),
+        (
+            left.merge(right, on="k", suffixes=(None, "_r")),
+            theirs_left.merge(theirs_right, on="k", suffixes=(None, "_r")),
+        ),
+        (
+            left.merge(sgpd.from_geopandas(renamed), left_on="k", right_on="kk"),
+            theirs_left.merge(renamed, left_on="k", right_on="kk"),
+        ),
+        (
+            left.merge(right, left_on="k", right_on="k"),
+            theirs_left.merge(theirs_right, left_on="k", right_on="k"),
+        ),
+        (
+            left.merge(right, on=["k", "v"], how="outer"),
+            theirs_left.merge(theirs_right, on=["k", "v"], how="outer"),
+        ),
+        (
+            left[["v"]].merge(right[["w"]], how="cross"),
+            theirs_left[["v"]].merge(theirs_right[["w"]], how="cross"),
+        ),
+    ]:
+        _same(ours, theirs)
+
+
+def test_merge_with_itself():
+    frame = _left()
+    ours = sgpd.from_geopandas(frame)
+    _same(ours.merge(ours, on="v"), frame.merge(frame, on="v"))
+
+
+def test_merge_matches_missing_keys_of_every_kind():
+    # Integers match floats, and missing text and times match their own kind.
+    left = pd.DataFrame(
+        {
+            "i": [1, 2],
+            "s": ["a", None],
+            "t": pd.to_datetime(["2020-01-01", None]),
+            "x": [1, 2],
+        }
+    )
+    right = pd.DataFrame(
+        {
+            "i": [1.0, 3.0],
+            "s": [None, "b"],
+            "t": pd.to_datetime([None, "2020-01-02"]),
+            "y": [10, 20],
+        }
+    )
+    ours = sgpd.from_geopandas(left)
+    for on in ["i", "s", "t"]:
+        _same(ours.merge(right, on=on), left.merge(right, on=on))
+
+
+def test_merge_indicator_validate_and_sort():
+    left = sgpd.from_geopandas(_left())
+    theirs = _left().merge(_right(), on="k", how="outer", indicator=True)
+    _same(left.merge(_right(), on="k", how="outer", indicator=True), theirs)
+    named = left.merge(_right(), on="k", how="outer", indicator="where")
+    assert "where" in named.columns
+    with pytest.raises(ValueError, match="indicator"):
+        left.merge(_right(), on="k", indicator="v")
+
+    unique = pd.DataFrame({"k": [1.0, 2.0], "w": [1, 2]})
+    left.merge(unique, on="k", validate="m:1")
+    with pytest.raises(
+        ValueError, match="not unique in left dataset; not a one-to-one"
+    ):
+        left.merge(unique, on="k", validate="1:1")
+    with pytest.raises(
+        ValueError, match="not unique in right dataset; not a many-to-one"
+    ):
+        left.merge(_right().assign(k=0.0), on="k", validate="m:1")
+    with pytest.raises(ValueError, match="not a valid argument"):
+        left.merge(unique, on="k", validate="1-1")
+
+    keys = left.merge(_right(), on="k", how="outer", sort=True).to_geopandas()["k"]
+    expected = _left().merge(_right(), on="k", how="outer", sort=True)["k"]
+    assert [_plain(v) for v in keys] == [_plain(v) for v in expected]
+
+
+def test_merge_keeps_geometry():
+    left = sgpd.from_geopandas(_left())
+    merged = left.merge(_right(), on="k")
+    assert merged.geometry._name == "geometry"
+    assert merged.to_geopandas().crs == "EPSG:4326"
+    # Geometry on both sides: suffixed, and the left's stays active (GeoPandas
+    # keeps naming a "geometry" column that is no longer there).
+    other = gpd.GeoDataFrame(
+        {"k": [1.0, 2.0]}, geometry=[Point(9, 9), Point(8, 8)], crs="EPSG:3857"
+    )
+    both = left.merge(sgpd.from_geopandas(other), on="k")
+    assert list(both.columns) == ["k", "v", "geometry_x", "geometry_y"]
+    assert both.geometry._name == "geometry_x"
+    result = both.to_geopandas()
+    assert result.crs == "EPSG:4326"
+    assert result["geometry_y"].crs == "EPSG:3857"
+
+
+def test_merge_validates_its_arguments():
+    left = sgpd.from_geopandas(_left())
+    right = _right()
+    with pytest.raises(KeyError):
+        left.merge(right, on="nope")
+    with pytest.raises(ValueError, match="do not recognize join method"):
+        left.merge(right, on="k", how="sideways")
+    with pytest.raises(ValueError, match='"on" OR "left_on"'):
+        left.merge(right, on="k", left_on="k")
+    with pytest.raises(ValueError, match="Must pass right_on"):
+        left.merge(right, left_on="k")
+    with pytest.raises(ValueError, match="len\\(right_on\\) must equal"):
+        left.merge(right, left_on=["k", "v"], right_on=["k"])
+    with pytest.raises(ValueError, match="No common columns"):
+        left.merge(pd.DataFrame({"z": [1]}))
+    with pytest.raises(ValueError, match="duplicate columns"):
+        left.assign(v_x=1).merge(right, on="k")
+    with pytest.raises(ValueError, match="no suffix specified"):
+        left.merge(right, on="k", suffixes=(None, None))
+    with pytest.raises(ValueError, match="You are trying to merge on"):
+        left.merge(right.assign(k=right["k"].astype(str)), on="k")
+    with pytest.raises(TypeError, match="geometry column"):
+        left.merge(left, on="geometry")
+    with pytest.raises(ValueError, match="Can not pass on"):
+        left.merge(right, on="k", how="cross")
+    with pytest.raises(NotImplementedError, match="no index"):
+        left.merge(right, left_index=True, right_index=True)
+    # The module-level form takes a frame on the left.
+    _same(sgpd.merge(left, right, on="k"), _left().merge(right, on="k"))
+    with pytest.raises(TypeError, match="GeoDataFrame on the left"):
+        sgpd.merge(_left(), right, on="k")
+
+
+def _frames():
+    a = gpd.GeoDataFrame(
+        {"a": [1, 2], "s": ["x", "y"]},
+        geometry=[Point(0, 0), Point(1, 1)],
+        crs="EPSG:4326",
+    )
+    b = gpd.GeoDataFrame(
+        {"a": [3.5], "b": [True]}, geometry=[Point(2, 2)], crs="EPSG:4326"
+    )
+    return a, b
+
+
+@pytest.mark.parametrize("kwargs", [{}, {"join": "inner"}, {"sort": True}])
+def test_concat_matches_geopandas(kwargs):
+    # Columns are matched by name, in the order they first appear; integers
+    # and floats stack as floats.
+    a, b = _frames()
+    ours = sgpd.concat([sgpd.from_geopandas(a), sgpd.from_geopandas(b)], **kwargs)
+    theirs = pd.concat([a, b], **kwargs)
+    _same(ours, theirs)
+    if "a" in theirs.columns:
+        assert ours.to_geopandas()["a"].dtype == theirs["a"].dtype
+
+
+def test_concat_fills_missing_columns():
+    a, _ = _frames()
+    plain = pd.DataFrame({"a": [9]})
+    ours = sgpd.concat([sgpd.from_geopandas(a), None, plain])
+    _same(ours, pd.concat([a, None, plain]))
+    # The missing geometry keeps the column's CRS.
+    assert ours.to_geopandas().crs == "EPSG:4326"
+    assert ours.geometry._name == "geometry"
+
+
+def test_concat_keeps_geography():
+    ctx = sgpd.default_context()
+    one = sgpd.GeoDataFrame(ctx.sql("SELECT 1 AS x, ST_GeogPoint(1, 1) AS geometry"))
+    two = sgpd.GeoDataFrame(ctx.sql("SELECT 2 AS x"))
+    stacked = sgpd.concat([one, two])
+    assert stacked.geometry._is_geography()
+    assert stacked.to_geopandas()["x"].tolist() in ([1, 2], [2, 1])
+
+
+def test_concat_validates_its_arguments():
+    a, b = _frames()
+    ours = sgpd.from_geopandas(a)
+    other = sgpd.from_geopandas(b.set_crs("EPSG:3857", allow_override=True))
+    with pytest.raises(ValueError, match="common CRS"):
+        sgpd.concat([ours, other])
+    with pytest.raises(TypeError, match="one kind of value"):
+        sgpd.concat([ours, ours.assign(a="p")])
+    with pytest.raises(TypeError, match="geometries and other values"):
+        sgpd.concat([ours, pd.DataFrame({"geometry": [1]})])
+    with pytest.raises(ValueError, match="No objects to concatenate"):
+        sgpd.concat([])
+    with pytest.raises(ValueError, match="All objects passed were None"):
+        sgpd.concat([None])
+    with pytest.raises(NotImplementedError, match="rows only"):
+        sgpd.concat([ours, ours], axis=1)
+    with pytest.raises(NotImplementedError, match="keys"):
+        sgpd.concat([ours, ours], keys=["a", "b"])
+    with pytest.raises(ValueError, match="inner \\(intersect\\) or outer"):
+        sgpd.concat([ours, ours], join="left")
+    with pytest.raises(TypeError, match="at least one GeoDataFrame"):
+        sgpd.concat([pd.DataFrame({"a": [1]})])

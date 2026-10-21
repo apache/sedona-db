@@ -568,6 +568,57 @@ class GeoDataFrame:
             )
         return GeoDataFrame(self._df.limit(n), self._geometry_name)
 
+    def merge(
+        self,
+        right,
+        how="inner",
+        on=None,
+        left_on=None,
+        right_on=None,
+        left_index=False,
+        right_index=False,
+        sort=False,
+        suffixes=("_x", "_y"),
+        copy=None,
+        indicator=False,
+        validate=None,
+    ):
+        """Join `right` (a frame, or a pandas DataFrame) on columns, as pandas
+        does.
+
+        `how` is "inner", "left", "right", "outer", or "cross"; the keys are
+        `on` (the columns both frames have, by default) or `left_on` and
+        `right_on`. As in pandas, and unlike SQL, a missing key matches a
+        missing key (NaN included), and -0.0 matches 0.0. A key both frames
+        share appears once, holding the left's value where there is one;
+        other columns both have take `suffixes`. `indicator` adds a column
+        saying where each row came from ("left_only", "right_only", "both"),
+        `validate` checks that keys are unique as it says (which computes),
+        and `sort` sorts by the keys. The active geometry is this frame's,
+        under its name in the result.
+
+        Without an index, rows don't keep this frame's order (`sort=True`
+        orders them by key), and `left_index`/`right_index` are not
+        supported.
+        """
+        from sedonadb_geopandas._relational import merge
+
+        return merge(
+            self,
+            right,
+            how=how,
+            on=on,
+            left_on=left_on,
+            right_on=right_on,
+            left_index=left_index,
+            right_index=right_index,
+            sort=sort,
+            suffixes=suffixes,
+            copy=copy,
+            indicator=indicator,
+            validate=validate,
+        )
+
     def copy(self, deep=True):
         """A copy of this frame, as in pandas.
 
