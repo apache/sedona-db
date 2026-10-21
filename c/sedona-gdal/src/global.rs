@@ -25,44 +25,55 @@ use std::sync::{Mutex, OnceLock};
 #[cfg(unix)]
 use std::time::{Duration, Instant};
 
-// Two shutdown flags, set by different hooks at different points of teardown:
+// Two teardown flags. There is one real boundary, "GDAL stops being valid
+// once `exit()` reaches libgdal's static destructors", and the flags are two
+// ways of observing it, because the platforms differ in which hook can see it:
 //
-// - `GDAL_SHUTTING_DOWN` ([`begin_gdal_shutdown`]) is set by an embedder's own
-//   shutdown hook (the Python package's `atexit` callback). It only stops
-//   `Drop` impls from freeing GDAL objects; GDAL calls keep working.
 // - `GDAL_EXITING` is set by the C `atexit` handler [`drain_gdal_calls_at_exit`]
-//   (Unix only) just before it waits for running GDAL closures, so it is the
-//   point after which GDAL may no longer be entered at all: new closures fail,
-//   `Drop` impls skip their frees, and long-running readers should stop.
+//   (Unix only) just before it waits for running GDAL closures. It observes the
+//   boundary directly, so it is the point after which GDAL may no longer be
+//   entered at all: new closures fail, `Drop` impls skip their frees, and
+//   long-running readers should stop.
+// - `GDAL_LEAK_ON_DROP` ([`leak_gdal_objects_on_drop`]) exists for Windows,
+//   where that handler can't work (see [`drain_gdal_calls_at_exit`]). It is
+//   set by the embedder's own hook (the Python package's `atexit` callback)
+//   during interpreter finalization, the latest point that reliably precedes
+//   Windows' DLL teardown. The interpreter is still intact then and later exit
+//   hooks may use GDAL, so it forbids only what is free to forbid: `Drop`
+//   impls leak their GDAL objects instead of freeing them. GDAL calls keep
+//   working. On Unix it is set too, redundantly: frees during finalization are
+//   safe there, and the exit barrier covers `exit()`.
 //
-// A `Drop` impl leaves its object alone if either flag is set: both mean "a
-// free now could run during or after GDAL's teardown", and leaking at process
-// exit is harmless since the OS reclaims the memory and handles.
+// A `Drop` impl leaves its object alone if either flag is set; leaking at
+// process exit is harmless since the OS reclaims the memory and handles.
 
-/// Set once the embedder signals shutdown; GDAL objects dropped afterwards are
-/// leaked instead of freed.
+/// Set once the embedder signals that process exit is near; GDAL objects
+/// dropped afterwards are leaked instead of freed. GDAL stays callable.
 ///
-/// On Windows, running `GDALClose` from a (thread-local) dataset cache's
-/// destructor while the GDAL shared library is being unloaded corrupts the
-/// teardown and aborts the process (`0xC0000409`). Leaking the handles at
-/// process exit is harmless — the OS reclaims them — so once shutdown begins
-/// the `Drop` impls of GDAL-owning wrappers (e.g. [`crate::dataset::Dataset`])
-/// skip their free calls. GDAL calls inside [`with_global_gdal`] closures are
-/// unaffected.
-static GDAL_SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
+/// This is a Windows exit rule armed early. On Windows, `exit()` unloads
+/// libgdal before this module's thread-local destructors run, so a dataset
+/// cache's destructor would run `GDALClose` against an unloaded library,
+/// corrupting teardown and aborting the process (`0xC0000409`). Leaking the
+/// handles at process exit is harmless, the OS reclaims them, so once this is
+/// set the `Drop` impls of GDAL-owning wrappers (e.g.
+/// [`crate::dataset::Dataset`]) skip their free calls. GDAL calls inside
+/// [`with_global_gdal`] closures are unaffected.
+static GDAL_LEAK_ON_DROP: AtomicBool = AtomicBool::new(false);
 
-/// Signal that the process is shutting down; see [`GDAL_SHUTTING_DOWN`].
+/// From now on, leak GDAL objects on drop instead of freeing them; see
+/// [`GDAL_LEAK_ON_DROP`].
 ///
 /// Intended to run on the interpreter thread during finalization (e.g. a Python
-/// `atexit` callback), before GDAL's library is unloaded. It does not refuse
-/// later GDAL calls: other `atexit` callbacks may still legitimately use GDAL.
-pub fn begin_gdal_shutdown() {
-    GDAL_SHUTTING_DOWN.store(true, Ordering::SeqCst);
+/// `atexit` callback), before `exit()` unloads GDAL's library. It does not
+/// refuse later GDAL calls: the interpreter is still intact, and other `atexit`
+/// callbacks may legitimately use GDAL.
+pub fn leak_gdal_objects_on_drop() {
+    GDAL_LEAK_ON_DROP.store(true, Ordering::SeqCst);
 }
 
-/// Whether [`begin_gdal_shutdown`] has been called.
-pub fn is_gdal_shutting_down() -> bool {
-    GDAL_SHUTTING_DOWN.load(Ordering::SeqCst)
+/// Whether [`leak_gdal_objects_on_drop`] has been called.
+pub fn is_gdal_leaking_on_drop() -> bool {
+    GDAL_LEAK_ON_DROP.load(Ordering::SeqCst)
 }
 
 /// Set by the C `atexit` handler [`drain_gdal_calls_at_exit`]: `exit()` is
@@ -125,10 +136,10 @@ impl Drop for InFlightGuard {
 /// `Drop` can run outside any [`with_global_gdal`] closure, e.g. a dataset in a
 /// thread-local cache dropped by a TLS destructor while a blocking thread idles
 /// out at exit, so the free is counted by the exit barrier like a closure. It
-/// is skipped (the object is leaked) once [`begin_gdal_shutdown`] was called or
-/// the process is exiting; see the comment on the two flags above.
+/// is skipped (the object is leaked) once [`leak_gdal_objects_on_drop`] was
+/// called or the process is exiting; see the comment on the two flags above.
 pub(crate) fn free_gdal_object<R>(free: impl FnOnce() -> R) {
-    if is_gdal_shutting_down() {
+    if is_gdal_leaking_on_drop() {
         return;
     }
     if let Ok(_in_flight) = InFlightGuard::enter() {
@@ -163,7 +174,7 @@ pub(crate) fn free_gdal_object<R>(free: impl FnOnce() -> R) {
 /// detached, so a running closure would never return and this would always
 /// wait out the timeout; and libgdal's DLL detach does not reliably come after
 /// this module's `atexit` handlers, so the ordering argument above doesn't
-/// hold. Windows relies on [`begin_gdal_shutdown`] alone.
+/// hold. Windows relies on [`leak_gdal_objects_on_drop`] alone.
 #[cfg(unix)]
 pub(crate) extern "C" fn drain_gdal_calls_at_exit() {
     GDAL_EXITING.store(true, Ordering::SeqCst);
@@ -604,8 +615,9 @@ mod test {
         assert!(returned - start >= Duration::from_millis(150));
         assert_eq!(GDAL_CALLS_IN_FLIGHT.load(Ordering::SeqCst), 0);
         assert!(is_gdal_exiting());
-        // `begin_gdal_shutdown` was never called: the two flags are independent.
-        assert!(!is_gdal_shutting_down());
+        // `leak_gdal_objects_on_drop` was never called: the exit barrier does
+        // not depend on the embedder's hook.
+        assert!(!is_gdal_leaking_on_drop());
         assert!(with_global_gdal_api(|_| ()).is_err());
         assert!(with_global_gdal(|_| ()).is_err());
     }

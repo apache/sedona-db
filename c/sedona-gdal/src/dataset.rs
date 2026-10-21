@@ -47,7 +47,7 @@ unsafe impl Send for Dataset {}
 
 impl Drop for Dataset {
     fn drop(&mut self) {
-        // Once the process is shutting down, the handle is left open (see
+        // Near process exit the handle is left open instead of closed (see
         // `free_gdal_object`). On Windows, closing a dataset while GDAL's shared
         // library is being unloaded corrupts teardown and aborts the process
         // (0xC0000409); leaking the handle at process exit is harmless since
