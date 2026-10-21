@@ -215,7 +215,7 @@ def _rasterio_resample(
         # Scale both axes of the source transform by the pixel-count ratio — the
         # independent affine equivalent of RS_Resample's footprint-preserving grid
         # (scale and skew terms scale together).
-        transform = src.transform * src.transform.scale(
+        transform = src.transform @ src.transform.scale(
             src.width / width, src.height / height
         )
         nodata = [src.nodata] * src.count
