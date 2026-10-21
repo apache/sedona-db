@@ -164,23 +164,32 @@ def test_merge_keys_compare_exactly():
 
 
 def test_merge_keys_of_both_signs():
-    # int64 and uint64 keys stand in for one another (a right or outer join's
-    # key, every sort key) as a float64, which holds both ranges, as NumPy
-    # widens them; pandas can't join them right or outer at all.
-    signed = pd.DataFrame({"k": np.array([-1, 5], np.int64), "v": [1, 2]})
-    unsigned = pd.DataFrame({"k": np.array([2**64 - 1, 5], np.uint64), "w": [3, 4]})
-    for how in ("right", "outer"):
-        got = sgpd.from_geopandas(signed).merge(unsigned, on="k", how=how)
-        keys = got.to_geopandas()["k"]
-        assert keys.dtype == np.float64
-        assert sorted(keys.dropna().tolist()) == sorted(
-            float(k) for k in ([5, 2**64 - 1] if how == "right" else [-1, 5, 2**64 - 1])
-        )
-    flipped = unsigned.rename(columns={"w": "v"}), signed.rename(columns={"v": "w"})
-    got = sgpd.from_geopandas(flipped[0]).merge(
-        flipped[1], on="k", how="left", sort=True
+    # int64 and uint64 keys: a right join's keys keep the right's type, as in
+    # pandas, so distinct large ones stay distinct; an outer join's take a
+    # float64, which holds both ranges, as NumPy widens them (pandas can't
+    # join these outer); a left join sorts by the left's keys exactly.
+    signed = pd.DataFrame({"k": np.array([-1], np.int64), "v": [1]})
+    unsigned = pd.DataFrame(
+        {"k": np.array([2**64 - 2, 2**64 - 1], np.uint64), "w": [3, 4]}
     )
-    expected = flipped[0].merge(flipped[1], on="k", how="left", sort=True)
+    got = sgpd.from_geopandas(signed).merge(unsigned, on="k", how="right")
+    expected = signed.merge(unsigned, on="k", how="right")
+    keys = got.to_geopandas()["k"]
+    assert keys.dtype == expected["k"].dtype
+    assert sorted(keys.tolist()) == sorted(expected["k"].tolist())
+
+    matched = pd.DataFrame({"k": np.array([-1, 5], np.int64), "v": [1, 2]})
+    got = sgpd.from_geopandas(matched).merge(
+        unsigned.assign(k=np.array([5, 2**64 - 1], np.uint64)), on="k", how="outer"
+    )
+    keys = got.to_geopandas()["k"]
+    assert keys.dtype == np.float64
+    assert sorted(keys.tolist()) == sorted([-1.0, 5.0, float(2**64 - 1)])
+
+    left = unsigned.rename(columns={"w": "v"})
+    right = pd.DataFrame({"k": np.array([-1, 2**63 - 1], np.int64), "w": [5, 6]})
+    got = sgpd.from_geopandas(left).merge(right, on="k", how="left", sort=True)
+    expected = left.merge(right, on="k", how="left", sort=True)
     assert got.to_geopandas()["k"].tolist() == expected["k"].tolist()
 
 

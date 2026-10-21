@@ -134,10 +134,11 @@ no row order to count back from.
 (NaN or None) with a missing key, unlike SQL; without an index, its rows don't
 keep the left frame's order (`sort=True` orders them by key), and
 `left_index`/`right_index` are not supported. A key both frames share keeps the
-left's type in an inner or left join; in a right or outer join it takes a type
-both sides fit, which pandas chooses by whether some row lacks the left's key,
-but a lazy frame's types can't depend on its rows. When both frames have a geometry
-column of the same name, the left's stays active under its suffixed name, where
+left's type in an inner or left join and the right's in a right join; in an
+outer join it takes a type both sides fit, which pandas chooses by whether some
+row lacks the left's key, but a lazy frame's types can't depend on its rows.
+When both frames have a geometry column of the same name, the left's stays
+active under its suffixed name, where
 GeoPandas keeps naming the unsuffixed column. `concat()` stacks rows only
 (`axis=0`), matching columns by name; a column holds one kind of value, so
 values of different kinds (numbers and text, say) raise rather than make a

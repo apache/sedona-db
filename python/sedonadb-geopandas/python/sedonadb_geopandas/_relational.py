@@ -117,6 +117,10 @@ def merge(
         left_value, right_value, key_types[left_name] = _join_values(
             left, right, left_name, right_name
         )
+        if how == "right" and not pa.types.is_null(right[right_name]._dtype()):
+            # Every row of a right join has the right's key: its type holds
+            # them all exactly, as pandas keeps it.
+            key_types[left_name] = right[right_name]._dtype()
         for side, value, keys, extra in (
             ("l", left_value, left_keys, left_extra),
             ("r", right_value, right_keys, right_extra),
@@ -159,8 +163,13 @@ def merge(
         joined = left_df.join(right_df, on=predicates, how=how)
 
     def either(left_name, right_name):
-        # The left's key where the row has one, else the right's, in a type
-        # both are exact in (decoded, and times in the finer unit).
+        # The row's key: the left's where it has one, as pandas has it, else
+        # the right's. Every row of an inner or left join has the left's,
+        # exactly as it is; in a right join, a left key that matched equals
+        # the right's, so it takes the right's type exactly; an outer join's
+        # take a type both sides fit (decoded, and times in the finer unit).
+        if how in ("inner", "left"):
+            return left_df[left_name]
         dtype = key_types[left_name]
         values = [
             # NaT's sentinel tick made missing first: a finer unit would
