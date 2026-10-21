@@ -26,7 +26,6 @@ requires-python = ">=3.9"
 classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
-    "Programming Language :: Python :: Implementation :: PyPy",
 ]
 dynamic = ["version"]
 
@@ -54,21 +53,15 @@ geopandas = [
 ]
 
 [tool.cibuildwheel]
+# PyO3's stable ABI support makes this one wheel per platform compatible with
+# every supported CPython version, rather than producing one wheel per version.
+build = "cp39-*"
 # Set here rather than via CIBW_TEST_REQUIRES in the workflow: environment
 # variables take precedence over the overrides below.
 test-requires = ["pytest", "adbc_driver_manager", "geoarrow-pyarrow", "geopandas", "duckdb"]
-# pyarrow (and shapely, pyogrio, adbc-driver-manager, duckdb) publish no cp315
-# wheels yet, so the test environment cannot be installed. Build the wheels
-# but skip testing them until those are available.
-test-skip = "cp315*"
-
-# DuckDB publishes no free-threaded wheels, and building it from its sdist fails
-# with scikit-build-core >= 1.1. The DuckDB-backed tests skip when it is absent.
-[[tool.cibuildwheel.overrides]]
-select = "cp314t-*"
-test-requires = ["pytest", "adbc_driver_manager", "geoarrow-pyarrow", "geopandas"]
 
 [tool.maturin]
-features = ["pyo3/extension-module"]
+features = ["pyo3/extension-module", "pyo3/abi3-py39"]
 module-name = "sedonadb._lib"
 python-source = "python"
+strip = true

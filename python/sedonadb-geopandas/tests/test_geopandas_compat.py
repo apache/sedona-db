@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import operator
 import sys
 
 import geoarrow.pyarrow as ga
@@ -24,9 +25,7 @@ import numpy.ma.mrecords as mrecords
 import pandas as pd
 import pyarrow as pa
 import pytest
-import sedonadb
 from geopandas.testing import assert_geodataframe_equal
-from packaging.version import Version
 from sedonadb.expr import lit
 from shapely.geometry import MultiPoint, Point
 
@@ -150,6 +149,120 @@ def test_column_subset_keeps_geometry(cities):
 def test_filter_matches_geopandas(cities):
     # Same op applied to GeoPandas and to the wrapper yields the same result.
     assert_geopandas_expr_equal(cities, lambda df: df[df["pop"] > 150], sort_by="name")
+
+
+_COMPARED = """
+SELECT f, g, CAST(i AS BIGINT) AS i, s, CAST(t AS TIMESTAMP) AS t,
+    ST_Point(0, 0) AS geometry
+FROM (VALUES
+    (1.5, 1.5, 1, 'a', '2020-01-01'),
+    (CAST('NaN' AS DOUBLE), CAST('NaN' AS DOUBLE), 2, 'b', '2020-01-02'),
+    (NULL, 2.0, NULL, NULL, NULL),
+    (CAST('-0.0' AS DOUBLE), 0.0, 0, 'a', '2020-01-01')
+) AS v(f, g, i, s, t)
+"""
+
+
+@pytest.mark.parametrize("op", ["gt", "ge", "lt", "le", "eq", "ne"])
+@pytest.mark.parametrize(
+    "left, right",
+    [
+        ("f", 1.5),
+        ("f", 0),
+        ("f", -0.0),
+        ("f", np.nan),
+        ("f", None),
+        ("f", "g"),
+        ("i", 1),
+        ("i", "f"),
+        ("t", pd.Timestamp("2020-01-01")),
+    ],
+)
+def test_comparisons_follow_pandas(op, left, right):
+    # A missing value on either side (null, or NaN in a float column) compares
+    # False, and True for !=; -0.0 equals 0.0. The engine alone answers null
+    # for a null, puts NaN above every number, and -0.0 below 0.0.
+    gdf = GeoDataFrame(sgpd.default_context().sql(_COMPARED))
+    frame = gdf.to_geopandas()
+    ours_right = gdf[right] if right in ("f", "g") else right
+    theirs_right = frame[right] if right in ("f", "g") else right
+    got = getattr(operator, op)(gdf[left], ours_right).to_pandas().tolist()
+    assert got == getattr(operator, op)(frame[left], theirs_right).tolist()
+
+
+@pytest.mark.parametrize("op", ["gt", "ge", "lt", "le", "eq", "ne"])
+@pytest.mark.parametrize("value", [-0.0, 0.0, 1.5, np.nan, None])
+def test_comparisons_with_literals_follow_pandas(op, value):
+    # A lit() operand compares as the value it holds: its -0.0 equals 0.0,
+    # and a missing one compares False (True for !=).
+    gdf = GeoDataFrame(sgpd.default_context().sql(_COMPARED))
+    got = getattr(operator, op)(gdf["f"], lit(value)).to_pandas().tolist()
+    assert got == getattr(operator, op)(gdf.to_geopandas()["f"], value).tolist()
+
+
+@pytest.mark.parametrize("encode", ["dictionary", "run_end"])
+@pytest.mark.parametrize("value", [-0.0, 1.5, np.nan, None])
+def test_encoded_literals_compare_as_their_value(encode, value):
+    plain = pa.array([value], pa.float64())
+    if encode == "dictionary":
+        encoded = plain.dictionary_encode()
+    else:
+        encoded = pa.RunEndEncodedArray.from_arrays(pa.array([1], pa.int32()), plain)
+    gdf = GeoDataFrame(sgpd.default_context().sql(_COMPARED))
+    frame = gdf.to_geopandas()
+    for op in (operator.eq, operator.ne, operator.lt):
+        got = op(gdf["f"], lit(encoded)).to_pandas().tolist()
+        assert got == op(frame["f"], value).tolist()
+
+
+@pytest.mark.parametrize("values", [[-0.0, 1.0], []])
+def test_literals_of_other_than_one_value_are_rejected(values):
+    # Not compared against the first value, nor failing to find one.
+    gdf = GeoDataFrame(sgpd.default_context().sql(_COMPARED))
+    with pytest.raises(ValueError, match=f"resolving to {len(values)} values"):
+        gdf["f"] == lit(pa.array(values, pa.float64()))
+
+
+@pytest.mark.parametrize("type", [pa.float32(), pa.float64()])
+@pytest.mark.parametrize("encode", ["dictionary", "run_end"])
+def test_encoded_float_columns_compare_as_plain_ones(type, encode):
+    # isnan(), behind the missing-value checks, accepts no encoded type.
+    values = pa.array([1.0, np.nan, None, -0.0], type)
+    if encode == "dictionary":
+        encoded = values.dictionary_encode()
+    else:
+        ends = pa.array(range(1, len(values) + 1), pa.int32())
+        encoded = pa.RunEndEncodedArray.from_arrays(ends, values)
+    ctx = sgpd.default_context()
+    ours = GeoDataFrame(ctx.create_data_frame(pa.table({"x": encoded})))["x"]
+    plain = GeoDataFrame(ctx.create_data_frame(pa.table({"x": values})))["x"]
+    for f in [
+        lambda s: s == 1.0,
+        lambda s: s != 1.0,
+        lambda s: s <= 0.0,
+        lambda s: s == s,
+        lambda s: s.isna(),
+    ]:
+        assert f(ours).to_pandas().tolist() == f(plain).to_pandas().tolist()
+    assert ours.isin([np.nan]).to_pandas().tolist() == [False, True, True, False]
+
+
+def test_string_equality_with_missing_values():
+    gdf = GeoDataFrame(sgpd.default_context().sql(_COMPARED))
+    assert (gdf["s"] == "a").to_pandas().tolist() == [True, False, False, True]
+    assert (gdf["s"] != "a").to_pandas().tolist() == [False, True, True, False]
+
+
+def test_masks_with_missing_values_select_the_rows_pandas_does():
+    gdf = GeoDataFrame(sgpd.default_context().sql(_COMPARED))
+    frame = gdf.to_geopandas()
+    for ours, theirs in [
+        (gdf["f"] > 100, frame["f"] > 100),
+        (~(gdf["f"] > 100), ~(frame["f"] > 100)),
+        (gdf["f"] == gdf["f"], frame["f"] == frame["f"]),
+        ((gdf["f"] != 1.5) & (gdf["i"] > 0), (frame["f"] != 1.5) & (frame["i"] > 0)),
+    ]:
+        assert len(gdf[ours].to_geopandas()) == int(theirs.sum())
 
 
 def test_to_crs_matches_geopandas(cities):
@@ -1035,6 +1148,26 @@ def test_geoarrow_scalars_to_new_columns():
     plain["g"] = pa.scalar(Point(1, 1).wkb, sph)
     assert "geography" in str(plain._df.schema.field("g").type)
     assert plain._geometry_name == "g"
+
+
+def test_valid_non_wkb_geoarrow_scalar_assigns():
+    # A GeoArrow scalar in native (non-WKB) storage becomes a geometry literal
+    # with its own CRS; a CRS-less one takes the destination column's.
+    points = gpd.GeoDataFrame(
+        {"v": [1, 2]}, geometry=gpd.points_from_xy([0, 5], [0, 5]), crs=3857
+    )
+    native = ga.as_geoarrow(["POINT (1 2)"], coord_type=ga.CoordType.SEPARATED)
+    for scalar, crs in (
+        (native[0], "EPSG:3857"),
+        (ga.with_crs(native, "EPSG:4326")[0], "EPSG:4326"),
+    ):
+        gdf = sgpd.from_geopandas(points)
+        gdf["geometry"] = scalar
+        gdf["fresh"] = scalar
+        result = gdf.to_geopandas()
+        assert result.geometry.tolist() == [Point(1, 2)] * 2
+        assert result["fresh"].tolist() == [Point(1, 2)] * 2
+        assert result.crs == crs
 
 
 def test_non_wkb_geoarrow_null_keeps_its_own_crs():
@@ -2142,10 +2275,6 @@ def test_dictionary_duration_columns_treat_sentinel_as_missing():
     assert gdf[gdf["t"] == gdf["t"]]["t"].to_pandas().tolist() == [pd.Timedelta(10)]
 
 
-@pytest.mark.skipif(
-    Version(sedonadb.__version__) < Version("0.5.0a0"),
-    reason="sedonadb < 0.5 expands a sliced run-end-encoded array from the wrong offset (#1345)",
-)
 @pytest.mark.parametrize("type", [pa.duration("ns"), pa.timestamp("ns")])
 def test_sliced_run_end_encoded_temporal_columns_read_correctly(type):
     # Sentinel normalization decodes run-end-encoded temporal columns, so a

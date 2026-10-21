@@ -14,8 +14,10 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+import json
 import math
 
+import pyarrow as pa
 import pytest
 import sedonadb
 import shapely
@@ -1366,6 +1368,74 @@ def test_st_makeline(eng):
 def test_st_dimension(eng, geom, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(f"SELECT ST_Dimension({geom_or_null(geom)})", expected)
+
+
+@pytest.mark.parametrize(
+    "wkt",
+    [
+        "POINT (1 2)",
+        "POINT EMPTY",
+        "LINESTRING (1 1, 2 2)",
+        "POLYGON ((1 1, 2 2, 2 1, 1 1))",
+        "MULTIPOINT (0 1, 1 2)",
+        "MULTIPOINT EMPTY",
+        "MULTILINESTRING ((1 1, 2 2), EMPTY, (3 3, 4 4))",
+        "MULTIPOLYGON (((1 1, 2 2, 2 1, 1 1)), EMPTY, ((3 3, 4 4, 4 3, 3 3)))",
+        "GEOMETRYCOLLECTION (POINT (1 2), GEOMETRYCOLLECTION (MULTILINESTRING ((1 1, 2 2), EMPTY, (3 3, 4 4)), LINESTRING (1 1, 2 2)))",
+        "GEOMETRYCOLLECTION EMPTY",
+        "MULTIPOINT Z ((0 1 2), (1 2 3))",
+    ],
+)
+def test_st_geometries(wkt):
+    # A geometry's direct members, one level deep, as shapely.get_parts gives
+    # them: a nested collection is a member, where ST_Dump recurses into it.
+    eng = SedonaDB.create_or_skip()
+    table = eng.con.sql(
+        f"SELECT ST_Geometries({geom_or_null(wkt)}) AS g"
+    ).to_arrow_table()
+    members = table.column("g").to_pylist()[0]
+    expected = shapely.get_parts(shapely.from_wkt(wkt))
+    assert [shapely.from_wkb(m).wkt for m in members] == [g.wkt for g in expected]
+
+
+def test_st_geometries_null():
+    eng = SedonaDB.create_or_skip()
+    table = eng.con.sql("SELECT ST_Geometries(NULL) AS g").to_arrow_table()
+    assert table.column("g").to_pylist() == [None]
+
+
+@pytest.mark.parametrize(
+    ("constructor", "expected"),
+    [
+        ("ST_SetSRID(ST_GeomFromText('MULTIPOINT (0 1, 1 2)'), 3857)", {"crs"}),
+        ("ST_GeogFromWKT('MULTIPOINT (0 1, 1 2)')", {"crs", "edges"}),
+    ],
+)
+def test_st_geometries_members_keep_the_input_type(constructor, expected):
+    # Each list item has the input's spatial type: its CRS, and for
+    # geography its spherical edges.
+    eng = SedonaDB.create_or_skip()
+    df = eng.con.sql(
+        f"SELECT {constructor} AS g, ST_Geometries({constructor}) AS parts"
+    )
+    schema = pa.schema(df.schema)
+    item_name, item_meta = _extension(schema.field("parts").type.value_field)
+    input_name, input_meta = _extension(schema.field("g"))
+    assert item_name == input_name == "geoarrow.wkb"
+    assert expected <= set(item_meta)
+    assert item_meta == input_meta
+
+
+def _extension(field):
+    """A field's extension name and metadata, whether or not the extension
+    type is registered with pyarrow (geoarrow-pyarrow registers it)."""
+    if isinstance(field.type, pa.ExtensionType):
+        serialized = field.type.__arrow_ext_serialize__() or b"{}"
+        return field.type.extension_name, json.loads(serialized)
+    return (
+        field.metadata[b"ARROW:extension:name"].decode(),
+        json.loads(field.metadata[b"ARROW:extension:metadata"]),
+    )
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
@@ -3228,6 +3298,15 @@ def test_st_reduceprecision(eng, geom, grid_size, expected):
 @pytest.mark.parametrize(
     ("geom", "expected"),
     [
+        ("POINT Z EMPTY", "POINT Z EMPTY"),
+        ("POINT M EMPTY", "POINT M EMPTY"),
+        ("POINT ZM EMPTY", "POINT ZM EMPTY"),
+        ("LINESTRING Z EMPTY", "LINESTRING Z EMPTY"),
+        ("LINESTRING M EMPTY", "LINESTRING M EMPTY"),
+        ("LINESTRING ZM EMPTY", "LINESTRING ZM EMPTY"),
+        ("POLYGON Z EMPTY", "POLYGON Z EMPTY"),
+        ("POLYGON M EMPTY", "POLYGON M EMPTY"),
+        ("POLYGON ZM EMPTY", "POLYGON ZM EMPTY"),
         (None, None),
         ("POINT EMPTY", "POINT EMPTY"),
         ("LINESTRING EMPTY", "LINESTRING EMPTY"),
@@ -3284,6 +3363,9 @@ def test_st_reduceprecision(eng, geom, grid_size, expected):
 def test_st_normalize(eng, geom, expected):
     eng = eng.create_or_skip()
     if isinstance(eng, PostGIS):
+        # PostGIS drops dimensional flags on empty simple geometries.
+        if geom is not None and geom.endswith(" EMPTY"):
+            expected = f"{geom.split()[0]} EMPTY"
         # PostGIS drops M during ST_Normalize for these cases in our test environment.
         if geom == "POLYGON M ((1 1 7, 1 0 7, 0 0 7, 0 1 7, 1 1 7))":
             expected = "POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))"
@@ -3626,6 +3708,9 @@ def test_st_pointn(eng, geometry, n, expected):
 @pytest.mark.parametrize(
     ("geom", "expected"),
     [
+        ("POINT Z EMPTY", "POINT Z EMPTY"),
+        ("LINESTRING Z EMPTY", "POINT Z EMPTY"),
+        ("POLYGON Z EMPTY", "POINT Z EMPTY"),
         (None, None),
         ("POINT EMPTY", "POINT EMPTY"),
         ("LINESTRING EMPTY", "POINT EMPTY"),
@@ -4134,6 +4219,18 @@ def test_st_mmax(eng, geom, expected):
 @pytest.mark.parametrize(
     ("geom", "expected"),
     [
+        ("POINT EMPTY", "POINT EMPTY"),
+        ("LINESTRING EMPTY", "LINESTRING EMPTY"),
+        (None, None),
+        ("POINT Z EMPTY", "POINT Z EMPTY"),
+        ("POINT M EMPTY", "POINT M EMPTY"),
+        ("POINT ZM EMPTY", "POINT ZM EMPTY"),
+        ("LINESTRING Z EMPTY", "LINESTRING Z EMPTY"),
+        ("LINESTRING M EMPTY", "LINESTRING M EMPTY"),
+        ("LINESTRING ZM EMPTY", "LINESTRING ZM EMPTY"),
+        ("POLYGON Z EMPTY", "POLYGON Z EMPTY"),
+        ("POLYGON M EMPTY", "POLYGON M EMPTY"),
+        ("POLYGON ZM EMPTY", "POLYGON ZM EMPTY"),
         # Already valid polygon should remain unchanged
         (
             "POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))",
@@ -4193,6 +4290,9 @@ def test_st_mmax(eng, geom, expected):
 )
 def test_st_makevalid(eng, geom, expected):
     eng = eng.create_or_skip()
+    # PostGIS drops dimensional flags on empty simple geometries.
+    if isinstance(eng, PostGIS) and geom is not None and geom.endswith(" EMPTY"):
+        expected = f"{geom.split()[0]} EMPTY"
     eng.assert_query_result(
         f"SELECT ST_MakeValid({geom_or_null(geom)})",
         expected,
@@ -4357,6 +4457,15 @@ def test_st_isvalidreason(eng, geom, expected):
 @pytest.mark.parametrize(
     ("geom", "tolerance", "expected"),
     [
+        ("POINT Z EMPTY", 1, "POINT Z EMPTY"),
+        ("POINT M EMPTY", 1, "POINT M EMPTY"),
+        ("POINT ZM EMPTY", 1, "POINT ZM EMPTY"),
+        ("LINESTRING Z EMPTY", 1, "LINESTRING Z EMPTY"),
+        ("LINESTRING M EMPTY", 1, "LINESTRING M EMPTY"),
+        ("LINESTRING ZM EMPTY", 1, "LINESTRING ZM EMPTY"),
+        ("POLYGON Z EMPTY", 1, "POLYGON Z EMPTY"),
+        ("POLYGON M EMPTY", 1, "POLYGON M EMPTY"),
+        ("POLYGON ZM EMPTY", 1, "POLYGON ZM EMPTY"),
         # TODO: PostGIS fails without explicit ::GEOMETRY type cast, but casting
         # doesn't work on SedonaDB yet.
         # (None, 2, None),
@@ -4486,6 +4595,15 @@ def test_st_simplify(eng, geom, tolerance, expected):
 @pytest.mark.parametrize(
     ("geom", "tolerance", "expected"),
     [
+        ("POINT Z EMPTY", 1, "POINT Z EMPTY"),
+        ("POINT M EMPTY", 1, "POINT M EMPTY"),
+        ("POINT ZM EMPTY", 1, "POINT ZM EMPTY"),
+        ("LINESTRING Z EMPTY", 1, "LINESTRING Z EMPTY"),
+        ("LINESTRING M EMPTY", 1, "LINESTRING M EMPTY"),
+        ("LINESTRING ZM EMPTY", 1, "LINESTRING ZM EMPTY"),
+        ("POLYGON Z EMPTY", 1, "POLYGON Z EMPTY"),
+        ("POLYGON M EMPTY", 1, "POLYGON M EMPTY"),
+        ("POLYGON ZM EMPTY", 1, "POLYGON ZM EMPTY"),
         # removes intermediate point
         (
             "LINESTRING (0 0, 0 10, 0 51, 50 20, 30 20, 7 32)",

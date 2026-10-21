@@ -46,6 +46,8 @@ pub fn scalar_kernels() -> Vec<(&'static str, Vec<ScalarKernelRef>)> {
         "st_buffer" => crate::st_buffer::st_buffer_impl,
         "st_buffer" => crate::st_buffer::st_buffer_style_impl,
         "st_centroid" => crate::st_centroid::st_centroid_impl,
+        "st_closestpoint" => crate::st_closest_point::st_closest_point_impl,
+        "st_shortestline" => crate::st_closest_point::st_shortest_line_impl,
         "st_concavehull" => crate::st_concavehull::st_concave_hull_allow_holes_impl,
         "st_concavehull" => crate::st_concavehull::st_concave_hull_impl,
         "st_contains" => crate::binary_predicates::st_contains_impl,

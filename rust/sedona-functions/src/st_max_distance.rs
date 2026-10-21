@@ -88,6 +88,18 @@ fn invoke_scalar(
     lhs_coords: &mut Vec<(f64, f64)>,
     rhs_coords: &mut Vec<(f64, f64)>,
 ) -> Option<f64> {
+    let (a, b) = farthest_coords(lhs, rhs, lhs_coords, rhs_coords)?;
+    let dx = a.0 - b.0;
+    let dy = a.1 - b.1;
+    Some(dx.hypot(dy))
+}
+
+pub(crate) fn farthest_coords(
+    lhs: &Wkb,
+    rhs: &Wkb,
+    lhs_coords: &mut Vec<(f64, f64)>,
+    rhs_coords: &mut Vec<(f64, f64)>,
+) -> Option<((f64, f64), (f64, f64))> {
     lhs_coords.clear();
     rhs_coords.clear();
 
@@ -98,19 +110,21 @@ fn invoke_scalar(
         return None;
     }
 
-    let mut max_dist_sq = f64::NEG_INFINITY;
+    let mut farthest = None;
+    let mut max_distance = f64::NEG_INFINITY;
     for a in lhs_coords {
         for b in &*rhs_coords {
             let dx = a.0 - b.0;
             let dy = a.1 - b.1;
-            let d2 = dx * dx + dy * dy;
-            if d2 > max_dist_sq {
-                max_dist_sq = d2;
+            let distance = dx.hypot(dy);
+            if distance > max_distance {
+                max_distance = distance;
+                farthest = Some((*a, *b));
             }
         }
     }
 
-    Some(max_dist_sq.max(0.0).sqrt())
+    farthest
 }
 
 fn collect_coords(geom: &impl GeometryTrait<T = f64>, coords: &mut Vec<(f64, f64)>) {
@@ -258,5 +272,18 @@ mod tests {
             .invoke_scalar_scalar("POINT (0 0)", "POINT (3 4)")
             .unwrap();
         tester.assert_scalar_result_equals(result, 5.0);
+    }
+
+    #[test]
+    fn distance_does_not_overflow_for_large_coordinates() {
+        let tester = ScalarUdfTester::new(
+            st_max_distance_udf().into(),
+            vec![WKB_GEOMETRY, WKB_GEOMETRY],
+        );
+
+        let result = tester
+            .invoke_scalar_scalar("MULTIPOINT ((1e200 0), (0 0))", "POINT (2e200 0)")
+            .unwrap();
+        tester.assert_scalar_result_equals(result, 2e200);
     }
 }
