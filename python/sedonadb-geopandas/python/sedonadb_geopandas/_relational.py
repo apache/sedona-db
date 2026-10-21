@@ -162,22 +162,35 @@ def merge(
             ]
         joined = left_df.join(right_df, on=predicates, how=how)
 
+    def key(df, name, dtype):
+        # NaT's sentinel tick made missing first: a finer unit would overflow
+        # it. Decoded, and in `dtype`.
+        return sanitize_temporal(df, df[name], name).cast(dtype)
+
     def either(left_name, right_name):
         # The row's key: the left's where it has one, as pandas has it, else
         # the right's. Every row of an inner or left join has the left's,
-        # exactly as it is; in a right join, a left key that matched equals
-        # the right's, so it takes the right's type exactly; an outer join's
-        # take a type both sides fit (decoded, and times in the finer unit).
+        # exactly as it is.
         if how in ("inner", "left"):
             return left_df[left_name]
         dtype = key_types[left_name]
-        values = [
-            # NaT's sentinel tick made missing first: a finer unit would
-            # overflow it.
-            sanitize_temporal(df, df[name], name).cast(dtype)
-            for df, name in ((left_df, left_name), (right_df, right_name))
-        ]
-        return values[0].funcs.coalesce(values[1])
+        if how == "right":
+            # Every row of a right join has the right's, which its own type
+            # holds exactly. A matched left key equals it but needn't fit that
+            # type (a float rounded to an integer's maximum), so the left's
+            # stands in only between floats, where it is a NaN for a missing
+            # value or a -0.0 for a 0.0, as pandas has them.
+            right_key = key(right_df, right_name, dtype)
+            if pa.types.is_floating(left[left_name]._dtype()) and pa.types.is_floating(
+                dtype
+            ):
+                return key(left_df, left_name, dtype).funcs.coalesce(right_key)
+            return right_key
+        # An outer join's take a type both sides fit (decoded, and times in
+        # the finer unit).
+        return key(left_df, left_name, dtype).funcs.coalesce(
+            key(right_df, right_name, dtype)
+        )
 
     exprs = []
     for name in left.columns:

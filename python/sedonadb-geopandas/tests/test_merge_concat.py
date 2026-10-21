@@ -193,6 +193,30 @@ def test_merge_keys_of_both_signs():
     assert got.to_geopandas()["k"].tolist() == expected["k"].tolist()
 
 
+def test_right_join_keys_need_no_cast_of_the_left():
+    # A float key matched to an integer one (rounded to its maximum, say)
+    # doesn't fit the integer type: a right join's key is the right's own,
+    # except between floats, where the left's -0.0 or NaN stands in for the
+    # right's 0.0 or missing value, as in pandas.
+    ctx = sgpd.default_context()
+    for left, right in [
+        ([float(2**63 - 1)], pa.array([2**63 - 1], pa.int64())),
+        ([float(2**64 - 1)], pa.array([2**64 - 1], pa.uint64())),
+        ([np.nan, 1.0], pa.array([None, 1], pa.int64())),
+    ]:
+        ours = sgpd.from_geopandas(pd.DataFrame({"k": left}))
+        other = sgpd.GeoDataFrame(ctx.create_data_frame(pa.table({"k": right})))
+        got = ours.merge(other, on="k", how="right").to_geopandas()["k"]
+        assert len(got) == len(right)
+        assert sorted(got.fillna(-1).tolist()) == sorted(
+            -1 if v is None else v for v in right.to_pylist()
+        )
+    floats = pd.DataFrame({"k": [-0.0, np.nan], "v": [1, 2]})
+    other = pd.DataFrame({"k": [0.0, None, 2.0], "w": [3, 4, 5]})
+    got = sgpd.from_geopandas(floats).merge(other, on="k", how="right")
+    _same(got, floats.merge(other, on="k", how="right"))
+
+
 def test_merge_categorical_and_all_missing_keys():
     left = pd.DataFrame({"k": pd.Categorical(["a", None]), "v": [1, 2]})
     right = pd.DataFrame({"k": pd.Categorical(["a", None]), "w": [3, 4]})
