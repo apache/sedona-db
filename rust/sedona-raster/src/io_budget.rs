@@ -21,28 +21,31 @@
 //! header read, a pixel read) are in flight at once across everything that
 //! shares it. A session holds one and hands it to every user: the GDAL pixel
 //! loader takes a permit per file it reads, and `RS_FromPath` takes one per
-//! file it opens. Both kinds of permit come from one
-//! `tokio::sync::Semaphore`, which works with or without a runtime, so the
-//! cap is on their total.
+//! file it opens, so the cap is on their total.
 //!
 //! The budget's size is `sedona.raster.io_concurrency`; it can change while
 //! permits are out (see [`RasterIoBudget::set_limit`]).
 //!
 //! ## Every waiter is a thread
 //!
-//! A permit is waited for only by [`RasterIoBudget::acquire_blocking`], on
-//! the thread that will do the I/O, and held only by that thread. There is
-//! deliberately no async `acquire`. Tokio's semaphore hands a released
-//! permit to the first queued waiter at release time, whether or not that
-//! waiter's future is ever polled again. A future queued as a waiter inside
-//! a task that then blocks its thread (for example a task that polls a
-//! pending load and then evaluates `RS_FromPath` on the same thread) would
-//! receive the permit and never run to use or return it, and every later
-//! waiter would queue behind it forever. A waiting thread makes progress on
-//! its own, and a holder needs nothing but its own thread to finish, so a
-//! permit released anywhere always reaches a thread that will use it and
-//! give it back. That is what makes `acquire_blocking` safe to call from any
-//! thread.
+//! The budget is a counter behind a mutex and a condition variable, with no
+//! runtime underneath. A permit is waited for only by
+//! [`RasterIoBudget::acquire_blocking`], on the thread that will do the I/O,
+//! and held only by that thread. There is deliberately no async `acquire`: a
+//! future parked on the budget inside a task that then blocks its thread
+//! (one that polls a pending load and then evaluates `RS_FromPath` on the
+//! same thread, as `SortPreservingMergeExec` or `EnsureLoadedExec` can)
+//! would be in line for a slot it could never take, and every waiter behind
+//! it would starve. A waiting thread makes progress on its own, and a holder
+//! needs nothing but its own thread to finish, so a slot freed anywhere
+//! always reaches a thread that will use it and give it back. That is what
+//! makes `acquire_blocking` safe to call from any thread: with no runtime,
+//! from a blocking-pool thread, on an async worker of either runtime
+//! flavor, and inside another executor's `block_on`.
+//!
+//! Waiters are served in arrival order, and a slot that a queued waiter is
+//! due is not given to a newcomer, so no user starves behind the churn of
+//! the others.
 //!
 //! A user must also never wait for a permit while it holds another: two
 //! such users could each hold part of the budget and wait forever for the
@@ -50,11 +53,9 @@
 
 use std::cell::Cell;
 use std::marker::PhantomData;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 
 pub use sedona_common::option::DEFAULT_RASTER_IO_CONCURRENCY;
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 /// A counting budget of blocking raster I/O operations, shared by clones.
 ///
@@ -67,18 +68,42 @@ pub struct RasterIoBudget {
 
 #[derive(Debug)]
 struct Inner {
-    semaphore: Arc<Semaphore>,
-    size: Mutex<Size>,
-    in_use: AtomicUsize,
-    peak_in_use: AtomicUsize,
+    state: Mutex<State>,
+    /// Signalled whenever a slot may have become free for the waiter next in
+    /// line: a permit returned, the limit changed, or the waiter ahead of it
+    /// took its slot.
+    changed: Condvar,
 }
 
 #[derive(Debug)]
-struct Size {
+struct State {
     limit: usize,
-    /// Permits still to be retired after a shrink: when the budget shrinks
-    /// below the permits out, the excess is retired as those permits drop.
-    debt: usize,
+    in_use: usize,
+    peak_in_use: usize,
+    /// The ticket the next waiter takes.
+    next_ticket: u64,
+    /// The ticket next in line for a slot. `next_ticket - now_serving`
+    /// waiters are queued.
+    now_serving: u64,
+}
+
+impl Inner {
+    fn lock(&self) -> MutexGuard<'_, State> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn has_waiters(state: &State) -> bool {
+        state.next_ticket != state.now_serving
+    }
+
+    /// Count a permit as out.
+    fn issue(self: &Arc<Self>, state: &mut State) -> IoPermit {
+        state.in_use += 1;
+        state.peak_in_use = state.peak_in_use.max(state.in_use);
+        IoPermit {
+            inner: Arc::clone(self),
+        }
+    }
 }
 
 impl Default for RasterIoBudget {
@@ -90,55 +115,58 @@ impl Default for RasterIoBudget {
 impl RasterIoBudget {
     /// A budget of `limit` operations at once, clamped to at least 1.
     pub fn new(limit: usize) -> Self {
-        let limit = limit.max(1);
         Self {
             inner: Arc::new(Inner {
-                semaphore: Arc::new(Semaphore::new(limit)),
-                size: Mutex::new(Size { limit, debt: 0 }),
-                in_use: AtomicUsize::new(0),
-                peak_in_use: AtomicUsize::new(0),
+                state: Mutex::new(State {
+                    limit: limit.max(1),
+                    in_use: 0,
+                    peak_in_use: 0,
+                    next_ticket: 0,
+                    now_serving: 0,
+                }),
+                changed: Condvar::new(),
             }),
         }
     }
 
     /// The most operations allowed in flight at once.
     pub fn limit(&self) -> usize {
-        self.lock_size().limit
+        self.inner.lock().limit
     }
 
-    /// Resize the budget, clamped to at least 1. Growing frees the new
-    /// permits at once. Shrinking takes free permits out of circulation, and
-    /// retires the rest as permits now in use are dropped, so the operations
-    /// in flight never exceed the new limit once those have finished.
+    /// Resize the budget, clamped to at least 1. Growing admits waiters at
+    /// once. Shrinking admits no one until the operations in flight have
+    /// dropped below the new limit, so it holds once those have finished.
     pub fn set_limit(&self, limit: usize) {
-        let limit = limit.max(1);
-        let mut size = self.lock_size();
-        if limit > size.limit {
-            let grow = limit - size.limit;
-            let cancelled = grow.min(size.debt);
-            size.debt -= cancelled;
-            self.inner.semaphore.add_permits(grow - cancelled);
-        } else if limit < size.limit {
-            let shrink = size.limit - limit;
-            let forgotten = self.inner.semaphore.forget_permits(shrink);
-            size.debt += shrink - forgotten;
-        }
-        size.limit = limit;
+        self.inner.lock().limit = limit.max(1);
+        self.inner.changed.notify_all();
     }
 
-    /// Permits free right now.
+    /// Permits free right now for a newcomer: none while waiters are queued,
+    /// since the slots that free up are theirs.
     pub fn available(&self) -> usize {
-        self.inner.semaphore.available_permits()
+        let state = self.inner.lock();
+        if Inner::has_waiters(&state) {
+            0
+        } else {
+            state.limit.saturating_sub(state.in_use)
+        }
     }
 
     /// Permits out right now.
     pub fn in_use(&self) -> usize {
-        self.inner.in_use.load(Ordering::SeqCst)
+        self.inner.lock().in_use
     }
 
     /// The most permits ever out at once. For tests and benchmarks.
     pub fn peak_in_use(&self) -> usize {
-        self.inner.peak_in_use.load(Ordering::SeqCst)
+        self.inner.lock().peak_in_use
+    }
+
+    /// Threads waiting for a permit right now.
+    pub fn waiting(&self) -> usize {
+        let state = self.inner.lock();
+        usize::try_from(state.next_ticket - state.now_serving).unwrap_or(usize::MAX)
     }
 
     /// Whether `self` and `other` are the same budget.
@@ -146,24 +174,25 @@ impl RasterIoBudget {
         Arc::ptr_eq(&self.inner, &other.inner)
     }
 
-    /// Take a permit if one is free, without waiting. The permit can move to
-    /// the thread that does the I/O; like any permit, it must not be held
-    /// while waiting for another.
+    /// Take a permit if one is free, without waiting; never ahead of a queued
+    /// waiter. The permit can move to the thread that does the I/O; like any
+    /// permit, it must not be held while waiting for another.
     pub fn try_acquire(&self) -> Option<IoPermit> {
-        Arc::clone(&self.inner.semaphore)
-            .try_acquire_owned()
-            .ok()
-            .map(|permit| self.issue(permit))
+        let mut state = self.inner.lock();
+        if Inner::has_waiters(&state) || state.in_use >= state.limit {
+            return None;
+        }
+        Some(self.inner.issue(&mut state))
     }
 
     /// Block the calling thread until a permit is free.
     ///
     /// Callable from any thread: with no runtime, from a `spawn_blocking`
-    /// thread, and from an async worker of either runtime flavor, since every
-    /// waiter on the budget is a thread (see the module docs). On an async
-    /// worker it stalls that worker's other tasks while it waits, so on a
-    /// multi-threaded runtime wrap the wait (and the I/O) in
-    /// `tokio::task::block_in_place`.
+    /// thread, from an async worker of either runtime flavor, and inside
+    /// another executor's `block_on`, since every waiter on the budget is a
+    /// thread (see the module docs). On an async worker it stalls that
+    /// worker's other tasks while it waits, so on a multi-threaded runtime
+    /// wrap the wait (and the I/O) in `tokio::task::block_in_place`.
     ///
     /// The permit stays on the thread that took it. In debug builds this
     /// panics if the thread already holds a permit from this method, since
@@ -174,29 +203,26 @@ impl RasterIoBudget {
             0,
             "waiting for a raster I/O permit while this thread holds another"
         );
-        let permit = futures::executor::block_on(Arc::clone(&self.inner.semaphore).acquire_owned())
-            .expect("the I/O budget's semaphore is never closed");
+        let mut state = self.inner.lock();
+        let ticket = state.next_ticket;
+        state.next_ticket += 1;
+        while state.now_serving != ticket || state.in_use >= state.limit {
+            state = self
+                .inner
+                .changed
+                .wait(state)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+        state.now_serving += 1;
+        let permit = self.inner.issue(&mut state);
+        drop(state);
+        // The waiter now at the head of the line may be due a slot as well.
+        self.inner.changed.notify_all();
         BLOCKING_PERMITS_HELD.with(|held| held.set(held.get() + 1));
         BlockingIoPermit {
-            _permit: self.issue(permit),
+            _permit: permit,
             _not_send: PhantomData,
         }
-    }
-
-    fn issue(&self, permit: OwnedSemaphorePermit) -> IoPermit {
-        let now = self.inner.in_use.fetch_add(1, Ordering::SeqCst) + 1;
-        self.inner.peak_in_use.fetch_max(now, Ordering::SeqCst);
-        IoPermit {
-            permit: Some(permit),
-            inner: Arc::clone(&self.inner),
-        }
-    }
-
-    fn lock_size(&self) -> std::sync::MutexGuard<'_, Size> {
-        self.inner
-            .size
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -208,26 +234,13 @@ thread_local! {
 /// One slot of a [`RasterIoBudget`], given back when dropped.
 #[derive(Debug)]
 pub struct IoPermit {
-    permit: Option<OwnedSemaphorePermit>,
     inner: Arc<Inner>,
 }
 
 impl Drop for IoPermit {
     fn drop(&mut self) {
-        self.inner.in_use.fetch_sub(1, Ordering::SeqCst);
-        let mut size = self
-            .inner
-            .size
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        // Dropping the permit returns it to the semaphore, unless the budget
-        // shrank while it was out: then it is retired instead.
-        if let Some(permit) = self.permit.take()
-            && size.debt > 0
-        {
-            size.debt -= 1;
-            permit.forget();
-        }
+        self.inner.lock().in_use -= 1;
+        self.inner.changed.notify_all();
     }
 }
 
@@ -249,8 +262,17 @@ impl Drop for BlockingIoPermit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicBool;
-    use std::time::Duration;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::time::{Duration, Instant};
+
+    /// Spin until `n` threads are queued on `budget`.
+    fn queued(budget: &RasterIoBudget, n: usize) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while budget.waiting() < n {
+            assert!(Instant::now() < deadline, "{n} waiter(s) never queued");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
 
     #[test]
     fn limit_is_clamped_to_one() {
@@ -264,6 +286,20 @@ mod tests {
             RasterIoBudget::default().limit(),
             DEFAULT_RASTER_IO_CONCURRENCY
         );
+    }
+
+    #[test]
+    fn any_limit_is_accepted() {
+        // `SET sedona.raster.io_concurrency = 18446744073709551615` parses.
+        let budget = RasterIoBudget::new(usize::MAX);
+        assert_eq!(budget.limit(), usize::MAX);
+        let _permit = budget.try_acquire().unwrap();
+        let budget = RasterIoBudget::new(4);
+        budget.set_limit(usize::MAX);
+        assert_eq!(budget.limit(), usize::MAX);
+        assert_eq!(budget.available(), usize::MAX);
+        let _permit = budget.acquire_blocking();
+        assert_eq!(budget.available(), usize::MAX - 1);
     }
 
     #[test]
@@ -288,6 +324,7 @@ mod tests {
                 let _permit = budget.acquire_blocking();
                 acquired.store(true, Ordering::SeqCst);
             });
+            queued(&budget, 1);
             std::thread::sleep(Duration::from_millis(20));
             assert!(!acquired.load(Ordering::SeqCst), "the budget was full");
             drop(held);
@@ -295,6 +332,7 @@ mod tests {
         assert!(acquired.load(Ordering::SeqCst));
         assert_eq!(budget.available(), 1);
         assert_eq!(budget.in_use(), 0);
+        assert_eq!(budget.waiting(), 0);
     }
 
     #[test]
@@ -334,6 +372,28 @@ mod tests {
         releaser.await.unwrap();
         assert_eq!(budget.available(), 1);
         assert_eq!(budget.in_use(), 0);
+    }
+
+    #[test]
+    fn acquire_blocking_inside_another_executor() {
+        // A host that drives its futures with `futures::executor::block_on`
+        // evaluates `RS_FromPath` inside that executor; the wait must not
+        // need an executor of its own.
+        let budget = RasterIoBudget::new(1);
+        let held = budget.try_acquire().unwrap();
+        let release = std::thread::spawn({
+            let budget = budget.clone();
+            move || {
+                queued(&budget, 1);
+                drop(held);
+            }
+        });
+        futures::executor::block_on(async {
+            let _permit = budget.acquire_blocking();
+            assert_eq!(budget.in_use(), 1);
+        });
+        release.join().unwrap();
+        assert_eq!(budget.available(), 1);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -396,6 +456,48 @@ mod tests {
         assert!(budget.peak_in_use() <= 3);
         assert_eq!(budget.available(), 3);
         assert_eq!(budget.in_use(), 0);
+        assert_eq!(budget.waiting(), 0);
+    }
+
+    #[test]
+    fn waiters_are_served_in_arrival_order() {
+        let budget = RasterIoBudget::new(1);
+        let held = budget.try_acquire().unwrap();
+        let order = Mutex::new(Vec::new());
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                let _permit = budget.acquire_blocking();
+                order.lock().unwrap().push("first");
+            });
+            queued(&budget, 1);
+            scope.spawn(|| {
+                let _permit = budget.acquire_blocking();
+                order.lock().unwrap().push("second");
+            });
+            queued(&budget, 2);
+            // A free slot is the first waiter's, not a newcomer's.
+            drop(held);
+            assert!(budget.try_acquire().is_none());
+            assert_eq!(budget.available(), 0);
+        });
+        assert_eq!(*order.lock().unwrap(), ["first", "second"]);
+        assert_eq!(budget.waiting(), 0);
+        assert!(budget.try_acquire().is_some());
+    }
+
+    #[test]
+    fn growing_admits_a_waiter() {
+        let budget = RasterIoBudget::new(1);
+        let _held = budget.try_acquire().unwrap();
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                let _permit = budget.acquire_blocking();
+            });
+            queued(&budget, 1);
+            budget.set_limit(2);
+        });
+        assert_eq!(budget.in_use(), 1);
+        assert_eq!(budget.available(), 1);
     }
 
     #[test]
@@ -434,21 +536,23 @@ mod tests {
     }
 
     #[test]
-    fn shrinking_retires_permits_as_they_return() {
+    fn shrinking_holds_once_permits_return() {
         let budget = RasterIoBudget::new(4);
         let a = budget.try_acquire().unwrap();
         let b = budget.try_acquire().unwrap();
         let c = budget.try_acquire().unwrap();
-        // One permit is free; shrinking to 1 forgets it and owes two more.
+        // One permit is free; shrinking to 1 takes it away and admits no one
+        // until the three out have come back below the limit.
         budget.set_limit(1);
         assert_eq!(budget.available(), 0);
+        assert!(budget.try_acquire().is_none());
         drop(a);
         drop(b);
-        assert_eq!(budget.available(), 0, "both returns went to the debt");
+        assert_eq!(budget.available(), 0, "still at the limit");
         drop(c);
         assert_eq!(budget.available(), 1);
 
-        // Growing again cancels outstanding debt before adding permits.
+        // Growing again before they return admits at once.
         budget.set_limit(2);
         let a = budget.try_acquire().unwrap();
         let b = budget.try_acquire().unwrap();
