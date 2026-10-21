@@ -563,6 +563,54 @@ class GeoDataFrame:
             )
         return GeoDataFrame(self._df.limit(n), self._geometry_name)
 
+    def groupby(
+        self,
+        by=None,
+        *,
+        level=None,
+        as_index=True,
+        sort=True,
+        group_keys=True,
+        observed=None,
+        dropna=True,
+    ):
+        """Group the rows by `by` (a column name, a Series of this frame, or a
+        list of them), as pandas does, to aggregate each group.
+
+        As in pandas, rows with a missing key are dropped unless
+        `dropna=False`, and groups are sorted by key unless `sort=False`; keys
+        compare as pandas compares them (NaN and None are one key, as are
+        -0.0 and 0.0). There is no index to hold the keys, so they are
+        columns of the result whatever `as_index` says. Only the groups that
+        occur are kept (`observed=True`).
+        """
+        from sedonadb_geopandas._groupby import GroupBy
+
+        if level is not None:
+            raise NotImplementedError("groupby() groups by columns: there is no index")
+        if by is None:
+            raise TypeError("You have to supply one of 'by' and 'level'")
+        keys = []
+        for i, key in enumerate(by if isinstance(by, list) else [by]):
+            if isinstance(key, str):
+                if key not in self.columns:
+                    raise KeyError(key)
+                keys.append((key, self[key]))
+            elif isinstance(key, Series):
+                if not self._accepts(key):
+                    raise ValueError(
+                        "Cannot group by a Series that comes from a different "
+                        "DataFrame: there is no row alignment."
+                    )
+                name = key._name if key._name is not None else f"key_{i}"
+                keys.append((name, type(key)(self._df, key._expr, name)))
+            else:
+                raise NotImplementedError(
+                    f"groupby() groups by column names or Series of this frame, "
+                    f"not a {type(key).__name__}"
+                )
+        return GroupBy(self, keys, sort=sort, dropna=dropna)
+
     def merge(
         self,
         right,

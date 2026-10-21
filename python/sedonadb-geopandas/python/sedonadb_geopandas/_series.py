@@ -999,28 +999,62 @@ class Series:
             values = values.cast(dtype)
         return self._df.select(values.alias("x"))
 
-    def sum(self):
-        """The sum of the values, skipping missing ones; 0 when there are none.
+    def _aggregate(self, func, ddof=1, min_count=0):
+        """The aggregate expression for the reduction `func` of this column,
+        skipping missing values as pandas does, and a function finishing its
+        result (identity but for geometry).
+
+        Shared by this column's own reductions and by grouped aggregation.
+        """
+        if func == "sum":
+            total = self._numeric("sum").funcs.sum()
+            if min_count > 0:
+                # Missing, as in pandas, with fewer than min_count values.
+                enough = self._valued().funcs.count() >= lit(min_count)
+                return _choose(enough, total, lit(None)), _same
+            return total.funcs.coalesce(lit(0)), _same
+        if func in ("mean", "median"):
+            name = "avg" if func == "mean" else "median"
+            values = self._numeric(func).cast(pa.float64())
+            return getattr(values.funcs, name)(), _same
+        if func == "std":
+            return self._spread("std", ddof, "stddev", "stddev_pop"), _same
+        if func == "var":
+            return self._spread("var", ddof, "var_samp", "var_pop"), _same
+        if func in ("min", "max"):
+            return getattr(self._ordered(func).funcs, func)(), _same
+        if func in ("first", "last"):
+            # A value that is not missing: with no row order to take the first
+            # or last by, the smallest or the largest.
+            extreme = "min" if func == "first" else "max"
+            return getattr(self._ordered(func).funcs, extreme)(), _same
+        if func == "count":
+            return self._valued().funcs.count(), _same
+        raise ValueError(f"{func!r} is not a supported aggregation")
+
+    def sum(self, min_count=0):
+        """The sum of the values, skipping missing ones; 0 when there are none
+        (missing with fewer than `min_count` values).
 
         Computes the result. As in pandas, booleans count as 0 and 1.
         """
-        return self._reduce(self._numeric("sum").funcs.sum().funcs.coalesce(lit(0)))
+        return self._reduce(self._aggregate("sum", min_count=min_count)[0])
 
     def mean(self):
         """The mean of the values, skipping missing ones; NaN when there are none."""
-        return self._reduce(self._numeric("mean").cast(pa.float64()).funcs.avg())
+        return self._reduce(self._aggregate("mean")[0])
 
     def median(self):
         """The median of the values, skipping missing ones; NaN when there are none."""
-        return self._reduce(self._numeric("median").cast(pa.float64()).funcs.median())
+        return self._reduce(self._aggregate("median")[0])
 
     def std(self, ddof=1):
         """The standard deviation, skipping missing values (`ddof` 1 or 0)."""
-        return self._reduce(self._spread("std", ddof, "stddev", "stddev_pop"))
+        return self._reduce(self._aggregate("std", ddof=ddof)[0])
 
     def var(self, ddof=1):
         """The variance, skipping missing values (`ddof` 1 or 0)."""
-        return self._reduce(self._spread("var", ddof, "var_samp", "var_pop"))
+        return self._reduce(self._aggregate("var", ddof=ddof)[0])
 
     def _spread(self, method, ddof, sample, population):
         if ddof not in (0, 1):
@@ -1039,12 +1073,12 @@ class Series:
         return self._extreme("max")
 
     def _extreme(self, method):
-        result = self._reduce(getattr(self._ordered(method).funcs, method)())
+        result = self._reduce(self._aggregate(method)[0])
         return math.nan if result is None else result
 
     def count(self):
         """The number of values that are not missing (NaN counts as missing)."""
-        return self._reduce(self._valued().funcs.count())
+        return self._reduce(self._aggregate("count")[0])
 
     def quantile(self, q=0.5, interpolation="linear"):
         """The `q` quantile(s), skipping missing values, interpolated linearly.
@@ -1395,6 +1429,10 @@ def _fail_where(condition, message):
     flag = passing.funcs.nullif(lit(True)).cast(pa.string())
     text = flag.funcs.replace(lit("false"), lit(message))
     return text.funcs.coalesce(lit("0")).cast(pa.int64())
+
+
+def _same(value):
+    return value
 
 
 def _choose(keep, chosen, other):
@@ -2137,6 +2175,35 @@ class GeoSeries(Series):
         wkb = _choose(keep, self._expr.geo.as_binary().cast(pa.binary()), replacement)
         rebuilt = self._as_column_kind(wkb.funcs.st_geomfromwkb(), own_crs=None)
         return self._geo(rebuilt)
+
+    def _aggregate(self, func, ddof=1, min_count=0):
+        """As for any column, for geometry: `count`, and `first`/`last`, which
+        take the smallest or largest WKB (a geometry that is not missing, as
+        there is no row order) and rebuild it with this column's spatial kind
+        and CRS once aggregated."""
+        if func == "count":
+            return self._expr.funcs.count(), _same
+        if func not in ("first", "last"):
+            # Refused as for any column that holds no numbers.
+            return super()._aggregate(func, ddof=ddof, min_count=min_count)
+        extreme = "min" if func == "first" else "max"
+        wkb = getattr(self._expr.geo.as_binary().funcs, extreme)()
+        ctx = self._df._ctx
+        geography, crs = self._is_geography(), self.crs
+
+        def rebuild(value):
+            if geography:
+                value = value.funcs.st_geogfromwkb()
+            else:
+                value = value.funcs.st_geomfromwkb()
+            if crs is not None:
+                return value.funcs.st_setcrs(ctx.lit(crs.to_json()))
+            if geography:
+                # The geography constructor assigns CRS84; SRID 0 clears it.
+                return value.funcs.st_setsrid(ctx.lit(0))
+            return value
+
+        return wkb, rebuild
 
     def _replacement(self, other, method):
         """`other` as WKB, to put in this column, with its type (None if

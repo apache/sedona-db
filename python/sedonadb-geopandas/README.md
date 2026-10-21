@@ -147,6 +147,15 @@ GeoPandas: one without a CRS takes the others' only if it holds no geometry,
 which is checked as the result is computed (GeoPandas relabels its coordinates
 whatever they are).
 
+`groupby()` aggregates as pandas does, skipping missing values and treating
+NaN and None (and -0.0 and 0.0) as one key, but there is no index to hold the
+keys, so they are columns of the result whatever `as_index` says. Several
+aggregations of one column (`agg({"v": ["sum", "max"]})`) would make two-level
+column names, which aren't supported: name each aggregate instead
+(`agg(total=("v", "sum"), largest=("v", "max"))`). Without a row order,
+`first()` and `last()` give a value of each group that is not missing, the
+smallest and the largest, rather than the first and last rows'.
+
 `fillna()` follows the same rule: a scalar fills the columns that hold its kind
 of value and leaves the others as they are (pandas would turn them into Python
 objects, and GeoPandas refuses a non-geometry value for a geometry column), and
