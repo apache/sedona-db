@@ -22,6 +22,7 @@ import math
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 import pytest
 from shapely.geometry import Point
 
@@ -109,6 +110,19 @@ def test_missing_and_signed_keys():
         sgpd.from_geopandas(_frame()).groupby("k", dropna=False)["i"].sum(),
         _frame().groupby("k", dropna=False)["i"].sum(),
     )
+
+
+def test_size_through_agg_and_keys_of_nothing():
+    # agg("size") is each group's size once, as size() gives it.
+    ours, theirs = sgpd.from_geopandas(_frame()), _frame()
+    _same(ours.groupby("k").agg("size"), theirs.groupby("k", as_index=False).size())
+    _same(ours.groupby("k")["i"].agg("size"), theirs.groupby("k")["i"].agg("size"))
+    # A key of nothing but missing values is one group with dropna=False,
+    # and its distinct values are counted.
+    table = pa.table({"k": pa.array([None, None, None]), "v": pa.array([1, 2, 2])})
+    nothing = sgpd.GeoDataFrame(sgpd.default_context().create_data_frame(table))
+    got = nothing.groupby("k", dropna=False)["v"].nunique().to_geopandas()
+    assert got["v"].tolist() == [2]
 
 
 def test_agg_forms():

@@ -118,7 +118,14 @@ class GroupBy:
             column = self._columns()[0]
             entries = [(_func(f), column, _func(f), {}) for f in func]
             return self._aggregate(entries)
-        return self._apply(_func(func))
+        func = _func(func)
+        if func == "size":
+            # The size of each group, once, as pandas' agg("size") gives it
+            # (named after the column for one selected column).
+            if single:
+                return self._aggregate([(self._columns()[0], None, "size", {})])
+            return self.size()
+        return self._apply(func)
 
     aggregate = agg
 
@@ -213,7 +220,9 @@ class GroupBy:
             original = _unused_name(df, f"__value{i}", reserved + [key, flag])
             reserved += [key, flag, original]
             if pa.types.is_null(dtype):
-                staged_exprs.append(lit(None).alias(key))
+                # Only missing keys: one non-null stand-in, so that joining
+                # nunique()'s counts back on it finds them.
+                staged_exprs.append(lit(False).alias(key))
             else:
                 staged_exprs.append(
                     value.funcs.coalesce(lit(_placeholder(dtype))).alias(key)
