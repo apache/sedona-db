@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! `RS_EnsureLoaded(raster) -> raster` — async UDF that materialises
+//! `RS_EnsureLoaded(raster) -> raster` — scalar UDF that materialises
 //! the pixel bytes of any OutDb bands in the input raster column.
 //!
 //! Walks every input row, identifies bands whose `data` column is empty
@@ -24,18 +24,27 @@
 //! and assembles an output `RecordBatch` of the same row count whose
 //! `data` columns are populated with the loaded bytes. InDb bands pass
 //! through unchanged. Other band/raster metadata is preserved verbatim.
+//!
+//! The loaders are async ([`AsyncRasterLoader`]), but the UDF is an
+//! ordinary synchronous `ScalarUDFImpl`: it runs the load on a dedicated
+//! tokio runtime (see [`loader_runtime`]) and blocks the calling thread
+//! until the batch is loaded. A sync UDF is planned and evaluated like any
+//! other scalar function, so it works in every expression position (nested
+//! in another call, in a join filter, in a `CASE` branch) and keeps lazy
+//! evaluation where the enclosing expression is lazy. DataFusion's async
+//! UDFs are restricted to projections, filters and aggregates and are
+//! always evaluated for every row of the batch.
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::hash::{Hash, Hasher};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock, mpsc};
 
 use arrow_array::{Array, ArrayRef, StructArray};
 use arrow_buffer::Buffer;
 use arrow_schema::{DataType, FieldRef};
-use async_trait::async_trait;
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::{Result, plan_err};
-use datafusion_expr::async_udf::AsyncScalarUDFImpl;
 use datafusion_expr::{
     ColumnarValue, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility,
 };
@@ -51,6 +60,7 @@ use sedona_raster::raster_loader::{
 use sedona_raster::traits::{BandOverrides, Override, RasterRef};
 use sedona_raster::view_entries::ViewEntries;
 use sedona_schema::raster::BandDataType;
+use tokio::runtime::{Builder, Handle, Runtime, RuntimeFlavor};
 
 /// `SedonaScalarUDF` metadata key marking a UDF whose kernels read raster
 /// pixel bytes. A raster function sets it (value `"true"`) via
@@ -66,23 +76,20 @@ pub const NEEDS_PIXELS_METADATA_KEY: &str = "needs_pixels";
 /// already fully materialised in-database. A raster function sets it (value
 /// `"true"`) via `with_metadata`; the `RS_EnsureLoaded` optimizer rule keys
 /// off it to skip wrapping an argument that is itself such a call (its result
-/// is already loaded, so a wrap would be redundant — and, being async, would
-/// nest unhoistably; see apache/datafusion#20031).
+/// is already loaded, so a wrap would be redundant).
 ///
 /// Only set this on functions that guarantee in-database output for loaded
 /// input. Like [`NEEDS_PIXELS_METADATA_KEY`], the optimizer rule carries a
 /// duplicate of the string literal — keep the two in sync.
 pub const RETURNS_BYTES_METADATA_KEY: &str = "returns_bytes";
 
-/// Async UDF that resolves OutDb bands by dispatching through the
+/// Scalar UDF that resolves OutDb bands by dispatching through the
 /// [`RasterLoaderRegistry`] stashed in `ConfigOptions` as a
 /// [`RasterLoaderConfig`] extension. The UDF instance itself is
 /// session-agnostic — it pulls the registry handle out of
 /// `args.config_options.extensions.get::<RasterLoaderConfig>()` at
-/// dispatch time. This matches DataFusion's
-/// `AsyncScalarUDFImpl::invoke_async_with_args` surface (only
-/// `Arc<ConfigOptions>` is reachable from the async fn) and mirrors how
-/// `SedonaRuntime` flows through the session's options.
+/// dispatch time, which mirrors how `SedonaRuntime` flows through the
+/// session's options.
 #[derive(Debug)]
 pub struct RsEnsureLoaded {
     signature: Signature,
@@ -99,20 +106,107 @@ impl RsEnsureLoaded {
         Self {
             // `any(1, ...)` accepts whatever single-arg type the caller
             // passes; we validate "argument is a Raster Struct" in
-            // `return_type` and at runtime. Using `Signature::any` (vs.
-            // `Signature::user_defined`) sidesteps DataFusion's
-            // `coerce_types` call path, which `AsyncScalarUDF` doesn't
-            // delegate to the inner impl.
+            // `return_field_from_args` and at runtime.
             //
             // `Stable` (not `Volatile`) so DataFusion's CSE pass can
             // deduplicate identical RS_EnsureLoaded(col) calls injected
-            // by the analyzer rule. Semantic: within a single query the
-            // byte materialisation is deterministic for fixed inputs;
-            // across queries the underlying storage may change, so the
-            // result isn't `Immutable`.
+            // by the optimizer rule, and so the simplifier never folds a
+            // call at plan time (only `Immutable` calls are folded).
+            // Semantic: within a single query the byte materialisation is
+            // deterministic for fixed inputs; across queries the underlying
+            // storage may change, so the result isn't `Immutable`.
             signature: Signature::any(1, Volatility::Stable),
         }
     }
+}
+
+/// The process-wide tokio runtime the loaders run on.
+///
+/// `invoke_with_args` is synchronous and is called on whatever thread
+/// DataFusion evaluates the expression on — usually a worker of the
+/// session's own runtime. The loader futures cannot be driven there: a
+/// worker that blocks waiting on its own runtime deadlocks once every
+/// worker is waiting. So the loads run on this separate runtime, whose
+/// workers are never blocked by query execution, and the calling thread
+/// only waits for the result (see [`block_on_loader_runtime`]).
+///
+/// Multi-threaded with tokio's default worker count: a load fans out over
+/// many chunks (`buffer_unordered` in the Zarr loader), decodes on the
+/// worker that fetched them, and GDAL and Python loaders hop to the
+/// blocking pool, so one partition's load keeps several workers busy. The
+/// threads sit idle while nothing is loading.
+///
+/// Like any tokio runtime held in a Python process, the workers do not
+/// survive `fork()`: a forked child that inherits an initialised runtime
+/// must not call `RS_EnsureLoaded`. Spawn-start multiprocessing is
+/// unaffected.
+fn loader_runtime() -> &'static Runtime {
+    static RUNTIME: OnceLock<Runtime> = OnceLock::new();
+    RUNTIME.get_or_init(|| {
+        Builder::new_multi_thread()
+            .thread_name("sedona-raster-loader")
+            .enable_all()
+            .build()
+            .expect("build the raster loader runtime")
+    })
+}
+
+/// Run `fut` on the [`loader_runtime`] and block until it completes.
+///
+/// When the calling thread is a worker of a multi-threaded tokio runtime,
+/// the wait goes through `block_in_place`, which hands the worker's other
+/// tasks to another thread for the duration so the session's runtime keeps
+/// making progress. On a current-thread runtime, or outside any runtime,
+/// the thread simply blocks; the loader runtime is separate, so this
+/// cannot deadlock.
+fn block_on_loader_runtime<F>(fut: F) -> Result<ArrayRef>
+where
+    F: Future<Output = Result<ArrayRef>> + Send + 'static,
+{
+    let (tx, rx) = mpsc::sync_channel(1);
+    loader_runtime().spawn(async move {
+        // The receiver only goes away when the caller gave up waiting,
+        // which it never does; nothing to do if the send fails.
+        let _ = tx.send(fut.await);
+    });
+    let wait = move || {
+        rx.recv().unwrap_or_else(|_| {
+            sedona_internal_err!(
+                "RS_EnsureLoaded: the load task ended without a result (it panicked)"
+            )
+        })
+    };
+    match Handle::try_current() {
+        Ok(handle) if handle.runtime_flavor() == RuntimeFlavor::MultiThread => {
+            tokio::task::block_in_place(wait)
+        }
+        _ => wait(),
+    }
+}
+
+/// True if any band of any row of `rasters` is OutDb (has no bytes yet).
+fn has_outdb_band(rasters: &RasterStructArray<'_>) -> Result<bool> {
+    for raster_idx in 0..rasters.len() {
+        if rasters.is_null(raster_idx) {
+            continue;
+        }
+        let raster = rasters.get(raster_idx).map_err(|e| {
+            sedona_internal_datafusion_err!(
+                "RS_EnsureLoaded: bad input raster row {raster_idx}: {e}"
+            )
+        })?;
+        for band_idx in 0..raster.num_bands() {
+            let band = raster.band(band_idx).map_err(|e| {
+                sedona_internal_datafusion_err!(
+                    "RS_EnsureLoaded: bad input band ({raster_idx},{band_idx}): {e}"
+                )
+            })?;
+            if !band.is_indb() {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 /// Pull the shared registry handle out of a `ConfigOptions`. Returns a
@@ -227,39 +321,39 @@ impl ScalarUDFImpl for RsEnsureLoaded {
         Ok(Arc::clone(field))
     }
 
-    fn invoke_with_args(&self, _args: ScalarFunctionArgs) -> Result<ColumnarValue> {
-        // DataFusion routes async UDFs through `invoke_async_with_args`
-        // on the AsyncFuncExec node; this sync entry should never be
-        // called for an `AsyncScalarUDF`-wrapped impl.
-        sedona_internal_err!(
-            "RS_EnsureLoaded is async; AsyncFuncExec should have dispatched to invoke_async_with_args"
-        )
-    }
-}
-
-#[async_trait]
-impl AsyncScalarUDFImpl for RsEnsureLoaded {
-    /// Materialising OutDb bytes is per-row I/O, so favour larger input
-    /// batches over DataFusion's default to amortise loader dispatch and
-    /// keep the async pipeline fed.
-    fn ideal_batch_size(&self) -> Option<usize> {
-        Some(1024)
-    }
-
-    async fn invoke_async_with_args(&self, args: ScalarFunctionArgs) -> Result<ColumnarValue> {
+    fn invoke_with_args(&self, args: ScalarFunctionArgs) -> Result<ColumnarValue> {
         if args.args.len() != 1 {
             return sedona_internal_err!("RS_EnsureLoaded() expects a single argument");
         }
 
         let input_array = args.args[0].to_array(args.number_rows)?;
+        // Already loaded (or nothing to load): the raster is returned as is.
+        // This is the common case for a redundant call, such as a user's
+        // explicit `RS_EnsureLoaded` under a pixel function the planner
+        // wraps again, and costs one pass over the band metadata.
+        let input_struct = input_array
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .ok_or_else(|| {
+                sedona_internal_datafusion_err!(
+                    "RS_EnsureLoaded: expected StructArray input, got {:?}",
+                    input_array.data_type()
+                )
+            })?;
+        if !has_outdb_band(&RasterStructArray::try_new(input_struct)?)? {
+            return Ok(ColumnarValue::Array(input_array));
+        }
+
         let registry = registry_handle_from_config(&args.config_options)?;
         let cache = chunk_cache_from_config(&args.config_options);
-        let output = ensure_loaded(
-            &input_array,
-            |format| lookup_loader(&registry, format),
-            cache.as_ref(),
-        )
-        .await?;
+        let output = block_on_loader_runtime(async move {
+            ensure_loaded(
+                &input_array,
+                |format| lookup_loader(&registry, format),
+                cache.as_ref(),
+            )
+            .await
+        })?;
         Ok(ColumnarValue::Array(output))
     }
 }
@@ -725,6 +819,7 @@ mod tests {
 
     use arrow_array::Array;
     use arrow_buffer::Buffer;
+    use async_trait::async_trait;
     use sedona_raster::array::RasterStructArray;
     use sedona_raster::builder::{RasterBuilder, StartBandArgs};
     use sedona_raster::raster_loader::{RasterLoadResult, RasterLoaderRegistry};
@@ -2163,5 +2258,125 @@ mod tests {
 
         assert!(loader.seen.lock().unwrap().is_empty());
         assert_eq!(cache.stats(), ChunkCacheStats::default());
+    }
+
+    /// `ScalarFunctionArgs` for one call of the UDF over `input`, with
+    /// `registry` installed in the config as a `SedonaContext` would.
+    fn scalar_args(
+        input: ArrayRef,
+        registry: Arc<RwLock<RasterLoaderRegistry>>,
+    ) -> ScalarFunctionArgs {
+        let mut config = ConfigOptions::default();
+        config
+            .extensions
+            .insert(RasterLoaderConfig::from_handle(registry));
+        let field: FieldRef = Arc::new(
+            sedona_schema::datatypes::SedonaType::Raster
+                .to_storage_field("rast", true)
+                .unwrap(),
+        );
+        ScalarFunctionArgs {
+            number_rows: input.len(),
+            args: vec![ColumnarValue::Array(input)],
+            arg_fields: vec![Arc::clone(&field)],
+            return_field: field,
+            config_options: Arc::new(config),
+        }
+    }
+
+    #[test]
+    fn invoke_loads_outdb_bands_outside_any_runtime() {
+        let loader: Arc<RecordingLoader> = Arc::new(RecordingLoader::default());
+        let input: ArrayRef = Arc::new(build_outdb_input("rec://a", "recording", &[2, 3]));
+        let out = RsEnsureLoaded::new()
+            .invoke_with_args(scalar_args(input, registry_with(loader.clone())))
+            .unwrap()
+            .to_array(1)
+            .unwrap();
+        assert_eq!(
+            band_bytes_and_ptr(&out, 0).0,
+            (0..6).map(|i| (i % 251) as u8).collect::<Vec<u8>>()
+        );
+        assert_eq!(loader.seen.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn invoke_loads_outdb_bands_from_a_current_thread_runtime() {
+        // The calling thread owns a current-thread runtime and blocks it
+        // while waiting; the load still completes on the loader runtime.
+        let loader: Arc<RecordingLoader> = Arc::new(RecordingLoader::default());
+        let input: ArrayRef = Arc::new(build_outdb_input("rec://a", "recording", &[2, 3]));
+        let out = RsEnsureLoaded::new()
+            .invoke_with_args(scalar_args(input, registry_with(loader.clone())))
+            .unwrap()
+            .to_array(1)
+            .unwrap();
+        assert_eq!(band_bytes_and_ptr(&out, 0).0.len(), 6);
+        assert_eq!(loader.seen.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn invoke_loads_outdb_bands_from_a_multi_thread_runtime_worker() {
+        // The only worker of the session's runtime makes the call, as a
+        // DataFusion partition would; the wait must not stall the runtime.
+        // The load is awaited on a task of that same runtime, so the test
+        // deadlocks if the wait ever blocks the worker outright.
+        let loader: Arc<RecordingLoader> = Arc::new(RecordingLoader::default());
+        let registry = registry_with(loader.clone());
+        let input: ArrayRef = Arc::new(build_outdb_input("rec://a", "recording", &[2, 3]));
+        let out = tokio::spawn(async move {
+            RsEnsureLoaded::new()
+                .invoke_with_args(scalar_args(input, registry))
+                .unwrap()
+                .to_array(1)
+                .unwrap()
+        })
+        .await
+        .unwrap();
+        assert_eq!(band_bytes_and_ptr(&out, 0).0.len(), 6);
+        assert_eq!(loader.seen.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn invoke_returns_the_input_as_is_when_nothing_is_outdb() {
+        let loader: Arc<RecordingLoader> = Arc::new(RecordingLoader::default());
+        let input: ArrayRef = Arc::new(build_indb_input(&[2, 2], &[1, 2, 3, 4]));
+        let out = RsEnsureLoaded::new()
+            .invoke_with_args(scalar_args(
+                Arc::clone(&input),
+                registry_with(loader.clone()),
+            ))
+            .unwrap()
+            .to_array(1)
+            .unwrap();
+        assert!(Arc::ptr_eq(&input, &out), "in-db input must pass through");
+        assert!(loader.seen.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn invoke_reports_a_loader_error_instead_of_hanging() {
+        #[derive(Debug)]
+        struct FailingLoader;
+        #[async_trait]
+        impl AsyncRasterLoader for FailingLoader {
+            fn name(&self) -> &str {
+                "failing"
+            }
+            fn supports_format(&self, _format: Option<&str>) -> bool {
+                true
+            }
+            async fn load(
+                &self,
+                _reqs: &[&RasterLoadRequest],
+            ) -> Result<Vec<RasterLoadResult>, arrow_schema::ArrowError> {
+                Err(arrow_schema::ArrowError::ExternalError("boom".into()))
+            }
+        }
+        let input: ArrayRef = Arc::new(build_outdb_input("rec://a", "failing", &[2, 3]));
+        let err = RsEnsureLoaded::new()
+            .invoke_with_args(scalar_args(input, registry_with(Arc::new(FailingLoader))))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("loader 'failing' failed"), "{err}");
     }
 }

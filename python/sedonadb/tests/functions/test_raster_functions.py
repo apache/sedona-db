@@ -798,3 +798,74 @@ def test_rs_as_raster_sets_output_nodata(con, sedona_testing):
     expected = np.full((10, 10), 9, dtype="uint8")
     expected[0, 0] = 5
     np.testing.assert_array_equal(raster.bands[0].to_numpy(), expected)
+
+
+# Pixel functions over an OutDb raster (RS_FromPath) whose raster argument
+# already has a loader somewhere below it. The planner wraps the argument in
+# RS_EnsureLoaded regardless; the inner loader materialises the pixels and
+# the outer call passes them through. These shapes used to fail with
+# 'async functions should not be called directly'.
+
+
+@pytest.fixture()
+def grid_tiff(tmp_path):
+    """A 3x3 single-band GeoTIFF holding 1..9 row by row."""
+    pytest.importorskip("rasterio")
+    from sedonadb.raster_testing import write_geotiff
+
+    path = tmp_path / "grid.tif"
+    pixels = np.arange(1, 10, dtype="float64").reshape(1, 3, 3)
+    write_geotiff(path, pixels, bbox=(0.0, 0.0, 3.0, 3.0))
+    return str(path)
+
+
+def test_pixel_function_over_metadata_function_over_pixel_function(con, grid_tiff):
+    """RS_SetSRID neither reads pixels nor promises loaded output."""
+    sql = """
+        SELECT RS_Value(
+            RS_SetSRID(RS_SetValue(RS_FromPath($1), 1, 2, 2, 70), 4326), 2, 2, 1)
+    """
+    got = con.sql(sql, params=(grid_tiff,)).to_arrow_table().column(0)
+    assert got.to_pylist() == [70.0]
+
+
+def test_summary_stats_over_nodata_change_over_clip(con, grid_tiff):
+    """Pixels 2..9 remain once 1 is the nodata value."""
+    sql = """
+        SELECT RS_SummaryStats(
+            RS_SetBandNoDataValue(
+                RS_Clip(RS_FromPath($1), 1,
+                        ST_GeomFromText('POLYGON ((0 0, 3 0, 3 3, 0 3, 0 0))')),
+                1, 1),
+            'mean', 1)
+    """
+    got = con.sql(sql, params=(grid_tiff,)).to_arrow_table().column(0)
+    assert got.to_pylist() == [44.0 / 8.0]
+
+
+def test_pixel_function_with_loader_in_a_non_raster_argument(con, grid_tiff):
+    """The loader feeds only the nodata value (the width, 3); the raster that
+    reaches RS_Value is the unloaded RS_FromPath and still needs loading."""
+    sql = """
+        SELECT RS_Value(
+            RS_SetBandNoDataValue(
+                RS_FromPath($1), 1, RS_Width(RS_EnsureLoaded(RS_FromPath($1)))),
+            2, 2, 1)
+    """
+    got = con.sql(sql, params=(grid_tiff,)).to_arrow_table().column(0)
+    assert got.to_pylist() == [5.0]
+
+
+def test_pixel_function_in_a_case_branch_loads_only_its_rows(con, grid_tiff):
+    """A pixel function in a CASE branch is evaluated only for the rows that
+    reach it. The other row names a GeoTIFF that does not exist, so loading
+    it would fail: the CASE must stay lazy around the loader."""
+    got = con.sql(
+        """
+        SELECT CASE WHEN ok THEN RS_Value(RS_FromPath(path), 2, 2, 1) ELSE -1 END AS v
+        FROM (VALUES (true, $1), (false, '/nonexistent/missing.tif')) AS t(ok, path)
+        ORDER BY v
+        """,
+        params=(grid_tiff,),
+    ).to_arrow_table()
+    assert got["v"].to_pylist() == [-1.0, 5.0]
