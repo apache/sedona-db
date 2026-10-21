@@ -52,6 +52,7 @@ url = { workspace = true }
 tokio = { workspace = true, features = ["fs", "io-util"] }
 
 [dev-dependencies]
+serde_json = { workspace = true }
 sedona-testing = { workspace = true }
 sedona-geometry = { workspace = true }
 geozero = { version = "0.15.1", default-features = false, features = ["with-wkb"] }

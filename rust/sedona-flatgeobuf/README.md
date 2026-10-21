@@ -23,7 +23,7 @@
 using generic `ObjectStore` range reads and DataFusion's file metadata cache.
 Enable Sedona's `fgb` feature for automatic registration; Python enables it by
 default as a compiled capability. Python keeps pyogrio/GDAL as its `fgb` default;
-use `sd.read(path, format="fgb_native")` to opt in to native range reads.
+use `sd.read(path, format="fgb_native")` to opt in to native reads.
 `FlatGeobufFormatSpec` retains the earlier local external datasource adapter.
 
 ## Read contract
@@ -35,12 +35,13 @@ use `sd.read(path, format="fgb_native")` to opt in to native range reads.
   return an error.
 - Produce only requested columns in bounded batches, including zero-column
   batches for count scans. Missing attributes remain null.
-- Indexed files may be divided into arbitrary byte ranges. A feature belongs
-  to the range containing the first byte of its size prefix. Metadata is shared
-  across readers of the same file version, while feature streams are independent.
-- Unindexed files use a serial fallback: the partition owning byte zero reads
-  the entire file; other partitions yield no rows. Validate framing once before
-  decoding; do not advertise parallel payload reads for these files.
+- Native scans read each file sequentially, skipping the RTree without loading
+  feature offsets. DataFusion redistributes decoded batches with batch round robin
+  when downstream work benefits from parallelism. Separate files can be read
+  concurrently; a single file is not divided into independent byte ranges.
+- Indexed and unindexed payloads use the same sequential framing decoder. Requests
+  use 8 MiB buffers independently of Arrow row batch size, including features
+  crossing request boundaries. Known feature counts are checked during iteration.
 - Any registered ObjectStore can provide range reads. Curves and temporal T/TM
   dimensions, spatial pruning, writing and morselized scans are outside this draft.
   Feature-local column overrides and absent header column schemas are rejected explicitly.
@@ -54,8 +55,8 @@ use `sd.read(path, format="fgb_native")` to opt in to native range reads.
 
 The `metadata_size_hint` option controls the initial header prefix read (default
 65536 bytes); incomplete headers are refetched before verified decoding.
-Feature payload requests coalesce adjacent records up to an 8 MiB target; a
-single indivisible feature may exceed this target.
+Payload requests read at most 8 MiB at a time. A single feature may require
+multiple requests and its complete frame must fit in memory before decoding.
 
 The `geometry_column_name` format option renames the geometry field (default
 `wkb_geometry`). Header conversion preserves duplicate names; DataFusion handles
@@ -71,7 +72,8 @@ The reader uses the
 released FlatGeobuf crate to verify and decode each feature buffer, followed by
 bounds-checked ISO WKB encoding. It does not require the earlier research fork.
 Batch size bounds rows per batch; it is not a byte-memory limit or a zero-copy
-claim. Index metadata uses one offset per feature and fetches only RTree leaves.
+claim. Native metadata contains only header information and the payload start.
+The legacy local adapter alone retains per-feature offsets for its byte-range API.
 The native cache uses DataFusion's configured memory limit; the local adapter
 opens asynchronously and does not retain its own metadata cache.
 This draft validates correctness, not a throughput improvement.

@@ -37,6 +37,7 @@ pub(crate) struct FlatGeobufOpener {
     pub batch_size: usize,
     pub schema: SchemaRef,
 }
+
 impl FileOpener for FlatGeobufOpener {
     fn open(&self, file: PartitionedFile) -> Result<FileOpenFuture> {
         let store = self.store.clone();
@@ -56,20 +57,14 @@ impl FileOpener for FlatGeobufOpener {
                 cache.as_ref(),
             )
             .await?;
-            let (lo, hi) = feature_bounds(&meta, file.range.as_ref())?;
+            if file.range.is_some() {
+                return exec_err!("Native FlatGeobuf scans do not support byte ranges");
+            }
             let output_schema = Arc::new(schema.project(&projection)?);
             let stream = async_stream::try_stream! {
-                let mut first=lo;
-                while first<hi {
-                    let last=first.saturating_add(batch_size).min(hi);
-                    let feature_ranges=meta.offsets[first..=last].windows(2).map(|p|p[0]..p[1]).collect::<Vec<_>>();
-                    let requests=crate::object_io::coalesce_ranges(&feature_ranges,file.object_meta.size,8*1024*1024)?;
-                    for range in requests {
-                        let begin=meta.offsets.binary_search(&range.start).map_err(|_|exec_datafusion_err!("Invalid planned feature start"))?;
-                        let end=meta.offsets.binary_search(&range.end).map_err(|_|exec_datafusion_err!("Invalid planned feature end"))?;
-                        yield fetch_batch(store.as_ref(),&file.object_meta,&meta,&schema,&projection,begin,end,range,&format.geometry_column_name).await?;
-                    }
-                    first=last;
+                let mut reader = BufferedFeatures::new(store, file.object_meta, &meta);
+                while let Some((bytes, offsets)) = reader.fetch_batch(batch_size).await? {
+                    yield decode_batch(&meta, &schema, &projection, &bytes, &offsets, 0, &format.geometry_column_name)?;
                 }
             };
             let stream: SendableRecordBatchStream =
@@ -78,43 +73,93 @@ impl FileOpener for FlatGeobufOpener {
         }))
     }
 }
-#[allow(clippy::too_many_arguments)]
-async fn fetch_batch(
-    store: &dyn ObjectStore,
-    object: &object_store::ObjectMeta,
-    meta: &Metadata,
-    schema: &SchemaRef,
-    projection: &[usize],
-    begin: usize,
-    end: usize,
-    range: std::ops::Range<u64>,
-    geometry_column_name: &str,
-) -> Result<arrow_array::RecordBatch> {
-    let bytes = crate::object_io::fetch_range(store, object, range.clone()).await?;
-    validate_frames(&bytes, &meta.offsets[begin..=end], range.start)?;
-    decode_batch(
-        meta,
-        schema,
-        projection,
-        &bytes,
-        &meta.offsets[begin..=end],
-        range.start,
-        geometry_column_name,
-    )
+/// Sequential framing and I/O are independent of Arrow conversion and row batch
+/// size. Small batches reuse the same fetched buffer; large features may span
+/// requests, but no request is issued for an individual prefix or RTree leaf.
+struct BufferedFeatures {
+    store: Arc<dyn ObjectStore>,
+    object: object_store::ObjectMeta,
+    buffer: bytes::BytesMut,
+    next_fetch: u64,
+    expected_count: usize,
+    rows: usize,
 }
-fn validate_frames(bytes: &[u8], offsets: &[u64], begin: u64) -> Result<()> {
-    for pair in offsets.windows(2) {
-        let start = usize::try_from(pair[0] - begin)
-            .map_err(|_| exec_datafusion_err!("FlatGeobuf offset overflow"))?;
-        let prefix = bytes
-            .get(start..start + 4)
-            .ok_or_else(|| exec_datafusion_err!("Truncated FlatGeobuf feature prefix"))?;
-        let len = u32::from_le_bytes(prefix.try_into().unwrap()) as u64;
-        if len == 0 || 4 + len != pair[1] - pair[0] {
-            return exec_err!("FlatGeobuf index does not match feature framing");
+
+impl BufferedFeatures {
+    const READ_BYTES: u64 = 8 * 1024 * 1024;
+
+    fn new(store: Arc<dyn ObjectStore>, object: object_store::ObjectMeta, meta: &Metadata) -> Self {
+        Self {
+            store,
+            object,
+            buffer: bytes::BytesMut::new(),
+            next_fetch: meta.payload_begin,
+            expected_count: meta.feature_count,
+            rows: 0,
         }
     }
-    Ok(())
+
+    async fn fill(&mut self, required: usize) -> Result<()> {
+        while self.buffer.len() < required && self.next_fetch < self.object.size {
+            let end = self
+                .next_fetch
+                .saturating_add(Self::READ_BYTES)
+                .min(self.object.size);
+            let bytes = crate::object_io::fetch_range(
+                self.store.as_ref(),
+                &self.object,
+                self.next_fetch..end,
+            )
+            .await?;
+            self.buffer.extend_from_slice(&bytes);
+            self.next_fetch = end;
+        }
+        Ok(())
+    }
+
+    async fn next_frame(&mut self) -> Result<Option<bytes::Bytes>> {
+        self.fill(4).await?;
+        if self.buffer.is_empty() {
+            if self.expected_count != 0 && self.rows != self.expected_count {
+                return exec_err!("FlatGeobuf count does not match object");
+            }
+            return Ok(None);
+        }
+        let prefix = self
+            .buffer
+            .get(..4)
+            .ok_or_else(|| exec_datafusion_err!("Truncated FlatGeobuf feature prefix"))?;
+        let len = u32::from_le_bytes(prefix.try_into().unwrap()) as u64;
+        let available = self.buffer.len() as u64 + self.object.size - self.next_fetch;
+        if len == 0 || len + 4 > available {
+            return exec_err!("Invalid or truncated FlatGeobuf feature payload");
+        }
+        let frame_len = usize::try_from(len + 4)
+            .map_err(|_| exec_datafusion_err!("FlatGeobuf feature length overflow"))?;
+        self.fill(frame_len).await?;
+        self.rows += 1;
+        if self.expected_count != 0 && self.rows > self.expected_count {
+            return exec_err!("FlatGeobuf count does not match object");
+        }
+        Ok(Some(self.buffer.split_to(frame_len).freeze()))
+    }
+
+    async fn fetch_batch(&mut self, batch_size: usize) -> Result<Option<(Vec<u8>, Vec<u64>)>> {
+        let mut bytes = Vec::new();
+        let mut offsets = vec![0];
+        while offsets.len() <= batch_size && bytes.len() < Self::READ_BYTES as usize {
+            let Some(frame) = self.next_frame().await? else {
+                break;
+            };
+            bytes.extend_from_slice(&frame);
+            offsets.push(bytes.len() as u64);
+        }
+        if offsets.len() == 1 {
+            Ok(None)
+        } else {
+            Ok(Some((bytes, offsets)))
+        }
+    }
 }
 
 /// Select features whose size-prefix starts are owned by this half-open byte range.
@@ -139,5 +184,63 @@ pub(crate) fn feature_bounds(meta: &Metadata, range: Option<&FileRange>) -> Resu
         Ok((0, count))
     } else {
         Ok((0, 0))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use object_store::{ObjectStoreExt, memory::InMemory, path::Path};
+
+    async fn framed_reader(bytes: Vec<u8>, expected_count: usize) -> BufferedFeatures {
+        let store = Arc::new(InMemory::new());
+        let path = Path::from("frames");
+        store.put(&path, bytes.into()).await.unwrap();
+        let object = store.head(&path).await.unwrap();
+        BufferedFeatures {
+            store,
+            object,
+            buffer: bytes::BytesMut::new(),
+            next_fetch: 0,
+            expected_count,
+            rows: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn sequential_frames_cross_request_boundaries_and_reject_truncation() {
+        let frame = |len: usize| {
+            let mut b = (len as u32).to_le_bytes().to_vec();
+            b.resize(len + 4, 7);
+            b
+        };
+        // Next prefix straddles the 8 MiB read boundary; then a frame spans
+        // multiple requests. Each frame is returned whole without loss/repeat.
+        let frames = [
+            frame(BufferedFeatures::READ_BYTES as usize - 6),
+            frame(9),
+            frame(BufferedFeatures::READ_BYTES as usize + 13),
+        ];
+        let mut reader = framed_reader(frames.concat(), 3).await;
+        for expected in &frames {
+            assert_eq!(
+                reader.next_frame().await.unwrap().unwrap().as_ref(),
+                expected
+            );
+        }
+        assert!(reader.next_frame().await.unwrap().is_none());
+        for bytes in [vec![1, 2], vec![0, 0, 0, 0], vec![9, 0, 0, 0, 1]] {
+            assert!(framed_reader(bytes, 0).await.next_frame().await.is_err());
+        }
+        for count in [1, 3] {
+            let mut reader = framed_reader([frame(8), frame(8)].concat(), count).await;
+            assert!(reader.next_frame().await.unwrap().is_some());
+            if count == 1 {
+                assert!(reader.next_frame().await.is_err());
+            } else {
+                reader.next_frame().await.unwrap();
+                assert!(reader.next_frame().await.is_err());
+            }
+        }
     }
 }

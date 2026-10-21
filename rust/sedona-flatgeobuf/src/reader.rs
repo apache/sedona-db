@@ -24,6 +24,7 @@ use arrow_schema::{ArrowError, SchemaRef};
 use datafusion_common::{Result, exec_datafusion_err, exec_err};
 use flatgeobuf::{ColumnType, size_prefixed_root_as_feature};
 use sedona_datasource::spec::OpenReaderArgs;
+use sedona_schema::datatypes::SedonaType;
 use std::{
     io::{Read, SeekFrom},
     sync::Arc,
@@ -81,11 +82,13 @@ pub(crate) async fn open(
         failed: false,
     }))
 }
+
 impl RecordBatchReader for Reader {
     fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }
 }
+
 impl Iterator for Reader {
     type Item = std::result::Result<RecordBatch, ArrowError>;
     fn next(&mut self) -> Option<Self::Item> {
@@ -97,6 +100,7 @@ impl Iterator for Reader {
         Some(result.map_err(|e| ArrowError::ExternalError(Box::new(e))))
     }
 }
+
 impl Reader {
     fn read_batch(&mut self) -> Result<RecordBatch> {
         let count = self.remaining.min(self.batch_size);
@@ -147,42 +151,7 @@ pub(crate) fn decode_batch(
     geometry_column_name: &str,
 ) -> Result<RecordBatch> {
     let schema = Arc::new(full_schema.project(projection)?);
-    let source_schema = meta.infer_schema(geometry_column_name)?;
-    // The output geometry name is configurable; identify it by its GeoArrow
-    // extension rather than assuming it is the last table field.
-    let positional = full_schema.fields().len() == source_schema.fields().len()
-        && full_schema
-            .fields()
-            .iter()
-            .zip(source_schema.fields())
-            .all(|(a, b)| a.name() == b.name());
-    let sources = projection
-        .iter()
-        .map(|i| {
-            let field = full_schema.field(*i);
-            if field
-                .metadata()
-                .get("ARROW:extension:name")
-                .is_some_and(|v| v == "geoarrow.wkb")
-            {
-                let source = source_schema.field(meta.types.len());
-                if field.metadata().get("ARROW:extension:metadata")
-                    != source.metadata().get("ARROW:extension:metadata")
-                    || field.data_type() != source.data_type()
-                {
-                    return exec_err!("Requested FlatGeobuf geometry/CRS differs from file schema");
-                }
-                Ok(Some(meta.types.len()))
-            } else if positional {
-                Ok(Some(*i))
-            } else {
-                Ok(source_schema
-                    .fields()
-                    .iter()
-                    .position(|s| s.name() == field.name()))
-            }
-        })
-        .collect::<Result<Vec<_>>>()?;
+    let sources = source_columns(meta, full_schema, projection, geometry_column_name)?;
     let count = offsets.len().saturating_sub(1);
     let mut columns = schema
         .fields()
@@ -279,6 +248,49 @@ pub(crate) fn decode_batch(
         &RecordBatchOptions::new().with_row_count(Some(count)),
     )?)
 }
+/// Match projected table fields to file columns before interpreting feature bytes.
+fn source_columns(
+    meta: &Metadata,
+    full_schema: &SchemaRef,
+    projection: &[usize],
+    geometry_column_name: &str,
+) -> Result<Vec<Option<usize>>> {
+    let source_schema = meta.infer_schema(geometry_column_name)?;
+    // The output geometry name is configurable; identify it by its GeoArrow
+    // extension rather than assuming it is the last table field.
+    let positional = full_schema.fields().len() == source_schema.fields().len()
+        && full_schema
+            .fields()
+            .iter()
+            .zip(source_schema.fields())
+            .all(|(a, b)| a.name() == b.name());
+    projection
+        .iter()
+        .map(|i| {
+            let field = full_schema.field(*i);
+            let requested_type = SedonaType::from_storage_field(field)?;
+            if matches!(
+                requested_type,
+                SedonaType::Wkb(..) | SedonaType::WkbLarge(..) | SedonaType::WkbView(..)
+            ) {
+                let source_type =
+                    SedonaType::from_storage_field(source_schema.field(meta.types.len()))?;
+                if requested_type != source_type {
+                    return exec_err!("Requested FlatGeobuf geometry/CRS differs from file schema");
+                }
+                Ok(Some(meta.types.len()))
+            } else if positional {
+                Ok(Some(*i))
+            } else {
+                Ok(source_schema
+                    .fields()
+                    .iter()
+                    .position(|s| s.name() == field.name()))
+            }
+        })
+        .collect::<Result<Vec<_>>>()
+}
+
 fn take<'a>(bytes: &mut &'a [u8], n: usize) -> Result<&'a [u8]> {
     if bytes.len() < n {
         return exec_err!("Truncated FlatGeobuf property value");
@@ -287,6 +299,7 @@ fn take<'a>(bytes: &mut &'a [u8], n: usize) -> Result<&'a [u8]> {
     *bytes = rest;
     Ok(value)
 }
+
 fn property_bytes<'a>(bytes: &mut &'a [u8], ty: ColumnType) -> Result<&'a [u8]> {
     let len = match ty {
         ColumnType::Byte | ColumnType::UByte | ColumnType::Bool => 1,

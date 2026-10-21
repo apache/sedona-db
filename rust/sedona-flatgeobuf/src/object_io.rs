@@ -69,44 +69,6 @@ pub(crate) async fn fetch_header(
     Ok(result)
 }
 
-/// Coalesce adjacent, disjoint feature ranges without reading gaps. Bound each
-/// request's byte size; a single feature exceeding the target is kept intact.
-pub(crate) fn coalesce_ranges(
-    ranges: &[Range<u64>],
-    file_size: u64,
-    target_bytes: u64,
-) -> Result<Vec<Range<u64>>> {
-    if target_bytes == 0 {
-        return exec_err!("FlatGeobuf range target must be positive");
-    }
-    let mut ranges = ranges.to_vec();
-    for range in &ranges {
-        if range.start > range.end || range.end > file_size {
-            return exec_err!("Invalid FlatGeobuf object range");
-        }
-    }
-    ranges.sort_by_key(|range| (range.start, range.end));
-    let mut result: Vec<Range<u64>> = vec![];
-    for range in ranges {
-        if range.is_empty() {
-            continue;
-        }
-        if let Some(last) = result.last_mut() {
-            let end = last.end.max(range.end);
-            if range.start < last.end {
-                return exec_err!("Overlapping FlatGeobuf feature ranges");
-            }
-            // The target is soft only for a single indivisible input feature.
-            if range.start == last.end && end - last.start <= target_bytes {
-                last.end = end;
-                continue;
-            }
-        }
-        result.push(range);
-    }
-    Ok(result)
-}
-
 /// Fetch exactly the requested range and reject short responses before decoding.
 pub(crate) async fn fetch_range(
     store: &dyn ObjectStore,
@@ -128,33 +90,6 @@ pub(crate) async fn fetch_range(
 mod tests {
     use super::*;
     use object_store::{memory::InMemory, path::Path};
-    #[test]
-    fn coalescing_preserves_coverage_and_bounds_requests() {
-        let input = [12..20, 0..4, 4..8, 8..12, 20..24, 30..35];
-        let out = coalesce_ranges(&input, 35, 12).unwrap();
-        assert_eq!(out, [0..12, 12..24, 30..35]);
-        let covered = |ranges: &[Range<u64>]| {
-            ranges
-                .iter()
-                .flat_map(Clone::clone)
-                .collect::<std::collections::BTreeSet<_>>()
-        };
-        assert_eq!(covered(&input), covered(&out));
-        assert!(out.iter().all(|r| r.end - r.start <= 12));
-        assert!(coalesce_ranges(&[0..8, 4..12], 12, 8).is_err());
-        assert!(coalesce_ranges(&[std::ops::Range { start: 4, end: 2 }], 10, 4).is_err());
-        assert!(coalesce_ranges(std::slice::from_ref(&(0..11)), 10, 4).is_err());
-        assert!(coalesce_ranges(std::slice::from_ref(&(0..4)), 10, 0).is_err());
-        assert!(
-            coalesce_ranges(std::slice::from_ref(&(4..4)), 10, 4)
-                .unwrap()
-                .is_empty()
-        );
-        assert_eq!(
-            coalesce_ranges(&[0..20, 20..24], 24, 8).unwrap(),
-            [0..20, 20..24]
-        );
-    }
     #[tokio::test]
     async fn header_hint_refetch_on_generic_store() {
         let store = InMemory::new();

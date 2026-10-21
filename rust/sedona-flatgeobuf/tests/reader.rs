@@ -919,7 +919,18 @@ async fn native_format_reads_generic_object_store() {
             }
             plan.children().iter().map(|p| scan_partitions(p)).sum()
         }
-        assert_eq!(scan_partitions(&scan), 8);
+        assert_eq!(scan_partitions(&scan), 1);
+        let aggregate = ctx
+            .sql("SELECT sum(id) FROM 'memory://fgb/points.fgb'")
+            .await
+            .unwrap()
+            .create_physical_plan()
+            .await
+            .unwrap();
+        let plan = datafusion_physical_plan::displayable(aggregate.as_ref())
+            .indent(true)
+            .to_string();
+        assert!(plan.contains("RoundRobinBatch(8)"), "{plan}");
         let result = ctx
             .sql("SELECT id, label FROM 'memory://fgb/points.fgb' WHERE id >= 3 ORDER BY id")
             .await
@@ -1199,4 +1210,154 @@ async fn duplicate_attribute_names_keep_positional_values() {
             .value(0),
         111
     );
+}
+
+#[tokio::test]
+async fn equivalent_geometry_metadata_is_accepted() {
+    let (_d, obj) = fixture(false, 2);
+    let spec = FlatGeobufFormatSpec::default();
+    let schema = spec.infer_schema(&obj).await.unwrap();
+    let mut field = schema.field(2).clone();
+    let mut metadata = field.metadata().clone();
+    let value: serde_json::Value =
+        serde_json::from_str(&metadata["ARROW:extension:metadata"]).unwrap();
+    metadata.insert(
+        "ARROW:extension:metadata".into(),
+        serde_json::to_string_pretty(&value).unwrap(),
+    );
+    field = field.with_metadata(metadata);
+    let mut request = args(obj, None);
+    request.file_schema = Some(Arc::new(arrow_schema::Schema::new(vec![field])));
+    assert_eq!(
+        spec.open_reader(&request)
+            .await
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .num_rows(),
+        2
+    );
+}
+
+// Instrument actual ObjectStore requests, independent of Arrow batch size.
+#[derive(Debug, Default)]
+struct ReadCountingStore {
+    inner: object_store::memory::InMemory,
+    reads: std::sync::atomic::AtomicUsize,
+}
+impl std::fmt::Display for ReadCountingStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "read-counting store")
+    }
+}
+#[async_trait::async_trait]
+impl object_store::ObjectStore for ReadCountingStore {
+    async fn put_opts(
+        &self,
+        p: &Path,
+        data: object_store::PutPayload,
+        opts: object_store::PutOptions,
+    ) -> object_store::Result<object_store::PutResult> {
+        self.inner.put_opts(p, data, opts).await
+    }
+    async fn put_multipart_opts(
+        &self,
+        p: &Path,
+        opts: object_store::PutMultipartOptions,
+    ) -> object_store::Result<Box<dyn object_store::MultipartUpload>> {
+        self.inner.put_multipart_opts(p, opts).await
+    }
+    async fn get_opts(
+        &self,
+        p: &Path,
+        opts: object_store::GetOptions,
+    ) -> object_store::Result<object_store::GetResult> {
+        if !opts.head {
+            self.reads
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        self.inner.get_opts(p, opts).await
+    }
+    fn delete_stream(
+        &self,
+        p: futures::stream::BoxStream<'static, object_store::Result<Path>>,
+    ) -> futures::stream::BoxStream<'static, object_store::Result<Path>> {
+        self.inner.delete_stream(p)
+    }
+    fn list(
+        &self,
+        p: Option<&Path>,
+    ) -> futures::stream::BoxStream<'static, object_store::Result<object_store::ObjectMeta>> {
+        self.inner.list(p)
+    }
+    async fn list_with_delimiter(
+        &self,
+        p: Option<&Path>,
+    ) -> object_store::Result<object_store::ListResult> {
+        self.inner.list_with_delimiter(p).await
+    }
+    async fn copy_opts(
+        &self,
+        a: &Path,
+        b: &Path,
+        opts: object_store::CopyOptions,
+    ) -> object_store::Result<()> {
+        self.inner.copy_opts(a, b, opts).await
+    }
+}
+
+#[tokio::test]
+async fn native_requests_do_not_scale_with_feature_or_batch_count() {
+    use datafusion::execution::SessionStateBuilder;
+    use object_store::ObjectStoreExt;
+    for indexed in [false, true] {
+        let (dir, _) = fixture(indexed, 2000);
+        let store = Arc::new(ReadCountingStore::default());
+        store
+            .put(
+                &Path::from("points.fgb"),
+                std::fs::read(dir.path().join("points.fgb")).unwrap().into(),
+            )
+            .await
+            .unwrap();
+        let mut state = SessionStateBuilder::new()
+            .with_config(
+                SessionConfig::new()
+                    .with_target_partitions(8)
+                    .with_batch_size(3),
+            )
+            .with_default_features()
+            .build();
+        state
+            .register_file_format(Arc::new(sedona_flatgeobuf::FlatGeobufFormatFactory), true)
+            .unwrap();
+        let ctx = SessionContext::new_with_state(state).enable_url_table();
+        ctx.register_object_store(&url::Url::parse("memory://count").unwrap(), store.clone());
+        let batches = ctx
+            .sql("SELECT id FROM 'memory://count/points.fgb'")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        let mut ids = batches
+            .iter()
+            .flat_map(|b| {
+                b.column(0)
+                    .as_any()
+                    .downcast_ref::<Int32Array>()
+                    .unwrap()
+                    .values()
+                    .to_vec()
+            })
+            .collect::<Vec<_>>();
+        ids.sort_unstable();
+        assert_eq!(ids, (0..2000).collect::<Vec<_>>());
+        let reads = store.reads.load(std::sync::atomic::Ordering::Relaxed);
+        assert!(
+            reads <= 3,
+            "{reads} GETs for {indexed:?} indexed file, expected header plus buffered payload"
+        );
+    }
 }

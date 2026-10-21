@@ -16,7 +16,6 @@
 // under the License.
 
 use datafusion_common::Result;
-use datafusion_datasource::file_groups::FileGroupPartitioner;
 use datafusion_datasource::{
     TableSchema,
     file::FileSource,
@@ -25,7 +24,6 @@ use datafusion_datasource::{
     projection::{ProjectionOpener, SplitProjection},
 };
 use datafusion_execution::cache::cache_manager::FileMetadataCache;
-use datafusion_physical_expr::LexOrdering;
 use datafusion_physical_expr::projection::ProjectionExprs;
 use datafusion_physical_plan::metrics::ExecutionPlanMetricsSet;
 use object_store::ObjectStore;
@@ -39,6 +37,7 @@ pub(crate) struct FlatGeobufSource {
     metrics: ExecutionPlanMetricsSet,
     pub(crate) cache: Option<Arc<dyn FileMetadataCache>>,
 }
+
 impl FlatGeobufSource {
     pub(crate) fn new(table_schema: TableSchema, format: crate::format::FlatGeobufFormat) -> Self {
         let projection = SplitProjection::unprojected(&table_schema).source;
@@ -52,6 +51,7 @@ impl FlatGeobufSource {
         }
     }
 }
+
 impl FileSource for FlatGeobufSource {
     fn create_file_opener(
         &self,
@@ -72,26 +72,10 @@ impl FileSource for FlatGeobufSource {
         ProjectionOpener::try_new(split, opener, schema)
     }
 
-    fn repartitioned(
-        &self,
-        target: usize,
-        min_size: usize,
-        ordering: Option<LexOrdering>,
-        config: &FileScanConfig,
-    ) -> Result<Option<FileScanConfig>> {
-        if target < 2 || ordering.is_some() {
-            return Ok(None);
-        }
-        let partitioner = FileGroupPartitioner::new()
-            .with_target_partitions(target)
-            .with_repartition_file_min_size(min_size);
-        Ok(partitioner
-            .repartition_file_groups(&config.file_groups)
-            .map(|groups| {
-                let mut conf = config.clone();
-                conf.file_groups = groups;
-                conf
-            }))
+    // Scan each file once. DataFusion can redistribute decoded batches without
+    // duplicating metadata reads or fragmenting remote object requests.
+    fn supports_repartitioning(&self) -> bool {
+        false
     }
 
     fn table_schema(&self) -> &TableSchema {

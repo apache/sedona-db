@@ -49,6 +49,7 @@ use std::{collections::HashMap, sync::Arc};
 pub struct FlatGeobufFormatSpec {
     geometry_column_name: String,
 }
+
 impl Default for FlatGeobufFormatSpec {
     fn default() -> Self {
         Self {
@@ -56,6 +57,7 @@ impl Default for FlatGeobufFormatSpec {
         }
     }
 }
+
 impl FlatGeobufFormatSpec {
     async fn metadata(&self, object: &Object) -> Result<Arc<FileMetadata>> {
         let path = local_path(object)?;

@@ -5954,6 +5954,7 @@ dependencies = [
  "sedona-geometry",
  "sedona-schema",
  "sedona-testing",
+ "serde_json",
  "tempfile",
  "tokio",
  "url",

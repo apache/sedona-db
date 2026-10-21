@@ -35,13 +35,16 @@ struct CachedMetadata {
     data: Arc<Metadata>,
     store: Arc<dyn ObjectStore>,
 }
+
 impl FileMetadata for CachedMetadata {
     fn as_any(&self) -> &dyn Any {
         self
     }
+
     fn extra_info(&self) -> std::collections::HashMap<String, String> {
         Default::default()
     }
+
     fn memory_size(&self) -> usize {
         std::mem::size_of::<Self>()
             + self.data.offsets.capacity() * 8
@@ -73,11 +76,19 @@ pub(crate) async fn metadata(
     let (mut data, count, node_size) =
         Metadata::from_header(&reader.header(), header[8..].to_vec())?;
     let index_begin = header.len() as u64;
-    data.offsets = if data.indexed {
-        indexed_offsets(store.as_ref(), object, index_begin, count, node_size).await?
+    // Sequential native scans only need to skip the index, never fetch its leaves.
+    let index_size = if data.indexed {
+        if node_size < 2 || count > usize::MAX / 80 || count as u64 > object.size / 40 {
+            return exec_err!("Invalid FlatGeobuf index dimensions");
+        }
+        PackedRTree::index_size(count, node_size) as u64
     } else {
-        unindexed_offsets(store.as_ref(), object, index_begin, count).await?
+        0
     };
+    data.payload_begin = index_begin
+        .checked_add(index_size)
+        .filter(|p| *p <= object.size)
+        .ok_or_else(|| exec_datafusion_err!("FlatGeobuf index exceeds object"))?;
     let data = Arc::new(data);
     if let Some(cache) = cache {
         cache.put(
@@ -93,6 +104,28 @@ pub(crate) async fn metadata(
     }
     Ok(data)
 }
+/// Offset discovery is retained only for the local ExternalFormatSpec adapter.
+pub(crate) async fn local_offsets(
+    store: &dyn ObjectStore,
+    object: &ObjectMeta,
+    data: &Metadata,
+) -> Result<Vec<u64>> {
+    let header = flatgeobuf::size_prefixed_root_as_header(&data.header)
+        .map_err(|e| exec_datafusion_err!("Invalid FlatGeobuf header: {e}"))?;
+    if data.indexed {
+        indexed_offsets(
+            store,
+            object,
+            data.header.len() as u64 + 8,
+            data.feature_count,
+            header.index_node_size(),
+        )
+        .await
+    } else {
+        unindexed_offsets(store, object, data.payload_begin, data.feature_count).await
+    }
+}
+
 /// Only the RTree's leaf level is required for sequential feature range ownership.
 async fn indexed_offsets(
     store: &dyn ObjectStore,

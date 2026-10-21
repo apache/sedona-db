@@ -37,6 +37,7 @@ pub struct FlatGeobufFormat {
     pub(crate) geometry_column_name: String,
     pub(crate) metadata_size_hint: usize,
 }
+
 impl Default for FlatGeobufFormat {
     fn default() -> Self {
         Self {
@@ -45,6 +46,7 @@ impl Default for FlatGeobufFormat {
         }
     }
 }
+
 impl FlatGeobufFormat {
     pub fn with_options(mut self, options: &HashMap<String, String>) -> Result<Self> {
         for (key, value) in options {
@@ -63,6 +65,7 @@ impl FlatGeobufFormat {
         Ok(self)
     }
 }
+
 #[derive(Debug, Default)]
 pub struct FlatGeobufFormatFactory;
 impl GetExt for FlatGeobufFormatFactory {
@@ -70,6 +73,7 @@ impl GetExt for FlatGeobufFormatFactory {
         "fgb".into()
     }
 }
+
 impl FileFormatFactory for FlatGeobufFormatFactory {
     fn create(
         &self,
@@ -178,6 +182,7 @@ impl GetExt for NativeFlatGeobufFormatFactory {
         "fgb_native".into()
     }
 }
+
 impl FileFormatFactory for NativeFlatGeobufFormatFactory {
     fn create(
         &self,

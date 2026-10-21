@@ -51,18 +51,21 @@ pub(crate) fn local_path(object: &Object) -> Result<PathBuf> {
     url.to_file_path()
         .map_err(|_| exec_datafusion_err!("FlatGeobuf currently supports only local file URLs"))
 }
+
 #[derive(Debug)]
 pub(crate) struct FileMetadata {
     pub path: PathBuf,
     pub stamp: FileStamp,
     pub data: Metadata,
 }
+
 impl std::ops::Deref for FileMetadata {
     type Target = Metadata;
     fn deref(&self) -> &Metadata {
         &self.data
     }
 }
+
 #[derive(Debug, Clone)]
 pub(crate) struct Metadata {
     pub header: Vec<u8>,
@@ -71,16 +74,24 @@ pub(crate) struct Metadata {
     pub has_z: bool,
     pub has_m: bool,
     pub indexed: bool,
+    pub payload_begin: u64,
+    pub feature_count: usize,
     // Absolute starts, followed by the end of the feature section.
     pub offsets: Vec<u64>,
 }
+
 impl FileMetadata {
     pub async fn read(path: &Path, stamp: FileStamp) -> Result<Self> {
         use object_store::{ObjectStoreExt, local::LocalFileSystem};
         let store = Arc::new(LocalFileSystem::new());
         let location = object_store::path::Path::from_filesystem_path(path)?;
         let object = store.head(&location).await?;
-        let data = crate::store_metadata::metadata(store.clone(), &object, 65536, None).await?;
+        let mut data = crate::store_metadata::metadata(store.clone(), &object, 65536, None)
+            .await?
+            .as_ref()
+            .clone();
+        // Only the local compatibility adapter supports independent byte ranges.
+        data.offsets = crate::store_metadata::local_offsets(store.as_ref(), &object, &data).await?;
         // Preserve the local adapter's eager framing validation using byte slices.
         use futures::{StreamExt, TryStreamExt};
         futures::stream::iter(data.offsets.windows(2))
@@ -104,10 +115,11 @@ impl FileMetadata {
         Ok(Self {
             path: path.into(),
             stamp,
-            data: data.as_ref().clone(),
+            data,
         })
     }
 }
+
 impl Metadata {
     /// Derive Arrow fields from the retained FlatGeobuf header when required.
     /// Geometry naming is a scan option, not a property of cached file metadata.
@@ -146,6 +158,8 @@ impl Metadata {
                 has_z,
                 has_m,
                 indexed,
+                payload_begin: 0,
+                feature_count: count,
                 offsets: vec![],
             },
             count,

@@ -28,16 +28,19 @@ pub(crate) fn to_wkb(g: Geometry<'_>, kind: GeometryType, z: bool, m: bool) -> R
     write(&mut out, g, kind, z, m, 0)?;
     Ok(out)
 }
+
 fn u32_value(out: &mut Vec<u8>, n: usize) -> Result<()> {
     let n = u32::try_from(n).map_err(|_| exec_datafusion_err!("FlatGeobuf WKB count overflow"))?;
     out.extend_from_slice(&n.to_le_bytes());
     Ok(())
 }
+
 fn header(out: &mut Vec<u8>, kind: GeometryType, z: bool, m: bool) {
     out.push(1);
     let code = kind.0 as u32 + u32::from(z) * 1000 + u32::from(m) * 2000;
     out.extend_from_slice(&code.to_le_bytes());
 }
+
 fn coord(out: &mut Vec<u8>, g: Geometry<'_>, i: usize, z: bool, m: bool) {
     let xy = g.xy().unwrap();
     out.extend_from_slice(&xy.get(i * 2).to_le_bytes());
@@ -49,6 +52,7 @@ fn coord(out: &mut Vec<u8>, g: Geometry<'_>, i: usize, z: bool, m: bool) {
         out.extend_from_slice(&g.m().unwrap().get(i).to_le_bytes());
     }
 }
+
 fn coords(
     out: &mut Vec<u8>,
     g: Geometry<'_>,
@@ -63,6 +67,7 @@ fn coords(
     }
     Ok(())
 }
+
 fn write(
     out: &mut Vec<u8>,
     g: Geometry<'_>,

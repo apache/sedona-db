@@ -27,6 +27,7 @@ pub(crate) struct FlatGeobufArrowConverter {
     builder: Option<Box<dyn ArrayBuilder>>,
     rows: usize,
 }
+
 impl FlatGeobufArrowConverter {
     pub(crate) fn new(
         output: FieldRef,
@@ -43,6 +44,7 @@ impl FlatGeobufArrowConverter {
             rows: 0,
         })
     }
+
     pub(crate) fn append_null(&mut self) {
         if let Some(b) = self.builder.as_mut() {
             macro_rules! null {
@@ -67,6 +69,7 @@ impl FlatGeobufArrowConverter {
         }
         self.rows += 1;
     }
+
     pub(crate) fn append(&mut self, ty: ColumnType, bytes: &[u8]) -> Result<()> {
         let b = self
             .builder
@@ -130,6 +133,7 @@ impl FlatGeobufArrowConverter {
         self.rows += 1;
         Ok(())
     }
+
     pub(crate) fn finish(mut self) -> Result<ArrayRef> {
         let array = if let Some(b) = self.builder.as_mut() {
             let array = b.finish();
