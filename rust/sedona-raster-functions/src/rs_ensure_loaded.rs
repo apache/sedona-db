@@ -110,11 +110,13 @@ impl RsEnsureLoaded {
             //
             // `Stable` (not `Volatile`) so DataFusion's CSE pass can
             // deduplicate identical RS_EnsureLoaded(col) calls injected
-            // by the optimizer rule, and so the simplifier never folds a
-            // call at plan time (only `Immutable` calls are folded).
-            // Semantic: within a single query the byte materialisation is
-            // deterministic for fixed inputs; across queries the underlying
-            // storage may change, so the result isn't `Immutable`.
+            // by the optimizer rule. Semantic: within a single query the
+            // byte materialisation is deterministic for fixed inputs;
+            // across queries the underlying storage may change, so the
+            // result isn't `Immutable`. Note that the simplifier does fold
+            // `Stable` calls whose arguments are constant, so a call over a
+            // constant raster is evaluated at plan time; OutDb references
+            // come from `RS_FromPath`, which is `Volatile` and never folded.
             signature: Signature::any(1, Volatility::Stable),
         }
     }
@@ -157,8 +159,17 @@ fn loader_runtime() -> &'static Runtime {
 /// the wait goes through `block_in_place`, which hands the worker's other
 /// tasks to another thread for the duration so the session's runtime keeps
 /// making progress. On a current-thread runtime, or outside any runtime,
-/// the thread simply blocks; the loader runtime is separate, so this
-/// cannot deadlock.
+/// the thread simply blocks. The loader runtime is separate, so the wait
+/// cannot deadlock as long as a loader needs nothing from the caller's
+/// runtime: every loader runs its blocking work and I/O on the loader
+/// runtime (`spawn_blocking` inside a loader lands there too). A loader
+/// that awaited a task living on the caller's runtime would hang a
+/// current-thread caller.
+///
+/// The future is detached: once spawned it runs to completion even if the
+/// query that asked for it is dropped, and the caller cannot be
+/// interrupted while it waits. Cancellation therefore happens between
+/// slices, never inside a load.
 fn block_on_loader_runtime<F>(fut: F) -> Result<ArrayRef>
 where
     F: Future<Output = Result<ArrayRef>> + Send + 'static,
@@ -2315,26 +2326,86 @@ mod tests {
         assert_eq!(loader.seen.lock().unwrap().len(), 1);
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-    async fn invoke_loads_outdb_bands_from_a_multi_thread_runtime_worker() {
-        // The only worker of the session's runtime makes the call, as a
-        // DataFusion partition would; the wait must not stall the runtime.
-        // The load is awaited on a task of that same runtime, so the test
-        // deadlocks if the wait ever blocks the worker outright.
-        let loader: Arc<RecordingLoader> = Arc::new(RecordingLoader::default());
-        let registry = registry_with(loader.clone());
-        let input: ArrayRef = Arc::new(build_outdb_input("rec://a", "recording", &[2, 3]));
-        let out = tokio::spawn(async move {
-            RsEnsureLoaded::new()
-                .invoke_with_args(scalar_args(input, registry))
+    #[test]
+    fn invoke_waits_without_parking_a_multi_thread_runtime_worker() {
+        // A one-worker session runtime, as a DataFusion partition runs on.
+        // The loader only completes once a second task on that runtime has
+        // fired its gate, and that task is only polled after the loader
+        // started waiting, so this passes only if the wait inside
+        // `invoke_with_args` hands the worker's core to another thread
+        // (`block_in_place`) instead of parking it.
+        use std::time::Duration;
+        use tokio::sync::oneshot;
+
+        #[derive(Debug)]
+        struct GatedLoader {
+            started: Mutex<Option<oneshot::Sender<()>>>,
+            gate: Mutex<Option<oneshot::Receiver<()>>>,
+        }
+        #[async_trait]
+        impl AsyncRasterLoader for GatedLoader {
+            fn name(&self) -> &str {
+                "gated"
+            }
+            fn supports_format(&self, _format: Option<&str>) -> bool {
+                true
+            }
+            async fn load(
+                &self,
+                reqs: &[&RasterLoadRequest],
+            ) -> Result<Vec<RasterLoadResult>, arrow_schema::ArrowError> {
+                let started = self.started.lock().unwrap().take().expect("one load");
+                let gate = self.gate.lock().unwrap().take().expect("one load");
+                let _ = started.send(());
+                gate.await
+                    .map_err(|_| arrow_schema::ArrowError::ExternalError("gate dropped".into()))?;
+                Ok(reqs
+                    .iter()
+                    .map(|req| RasterLoadResult::unresolved(Buffer::from_vec(vec![0u8; 6]), req))
+                    .collect())
+            }
+        }
+
+        let (started_tx, started_rx) = oneshot::channel();
+        let (gate_tx, gate_rx) = oneshot::channel();
+        let registry = registry_with(Arc::new(GatedLoader {
+            started: Mutex::new(Some(started_tx)),
+            gate: Mutex::new(Some(gate_rx)),
+        }));
+        let input: ArrayRef = Arc::new(build_outdb_input("gated://a", "gated", &[2, 3]));
+
+        let session = Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        let (done_tx, done_rx) = mpsc::channel();
+        let handle = session.handle().clone();
+        std::thread::spawn(move || {
+            let result = handle.block_on(async move {
+                tokio::spawn(async move {
+                    started_rx.await.unwrap();
+                    gate_tx.send(()).unwrap();
+                });
+                tokio::spawn(async move {
+                    RsEnsureLoaded::new()
+                        .invoke_with_args(scalar_args(input, registry))
+                        .and_then(|value| value.to_array(1))
+                })
+                .await
                 .unwrap()
-                .to_array(1)
-                .unwrap()
-        })
-        .await
-        .unwrap();
-        assert_eq!(band_bytes_and_ptr(&out, 0).0.len(), 6);
-        assert_eq!(loader.seen.lock().unwrap().len(), 1);
+            });
+            let _ = done_tx.send(result);
+        });
+        match done_rx.recv_timeout(Duration::from_secs(30)) {
+            Ok(out) => assert_eq!(band_bytes_and_ptr(&out.unwrap(), 0).0.len(), 6),
+            Err(_) => {
+                // The worker is parked for good; don't wait for it on drop.
+                session.shutdown_background();
+                panic!("the wait parked the only worker of the session runtime");
+            }
+        }
+        session.shutdown_background();
     }
 
     #[test]

@@ -869,3 +869,26 @@ def test_pixel_function_in_a_case_branch_loads_only_its_rows(con, grid_tiff):
         params=(grid_tiff,),
     ).to_arrow_table()
     assert got["v"].to_pylist() == [-1.0, 5.0]
+
+
+def test_aggregate_over_pixel_function_across_partitions(con, grid_tiff):
+    """With several partitions the planner builds a partial and a final
+    aggregate stage carrying the same expressions. Only the partial stage
+    reads rows and loads rasters; the final stage reads partial state, where
+    the raster column does not exist."""
+    con.sql("SET datafusion.execution.target_partitions TO 4").execute()
+    sql = """
+        SELECT id, SUM(RS_Value(RS_FromPath(path), 2, 2, 1)) AS s
+        FROM (VALUES (1, $1), (1, $1), (2, $1)) AS t(id, path)
+        GROUP BY id
+        ORDER BY id
+    """
+    plan = con.sql("EXPLAIN " + sql, params=(grid_tiff,)).to_arrow_table()
+    physical = plan.column("plan").to_pylist()[1]
+    assert "mode=Partial" in physical, physical
+    assert "mode=Final" in physical, physical
+    assert physical.count("RasterBatchSplitExec") == 1, physical
+
+    got = con.sql(sql, params=(grid_tiff,)).to_arrow_table()
+    assert got["id"].to_pylist() == [1, 2]
+    assert got["s"].to_pylist() == [10.0, 5.0]

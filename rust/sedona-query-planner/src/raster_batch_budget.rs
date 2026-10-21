@@ -96,7 +96,7 @@ use datafusion_execution::{SendableRecordBatchStream, TaskContext};
 use datafusion_expr::Operator;
 use datafusion_physical_expr::expressions::{BinaryExpr, CaseExpr, Column};
 use datafusion_physical_expr::{PhysicalExpr, ScalarFunctionExpr};
-use datafusion_physical_plan::aggregates::{AggregateExec, PhysicalGroupBy};
+use datafusion_physical_plan::aggregates::{AggregateExec, AggregateInputMode, PhysicalGroupBy};
 use datafusion_physical_plan::execution_plan::CardinalityEffect;
 use datafusion_physical_plan::filter::{FilterExec, FilterExecBuilder};
 use datafusion_physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
@@ -226,7 +226,11 @@ struct SizedArgs {
     /// Input columns, read as is.
     columns: Vec<usize>,
     /// Expressions, each evaluated once per batch into a column appended
-    /// after the input's.
+    /// after the input's. Identical expressions share one column, volatile
+    /// ones included (`RS_FromPath` is declared volatile to stay out of
+    /// constant folding, and two calls over the same path should open the
+    /// file once); a genuinely nondeterministic argument written twice in
+    /// one node therefore yields the same raster twice.
     exprs: Vec<Arc<dyn PhysicalExpr>>,
 }
 
@@ -290,13 +294,6 @@ impl SizedArgs {
 
     fn is_empty(&self) -> bool {
         self.columns.is_empty() && self.exprs.is_empty()
-    }
-
-    fn columns_only(&self) -> Self {
-        Self {
-            columns: self.columns.clone(),
-            exprs: Vec::new(),
-        }
     }
 }
 
@@ -388,6 +385,15 @@ fn read_hoisted_args(
 fn split_under_loading_node(
     node: Arc<dyn ExecutionPlan>,
 ) -> Result<Transformed<Arc<dyn ExecutionPlan>>> {
+    // Already split (the rule ran on this plan before); never stack a second.
+    if node
+        .children()
+        .first()
+        .is_some_and(|input| input.downcast_ref::<RasterBatchSplitExec>().is_some())
+    {
+        return Ok(Transformed::no(node));
+    }
+
     if let Some(projection) = node.downcast_ref::<ProjectionExec>() {
         let exprs: Vec<Arc<dyn PhysicalExpr>> = projection
             .expr()
@@ -439,6 +445,13 @@ fn split_under_loading_node(
     }
 
     if let Some(aggregate) = node.downcast_ref::<AggregateExec>() {
+        // Only a first-stage aggregate evaluates its expressions over raw
+        // input. A `Final`/`FinalPartitioned` stage carries the same
+        // expressions (bound to the raw input schema) but reads partial
+        // state, so there is nothing to split under it.
+        if aggregate.mode().input_mode() != AggregateInputMode::Raw {
+            return Ok(Transformed::no(node));
+        }
         let group_by = aggregate.group_expr();
         let mut exprs: Vec<Arc<dyn PhysicalExpr>> = group_by.input_exprs();
         exprs.extend(group_by.null_expr().iter().map(|(e, _)| Arc::clone(e)));
@@ -472,18 +485,13 @@ fn split_under_loading_node(
                 .iter()
                 .map(|s| rewrite(&s.expr))
                 .collect::<Result<Vec<_>>>()?;
+            // `with_new_expressions` only refuses a different number of
+            // arguments or order-bys, and the rewrite keeps both.
             let Some(rewritten) = aggr.with_new_expressions(args, order_bys) else {
-                // The aggregate cannot take rewritten arguments; size by the
-                // column arguments alone and leave its expressions as they
-                // are.
-                let sized = sized.columns_only();
-                if sized.is_empty() {
-                    return Ok(Transformed::no(node));
-                }
-                let split = split_input(aggregate.input(), &sized)?;
-                return Ok(Transformed::yes(
-                    Arc::clone(&node).with_new_children(vec![split.plan])?,
-                ));
+                return internal_err!(
+                    "RasterBatchBudgetRule: aggregate {} rejected its rewritten arguments",
+                    aggr.name()
+                );
             };
             aggr_exprs.push(Arc::new(rewritten));
         }
@@ -693,10 +701,10 @@ impl ExecutionPlan for RasterBatchSplitExec {
         vec![true]
     }
 
-    // `benefits_from_input_partitioning` is deliberately left at the default
-    // (true): the planner then puts any round-robin repartition *below* this
-    // node, over cheap OutDb references, so loads run in parallel and no
-    // repartition coalescer sits above the byte-bounded output re-merging it.
+    // The rule runs after `EnforceDistribution`, so no repartition is ever
+    // placed relative to this node: whatever the planner put under the
+    // loading node (a round-robin over cheap OutDb references, usually) ends
+    // up under the split.
 
     fn cardinality_effect(&self) -> CardinalityEffect {
         CardinalityEffect::Equal
@@ -770,6 +778,7 @@ mod tests {
     use datafusion_physical_expr::aggregate::AggregateExprBuilder;
     use datafusion_physical_expr::expressions::{binary, col, is_not_null, is_null, lit};
     use datafusion_physical_plan::aggregates::AggregateMode;
+    use datafusion_physical_plan::coalesce_partitions::CoalescePartitionsExec;
     use datafusion_physical_plan::common::collect;
     use sedona_common::option::RasterOptions;
     use sedona_raster::builder::{RasterBuilder, StartBandArgs};
@@ -1430,7 +1439,6 @@ mod tests {
                 &schema,
             )
         };
-        let rast = || col("rast", &schema).unwrap();
         let project = |expr: Arc<dyn PhysicalExpr>| -> Arc<dyn ExecutionPlan> {
             let input =
                 MemorySourceConfig::try_new_exec(&[vec![batch.clone()]], Arc::clone(&schema), None)
@@ -1443,8 +1451,8 @@ mod tests {
         let in_branch: Arc<dyn PhysicalExpr> = Arc::new(
             CaseExpr::try_new(
                 None,
-                vec![(is_null(rast()).unwrap(), loaded())],
-                Some(rast()),
+                vec![(is_null(col("rast", &schema).unwrap()).unwrap(), loaded())],
+                Some(col("rast", &schema).unwrap()),
             )
             .unwrap(),
         );
@@ -1467,8 +1475,15 @@ mod tests {
             // The first WHEN condition is evaluated for every row.
             (
                 Arc::new(
-                    CaseExpr::try_new(None, vec![(is_not_null(loaded()).unwrap(), rast())], None)
-                        .unwrap(),
+                    CaseExpr::try_new(
+                        None,
+                        vec![(
+                            is_not_null(loaded()).unwrap(),
+                            col("rast", &schema).unwrap(),
+                        )],
+                        None,
+                    )
+                    .unwrap(),
                 ),
                 true,
             ),
@@ -1478,8 +1493,14 @@ mod tests {
                     CaseExpr::try_new(
                         None,
                         vec![
-                            (is_null(rast()).unwrap(), rast()),
-                            (is_not_null(loaded()).unwrap(), rast()),
+                            (
+                                is_null(col("rast", &schema).unwrap()).unwrap(),
+                                col("rast", &schema).unwrap(),
+                            ),
+                            (
+                                is_not_null(loaded()).unwrap(),
+                                col("rast", &schema).unwrap(),
+                            ),
                         ],
                         None,
                     )
@@ -1490,7 +1511,7 @@ mod tests {
             // The right side of AND may be skipped; the left side never is.
             (
                 binary(
-                    is_null(rast()).unwrap(),
+                    is_null(col("rast", &schema).unwrap()).unwrap(),
                     Operator::And,
                     is_not_null(loaded()).unwrap(),
                     &schema,
@@ -1502,7 +1523,7 @@ mod tests {
                 binary(
                     is_not_null(loaded()).unwrap(),
                     Operator::Or,
-                    is_null(rast()).unwrap(),
+                    is_null(col("rast", &schema).unwrap()).unwrap(),
                     &schema,
                 )
                 .unwrap(),
@@ -1532,5 +1553,286 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[tokio::test]
+    async fn only_the_first_aggregate_stage_is_split() {
+        // Final ← CoalescePartitions ← Partial ← scan, as the planner builds
+        // `SELECT count(rs_ensureloaded(rast))` over several partitions.
+        // Both stages carry the same expressions, bound to the raw schema;
+        // only the partial stage reads rows, so only it gets a split. (The
+        // final stage reads partial state, where the raster column does not
+        // even exist.)
+        let (schema, batch) = raster_batch(&[Some(16); 6]);
+        let input =
+            MemorySourceConfig::try_new_exec(&[vec![batch]], Arc::clone(&schema), None).unwrap();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let count = Arc::new(
+            AggregateExprBuilder::new(
+                count_udaf(),
+                vec![ensure_loaded_call(
+                    &calls,
+                    col("rast", &schema).unwrap(),
+                    &schema,
+                )],
+            )
+            .schema(Arc::clone(&schema))
+            .alias("c")
+            .build()
+            .unwrap(),
+        );
+        let partial = Arc::new(
+            AggregateExec::try_new(
+                AggregateMode::Partial,
+                PhysicalGroupBy::new_single(vec![]),
+                vec![Arc::clone(&count)],
+                vec![None],
+                input,
+                Arc::clone(&schema),
+            )
+            .unwrap(),
+        );
+        let merged = Arc::new(CoalescePartitionsExec::new(partial));
+        let final_stage: Arc<dyn ExecutionPlan> = Arc::new(
+            AggregateExec::try_new(
+                AggregateMode::Final,
+                PhysicalGroupBy::new_single(vec![]),
+                vec![count],
+                vec![None],
+                merged,
+                Arc::clone(&schema),
+            )
+            .unwrap(),
+        );
+        let expected_schema = final_stage.schema();
+
+        let plan = RasterBatchBudgetRule
+            .optimize(final_stage, &ConfigOptions::default())
+            .unwrap();
+        assert_eq!(plan.schema(), expected_schema);
+        let final_stage = plan.downcast_ref::<AggregateExec>().expect("final kept");
+        assert_eq!(*final_stage.mode(), AggregateMode::Final);
+        let partial = final_stage
+            .input()
+            .downcast_ref::<CoalescePartitionsExec>()
+            .expect("merge kept")
+            .input()
+            .downcast_ref::<AggregateExec>()
+            .expect("partial kept");
+        assert_eq!(*partial.mode(), AggregateMode::Partial);
+        assert!(
+            partial
+                .input()
+                .downcast_ref::<RasterBatchSplitExec>()
+                .is_some(),
+            "the split goes under the partial stage"
+        );
+
+        let batches = collect(plan.execute(0, task_context(600)).unwrap())
+            .await
+            .unwrap();
+        let counts: Vec<i64> = batches
+            .iter()
+            .flat_map(|b| {
+                b.column(0)
+                    .as_any()
+                    .downcast_ref::<arrow_array::Int64Array>()
+                    .unwrap()
+                    .values()
+                    .to_vec()
+            })
+            .collect();
+        assert_eq!(counts, vec![6]);
+        assert_eq!(*calls.lock().unwrap(), vec![2, 2, 2]);
+    }
+
+    #[tokio::test]
+    async fn filter_keeps_its_projection_and_fetch_around_a_hoisted_argument() {
+        // A filter that already projects its output (only `id`) and stops
+        // after three rows, with an expression argument hoisted under it.
+        let (raster_schema, raster_batch) = raster_batch(&[Some(16); 6]);
+        let schema = Arc::new(Schema::new(vec![
+            raster_schema.field(0).clone(),
+            Field::new("id", DataType::Int32, false),
+        ]));
+        let batch = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![
+                Arc::clone(raster_batch.column(0)),
+                Arc::new(Int32Array::from(vec![1, 2, 3, 4, 5, 6])),
+            ],
+        )
+        .unwrap();
+        let input =
+            MemorySourceConfig::try_new_exec(&[vec![batch]], Arc::clone(&schema), None).unwrap();
+        let evaluations = Arc::new(AtomicUsize::new(0));
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let filter: Arc<dyn ExecutionPlan> = Arc::new(
+            FilterExecBuilder::new(
+                is_not_null(ensure_loaded_call(
+                    &calls,
+                    counted_raster_call(&evaluations, col("rast", &schema).unwrap(), &schema),
+                    &schema,
+                ))
+                .unwrap(),
+                input,
+            )
+            .apply_projection(Some(vec![1]))
+            .unwrap()
+            .with_fetch(Some(3))
+            .build()
+            .unwrap(),
+        );
+        let expected_schema = filter.schema();
+        assert_eq!(expected_schema.fields().len(), 1);
+
+        let plan = RasterBatchBudgetRule
+            .optimize(filter, &ConfigOptions::default())
+            .unwrap();
+        assert_eq!(plan.schema(), expected_schema);
+        let filter = plan.downcast_ref::<FilterExec>().expect("filter kept");
+        assert_eq!(filter.projection().as_deref(), Some(&[1][..]));
+        assert_eq!(filter.fetch(), Some(3));
+        assert_eq!(filter.input().schema().fields().len(), 3);
+
+        let batches = collect(plan.execute(0, task_context(600)).unwrap())
+            .await
+            .unwrap();
+        let ids: Vec<i32> = batches
+            .iter()
+            .flat_map(|b| {
+                b.column(0)
+                    .as_any()
+                    .downcast_ref::<Int32Array>()
+                    .unwrap()
+                    .values()
+                    .to_vec()
+            })
+            .collect();
+        assert_eq!(ids, vec![1, 2, 3]);
+        assert_eq!(evaluations.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn slices_are_sized_by_every_loader_argument() {
+        // Two loader calls over two raster columns: each row costs the sum
+        // of both estimates, 512 bytes, so a 600-byte budget takes one row
+        // per slice.
+        let (raster_schema, a) = raster_batch(&[Some(16); 6]);
+        let (_, b) = raster_batch(&[Some(16); 6]);
+        let schema = Arc::new(Schema::new(vec![
+            raster_schema.field(0).clone().with_name("a"),
+            raster_schema.field(0).clone().with_name("b"),
+        ]));
+        let batch = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![Arc::clone(a.column(0)), Arc::clone(b.column(0))],
+        )
+        .unwrap();
+        let input =
+            MemorySourceConfig::try_new_exec(&[vec![batch]], Arc::clone(&schema), None).unwrap();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let projection: Arc<dyn ExecutionPlan> = Arc::new(
+            ProjectionExec::try_new(
+                vec![
+                    ProjectionExpr::new(
+                        ensure_loaded_call(&calls, col("a", &schema).unwrap(), &schema),
+                        "la",
+                    ),
+                    ProjectionExpr::new(
+                        ensure_loaded_call(&calls, col("b", &schema).unwrap(), &schema),
+                        "lb",
+                    ),
+                ],
+                input,
+            )
+            .unwrap(),
+        );
+        let plan = RasterBatchBudgetRule
+            .optimize(projection, &ConfigOptions::default())
+            .unwrap();
+        let split = plan
+            .downcast_ref::<ProjectionExec>()
+            .unwrap()
+            .input()
+            .downcast_ref::<RasterBatchSplitExec>()
+            .unwrap();
+        assert_eq!(split.sized_columns(), &[0, 1]);
+
+        let batches = collect(plan.execute(0, task_context(600)).unwrap())
+            .await
+            .unwrap();
+        let rows: Vec<usize> = batches.iter().map(RecordBatch::num_rows).collect();
+        assert_eq!(rows, vec![1; 6]);
+        assert_eq!(*calls.lock().unwrap(), vec![1; 12]);
+    }
+
+    #[tokio::test]
+    async fn calls_sharing_an_argument_read_one_hoisted_column() {
+        // The same expression argument under an unconditional call and under
+        // a CASE branch: hoisted once (the unconditional call needs it for
+        // every row anyway) and both calls read the column.
+        let (schema, batch) = raster_batch(&[Some(16); 6]);
+        let input =
+            MemorySourceConfig::try_new_exec(&[vec![batch]], Arc::clone(&schema), None).unwrap();
+        let evaluations = Arc::new(AtomicUsize::new(0));
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let loaded = || {
+            ensure_loaded_call(
+                &calls,
+                counted_raster_call(&evaluations, col("rast", &schema).unwrap(), &schema),
+                &schema,
+            )
+        };
+        let in_branch: Arc<dyn PhysicalExpr> = Arc::new(
+            CaseExpr::try_new(
+                None,
+                vec![(is_null(col("rast", &schema).unwrap()).unwrap(), loaded())],
+                Some(col("rast", &schema).unwrap()),
+            )
+            .unwrap(),
+        );
+        let projection: Arc<dyn ExecutionPlan> = Arc::new(
+            ProjectionExec::try_new(
+                vec![
+                    ProjectionExpr::new(loaded(), "loaded"),
+                    ProjectionExpr::new(in_branch, "maybe"),
+                ],
+                input,
+            )
+            .unwrap(),
+        );
+        let plan = RasterBatchBudgetRule
+            .optimize(projection, &ConfigOptions::default())
+            .unwrap();
+        let projection = plan.downcast_ref::<ProjectionExec>().unwrap();
+        let split = projection
+            .input()
+            .downcast_ref::<RasterBatchSplitExec>()
+            .unwrap();
+        assert_eq!(split.sized_columns(), &[1]);
+        assert_eq!(
+            split.input().schema().fields().len(),
+            2,
+            "one hoisted column"
+        );
+        for p in projection.expr() {
+            assert!(
+                p.expr
+                    .to_string()
+                    .contains("rs_ensureloaded(__ensure_loaded_arg_0@1)"),
+                "{}",
+                p.expr
+            );
+        }
+
+        let batches = collect(plan.execute(0, task_context(600)).unwrap())
+            .await
+            .unwrap();
+        let rows: Vec<usize> = batches.iter().map(RecordBatch::num_rows).collect();
+        assert_eq!(rows, vec![2, 2, 2]);
+        assert_eq!(evaluations.load(Ordering::SeqCst), 1);
+        // The branch is never taken, so only the unconditional call runs.
+        assert_eq!(*calls.lock().unwrap(), vec![2, 2, 2]);
     }
 }
