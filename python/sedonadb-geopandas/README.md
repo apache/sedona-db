@@ -133,13 +133,17 @@ no row order to count back from.
 `merge()` joins on columns as pandas does, including in matching a missing key
 (NaN or None) with a missing key, unlike SQL; without an index, its rows don't
 keep the left frame's order (`sort=True` orders them by key), and
-`left_index`/`right_index` are not supported. When both frames have a geometry
+`left_index`/`right_index` are not supported. A key both frames share keeps the
+left's type in an inner or left join; in a right or outer join it takes a type
+both sides fit, which pandas chooses by whether some row lacks the left's key,
+but a lazy frame's types can't depend on its rows. When both frames have a geometry
 column of the same name, the left's stays active under its suffixed name, where
 GeoPandas keeps naming the unsuffixed column. `concat()` stacks rows only
 (`axis=0`), matching columns by name; a column holds one kind of value, so
 values of different kinds (numbers and text, say) raise rather than make a
 column of Python objects, and geometry columns must share their CRS, as in
-GeoPandas.
+GeoPandas: one without a CRS takes the others' only if it holds no geometry
+(GeoPandas relabels its coordinates whatever they are).
 
 `fillna()` follows the same rule: a scalar fills the columns that hold its kind
 of value and leaves the others as they are (pandas would turn them into Python

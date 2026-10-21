@@ -25,9 +25,11 @@ from sedonadb_geopandas._frame import (
     _geometry_column_names,
     _unused_name,
 )
+from sedonadb_geopandas._temporal import sanitize_temporal
 from sedonadb_geopandas._series import (
     GeoSeries,
     _choose,
+    _common_type,
     _same_crs,
     _value_kind,
 )
@@ -110,8 +112,11 @@ def merge(
     reserved = [*left.columns, *right.columns]
     left_keys, right_keys = [], []
     left_extra, right_extra = [], []
+    key_types = {}
     for left_name, right_name in pairs:
-        left_value, right_value = _join_values(left, right, left_name, right_name)
+        left_value, right_value, key_types[left_name] = _join_values(
+            left, right, left_name, right_name
+        )
         for side, value, keys, extra in (
             ("l", left_value, left_keys, left_extra),
             ("r", right_value, right_keys, right_extra),
@@ -153,12 +158,25 @@ def merge(
             ]
         joined = left_df.join(right_df, on=predicates, how=how)
 
+    def either(left_name, right_name):
+        # The left's key where the row has one, else the right's, in a type
+        # both are exact in (decoded, and times in the finer unit).
+        dtype = key_types[left_name]
+        values = [
+            # NaT's sentinel tick made missing first: a finer unit would
+            # overflow it.
+            sanitize_temporal(df, df[name], name).cast(dtype)
+            for df, name in ((left_df, left_name), (right_df, right_name))
+        ]
+        return values[0].funcs.coalesce(values[1])
+
     exprs = []
     for name in left.columns:
         expr = left_df[name]
-        if name in shared:
-            # The left's key where it has one, as in pandas, else the right's.
-            expr = expr.funcs.coalesce(right_df[name])
+        if name in shared and how in ("right", "outer"):
+            # As in pandas; every row of an inner or left join has the left's
+            # key, which stays exactly as it is.
+            expr = either(name, name)
         exprs.append(expr.alias(left_names[name]))
     for name in right.columns:
         if name not in shared:
@@ -176,12 +194,21 @@ def merge(
         exprs.append(status.alias(indicator_name))
 
     geometry = left._geometry_name
-    result = GeoDataFrame(
-        joined.select(*exprs), None if geometry is None else left_names[geometry]
-    )
-    if sort and pairs:
-        result = result.sort_values([left_names[name] for name, _ in pairs])
-    return result
+    geometry = None if geometry is None else left_names[geometry]
+    if not (sort and pairs):
+        return GeoDataFrame(joined.select(*exprs), geometry)
+    # Sorted by the key from either side: a right-only row of a right or
+    # outer join has no left key.
+    visible = [*left_names.values(), *right_names.values()]
+    if indicator:
+        visible.append(indicator_name)
+    sort_names = []
+    for left_name, right_name in pairs:
+        sort_name = _unused_name(left._df, f"__sort_{left_name}", visible + sort_names)
+        sort_names.append(sort_name)
+        exprs.append(either(left_name, right_name).alias(sort_name))
+    result = GeoDataFrame(joined.select(*exprs), geometry)
+    return result.sort_values(sort_names)[visible]
 
 
 def _as_frame(value, like):
@@ -253,15 +280,33 @@ def _join_values(left, right, left_name, right_name):
             f"You are trying to merge on {dtypes[0]} and {dtypes[1]} columns for "
             f"key '{left_name}'. If you wish to proceed you should use pd.concat"
         )
+    if all(pa.types.is_null(dtype) for dtype in dtypes):
+        # Only missing keys, which match one another: compared as booleans.
+        dtypes = [pa.bool_(), pa.bool_()]
+    # Times are compared in the finer unit of the two, where the engine would
+    # compare them in the coarser one, losing what tells them apart. A column
+    # of the null type takes the other's type.
+    common = _common_type(*dtypes)
     values = []
-    for column, dtype, other in zip(columns, dtypes, reversed(dtypes)):
+    for column, dtype in zip(columns, dtypes):
         value = column._decoded()
-        if pa.types.is_null(dtype):
-            value, dtype = value.cast(other), other
+        if common is not None and common != dtype:
+            value, dtype = value.cast(common), common
         if pa.types.is_floating(dtype):
             value, dtype = value.funcs.nanvl(lit(None)) + lit(0.0), pa.float64()
         values.append((value, dtype))
-    return values
+    # The type both keys take where either stands for the row's key.
+    output = common
+    if output is None:
+        output = (
+            pa.unify_schemas(
+                [pa.schema([("x", dtype)]) for dtype in dtypes],
+                promote_options="permissive",
+            )
+            .field("x")
+            .type
+        )
+    return values[0], values[1], output
 
 
 def _placeholder(dtype):
@@ -387,13 +432,18 @@ def concat(objs, *, axis=0, join="outer", ignore_index=False, keys=None, sort=Fa
         names = sorted(names)
 
     columns = {name: _stacked_column(frames, name) for name in names}
-    parts = [
-        frame._df.select(*[columns[name](frame).alias(name) for name in names])
-        for frame in frames
-    ]
+    # With no column to keep (an inner join of frames that share none), the
+    # rows still stack, as in pandas: a placeholder column carries them.
+    row = _unused_name(frames[0]._df, "__row", names)
+    parts = []
+    for frame in frames:
+        exprs = [columns[name](frame).alias(name) for name in names]
+        parts.append(frame._df.select(*(exprs or [frame._df._ctx.lit(1).alias(row)])))
     stacked = parts[0]
     for part in parts[1:]:
         stacked = stacked.union(part)
+    if not names:
+        stacked = stacked.drop(row)
     geometry = frames[0]._geometry_name
     return GeoDataFrame(stacked, geometry if geometry in names else None)
 
@@ -403,11 +453,16 @@ def _stacked_column(frames, name):
     column takes (missing values where a frame lacks it)."""
     having = [frame for frame in frames if name in frame.columns]
     geometry = [name in _geometry_column_names(frame._df) for frame in having]
-    if any(geometry) and not all(geometry):
-        raise TypeError(
-            f"concat() can't stack geometries and other values in column {name!r}"
-        )
-    if all(geometry):
+    if any(geometry):
+        # A column of the null type holds only missing values, which are
+        # missing geometries alongside geometries.
+        if not all(
+            is_geometry or pa.types.is_null(frame[name]._dtype())
+            for frame, is_geometry in zip(having, geometry)
+        ):
+            raise TypeError(
+                f"concat() can't stack geometries and other values in column {name!r}"
+            )
         return _stacked_geometry(frames, name)
 
     dtypes = [having_frame[name]._dtype() for having_frame in having]
@@ -418,14 +473,25 @@ def _stacked_column(frames, name):
                 f"concat() can't stack {known[0]} and {dtype} values in column "
                 f"{name!r}: a column holds one kind of value"
             )
-    target = (
-        pa.unify_schemas(
-            [pa.schema([pa.field("x", dtype)]) for dtype in dtypes],
-            promote_options="permissive",
+    if known and all(
+        pa.types.is_integer(dtype) or pa.types.is_floating(dtype) for dtype in known
+    ):
+        # Numbers widen as NumPy (and so pandas) widens them: a uint64 and an
+        # int64 make a float64, which holds both, where Arrow picks int64.
+        import numpy as np
+
+        target = pa.from_numpy_dtype(
+            np.result_type(*[dtype.to_pandas_dtype() for dtype in known])
         )
-        .field("x")
-        .type
-    )
+    else:
+        target = (
+            pa.unify_schemas(
+                [pa.schema([pa.field("x", dtype)]) for dtype in dtypes],
+                promote_options="permissive",
+            )
+            .field("x")
+            .type
+        )
 
     def column(frame):
         if name not in frame.columns:
@@ -436,11 +502,27 @@ def _stacked_column(frames, name):
     return column
 
 
+def _has_values(frame, name):
+    """Whether column `name` of `frame` holds any value; this computes."""
+    df = frame._df
+    return df.filter(df[name].is_not_null()).limit(1).count() > 0
+
+
 def _stacked_geometry(frames, name):
     """As `_stacked_column`, for a geometry column: every frame's must have
     the same CRS and spatial kind, as GeoPandas requires."""
-    having = [frame for frame in frames if name in frame.columns]
+    having = [frame for frame in frames if name in _geometry_column_names(frame._df)]
     columns = [frame[name] for frame in having]
+    if any(column.crs is not None for column in columns):
+        # A geometry column without a CRS but also without a geometry (empty,
+        # or all missing) takes the others' CRS, as in GeoPandas; one with
+        # geometries would have its coordinates relabeled, so it still refuses.
+        kept = [
+            column.crs is not None or _has_values(frame, name)
+            for frame, column in zip(having, columns)
+        ]
+        having = [frame for frame, keep in zip(having, kept) if keep]
+        columns = [column for column, keep in zip(columns, kept) if keep]
     crs = [column.crs for column in columns]
     if any(
         (a is None) != (b is None) or (a is not None and not _same_crs(a, b.to_json()))
@@ -471,11 +553,12 @@ def _stacked_geometry(frames, name):
     # "OGC:CRS84" in one part and as PROJJSON in another, say), so if they
     # would, every part is rebuilt from WKB the same way.
     types = {stored(frame, frame[name]._expr) for frame in having}
-    types |= {stored(frame, missing(frame)) for frame in frames if frame not in having}
+    lacking = [frame for frame in frames if not any(frame is h for h in having)]
+    types |= {stored(frame, missing(frame)) for frame in lacking}
     alike = len(types) == 1
 
     def column(frame):
-        if name not in frame.columns:
+        if any(frame is lacks for lacks in lacking):
             return missing(frame)
         if alike:
             return frame[name]._expr

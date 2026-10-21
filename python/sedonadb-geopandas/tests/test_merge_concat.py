@@ -22,6 +22,7 @@ import math
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 import pytest
 from shapely.geometry import Point
 
@@ -135,6 +136,56 @@ def test_merge_matches_missing_keys_of_every_kind():
         _same(ours.merge(right, on=on), left.merge(right, on=on))
 
 
+def _frame_of(**columns):
+    table = pa.table(columns)
+    return sgpd.GeoDataFrame(sgpd.default_context().create_data_frame(table))
+
+
+def test_merge_keys_compare_exactly():
+    # Times compare in the finer unit: the epoch in seconds is not the epoch
+    # plus a nanosecond, but is the epoch in nanoseconds.
+    seconds = _frame_of(k=pa.array([0], pa.timestamp("s")), v=pa.array([1]))
+    nanos = _frame_of(k=pa.array([1, 0], pa.timestamp("ns")), w=pa.array([2, 3]))
+    got = seconds.merge(nanos, on="k").to_geopandas()
+    assert got["w"].tolist() == [3]
+    # An inner or left join keeps the left's key exactly (an integer past
+    # float precision). A right or outer join's key takes a type both sides'
+    # fit in: pandas chooses it by whether a row lacks the left's key, but a
+    # lazy frame's types can't depend on its rows, so it is always the common
+    # one, as pandas has it when the right has a key the left doesn't.
+    big = 2**53 + 1
+    ints = pd.DataFrame({"k": [big], "v": [1]})
+    floats = pd.DataFrame({"k": [float(big), 5.0], "w": [2, 3]})
+    for how in ("inner", "left", "right", "outer"):
+        got = sgpd.from_geopandas(ints).merge(floats, on="k", how=how).to_geopandas()
+        expected = ints.merge(floats, on="k", how=how)
+        assert sorted(got["k"].tolist()) == sorted(expected["k"].tolist())
+        assert got["k"].dtype == expected["k"].dtype
+
+
+def test_merge_categorical_and_all_missing_keys():
+    left = pd.DataFrame({"k": pd.Categorical(["a", None]), "v": [1, 2]})
+    right = pd.DataFrame({"k": pd.Categorical(["a", None]), "w": [3, 4]})
+    ours = sgpd.from_geopandas(left).merge(right, on="k", how="outer")
+    _same(ours, left.merge(right, on="k", how="outer").astype({"k": object}))
+    # Keys that are all missing (of the null type) match one another.
+    nothing = _frame_of(k=pa.array([None, None]), v=pa.array([1, 2]))
+    other = _frame_of(k=pa.array([None]), w=pa.array([3]))
+    assert nothing.merge(other, on="k").to_geopandas()["w"].tolist() == [3, 3]
+
+
+def test_merge_sorts_by_either_key():
+    # A right-only row of an outer join sorts by its right key.
+    left = pd.DataFrame({"a": [2, 1], "v": ["x", "y"]})
+    right = pd.DataFrame({"b": [0, 1], "w": ["p", "q"]})
+    kwargs = dict(left_on="a", right_on="b", how="outer", sort=True)
+    got = sgpd.from_geopandas(left).merge(right, **kwargs).to_geopandas()
+    expected = left.merge(right, **kwargs)
+    assert list(got.columns) == list(expected.columns)
+    assert [_plain(v) for v in got["b"]] == [_plain(v) for v in expected["b"]]
+    assert [_plain(v) for v in got["v"]] == [_plain(v) for v in expected["v"]]
+
+
 def test_merge_indicator_validate_and_sort():
     left = sgpd.from_geopandas(_left())
     theirs = _left().merge(_right(), on="k", how="outer", indicator=True)
@@ -245,6 +296,52 @@ def test_concat_fills_missing_columns():
     # The missing geometry keeps the column's CRS.
     assert ours.to_geopandas().crs == "EPSG:4326"
     assert ours.geometry._name == "geometry"
+
+
+def test_concat_takes_missing_geometries():
+    # Missing geometries take the known CRS: a plain column of nothing but
+    # missing values, and a geometry column without a CRS but also without a
+    # geometry (all missing, or no rows).
+    a, _ = _frames()
+    ours = sgpd.from_geopandas(a)
+    for other in [
+        pd.DataFrame({"a": [9], "geometry": [None]}),
+        sgpd.from_geopandas(gpd.GeoDataFrame({"a": [9]}, geometry=[None])),
+        sgpd.from_geopandas(
+            gpd.GeoDataFrame({"a": pd.Series([], dtype="int64")}, geometry=[])
+        ),
+    ]:
+        result = sgpd.concat([ours, other]).to_geopandas()
+        assert result.crs == "EPSG:4326"
+        assert result.geometry.isna().sum() == len(result) - 2
+    # One with geometries would have its coordinates relabeled: refused.
+    unlabeled = sgpd.from_geopandas(
+        gpd.GeoDataFrame({"a": [9]}, geometry=[Point(5, 5)])
+    )
+    with pytest.raises(ValueError, match="common CRS"):
+        sgpd.concat([ours, unlabeled])
+
+
+def test_concat_widens_numbers_as_numpy_does():
+    # An uint64 and an int64 make a float64, which holds both.
+    for left, right in [
+        (np.array([2**64 - 1], np.uint64), np.array([-1], np.int64)),
+        (np.array([7], np.uint32), np.array([-1], np.int64)),
+        (np.array([1], np.int8), np.array([2.5], np.float32)),
+    ]:
+        frames = [pd.DataFrame({"n": left}), pd.DataFrame({"n": right})]
+        got = sgpd.concat([sgpd.from_geopandas(f) for f in frames]).to_geopandas()
+        expected = pd.concat(frames)
+        assert got["n"].dtype == expected["n"].dtype
+        assert sorted(got["n"].tolist()) == sorted(expected["n"].tolist())
+
+
+def test_concat_of_frames_sharing_no_column():
+    a, b = pd.DataFrame({"a": [1]}), pd.DataFrame({"b": [2, 3]})
+    got = sgpd.concat(
+        [sgpd.from_geopandas(a), sgpd.from_geopandas(b)], join="inner"
+    ).to_geopandas()
+    assert got.shape == pd.concat([a, b], join="inner").shape
 
 
 def test_concat_keeps_geography():
