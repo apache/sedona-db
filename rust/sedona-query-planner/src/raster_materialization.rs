@@ -15,7 +15,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! Byte-bounded batches for raster materialization.
+//! Physical planning of raster materialization: byte-bounded load batches,
+//! pass-through filters over raster streams, and loads spread by raster
+//! source.
 //!
 //! `datafusion.execution.batch_size` counts rows, but a row holding a
 //! raster can carry megabytes of pixels, so a batch of a few thousand OutDb
@@ -25,7 +27,7 @@
 //! `ensure_loaded` logical rule has wrapped the raster arguments of pixel
 //! functions) evaluates it over each input batch in full.
 //!
-//! [`RasterBatchBudgetRule`] therefore puts a [`RasterBatchSplitExec`] under
+//! [`RasterMaterializationRule`] therefore puts a [`RasterBatchSplitExec`] under
 //! every such node. It re-slices each input batch so that the *estimated*
 //! bytes of the rasters the node is about to load stay within
 //! `sedona.raster.max_batch_bytes`, and the node then evaluates each slice
@@ -148,7 +150,7 @@ const ENSURE_LOADED_NAME: &str = "rs_ensureloaded";
 /// byte-bounded slices produced upstream keep their boundaries.
 pub const PASSTHROUGH_BATCH_SIZE: usize = 1;
 
-/// Physical optimizer rule that keeps raster batches byte-bounded:
+/// Physical optimizer rule that plans raster materialization:
 ///
 /// - puts a [`RasterBatchSplitExec`] under every `ProjectionExec`,
 ///   `FilterExec` and `AggregateExec` whose expressions call
@@ -165,9 +167,9 @@ pub const PASSTHROUGH_BATCH_SIZE: usize = 1;
 /// final placement of the loading nodes. Plans without raster columns are
 /// untouched.
 #[derive(Debug, Default)]
-pub struct RasterBatchBudgetRule;
+pub struct RasterMaterializationRule;
 
-impl PhysicalOptimizerRule for RasterBatchBudgetRule {
+impl PhysicalOptimizerRule for RasterMaterializationRule {
     fn optimize(
         &self,
         plan: Arc<dyn ExecutionPlan>,
@@ -184,7 +186,7 @@ impl PhysicalOptimizerRule for RasterBatchBudgetRule {
     }
 
     fn name(&self) -> &str {
-        "sedona.raster_batch_budget"
+        "sedona.raster_materialization"
     }
 
     fn schema_check(&self) -> bool {
@@ -700,7 +702,7 @@ fn split_under_loading_node(
             // arguments or order-bys, and the rewrite keeps both.
             let Some(rewritten) = aggr.with_new_expressions(args, order_bys) else {
                 return internal_err!(
-                    "RasterBatchBudgetRule: aggregate {} rejected its rewritten arguments",
+                    "RasterMaterializationRule: aggregate {} rejected its rewritten arguments",
                     aggr.name()
                 );
             };
@@ -1374,7 +1376,9 @@ mod tests {
         // One target partition: the test observes a single stream's slices.
         let mut config = ConfigOptions::default();
         config.execution.target_partitions = 1;
-        let plan = RasterBatchBudgetRule.optimize(projection, &config).unwrap();
+        let plan = RasterMaterializationRule
+            .optimize(projection, &config)
+            .unwrap();
         assert_eq!(plan.schema(), expected_schema, "schema must be unchanged");
         (plan, calls, expected_schema)
     }
@@ -1491,7 +1495,9 @@ mod tests {
         // One target partition: the test observes a single stream's slices.
         let mut config = ConfigOptions::default();
         config.execution.target_partitions = 1;
-        let plan = RasterBatchBudgetRule.optimize(projection, &config).unwrap();
+        let plan = RasterMaterializationRule
+            .optimize(projection, &config)
+            .unwrap();
         assert_eq!(plan.schema(), expected_schema);
 
         // Projection ← Split ← Projection(rast, __ensure_loaded_arg_0) ← scan
@@ -1556,7 +1562,9 @@ mod tests {
         // One target partition: the test observes a single stream's slices.
         let mut config = ConfigOptions::default();
         config.execution.target_partitions = 1;
-        let plan = RasterBatchBudgetRule.optimize(projection, &config).unwrap();
+        let plan = RasterMaterializationRule
+            .optimize(projection, &config)
+            .unwrap();
         let split = plan
             .downcast_ref::<ProjectionExec>()
             .unwrap()
@@ -1597,7 +1605,7 @@ mod tests {
         // One target partition: the test observes a single stream's slices.
         let mut config = ConfigOptions::default();
         config.execution.target_partitions = 1;
-        let plan = RasterBatchBudgetRule.optimize(filter, &config).unwrap();
+        let plan = RasterMaterializationRule.optimize(filter, &config).unwrap();
         assert_eq!(plan.schema(), schema);
         let filter = plan.downcast_ref::<FilterExec>().expect("filter kept");
         assert_eq!(filter.batch_size(), PASSTHROUGH_BATCH_SIZE);
@@ -1638,7 +1646,7 @@ mod tests {
         // One target partition: the test observes a single stream's slices.
         let mut config = ConfigOptions::default();
         config.execution.target_partitions = 1;
-        let plan = RasterBatchBudgetRule.optimize(filter, &config).unwrap();
+        let plan = RasterMaterializationRule.optimize(filter, &config).unwrap();
         // The filter's input grew by the hoisted argument; its output did not.
         assert_eq!(plan.schema(), schema);
         let filter = plan.downcast_ref::<FilterExec>().expect("filter kept");
@@ -1696,7 +1704,9 @@ mod tests {
         // One target partition: the test observes a single stream's slices.
         let mut config = ConfigOptions::default();
         config.execution.target_partitions = 1;
-        let plan = RasterBatchBudgetRule.optimize(aggregate, &config).unwrap();
+        let plan = RasterMaterializationRule
+            .optimize(aggregate, &config)
+            .unwrap();
         assert_eq!(plan.schema(), expected_schema);
         let aggregate = plan
             .downcast_ref::<AggregateExec>()
@@ -1750,7 +1760,9 @@ mod tests {
         // One target partition: the test observes a single stream's slices.
         let mut config = ConfigOptions::default();
         config.execution.target_partitions = 1;
-        let plan = RasterBatchBudgetRule.optimize(filtered, &config).unwrap();
+        let plan = RasterMaterializationRule
+            .optimize(filtered, &config)
+            .unwrap();
         let filter = plan.downcast_ref::<FilterExec>().expect("filter kept");
         assert_eq!(filter.batch_size(), PASSTHROUGH_BATCH_SIZE);
         let batches = collect(plan.execute(0, task_context(600)).unwrap())
@@ -1776,7 +1788,7 @@ mod tests {
         // One target partition: the test observes a single stream's slices.
         let mut config = ConfigOptions::default();
         config.execution.target_partitions = 1;
-        let plan = RasterBatchBudgetRule
+        let plan = RasterMaterializationRule
             .optimize(Arc::clone(&projection), &config)
             .unwrap();
         assert!(
@@ -1800,7 +1812,7 @@ mod tests {
         // One target partition: the test observes a single stream's slices.
         let mut config = ConfigOptions::default();
         config.execution.target_partitions = 1;
-        let plan = RasterBatchBudgetRule
+        let plan = RasterMaterializationRule
             .optimize(Arc::clone(&filter), &config)
             .unwrap();
         assert!(
@@ -1869,7 +1881,7 @@ mod tests {
         // One target partition: the test observes a single stream's slices.
         let mut config = ConfigOptions::default();
         config.execution.target_partitions = 1;
-        let plan = RasterBatchBudgetRule
+        let plan = RasterMaterializationRule
             .optimize(Arc::clone(&projection), &config)
             .unwrap();
         assert!(
@@ -1944,7 +1956,7 @@ mod tests {
         ];
         for (expr, hoisted) in shapes {
             let projection = project(Arc::clone(&expr));
-            let plan = RasterBatchBudgetRule
+            let plan = RasterMaterializationRule
                 .optimize(Arc::clone(&projection), &config)
                 .unwrap();
             if hoisted {
@@ -2021,7 +2033,7 @@ mod tests {
         let mut config = ConfigOptions::default();
         config.execution.target_partitions = 1;
 
-        let plan = RasterBatchBudgetRule
+        let plan = RasterMaterializationRule
             .optimize(final_stage, &config)
             .unwrap();
         assert_eq!(plan.schema(), expected_schema);
@@ -2101,7 +2113,7 @@ mod tests {
         let expected_schema = filter.schema();
         assert_eq!(expected_schema.fields().len(), 1);
 
-        let plan = RasterBatchBudgetRule
+        let plan = RasterMaterializationRule
             .optimize(filter, &ConfigOptions::default())
             .unwrap();
         assert_eq!(plan.schema(), expected_schema);
@@ -2166,7 +2178,9 @@ mod tests {
         // One target partition: the test observes a single stream's slices.
         let mut config = ConfigOptions::default();
         config.execution.target_partitions = 1;
-        let plan = RasterBatchBudgetRule.optimize(projection, &config).unwrap();
+        let plan = RasterMaterializationRule
+            .optimize(projection, &config)
+            .unwrap();
         let split = plan
             .downcast_ref::<ProjectionExec>()
             .unwrap()
@@ -2221,7 +2235,9 @@ mod tests {
         // One target partition: the test observes a single stream's slices.
         let mut config = ConfigOptions::default();
         config.execution.target_partitions = 1;
-        let plan = RasterBatchBudgetRule.optimize(projection, &config).unwrap();
+        let plan = RasterMaterializationRule
+            .optimize(projection, &config)
+            .unwrap();
         let projection = plan.downcast_ref::<ProjectionExec>().unwrap();
         let split = projection
             .input()
@@ -2413,7 +2429,9 @@ mod tests {
         let expected_schema = projection.schema();
         let mut config = ConfigOptions::default();
         config.execution.target_partitions = 4;
-        let plan = RasterBatchBudgetRule.optimize(projection, &config).unwrap();
+        let plan = RasterMaterializationRule
+            .optimize(projection, &config)
+            .unwrap();
 
         // Projection ← Split ← hash RepartitionExec ← scan
         assert_eq!(plan.schema(), expected_schema);
@@ -2528,7 +2546,9 @@ mod tests {
             );
             let mut config = ConfigOptions::default();
             config.execution.target_partitions = target_partitions;
-            let plan = RasterBatchBudgetRule.optimize(projection, &config).unwrap();
+            let plan = RasterMaterializationRule
+                .optimize(projection, &config)
+                .unwrap();
             // The split still goes in, directly over the input.
             let split = plan
                 .downcast_ref::<ProjectionExec>()
@@ -2558,7 +2578,9 @@ mod tests {
         let expected_schema = projection.schema();
         let mut config = ConfigOptions::default();
         config.execution.target_partitions = 4;
-        let plan = RasterBatchBudgetRule.optimize(projection, &config).unwrap();
+        let plan = RasterMaterializationRule
+            .optimize(projection, &config)
+            .unwrap();
 
         // Coalesce ← Projection ← Split ← hash RepartitionExec ← scan
         assert_eq!(plan.schema(), expected_schema);
@@ -2617,7 +2639,9 @@ mod tests {
         let expected_schema = projection.schema();
         let mut config = ConfigOptions::default();
         config.execution.target_partitions = 4;
-        let plan = RasterBatchBudgetRule.optimize(projection, &config).unwrap();
+        let plan = RasterMaterializationRule
+            .optimize(projection, &config)
+            .unwrap();
 
         // Projection ← Split ← hash RepartitionExec ← Projection (evaluate
         // the argument) ← scan
@@ -2707,7 +2731,9 @@ mod tests {
         let expected_schema = projection.schema();
         let mut config = ConfigOptions::default();
         config.execution.target_partitions = 4;
-        let plan = RasterBatchBudgetRule.optimize(projection, &config).unwrap();
+        let plan = RasterMaterializationRule
+            .optimize(projection, &config)
+            .unwrap();
 
         // Coalesce ← Projection ← Split ← hash RepartitionExec ← Projection
         // (evaluate the argument) ← scan
@@ -2790,7 +2816,9 @@ mod tests {
         let expected_schema = projection.schema();
         let mut config = ConfigOptions::default();
         config.execution.target_partitions = 4;
-        let plan = RasterBatchBudgetRule.optimize(projection, &config).unwrap();
+        let plan = RasterMaterializationRule
+            .optimize(projection, &config)
+            .unwrap();
 
         assert_eq!(plan.schema(), expected_schema);
         let top = plan.downcast_ref::<ProjectionExec>().unwrap();
@@ -2871,7 +2899,9 @@ mod tests {
         let expected_schema = projection.schema();
         let mut config = ConfigOptions::default();
         config.execution.target_partitions = 4;
-        let plan = RasterBatchBudgetRule.optimize(projection, &config).unwrap();
+        let plan = RasterMaterializationRule
+            .optimize(projection, &config)
+            .unwrap();
 
         // Projection ← Filter ← Projection (load) ← Split ← hash.
         assert_eq!(plan.schema(), expected_schema);
@@ -2953,7 +2983,9 @@ mod tests {
             );
             let mut config = ConfigOptions::default();
             config.execution.target_partitions = 4;
-            let plan = RasterBatchBudgetRule.optimize(projection, &config).unwrap();
+            let plan = RasterMaterializationRule
+                .optimize(projection, &config)
+                .unwrap();
 
             let loading = if merged {
                 assert_eq!(plan.output_partitioning().partition_count(), 1, "{name}");
@@ -3027,7 +3059,9 @@ mod tests {
             let expected_schema = projection.schema();
             let mut config = ConfigOptions::default();
             config.execution.target_partitions = target_partitions;
-            let plan = RasterBatchBudgetRule.optimize(projection, &config).unwrap();
+            let plan = RasterMaterializationRule
+                .optimize(projection, &config)
+                .unwrap();
             assert_eq!(plan.schema(), expected_schema);
             let batches = collect(
                 plan.execute(0, task_context(DEFAULT_RASTER_MAX_BATCH_BYTES))
@@ -3086,7 +3120,9 @@ mod tests {
                 .unwrap(),
             );
             let expected_schema = aggregate.schema();
-            let plan = RasterBatchBudgetRule.optimize(aggregate, &config).unwrap();
+            let plan = RasterMaterializationRule
+                .optimize(aggregate, &config)
+                .unwrap();
             assert_eq!(plan.schema(), expected_schema, "{mode:?}");
             assert_eq!(plan.output_partitioning().partition_count(), 1, "{mode:?}");
             let aggregate = if spread {
@@ -3148,7 +3184,7 @@ mod tests {
             .build()
             .unwrap(),
         );
-        let plan = RasterBatchBudgetRule.optimize(filter, &config).unwrap();
+        let plan = RasterMaterializationRule.optimize(filter, &config).unwrap();
         let filter = plan.downcast_ref::<FilterExec>().expect("filter kept");
         assert_eq!(filter.fetch(), Some(3));
         let split = filter

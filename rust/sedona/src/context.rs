@@ -89,7 +89,7 @@ use sedona_query_planner::{
         register_spatial_join_logical_optimizer, register_vendored_optimizer_rules,
     },
     query_planner::SedonaQueryPlanner,
-    raster_batch_budget::RasterBatchBudgetRule,
+    raster_materialization::RasterMaterializationRule,
 };
 use sedona_raster::chunk_cache::{InMemoryChunkCache, RasterChunkCache};
 use sedona_raster::io_budget::RasterIoBudget;
@@ -294,9 +294,10 @@ impl SedonaContext {
         state_builder = register_sedona_analyzer_rules(state_builder)?;
         state_builder = register_spatial_join_logical_optimizer(state_builder)?;
         state_builder = register_ensure_loaded_optimizer(state_builder)?;
-        // Re-batch raster materialization by estimated bytes rather than
-        // row count (see `sedona_query_planner::raster_batch_budget`).
-        state_builder = state_builder.with_physical_optimizer_rule(Arc::new(RasterBatchBudgetRule));
+        // Plan raster materialization: byte-bounded load batches, spread by
+        // raster source (see `sedona_query_planner::raster_materialization`).
+        state_builder =
+            state_builder.with_physical_optimizer_rule(Arc::new(RasterMaterializationRule));
         state_builder = state_builder.with_query_planner(Arc::new(planner));
 
         let mut state = state_builder.build();

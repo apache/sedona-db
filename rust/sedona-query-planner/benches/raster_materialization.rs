@@ -47,7 +47,7 @@ use datafusion_physical_plan::ExecutionPlan;
 use datafusion_physical_plan::common::collect;
 use datafusion_physical_plan::projection::{ProjectionExec, ProjectionExpr};
 use sedona_common::option::{RasterOptions, SedonaOptions};
-use sedona_query_planner::raster_batch_budget::RasterBatchBudgetRule;
+use sedona_query_planner::raster_materialization::RasterMaterializationRule;
 use sedona_raster::builder::{RasterBuilder, StartBandArgs};
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::raster::BandDataType;
@@ -169,7 +169,7 @@ fn bench(c: &mut Criterion) {
     // raster-source spread, so the operator's own overhead is what is timed.
     let mut config = ConfigOptions::default();
     config.execution.target_partitions = 1;
-    let budgeted = RasterBatchBudgetRule
+    let budgeted = RasterMaterializationRule
         .optimize(projection_plan(&schema, &batch), &config)
         .unwrap();
     let ctx = task_context(0);
