@@ -296,16 +296,7 @@ def _join_values(left, right, left_name, right_name):
             value, dtype = value.funcs.nanvl(lit(None)) + lit(0.0), pa.float64()
         values.append((value, dtype))
     # The type both keys take where either stands for the row's key.
-    output = common
-    if output is None:
-        output = (
-            pa.unify_schemas(
-                [pa.schema([("x", dtype)]) for dtype in dtypes],
-                promote_options="permissive",
-            )
-            .field("x")
-            .type
-        )
+    output = common if common is not None else _widened(dtypes)
     return values[0], values[1], output
 
 
@@ -448,6 +439,30 @@ def concat(objs, *, axis=0, join="outer", ignore_index=False, keys=None, sort=Fa
     return GeoDataFrame(stacked, geometry if geometry in names else None)
 
 
+def _widened(dtypes):
+    """The type that values of all `dtypes` take together, widened as pandas
+    widens them: numbers as NumPy promotes them (a uint64 and an int64 make
+    a float64, which holds both, where Arrow picks an int64 that can't), and
+    anything else as Arrow does."""
+    known = [dtype for dtype in dtypes if not pa.types.is_null(dtype)]
+    if known and all(
+        pa.types.is_integer(dtype) or pa.types.is_floating(dtype) for dtype in known
+    ):
+        import numpy as np
+
+        return pa.from_numpy_dtype(
+            np.result_type(*[dtype.to_pandas_dtype() for dtype in known])
+        )
+    return (
+        pa.unify_schemas(
+            [pa.schema([pa.field("x", dtype)]) for dtype in dtypes],
+            promote_options="permissive",
+        )
+        .field("x")
+        .type
+    )
+
+
 def _stacked_column(frames, name):
     """A function giving column `name` of a frame, in the type the stacked
     column takes (missing values where a frame lacks it)."""
@@ -473,25 +488,7 @@ def _stacked_column(frames, name):
                 f"concat() can't stack {known[0]} and {dtype} values in column "
                 f"{name!r}: a column holds one kind of value"
             )
-    if known and all(
-        pa.types.is_integer(dtype) or pa.types.is_floating(dtype) for dtype in known
-    ):
-        # Numbers widen as NumPy (and so pandas) widens them: a uint64 and an
-        # int64 make a float64, which holds both, where Arrow picks int64.
-        import numpy as np
-
-        target = pa.from_numpy_dtype(
-            np.result_type(*[dtype.to_pandas_dtype() for dtype in known])
-        )
-    else:
-        target = (
-            pa.unify_schemas(
-                [pa.schema([pa.field("x", dtype)]) for dtype in dtypes],
-                promote_options="permissive",
-            )
-            .field("x")
-            .type
-        )
+    target = _widened(dtypes)
 
     def column(frame):
         if name not in frame.columns:

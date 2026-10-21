@@ -163,6 +163,27 @@ def test_merge_keys_compare_exactly():
         assert got["k"].dtype == expected["k"].dtype
 
 
+def test_merge_keys_of_both_signs():
+    # int64 and uint64 keys stand in for one another (a right or outer join's
+    # key, every sort key) as a float64, which holds both ranges, as NumPy
+    # widens them; pandas can't join them right or outer at all.
+    signed = pd.DataFrame({"k": np.array([-1, 5], np.int64), "v": [1, 2]})
+    unsigned = pd.DataFrame({"k": np.array([2**64 - 1, 5], np.uint64), "w": [3, 4]})
+    for how in ("right", "outer"):
+        got = sgpd.from_geopandas(signed).merge(unsigned, on="k", how=how)
+        keys = got.to_geopandas()["k"]
+        assert keys.dtype == np.float64
+        assert sorted(keys.dropna().tolist()) == sorted(
+            float(k) for k in ([5, 2**64 - 1] if how == "right" else [-1, 5, 2**64 - 1])
+        )
+    flipped = unsigned.rename(columns={"w": "v"}), signed.rename(columns={"v": "w"})
+    got = sgpd.from_geopandas(flipped[0]).merge(
+        flipped[1], on="k", how="left", sort=True
+    )
+    expected = flipped[0].merge(flipped[1], on="k", how="left", sort=True)
+    assert got.to_geopandas()["k"].tolist() == expected["k"].tolist()
+
+
 def test_merge_categorical_and_all_missing_keys():
     left = pd.DataFrame({"k": pd.Categorical(["a", None]), "v": [1, 2]})
     right = pd.DataFrame({"k": pd.Categorical(["a", None]), "w": [3, 4]})
