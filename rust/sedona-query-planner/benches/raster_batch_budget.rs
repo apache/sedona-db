@@ -165,8 +165,12 @@ fn bench(c: &mut Criterion) {
         .unwrap();
     let (schema, batch) = raster_batch();
     let stock = projection_plan(&schema, &batch);
+    // One target partition: the rule then adds the split alone, without the
+    // raster-source spread, so the operator's own overhead is what is timed.
+    let mut config = ConfigOptions::default();
+    config.execution.target_partitions = 1;
     let budgeted = RasterBatchBudgetRule
-        .optimize(projection_plan(&schema, &batch), &ConfigOptions::default())
+        .optimize(projection_plan(&schema, &batch), &config)
         .unwrap();
     let ctx = task_context(0);
 
