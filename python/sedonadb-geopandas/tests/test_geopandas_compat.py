@@ -1418,7 +1418,7 @@ def test_tz_aware_timestamp_scalars_keep_nanoseconds_and_zone():
         crs=3857,
     )
     gdf = sgpd.from_geopandas(points)
-    stamp = pd.Timestamp("2026-01-01 00:00:00.000000001", tz="US/Pacific")
+    stamp = pd.Timestamp("2026-01-01 00:00:00.000000001", tz="America/Los_Angeles")
     gdf["ts"] = stamp
     got = gdf.to_geopandas()["ts"]
     assert got.dt.tz is not None

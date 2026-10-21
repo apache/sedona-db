@@ -533,7 +533,7 @@ class DuckDB(DBEngine):
         needs_geoarrow_registration = self.con.sql(
             "SELECT count(*) > 0 FROM duckdb_functions() "
             "WHERE function_name = 'register_geoarrow_extensions'"
-        ).fetchone()[0]
+        ).fetchall()[0][0]
 
         if needs_geoarrow_registration:
             self.con.sql("CALL register_geoarrow_extensions()")
