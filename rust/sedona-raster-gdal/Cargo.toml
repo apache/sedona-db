@@ -54,12 +54,14 @@ tokio = { workspace = true, features = ["rt-multi-thread"] }
 bindgen = ["sedona-gdal/bindgen"]
 
 [dev-dependencies]
+axum = { workspace = true }
 criterion = { workspace = true }
 sedona-gdal = { workspace = true, features = ["gdal-sys"] }
 sedona-proj = { workspace = true, features = ["proj-sys"] }
 sedona-testing = { workspace = true, features = ["criterion"] }
 tempfile = { workspace = true }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time"] }
+tower-http = { workspace = true, features = ["fs"] }
 
 [[bench]]
 harness = false

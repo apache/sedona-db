@@ -26,22 +26,21 @@
 //! costs when there is no latency to hide.
 //!
 //! Every iteration reads the files under fresh names (hard links in a new
-//! directory, made outside the timed section), so neither GDAL's caches nor
-//! the loader's per-thread dataset cache serves a later iteration from an
-//! earlier one: each read is a cold open, as it is for a query that reads
-//! each COG once.
+//! directory, made outside the timed section), so GDAL's caches never serve
+//! a later iteration from an earlier one: each read is a cold open, as it is
+//! for a query that reads each COG once.
 //!
 //! Run with `cargo bench -p sedona-raster-gdal --bench gdal_io_concurrency`.
 //! `GDAL_BENCH_LATENCY_MS` sets the HTTP store's per-request latency
-//! (default 10). The HTTP store needs `python3` on the path; without it that
-//! half is skipped.
+//! (default 10).
 
-use std::net::{TcpListener, TcpStream};
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use axum::Router;
+use axum::extract::Request;
+use axum::middleware::{self, Next};
 use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use sedona_gdal::global::with_global_gdal;
 use sedona_gdal::raster::types::{Buffer as GdalBuffer, GdalDataType};
@@ -50,6 +49,7 @@ use sedona_raster::view_entries::ViewEntries;
 use sedona_raster_gdal::GdalLoader;
 use sedona_schema::raster::BandDataType;
 use tempfile::TempDir;
+use tower_http::services::ServeDir;
 
 const FILES: usize = 64;
 const SIDE: usize = 1024;
@@ -164,90 +164,48 @@ fn sweep(
     group.finish();
 }
 
-/// A Python HTTP server over `root` that sleeps `latency` before answering
-/// every request and serves byte ranges (which `/vsicurl/` relies on), with
-/// keep-alive and a deep listen backlog so that only the latency is
-/// measured; killed on drop.
+/// An HTTP server over `root` that sleeps `latency` before answering every
+/// request. [`ServeDir`] serves `GET`, `HEAD` and byte ranges, which
+/// `/vsicurl/` relies on, and hyper keeps connections alive, so only the
+/// latency is measured. It runs on a runtime of its own, so it never
+/// competes with the loads for the bench runtime's workers. Stopped on drop.
 struct LatencyServer {
-    child: Child,
     port: u16,
+    runtime: Option<tokio::runtime::Runtime>,
 }
 
 impl LatencyServer {
-    fn start(root: &Path, latency: Duration) -> Option<Self> {
-        let port = TcpListener::bind("127.0.0.1:0")
-            .ok()?
-            .local_addr()
-            .ok()?
-            .port();
-        let script = r#"
-import http.server, os, re, sys, time
-root, port, latency = sys.argv[1], int(sys.argv[2]), float(sys.argv[3]) / 1000.0
-class Handler(http.server.BaseHTTPRequestHandler):
-    # Keep-alive, so the client reuses connections instead of opening one
-    # per request; a burst of new connections would overflow the listen
-    # backlog and stall on SYN retransmits, which is not what is measured.
-    protocol_version = "HTTP/1.1"
-    def _serve(self, body):
-        time.sleep(latency)
-        path = os.path.join(root, self.path.split("?")[0].lstrip("/"))
-        if not os.path.isfile(path):
-            self.send_response(404)
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-            return
-        size = os.path.getsize(path)
-        m = re.match(r"bytes=(\d+)-(\d*)", self.headers.get("Range", ""))
-        start, end = 0, size - 1
-        if m:
-            start = int(m.group(1))
-            end = min(int(m.group(2)) if m.group(2) else size - 1, size - 1)
-            self.send_response(206)
-            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
-        else:
-            self.send_response(200)
-        self.send_header("Accept-Ranges", "bytes")
-        self.send_header("Content-Length", str(end - start + 1))
-        self.end_headers()
-        if body:
-            with open(path, "rb") as f:
-                f.seek(start)
-                self.wfile.write(f.read(end - start + 1))
-    def do_GET(self):
-        self._serve(True)
-    def do_HEAD(self):
-        self._serve(False)
-    def log_message(self, *args):
-        pass
-class Server(http.server.ThreadingHTTPServer):
-    request_queue_size = 1024
-Server(("127.0.0.1", port), Handler).serve_forever()
-"#;
-        let child = Command::new("python3")
-            .arg("-c")
-            .arg(script)
-            .arg(root)
-            .arg(port.to_string())
-            .arg(latency.as_millis().to_string())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .ok()?;
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while TcpStream::connect(("127.0.0.1", port)).is_err() {
-            if Instant::now() > deadline {
-                return None;
-            }
-            std::thread::sleep(Duration::from_millis(50));
+    fn start(root: &Path, latency: Duration) -> Self {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        let listener = runtime
+            .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let app = Router::new()
+            .fallback_service(ServeDir::new(root))
+            .layer(middleware::from_fn(
+                move |req: Request, next: Next| async move {
+                    tokio::time::sleep(latency).await;
+                    next.run(req).await
+                },
+            ));
+        runtime.spawn(async move { axum::serve(listener, app).await.unwrap() });
+        Self {
+            port,
+            runtime: Some(runtime),
         }
-        Some(Self { child, port })
     }
 }
 
 impl Drop for LatencyServer {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        if let Some(runtime) = self.runtime.take() {
+            runtime.shutdown_background();
+        }
     }
 }
 
@@ -276,20 +234,16 @@ fn bench_io_budget(c: &mut Criterion) {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(10);
-    match LatencyServer::start(tmp.path(), Duration::from_millis(latency_ms)) {
-        Some(server) => {
-            let prefix = format!("/vsicurl/http://127.0.0.1:{}", server.port);
-            sweep(
-                c,
-                &format!("gdal_io_budget_http_{latency_ms}ms"),
-                tmp.path(),
-                &prefix,
-                &rt,
-                &generation,
-            );
-        }
-        None => eprintln!("python3 not available or server did not start; skipping the HTTP store"),
-    }
+    let server = LatencyServer::start(tmp.path(), Duration::from_millis(latency_ms));
+    let prefix = format!("/vsicurl/http://127.0.0.1:{}", server.port);
+    sweep(
+        c,
+        &format!("gdal_io_budget_http_{latency_ms}ms"),
+        tmp.path(),
+        &prefix,
+        &rt,
+        &generation,
+    );
 }
 
 criterion_group!(benches, bench_io_budget);
