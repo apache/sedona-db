@@ -18,9 +18,8 @@
 //! GDAL backend implementing [`sedona_raster::raster_loader::AsyncRasterLoader`].
 //!
 //! Reads OutDb raster bands identified by a `#band=N` URI fragment via
-//! GDAL's blocking API. The blocking work runs inside
-//! `tokio::task::spawn_blocking` so the caller's async runtime is not
-//! stalled. Each read opens its file, reads the requested bands, and closes
+//! GDAL's blocking API. The blocking work runs on the runtime's blocking
+//! pool, as `SpawnedTask`s, so the caller's async runtime is not stalled. Each read opens its file, reads the requested bands, and closes
 //! it again; the loader keeps no datasets open between calls. Repeat loads
 //! are served before they reach the loader, by `RS_EnsureLoaded`'s session
 //! chunk cache, and GDAL's own `/vsicurl` cache makes reopening a remote
@@ -43,11 +42,12 @@
 //! and header opens together (`sedona.raster.io_concurrency`).
 //!
 //! Each blocking task waits for its permit on its own thread; the call never
-//! waits for the budget as a future (see `sedona_raster::io_budget` for why
-//! that would deadlock against `RS_FromPath`). The call spawns a file's task
-//! only once the previous one has its permit, so it keeps at most one
-//! blocking thread waiting for the budget. Results are taken in file order,
-//! so a failing call reports its first failing file.
+//! waits for the budget as a future (the budget has no async acquire; see
+//! `sedona_raster::io_budget`). The call spawns a file's task only once the
+//! previous one has its permit, so it keeps at most one blocking thread
+//! waiting for the budget. Results are placed by request index as the files
+//! finish, and taken in file order, so a failing call reports its first
+//! failing file.
 //!
 //! ## Cancellation
 //!
@@ -58,8 +58,9 @@
 //! an [`AtomicBool`] shared by every task of the call; the next iteration
 //! of each task's loop observes the flag and returns a cancellation error
 //! rather than running to completion. Files not yet spawned are never
-//! started, and a task still waiting for its permit returns as soon as it
-//! gets one, without opening its file. The same guard fires when one file fails:
+//! started, a spawned task that has not begun is aborted with the call's
+//! `SpawnedTask`s, and one still waiting for its permit returns as soon as
+//! it gets one, without opening its file. The same guard fires when one file fails:
 //! the call returns that error and the files still being read stop at
 //! their next check. A task holds its share of the budget until its
 //! blocking work has actually returned, so abandoned reads still count
@@ -97,6 +98,7 @@ use arrow_buffer::Buffer;
 use arrow_schema::ArrowError;
 use async_trait::async_trait;
 use datafusion_common::{DataFusionError, Result as DFResult};
+use datafusion_common_runtime::SpawnedTask;
 use futures::StreamExt;
 use futures::stream::FuturesOrdered;
 use sedona_gdal::raster::rasterband::RasterBand;
@@ -246,14 +248,6 @@ impl AsyncRasterLoader for GdalLoader {
             .collect::<Result<Vec<_>, ArrowError>>()?;
 
         let buffers = self.load_all(load_requests).await?;
-        if buffers.len() != reqs.len() {
-            return Err(ArrowError::InvalidArgumentError(format!(
-                "GDAL loader returned {} buffer(s) for {} request(s)",
-                buffers.len(),
-                reqs.len()
-            )));
-        }
-
         let results = zip(buffers, reqs)
             .map(|(buf, req)| RasterLoadResult::unresolved(buf, req))
             .collect::<Vec<_>>();
@@ -376,22 +370,24 @@ impl GdalLoader {
         // Each file is read by its own blocking task, which waits for its
         // permit of the shared I/O budget on its own thread and holds it
         // until the read has returned. Nothing here waits for the budget as
-        // a future (see `sedona_raster::io_budget`): a future queued on the
-        // semaphore is handed a released permit even if its task is blocked
-        // and cannot poll it, which deadlocks a task that also evaluates
-        // `RS_FromPath`. A task is spawned only once the previous one has its
-        // permit, so a call keeps at most one thread waiting for the budget,
-        // and as many reading as the budget lets it.
+        // a future: the budget has no async acquire (see
+        // `sedona_raster::io_budget`), so a task that polls a pending load
+        // and then blocks its thread in `RS_FromPath` cannot be in line for
+        // a slot it would never take. A task is spawned only once the
+        // previous one has its permit, so a call keeps at most one thread
+        // waiting for the budget, and as many reading as the budget lets it.
         //
-        // Results are taken in file order, so a failing call reports the
-        // failure of its first failing file, whatever order the reads end
-        // in. Returning early drops the rest: reads in flight stop at their
-        // next strip, and a task still waiting returns as soon as it gets a
-        // permit, without opening anything.
+        // Each file's buffers go into their requests' slots as the file
+        // finishes. Results are taken in file order, so a failing call
+        // reports the failure of its first failing file, whatever order the
+        // reads end in. Returning early drops the rest: a task that has not
+        // started is aborted with its `SpawnedTask`, reads in flight stop at
+        // their next strip, and a task still waiting returns as soon as it
+        // gets a permit, without opening anything.
         let mut files = files.into_iter();
         let mut reads = FuturesOrdered::new();
         let mut waiting: Option<oneshot::Receiver<()>> = None;
-        let mut loaded = Vec::with_capacity(num_reqs);
+        let mut buffers: Vec<Option<Buffer>> = vec![None; num_reqs];
         loop {
             if waiting.is_none()
                 && let Some(file_reqs) = files.next()
@@ -400,7 +396,7 @@ impl GdalLoader {
                 let budget = self.budget.clone();
                 let io = Arc::clone(&self.io);
                 let cancel = Arc::clone(&cancel);
-                reads.push_back(tokio::task::spawn_blocking(move || {
+                reads.push_back(SpawnedTask::spawn_blocking(move || {
                     let _permit = budget.acquire_blocking();
                     // The call may be gone; it no longer listens.
                     let _ = got_permit.send(());
@@ -422,7 +418,11 @@ impl GdalLoader {
                                 ),
                             ))
                         })?;
-                        loaded.extend(read.map_err(|e| ArrowError::ExternalError(Box::new(e)))?);
+                        for (req_idx, buffer) in
+                            read.map_err(|e| ArrowError::ExternalError(Box::new(e)))?
+                        {
+                            buffers[req_idx] = Some(buffer);
+                        }
                     }
                     // Every task spawned so far has finished, so the one
                     // that was waiting got its permit: start the next file,
@@ -439,10 +439,21 @@ impl GdalLoader {
             }
         }
 
-        // Back to request order: every request belongs to exactly one file,
-        // and a file's read returns a buffer for each of its requests.
-        loaded.sort_unstable_by_key(|(req_idx, _)| *req_idx);
-        Ok(loaded.into_iter().map(|(_, buffer)| buffer).collect())
+        // Every request belongs to exactly one file, and a file's read
+        // returns a buffer for each of its requests.
+        buffers
+            .into_iter()
+            .enumerate()
+            .map(|(req_idx, buffer)| {
+                buffer.ok_or_else(|| {
+                    ArrowError::ExternalError(Box::new(
+                        sedona_common::sedona_internal_datafusion_err!(
+                            "GDAL loader: request {req_idx} of {num_reqs} was never read"
+                        ),
+                    ))
+                })
+            })
+            .collect()
     }
 }
 

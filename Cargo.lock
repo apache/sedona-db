@@ -6233,8 +6233,10 @@ dependencies = [
  "arrow-buffer",
  "arrow-schema",
  "async-trait",
+ "axum",
  "criterion",
  "datafusion-common",
+ "datafusion-common-runtime",
  "datafusion-expr",
  "futures",
  "lru 0.18.0",
@@ -6249,6 +6251,7 @@ dependencies = [
  "sedona-testing",
  "tempfile",
  "tokio",
+ "tower-http 0.7.1",
 ]
 
 [[package]]

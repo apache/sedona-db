@@ -36,6 +36,7 @@ arrow-buffer = { workspace = true }
 arrow-schema = { workspace = true }
 async-trait = { workspace = true }
 datafusion-common = { workspace = true }
+datafusion-common-runtime = { workspace = true }
 datafusion-expr = { workspace = true }
 futures = { workspace = true }
 lru = { workspace = true }
