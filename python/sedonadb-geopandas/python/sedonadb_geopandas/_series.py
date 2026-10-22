@@ -2192,16 +2192,9 @@ class GeoSeries(Series):
         geography, crs = self._is_geography(), self.crs
 
         def rebuild(value):
-            if geography:
-                value = value.funcs.st_geogfromwkb()
-            else:
-                value = value.funcs.st_geomfromwkb()
-            if crs is not None:
-                return value.funcs.st_setcrs(ctx.lit(crs.to_json()))
-            if geography:
-                # The geography constructor assigns CRS84; SRID 0 clears it.
-                return value.funcs.st_setsrid(ctx.lit(0))
-            return value
+            # From the aggregated WKB, not this column's frame, which has no
+            # aggregate result to resolve it against.
+            return _geometry_from_wkb(value, geography, crs, ctx)
 
         return wkb, rebuild
 

@@ -17,16 +17,12 @@
 
 """Grouped aggregation, as pandas' `DataFrame.groupby()` does it."""
 
-import pyarrow as pa
-from sedonadb.expr import lit
-
 from sedonadb_geopandas._frame import (
     GeoDataFrame,
     _geometry_column_names,
     _unused_name,
 )
-from sedonadb_geopandas._relational import _placeholder
-from sedonadb_geopandas._series import GeoSeries, _kind
+from sedonadb_geopandas._series import _key_columns, _kind
 
 # The reductions a group's column can take, by pandas name.
 _FUNCS = (
@@ -209,25 +205,12 @@ class GroupBy:
         hidden, staged_exprs, missing_flags = [], [], []
         key_values = []
         for i, (name, series) in enumerate(self._by):
-            if isinstance(series, GeoSeries):
-                value, dtype = series._expr.geo.as_binary(), pa.binary()
-            else:
-                value, dtype = series._decoded(), series._dtype()
-                if pa.types.is_floating(dtype):
-                    value, dtype = value.funcs.nanvl(lit(None)) + lit(0.0), pa.float64()
             key = _unused_name(df, f"__key{i}", reserved)
             flag = _unused_name(df, f"__missing{i}", reserved + [key])
             original = _unused_name(df, f"__value{i}", reserved + [key, flag])
             reserved += [key, flag, original]
-            if pa.types.is_null(dtype):
-                # Only missing keys: one non-null stand-in, so that joining
-                # nunique()'s counts back on it finds them.
-                staged_exprs.append(lit(False).alias(key))
-            else:
-                staged_exprs.append(
-                    value.funcs.coalesce(lit(_placeholder(dtype))).alias(key)
-                )
-            staged_exprs += [value.is_null().alias(flag), series._expr.alias(original)]
+            staged_exprs += _key_columns(*series._key(), key, flag)
+            staged_exprs.append(series._expr.alias(original))
             hidden += [key, flag]
             missing_flags.append(flag)
             key_values.append((name, original))
@@ -290,14 +273,8 @@ def _join_distinct_counts(grouped, staged, hidden, frame, column, out, options):
     """`grouped` with the number of distinct values of `column` in each group
     as column `out`: the distinct pairs of key and value, counted per key,
     joined back on the hidden keys."""
-    series = _column_of(frame, column, staged)
-    if isinstance(series, GeoSeries):
-        value = series._expr.geo.as_binary()
-    else:
-        value = series._valued()
-        if series._is_floating():
-            # -0.0 and 0.0 are one value to pandas.
-            value = value + lit(0.0)
+    # Values compare as pandas compares them (NaN missing, -0.0 as 0.0).
+    value, _ = _column_of(frame, column, staged)._key()
     distinct_value = _unused_name(staged, "__distinct", hidden)
     pairs = staged.select(
         *[staged[name] for name in hidden], value.alias(distinct_value)
