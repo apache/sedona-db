@@ -109,13 +109,10 @@ extern "C" __global__ void __raygen__gpuspatial() {
       bool matched = false;
 
       if (polygon.empty()) {
-        IM = IntersectionMatrix::INTER_EXTER_0D | IntersectionMatrix::EXTER_EXTER_2D;
-      } else {
-        IM = IntersectionMatrix::EXTER_EXTER_2D;
+        IM |= IntersectionMatrix::INTER_EXTER_0D;
+        return matched;
       }
       RayCrossingCounter locator;
-
-      if (polygon.empty()) return matched;
       IM |= IntersectionMatrix::EXTER_INTER_2D | IntersectionMatrix::EXTER_BOUND_1D;
       uint32_t ring = 0;
       locator.Init();
@@ -192,7 +189,7 @@ extern "C" __global__ void __raygen__gpuspatial() {
           assert(false);
       }
 #ifndef NDEBUG
-      auto ref_loc = polygon.locate_point(params.points[point_idx]);
+      auto ref_loc = polygon.locate_point(p);
       if (ref_loc != final_location) {
         printf(
             "reorder %u, poly %u, point %u (%lf, %lf), num rings %u, point %u, loc %d, ref loc %d\n",
@@ -213,10 +210,7 @@ extern "C" __global__ void __raygen__gpuspatial() {
       auto mp = params.multi_points[point_idx];
       for (uint32_t j = 0; j < mp.num_points(); j++) {
         const auto& p = mp.get_point(j);
-        if (handle_point(p, j, IM)) {
-          // IM will not be changed anymore
-          break;
-        }
+        handle_point(p, j, IM);
       }
     } else {
       assert(false);

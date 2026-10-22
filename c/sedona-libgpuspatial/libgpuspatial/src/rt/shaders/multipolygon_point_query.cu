@@ -123,9 +123,7 @@ extern "C" __global__ void __raygen__gpuspatial() {
       bool matched = false;
 
       if (multi_polygon.empty()) {
-        IM = IntersectionMatrix::INTER_EXTER_0D | IntersectionMatrix::EXTER_EXTER_2D;
-      } else {
-        IM = IntersectionMatrix::EXTER_EXTER_2D;
+        IM |= IntersectionMatrix::INTER_EXTER_0D;
       }
       RayCrossingCounter locator;
 
@@ -232,10 +230,7 @@ extern "C" __global__ void __raygen__gpuspatial() {
       auto mp = params.multi_points[point_idx];
       for (uint32_t j = 0; j < mp.num_points(); j++) {
         const auto& p = mp.get_point(j);
-        if (handle_point(p, j, IM)) {
-          // IM will not be changed anymore
-          break;
-        }
+        handle_point(p, j, IM);
       }
     } else {
       assert(false);
