@@ -368,12 +368,14 @@ def test_concat_takes_missing_geometries():
         result = sgpd.concat([ours, other]).to_geopandas()
         assert result.crs == "EPSG:4326"
         assert result.geometry.isna().sum() == len(result) - 2
-    # One with geometries would have its coordinates relabeled: refused.
+    # One with geometries would have its coordinates relabeled: refused, as
+    # the result is computed (checking beforehand would compute).
     unlabeled = sgpd.from_geopandas(
         gpd.GeoDataFrame({"a": [9]}, geometry=[Point(5, 5)])
     )
-    with pytest.raises(ValueError, match="common CRS"):
-        sgpd.concat([ours, unlabeled])
+    stacked = sgpd.concat([ours, unlabeled])
+    with pytest.raises(Exception, match="common CRS"):
+        stacked.to_geopandas()
 
 
 def test_concat_widens_numbers_as_numpy_does():

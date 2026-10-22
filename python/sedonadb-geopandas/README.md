@@ -143,8 +143,9 @@ GeoPandas keeps naming the unsuffixed column. `concat()` stacks rows only
 (`axis=0`), matching columns by name; a column holds one kind of value, so
 values of different kinds (numbers and text, say) raise rather than make a
 column of Python objects, and geometry columns must share their CRS, as in
-GeoPandas: one without a CRS takes the others' only if it holds no geometry
-(GeoPandas relabels its coordinates whatever they are).
+GeoPandas: one without a CRS takes the others' only if it holds no geometry,
+which is checked as the result is computed (GeoPandas relabels its coordinates
+whatever they are).
 
 `fillna()` follows the same rule: a scalar fills the columns that hold its kind
 of value and leaves the others as they are (pandas would turn them into Python

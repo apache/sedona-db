@@ -30,6 +30,10 @@ from sedonadb_geopandas._series import (
     GeoSeries,
     _choose,
     _common_type,
+    _fail_where,
+    _geometry_from_wkb,
+    _key_columns,
+    _matching_key,
     _same_crs,
     _value_kind,
 )
@@ -128,11 +132,7 @@ def merge(
             key = _unused_name(left._df, f"__{side}key{len(keys)}", reserved)
             missing = _unused_name(left._df, f"__{side}null{len(keys)}", reserved)
             reserved += [key, missing]
-            placeholder = lit(_placeholder(value[1]))
-            extra += [
-                value[0].funcs.coalesce(placeholder).alias(key),
-                value[0].is_null().alias(missing),
-            ]
+            extra += _key_columns(*value, key, missing)
             keys.append((key, missing))
     if indicator:
         left_marker = _unused_name(left._df, "__left_row", reserved)
@@ -302,9 +302,6 @@ def _join_values(left, right, left_name, right_name):
             f"You are trying to merge on {dtypes[0]} and {dtypes[1]} columns for "
             f"key '{left_name}'. If you wish to proceed you should use pd.concat"
         )
-    if all(pa.types.is_null(dtype) for dtype in dtypes):
-        # Only missing keys, which match one another: compared as booleans.
-        dtypes = [pa.bool_(), pa.bool_()]
     # Times are compared in the finer unit of the two, where the engine would
     # compare them in the coarser one, losing what tells them apart. A column
     # of the null type takes the other's type.
@@ -314,32 +311,10 @@ def _join_values(left, right, left_name, right_name):
         value = column._decoded()
         if common is not None and common != dtype:
             value, dtype = value.cast(common), common
-        if pa.types.is_floating(dtype):
-            value, dtype = value.funcs.nanvl(lit(None)) + lit(0.0), pa.float64()
-        values.append((value, dtype))
+        values.append(_matching_key(value, dtype))
     # The type both keys take where either stands for the row's key.
     output = common if common is not None else _widened(dtypes)
     return values[0], values[1], output
-
-
-def _placeholder(dtype):
-    """A value of `dtype` to stand in for a missing key."""
-    if pa.types.is_boolean(dtype):
-        return pa.scalar(False)
-    if (
-        pa.types.is_string(dtype)
-        or pa.types.is_large_string(dtype)
-        or pa.types.is_string_view(dtype)
-    ):
-        return pa.scalar("", dtype)
-    if pa.types.is_binary(dtype) or pa.types.is_large_binary(dtype):
-        return pa.scalar(b"", dtype)
-    for source in (pa.int64(), pa.int32()):
-        try:
-            return pa.array([0], source).cast(dtype)[0]
-        except (pa.ArrowInvalid, pa.ArrowNotImplementedError):
-            continue
-    raise TypeError(f"merge() can't join on a {dtype} column")
 
 
 def _output_names(left_columns, right_columns, shared, lsuffix, rsuffix):
@@ -521,27 +496,24 @@ def _stacked_column(frames, name):
     return column
 
 
-def _has_values(frame, name):
-    """Whether column `name` of `frame` holds any value; this computes."""
-    df = frame._df
-    return df.filter(df[name].is_not_null()).limit(1).count() > 0
-
-
 def _stacked_geometry(frames, name):
     """As `_stacked_column`, for a geometry column: every frame's must have
     the same CRS and spatial kind, as GeoPandas requires."""
     having = [frame for frame in frames if name in _geometry_column_names(frame._df)]
     columns = [frame[name] for frame in having]
+    unlabeled = []
     if any(column.crs is not None for column in columns):
-        # A geometry column without a CRS but also without a geometry (empty,
-        # or all missing) takes the others' CRS, as in GeoPandas; one with
-        # geometries would have its coordinates relabeled, so it still refuses.
-        kept = [
-            column.crs is not None or _has_values(frame, name)
-            for frame, column in zip(having, columns)
+        # A geometry column without a CRS takes the others' CRS if it holds no
+        # geometry (empty, or all missing), as in GeoPandas; one holding
+        # geometries would have its coordinates relabeled, so it fails. That
+        # is known only once its values are computed, so it is checked then.
+        unlabeled = [
+            frame for frame, column in zip(having, columns) if column.crs is None
         ]
-        having = [frame for frame, keep in zip(having, kept) if keep]
-        columns = [column for column, keep in zip(columns, kept) if keep]
+        having = [
+            frame for frame, column in zip(having, columns) if column.crs is not None
+        ]
+        columns = [column for column in columns if column.crs is not None]
     crs = [column.crs for column in columns]
     if any(
         (a is None) != (b is None) or (a is not None and not _same_crs(a, b.to_json()))
@@ -556,33 +528,47 @@ def _stacked_geometry(frames, name):
         raise TypeError(
             f"concat() can't stack geography and geometry in column {name!r}"
         )
-    reference = columns[0]
+    geography, crs = columns[0]._is_geography(), columns[0].crs
+
+    def from_wkb(frame, wkb):
+        return _geometry_from_wkb(wkb, geography, crs, frame._df._ctx)
 
     def missing(frame):
         # A missing geometry of the column's kind, with its CRS.
-        return reference._as_column_kind(
-            frame._df._ctx.lit(None).funcs.st_geomfromwkt(), own_crs=None
+        return from_wkb(frame, frame._df._ctx.lit(pa.scalar(None, pa.binary())))
+
+    def checked_missing(frame):
+        # As missing(), failing where the frame's own column, which has no
+        # CRS, holds a geometry.
+        df = frame._df
+        failing = _fail_where(
+            df[name].is_not_null(),
+            f"Cannot determine common CRS for concatenation inputs: column "
+            f"{name!r} holds geometries without a CRS in one frame and with "
+            f"{crs} in another. Use `set_crs()` or `to_crs()` first.",
         )
+        nothing = df._ctx.lit(pa.scalar(None, pa.binary()))
+        return from_wkb(frame, _choose(failing == lit(0), nothing, nothing))
 
     def stored(frame, expr):
         return str(frame._df.select(expr.alias("x")).schema.field("x").type)
 
-    # The stacked parts must be typed exactly alike: the engine drops a
-    # column's type metadata, CRS included, where they differ (a CRS given as
-    # "OGC:CRS84" in one part and as PROJJSON in another, say), so if they
-    # would, every part is rebuilt from WKB the same way.
-    types = {stored(frame, frame[name]._expr) for frame in having}
+    # The stacked parts must be typed exactly alike: the engine's UNION drops
+    # a column's type metadata, CRS included, where it is written differently
+    # (the same CRS as "OGC:CRS84" in one part and as PROJJSON in another),
+    # so if it would be, every part is rebuilt from WKB alike.
     lacking = [frame for frame in frames if not any(frame is h for h in having)]
+    types = {stored(frame, frame[name]._expr) for frame in having}
     types |= {stored(frame, missing(frame)) for frame in lacking}
     alike = len(types) == 1
 
     def column(frame):
+        if any(frame is u for u in unlabeled):
+            return checked_missing(frame)
         if any(frame is lacks for lacks in lacking):
             return missing(frame)
         if alike:
             return frame[name]._expr
-        return reference._as_column_kind(
-            frame[name]._expr.geo.as_binary().funcs.st_geomfromwkb(), own_crs=None
-        )
+        return from_wkb(frame, frame[name]._expr.geo.as_binary())
 
     return column
