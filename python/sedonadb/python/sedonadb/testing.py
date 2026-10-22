@@ -575,13 +575,9 @@ class DuckDB(DBEngine):
         return self
 
     def execute_and_collect(self, query) -> pa.Table:
-        result = self.con.execute(query)
-        # DuckDB 2.0 removed arrow() and fetch_arrow_table() from a result in
-        # favor of to_arrow_table(), which recent 1.x releases also have;
-        # older ones have only fetch_arrow_table().
-        if hasattr(result, "to_arrow_table"):
-            return result.to_arrow_table()
-        return result.fetch_arrow_table()
+        # A relation's to_arrow_table() works across DuckDB versions; DuckDB
+        # 2.0 removed arrow() from an execute() result.
+        return self.con.sql(query).to_arrow_table()
 
 
 class DuckDBSingleThread(DuckDB):
