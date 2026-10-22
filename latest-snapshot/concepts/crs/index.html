@@ -2150,7 +2150,11 @@ CRS. <code>ST_SRID</code> / <code>RS_SRID</code> return the integer, and <code>S
 set a CRS from one. SedonaDB maps between the two following the majority of SRID usage in the wild: SRID <code>0</code>
 means "no CRS", <code>4326</code> maps to <code>OGC:CRS84</code>, and any other value <code>N</code> maps to
 <code>EPSG:N</code>. A CRS only has an SRID when it carries an EPSG (or lon/lat) authority
-code; a purely custom WKT or PROJJSON definition with no authority has no SRID.</p>
+code; a purely custom WKT or PROJJSON definition with no authority has no SRID,
+and <code>ST_SRID</code> / <code>RS_SRID</code> return <code>0</code> for it, the same value as for no CRS at
+all. The SRID is therefore a lossy view: <code>ST_SetSRID(geom, ST_SRID(other))</code>
+clears the CRS when <code>other</code> carries a custom definition. Use <code>ST_CRS</code> /
+<code>ST_SetCRS</code> (and <code>RS_CRS</code> / <code>RS_SetCRS</code>) to read and carry the full definition.</p>
 <h2 id="internals-design">Internals / design<a class="headerlink" href="#internals-design" title="Permanent link">¶</a></h2>
 <p>A few deeper points, for the curious:</p>
 <ul>
@@ -2198,7 +2202,7 @@ code; a purely custom WKT or PROJJSON definition with no authority has no SRID.<
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"></path></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="August 6, 2026 20:35:51 UTC">August 6, 2026 20:35:51</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-datetime" title="October 22, 2026 04:23:49 UTC">October 22, 2026 04:23:49</span>
   </span>
 
     
