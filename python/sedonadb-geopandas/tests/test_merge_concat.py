@@ -400,6 +400,30 @@ def test_concat_of_frames_sharing_no_column():
     assert got.shape == pd.concat([a, b], join="inner").shape
 
 
+@pytest.mark.parametrize("constructor", ["ST_Point", "ST_GeogPoint"])
+def test_concat_keeps_a_crs_written_differently(constructor):
+    # The same CRS as "OGC:CRS84" in one frame and as PROJJSON in the other
+    # displays alike but is stored differently, which the engine's UNION
+    # would drop, along with the spatial kind; both are kept.
+    pyproj = pytest.importorskip("pyproj")
+    projjson = pyproj.CRS("OGC:CRS84").to_json().replace("'", "''")
+    ctx = sgpd.default_context()
+    one = sgpd.GeoDataFrame(
+        ctx.sql(
+            f"SELECT 1 AS x, ST_SetCRS({constructor}(1, 1), 'OGC:CRS84') AS geometry"
+        )
+    )
+    two = sgpd.GeoDataFrame(
+        ctx.sql(
+            f"SELECT 2 AS x, ST_SetCRS({constructor}(2, 2), '{projjson}') AS geometry"
+        )
+    )
+    stacked = sgpd.concat([one, two])
+    assert stacked.geometry._is_geography() == (constructor == "ST_GeogPoint")
+    assert stacked.geometry.crs is not None
+    assert sorted(stacked.to_geopandas()["x"].tolist()) == [1, 2]
+
+
 def test_concat_keeps_geography():
     ctx = sgpd.default_context()
     one = sgpd.GeoDataFrame(ctx.sql("SELECT 1 AS x, ST_GeogPoint(1, 1) AS geometry"))

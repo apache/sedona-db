@@ -551,12 +551,17 @@ def _stacked_geometry(frames, name):
         return from_wkb(frame, _choose(failing == lit(0), nothing, nothing))
 
     def stored(frame, expr):
-        return str(frame._df.select(expr.alias("x")).schema.field("x").type)
+        # The type as stored, metadata included: two can display alike yet
+        # differ there (the same CRS written as "OGC:CRS84" and as PROJJSON).
+        field = pa.schema(frame._df.select(expr.alias("x")).schema).field("x")
+        extension = b""
+        if isinstance(field.type, pa.ExtensionType):
+            extension = field.type.__arrow_ext_serialize__()
+        return str(field.type), extension, tuple(sorted((field.metadata or {}).items()))
 
-    # The stacked parts must be typed exactly alike: the engine's UNION drops
-    # a column's type metadata, CRS included, where it is written differently
-    # (the same CRS as "OGC:CRS84" in one part and as PROJJSON in another),
-    # so if it would be, every part is rebuilt from WKB alike.
+    # The stacked parts must be stored exactly alike: the engine's UNION drops
+    # a column's type metadata, CRS and spatial kind included, where it
+    # differs (#1480), so if it would, every part is rebuilt from WKB alike.
     lacking = [frame for frame in frames if not any(frame is h for h in having)]
     types = {stored(frame, frame[name]._expr) for frame in having}
     types |= {stored(frame, missing(frame)) for frame in lacking}
