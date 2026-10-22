@@ -575,8 +575,8 @@ class DuckDB(DBEngine):
         return self
 
     def execute_and_collect(self, query) -> pa.Table:
-        # DuckDB 2.0 removed the connection's arrow(); the relation form is
-        # what DuckDB recommends and works on 1.x as well.
+        # A relation's to_arrow_table() works across DuckDB versions; DuckDB
+        # 2.0 removed arrow() from an execute() result.
         return self.con.sql(query).to_arrow_table()
 
 
