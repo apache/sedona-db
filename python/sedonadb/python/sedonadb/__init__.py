@@ -15,23 +15,37 @@
 # specific language governing permissions and limitations
 # under the License.
 import atexit
+import os
 
 from sedonadb import _lib
-from sedonadb.context import connect, configure_proj, configure_gdal
+from sedonadb.context import (
+    ConfigurationWarning,
+    connect,
+    configure_proj,
+    configure_gdal,
+)
 
 __version__ = _lib.sedona_python_version()
 
 __features__ = _lib.sedona_python_features()
 
-__all__ = ["connect", "options"]
+__all__ = ["connect", "options", "ConfigurationWarning"]
 
-# Attempt to configure PROJ and GDAL on import. This will warn if PROJ
-# or GDAL can't be configured but should never error. The auto-configured
-# values can be overridden as long as configure_proj() is called before
-# creating a transform and configure_gdal() is called before any
-# GDAL-backed operation (e.g., raster I/O).
-configure_proj("auto")
-configure_gdal("auto")
+# Attempt to configure PROJ and GDAL on import. This will warn (with a
+# ConfigurationWarning) if PROJ or GDAL can't be configured but should never
+# error. The auto-configured values can be overridden as long as
+# configure_proj() is called before creating a transform and configure_gdal()
+# is called before any GDAL-backed operation (e.g., raster I/O). Setting
+# SEDONADB_AUTO_CONFIGURE=false skips this step (e.g., for lower-level
+# extensions that don't need PROJ or GDAL or that configure them explicitly).
+if os.environ.get("SEDONADB_AUTO_CONFIGURE", "true").strip().lower() not in (
+    "false",
+    "0",
+    "no",
+    "off",
+):
+    configure_proj("auto")
+    configure_gdal("auto")
 
 # From interpreter shutdown on, leave GDAL objects (e.g. datasets) unfreed
 # instead of closing them. This guards Windows process exit, which unloads GDAL's
