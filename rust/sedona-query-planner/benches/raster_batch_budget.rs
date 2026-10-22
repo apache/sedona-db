@@ -15,13 +15,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! Overhead of `EnsureLoadedExec` in the non-materialized case.
+//! Overhead of `RasterBatchSplitExec` in the non-materialized case.
 //!
-//! The async UDF is an identity that stands in for `rs_ensureloaded` over
+//! The UDF is an identity that stands in for `rs_ensureloaded` over
 //! rasters that are already in memory, so the only work measured is the
-//! operator's own: the per-row byte estimate, the slicing, and one async
-//! invocation plus one output batch per slice. DataFusion's stock
-//! `AsyncFuncExec` over the same plan is the baseline, and the budget is
+//! operator's own: the per-row byte estimate, the slicing, and one
+//! projection evaluation plus one output batch per slice. The same
+//! `ProjectionExec` without the split is the baseline, and the budget is
 //! swept so the 8192-row input batch is emitted as 1, 8, 64, 512 and 8192
 //! slices.
 
@@ -30,7 +30,6 @@ use std::sync::Arc;
 
 use arrow_array::{ArrayRef, RecordBatch};
 use arrow_schema::{DataType, Field, Schema, SchemaRef};
-use async_trait::async_trait;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use datafusion::datasource::memory::MemorySourceConfig;
 use datafusion::execution::SessionStateBuilder;
@@ -39,14 +38,14 @@ use datafusion::prelude::SessionConfig;
 use datafusion_common::Result;
 use datafusion_common::config::ConfigOptions;
 use datafusion_execution::TaskContext;
-use datafusion_expr::async_udf::{AsyncScalarUDF, AsyncScalarUDFImpl};
-use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
+use datafusion_expr::{
+    ColumnarValue, ScalarFunctionArgs, ScalarUDF, ScalarUDFImpl, Signature, Volatility,
+};
 use datafusion_physical_expr::ScalarFunctionExpr;
-use datafusion_physical_expr::async_scalar_function::AsyncFuncExpr;
 use datafusion_physical_expr::expressions::col;
 use datafusion_physical_plan::ExecutionPlan;
-use datafusion_physical_plan::async_func::AsyncFuncExec;
 use datafusion_physical_plan::common::collect;
+use datafusion_physical_plan::projection::{ProjectionExec, ProjectionExpr};
 use sedona_common::option::{RasterOptions, SedonaOptions};
 use sedona_query_planner::raster_batch_budget::RasterBatchBudgetRule;
 use sedona_raster::builder::{RasterBuilder, StartBandArgs};
@@ -88,14 +87,7 @@ impl ScalarUDFImpl for IdentityEnsureLoaded {
     fn return_type(&self, arg_types: &[DataType]) -> Result<DataType> {
         Ok(arg_types[0].clone())
     }
-    fn invoke_with_args(&self, _args: ScalarFunctionArgs) -> Result<ColumnarValue> {
-        unreachable!("async only")
-    }
-}
-
-#[async_trait]
-impl AsyncScalarUDFImpl for IdentityEnsureLoaded {
-    async fn invoke_async_with_args(&self, args: ScalarFunctionArgs) -> Result<ColumnarValue> {
+    fn invoke_with_args(&self, args: ScalarFunctionArgs) -> Result<ColumnarValue> {
         Ok(ColumnarValue::Array(
             args.args[0].to_array(args.number_rows)?,
         ))
@@ -134,17 +126,14 @@ fn raster_batch() -> (SchemaRef, RecordBatch) {
     (schema, batch)
 }
 
-/// `AsyncFuncExec(rs_ensureloaded(rast))` over the batch.
-fn async_func_plan(schema: &SchemaRef, batch: &RecordBatch) -> Arc<dyn ExecutionPlan> {
+/// `ProjectionExec(rs_ensureloaded(rast) AS loaded)` over the batch.
+fn projection_plan(schema: &SchemaRef, batch: &RecordBatch) -> Arc<dyn ExecutionPlan> {
     let input =
         MemorySourceConfig::try_new_exec(&[vec![batch.clone()]], Arc::clone(schema), None).unwrap();
-    let udf = Arc::new(
-        AsyncScalarUDF::new(Arc::new(IdentityEnsureLoaded {
-            signature: Signature::any(1, Volatility::Stable),
-        }))
-        .into_scalar_udf(),
-    );
-    let func = Arc::new(
+    let udf = Arc::new(ScalarUDF::new_from_impl(IdentityEnsureLoaded {
+        signature: Signature::any(1, Volatility::Stable),
+    }));
+    let call = Arc::new(
         ScalarFunctionExpr::try_new(
             udf,
             vec![col("rast", schema).unwrap()],
@@ -153,8 +142,7 @@ fn async_func_plan(schema: &SchemaRef, batch: &RecordBatch) -> Arc<dyn Execution
         )
         .unwrap(),
     );
-    let expr = Arc::new(AsyncFuncExpr::try_new("__async_fn_0", func, schema).unwrap());
-    Arc::new(AsyncFuncExec::try_new(vec![expr], input).unwrap())
+    Arc::new(ProjectionExec::try_new(vec![ProjectionExpr::new(call, "loaded")], input).unwrap())
 }
 
 fn task_context(max_batch_bytes: usize) -> Arc<TaskContext> {
@@ -176,16 +164,16 @@ fn bench(c: &mut Criterion) {
         .build()
         .unwrap();
     let (schema, batch) = raster_batch();
-    let stock = async_func_plan(&schema, &batch);
+    let stock = projection_plan(&schema, &batch);
     let budgeted = RasterBatchBudgetRule
-        .optimize(async_func_plan(&schema, &batch), &ConfigOptions::default())
+        .optimize(projection_plan(&schema, &batch), &ConfigOptions::default())
         .unwrap();
     let ctx = task_context(0);
 
-    let mut group = c.benchmark_group("ensure_loaded_exec_overhead");
+    let mut group = c.benchmark_group("raster_batch_split_exec_overhead");
     group.throughput(Throughput::Elements(ROWS as u64));
 
-    group.bench_function("AsyncFuncExec (baseline)", |b| {
+    group.bench_function("ProjectionExec (baseline)", |b| {
         b.iter(|| {
             let stream = stock.execute(0, Arc::clone(&ctx)).unwrap();
             rt.block_on(collect(stream)).unwrap()
@@ -196,7 +184,7 @@ fn bench(c: &mut Criterion) {
         let ctx = task_context(BYTES_PER_ROW * rows_per_slice);
         let slices = ROWS / rows_per_slice;
         group.bench_with_input(
-            BenchmarkId::new("EnsureLoadedExec/slices", slices),
+            BenchmarkId::new("RasterBatchSplitExec/slices", slices),
             &slices,
             |b, _| {
                 b.iter(|| {
