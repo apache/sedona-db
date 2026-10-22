@@ -66,13 +66,11 @@ class ConfigurationWarning(UserWarning):
     """Warning issued when an optional native dependency can't be configured
 
     SedonaDB attempts to locate PROJ and GDAL when it is imported (see
-    :func:`configure_proj` and :func:`configure_gdal`). Most functionality
+    `configure_proj()` and `configure_gdal()`). Most functionality
     works without them, so a failure to find either is reported with this
-    warning rather than an error. Because it is a dedicated subclass of
-    ``UserWarning``, it can be silenced selectively, for example with
-    ``warnings.filterwarnings("ignore", category=sedonadb.ConfigurationWarning)``.
-    To skip the automatic configuration on import entirely, set the
-    ``SEDONADB_AUTO_CONFIGURE`` environment variable to ``false``.
+    warning rather than an error. To skip the automatic configuration on
+    import entirely, set the `SEDONADB_AUTO_CONFIGURE` environment variable
+    to `false`.
     """
 
 
@@ -640,7 +638,7 @@ def configure_proj(
             - None: Use custom values of shared_library and/or other keyword
               arguments.
             - auto: Try all presets in the order pyproj, conda, homebrew,
-              system and warn (with :class:`ConfigurationWarning`)
+              system and warn (with `ConfigurationWarning`)
               if none succeeded.
             - pyproj: Attempt to use shared libraries bundled with pyproj.
               This aligns transformations with those performed by geopandas
@@ -865,7 +863,7 @@ def configure_gdal(
             - None: Use a custom `shared_library` path.
             - auto: Try all presets in the order rasterio, pyogrio, conda,
               homebrew, system and warn (with
-              :class:`ConfigurationWarning`) if none succeeded.
+              `ConfigurationWarning`) if none succeeded.
             - pyogrio: Attempt to use the GDAL shared library bundled with
               pyogrio. This aligns the GDAL version with the one used by
               `read_pyogrio()` / `geopandas.read_file()`.

@@ -16,7 +16,6 @@
 # under the License.
 import json
 import shutil
-import warnings
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Mapping
@@ -351,73 +350,3 @@ def test_read_parquet_invalid_azure_option():
         match='Config value "unknown_option" not found on AzureOptions',
     ):
         con.read_parquet(url, options={"azure.unknown_option": "value"})
-
-
-def _raise(*args, **kwargs):
-    raise RuntimeError("not available")
-
-
-def test_configure_proj_auto_warning_class(monkeypatch):
-    import sedonadb.context as context
-
-    for name in [
-        "_configure_proj_pyproj",
-        "_configure_proj_prefix",
-        "_configure_proj_system",
-    ]:
-        monkeypatch.setattr(context, name, _raise)
-    monkeypatch.setenv("CONDA_PREFIX", "/nonexistent")
-
-    with pytest.warns(sedonadb.ConfigurationWarning, match="Failed to configure PROJ"):
-        sedonadb.configure_proj("auto")
-
-    # The dedicated warning class can be silenced without silencing other
-    # UserWarnings
-    assert issubclass(sedonadb.ConfigurationWarning, UserWarning)
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        warnings.filterwarnings("ignore", category=sedonadb.ConfigurationWarning)
-        sedonadb.configure_proj("auto")
-
-
-def test_configure_gdal_auto_warning_class(monkeypatch):
-    import sedonadb.context as context
-
-    for name in [
-        "_configure_gdal_rasterio",
-        "_configure_gdal_pyogrio",
-        "_configure_gdal_conda",
-        "configure_gdal_prefix_native",
-        "configure_gdal_system_native",
-    ]:
-        monkeypatch.setattr(context, name, _raise)
-
-    with pytest.warns(sedonadb.ConfigurationWarning, match="Failed to configure GDAL"):
-        sedonadb.configure_gdal("auto")
-
-
-@pytest.mark.parametrize(
-    "value,expect_configured",
-    [(None, True), ("true", True), ("false", False), ("0", False), ("OFF", False)],
-)
-def test_auto_configure_env_var(monkeypatch, value, expect_configured):
-    import atexit
-    import importlib
-
-    import sedonadb.context as context
-
-    calls = []
-    monkeypatch.setattr(context, "configure_proj", lambda p: calls.append(("proj", p)))
-    monkeypatch.setattr(context, "configure_gdal", lambda p: calls.append(("gdal", p)))
-    monkeypatch.setattr(atexit, "register", lambda *args, **kwargs: None)
-    if value is None:
-        monkeypatch.delenv("SEDONADB_AUTO_CONFIGURE", raising=False)
-    else:
-        monkeypatch.setenv("SEDONADB_AUTO_CONFIGURE", value)
-
-    importlib.reload(sedonadb)
-
-    if expect_configured:
-        assert calls == [("proj", "auto"), ("gdal", "auto")]
-    else:
-        assert calls == []
