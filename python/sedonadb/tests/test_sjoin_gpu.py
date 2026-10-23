@@ -184,7 +184,13 @@ def test_spatial_join_mixed_geometry_gpu():
             (109, 'line_in_gap', ST_GeomFromText('LINESTRING (4 4, 9 9)')),
             (110, 'line_crossing', ST_GeomFromText('LINESTRING (0 5, 5 5)')),
             (111, 'poly_in_gap', ST_GeomFromText('POLYGON ((4 4, 9 4, 9 9, 4 9, 4 4))')),
-            (112, 'poly_overlapping', ST_GeomFromText('POLYGON ((0.5 0.5, 5 0.5, 5 5, 0.5 5, 0.5 0.5))'))
+            (112, 'poly_overlapping', ST_GeomFromText('POLYGON ((0.5 0.5, 5 0.5, 5 5, 0.5 5, 0.5 0.5))')),
+            (113, 'mline_in_hole', ST_GeomFromText('MULTILINESTRING ((23 23, 27 27), (24 24, 26 26))')),
+            (114, 'mline_crossing', ST_GeomFromText('MULTILINESTRING ((23 23, 27 27), (19 25, 21 25))')),
+            (115, 'mpoly_in_gap', ST_GeomFromText('MULTIPOLYGON (((47 47, 52 47, 52 52, 47 52, 47 47)))')),
+            (116, 'mpoly_overlapping', ST_GeomFromText('MULTIPOLYGON (((44 44, 48 44, 48 48, 44 48, 44 44)))')),
+            (117, 'gc_in_gap', ST_GeomFromText('GEOMETRYCOLLECTION (POINT EMPTY, POINT (5 5), LINESTRING (4 4, 9 9))')),
+            (118, 'gc_overlapping', ST_GeomFromText('GEOMETRYCOLLECTION (POINT EMPTY, POINT (5 5), POINT (1 1))'))
         ) AS t(probe_id, kind, geom)
     """).execute()
 
@@ -211,5 +217,7 @@ def test_spatial_join_mixed_geometry_gpu():
 
     assert gpu_probe_res.equals(cpu_probe_res)
     assert gpu_build_res.equals(cpu_build_res)
-    assert set(gpu_probe_res["probe_id"].tolist()) == {104, 105, 106, 108, 110, 112}
+    assert set(gpu_probe_res["probe_id"].tolist()) == {
+        104, 105, 106, 108, 110, 112, 114, 116, 118
+    }
 

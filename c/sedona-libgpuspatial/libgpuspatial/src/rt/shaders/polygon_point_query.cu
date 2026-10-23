@@ -91,10 +91,15 @@ extern "C" __global__ void __raygen__gpuspatial() {
     assert(params.uniq_polygon_ids[reordered_polygon_idx] == polygon_idx);
 
     auto handle_point = [&](const point_t& p, uint32_t point_part_id, int& IM) {
-      assert(!p.empty());
+      const auto& polygon = polygons[polygon_idx];
+      if (p.empty()) {
+        if (!polygon.empty()) {
+          IM |= IntersectionMatrix::EXTER_INTER_2D | IntersectionMatrix::EXTER_BOUND_1D;
+        }
+        return false;
+      }
       // cast ray toward positive x-axis
       float3 dir = {1, 0, 0};
-      const auto& polygon = polygons[polygon_idx];
       const auto& mbr = polygon.get_mbr();
       auto width = mbr.get_max().x() - mbr.get_min().x();
       float tmin = 0;

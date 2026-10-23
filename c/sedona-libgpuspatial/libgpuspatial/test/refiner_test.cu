@@ -451,36 +451,123 @@ TEST(JoinerTest, MixedGeometryProbeIntersects) {
 }
 
 TEST(JoinerTest, MixedGeometryBuildAndBothSidesIntersects) {
-  std::vector<std::vector<std::string>> mixed_side_1 = {{
-      "POLYGON ((0 0, 10 0, 10 2, 2 2, 2 10, 0 10, 0 0))",
+  // Contains all 6 geometry types (Point, MultiPoint, LineString, MultiLineString,
+  // Polygon, MultiPolygon) so all 6 sub-array branches in EvaluateGeometryCollection
+  // are exercised on both build and probe sides.
+  std::vector<std::vector<std::string>> mixed_all_6_types_1 = {{
+      // 1. Point (inside L-shape gap vs inside L-shape)
       "POINT (5 5)",
       "POINT (1 1)",
+      // 2. MultiPoint (in gap vs partially inside L-shape)
+      "MULTIPOINT ((5 5), (8 8))",
+      "MULTIPOINT ((5 5), (1 1))",
+      // 3. LineString (in gap vs crossing L-shape)
       "LINESTRING (4 4, 9 9)",
+      "LINESTRING (0 5, 5 5)",
+      // 4. MultiLineString (in hole vs crossing hole boundary)
+      "MULTILINESTRING ((23 23, 27 27), (24 24, 26 26))",
+      "MULTILINESTRING ((23 23, 27 27), (19 25, 21 25))",
+      // 5. Polygon (L-shaped polygon and polygon with hole)
+      "POLYGON ((0 0, 10 0, 10 2, 2 2, 2 10, 0 10, 0 0))",
+      "POLYGON ((20 20, 30 20, 30 30, 20 30, 20 20), (22 22, 28 22, 28 28, 22 28, 22 22))",
+      // 6. MultiPolygon (two disjoint parts with gap in [45, 55])
       "MULTIPOLYGON (((40 40, 45 40, 45 45, 40 45, 40 40)), ((55 55, 60 55, 60 60, 55 60, 55 55)))",
   }};
 
-  std::vector<std::vector<std::string>> points_only = {{
+  std::vector<std::vector<std::string>> mixed_all_6_types_2 = {{
+      // 1. Point
       "POINT (5 5)",
       "POINT (1 1)",
-      "POINT (42 42)",
-      "POINT (50 50)",
-  }};
-
-  std::vector<std::vector<std::string>> mixed_side_2 = {{
-      "POINT (5 5)",
-      "POINT (1 1)",
+      "POINT (25 25)",
+      "POINT (21 21)",
       "POINT (50 50)",
       "POINT (42 42)",
-      "POLYGON ((4 4, 9 4, 9 9, 4 9, 4 4))",
-      "POLYGON ((0 0, 10 0, 10 2, 2 2, 2 10, 0 10, 0 0))",
+      // 2. MultiPoint
+      "MULTIPOINT ((5 5), (8 8))",
+      "MULTIPOINT ((1 1), (5 5))",
+      "MULTIPOINT ((42 42), (50 50))",
+      // 3. LineString
+      "LINESTRING (4 4, 9 9)",
       "LINESTRING (0 5, 5 5)",
+      "LINESTRING (46 46, 54 54)",
+      // 4. MultiLineString
+      "MULTILINESTRING ((4 4, 9 9), (6 6, 8 8))",
+      "MULTILINESTRING ((0 1, 5 1), (46 46, 54 54))",
+      // 5. Polygon
+      "POLYGON ((4 4, 9 4, 9 9, 4 9, 4 4))",
+      "POLYGON ((0.5 0.5, 5 0.5, 5 5, 0.5 5, 0.5 0.5))",
+      // 6. MultiPolygon
+      "MULTIPOLYGON (((47 47, 52 47, 52 52, 47 52, 47 47)))",
+      "MULTIPOLYGON (((44 44, 48 44, 48 48, 44 48, 44 44)))",
   }};
 
-  // Build side is mixed (GeometryCollection), probe side is homogeneous (Point)
-  TestJoinerWKT(mixed_side_1, points_only, Predicate::kIntersects);
-  TestJoinerWKT(mixed_side_1, points_only, Predicate::kContains);
+  // Homogeneous batches for each of the 6 geometry types
+  std::vector<std::vector<std::string>> points_only = {{
+      "POINT (5 5)", "POINT (1 1)", "POINT (21 21)", "POINT (25 25)", "POINT (42 42)", "POINT (50 50)",
+  }};
+  std::vector<std::vector<std::string>> multipoints_only = {{
+      "MULTIPOINT ((5 5), (8 8))", "MULTIPOINT ((1 1), (5 5))", "MULTIPOINT ((42 42), (50 50))",
+  }};
+  std::vector<std::vector<std::string>> linestrings_only = {{
+      "LINESTRING (4 4, 9 9)", "LINESTRING (0 5, 5 5)", "LINESTRING (23 23, 27 27)",
+  }};
+  std::vector<std::vector<std::string>> multilinestrings_only = {{
+      "MULTILINESTRING ((4 4, 9 9), (6 6, 8 8))", "MULTILINESTRING ((0 5, 5 5), (20 20, 21 21))",
+  }};
+  std::vector<std::vector<std::string>> polygons_only = {{
+      "POLYGON ((4 4, 9 4, 9 9, 4 9, 4 4))",
+      "POLYGON ((0.5 0.5, 5 0.5, 5 5, 0.5 5, 0.5 0.5))",
+      "POLYGON ((23 23, 27 23, 27 27, 23 27, 23 23))",
+  }};
+  std::vector<std::vector<std::string>> multipolygons_only = {{
+      "MULTIPOLYGON (((47 47, 52 47, 52 52, 47 52, 47 47)))",
+      "MULTIPOLYGON (((44 44, 48 44, 48 48, 44 48, 44 44)))",
+  }};
 
-  // Both build and probe sides are mixed (GeometryCollection vs GeometryCollection)
-  TestJoinerWKT(mixed_side_1, mixed_side_2, Predicate::kIntersects);
+  // 1. Build side is GeometryCollection (all 6 types, single-geom per row) vs each homogeneous probe type
+  for (const auto& probe_batch : {points_only, multipoints_only, linestrings_only,
+                                  multilinestrings_only, polygons_only, multipolygons_only}) {
+    TestJoinerWKT(mixed_all_6_types_1, probe_batch, Predicate::kIntersects);
+    TestJoinerWKT(probe_batch, mixed_all_6_types_1, Predicate::kIntersects);
+  }
+  for (const auto& probe_batch :
+       {points_only, multipoints_only, linestrings_only, multilinestrings_only}) {
+    TestJoinerWKT(mixed_all_6_types_1, probe_batch, Predicate::kContains);
+    TestJoinerWKT(probe_batch, mixed_all_6_types_1, Predicate::kWithin);
+  }
+
+  // 2. Both build and probe sides are GeometryCollection (all 6 types, single-geom fast path)
+  TestJoinerWKT(mixed_all_6_types_1, mixed_all_6_types_2, Predicate::kIntersects);
+
+  // 3. Multi-element GEOMETRYCOLLECTIONs covering all 6 child geometry types + POINT EMPTY + GC EMPTY
+  // (exercises the general expansion + deduplication path in EvaluateGeometryCollection)
+  auto multi_gc_side_1 = mixed_all_6_types_1;
+  multi_gc_side_1[0].push_back("GEOMETRYCOLLECTION EMPTY");
+  multi_gc_side_1[0].push_back("GEOMETRYCOLLECTION (POINT EMPTY, POINT (1 1))");
+  multi_gc_side_1[0].push_back("GEOMETRYCOLLECTION (POINT EMPTY, POINT (5 5))");
+  multi_gc_side_1[0].push_back(
+      "GEOMETRYCOLLECTION ("
+      "POINT (1 1), "
+      "MULTIPOINT ((5 5), (1 1)), "
+      "LINESTRING (0 5, 5 5), "
+      "MULTILINESTRING ((23 23, 27 27), (19 25, 21 25)), "
+      "POLYGON ((0 0, 10 0, 10 2, 2 2, 2 10, 0 10, 0 0)), "
+      "MULTIPOLYGON (((40 40, 45 40, 45 45, 40 45, 40 40)), ((55 55, 60 55, 60 60, 55 60, 55 55)))"
+      ")");
+
+  auto multi_gc_side_2 = mixed_all_6_types_2;
+  multi_gc_side_2[0].push_back("GEOMETRYCOLLECTION EMPTY");
+  multi_gc_side_2[0].push_back("GEOMETRYCOLLECTION (POINT EMPTY, POINT (5 5))");
+  multi_gc_side_2[0].push_back(
+      "GEOMETRYCOLLECTION ("
+      "POINT (5 5), "
+      "MULTIPOINT ((5 5), (8 8)), "
+      "LINESTRING (4 4, 9 9), "
+      "MULTILINESTRING ((4 4, 9 9), (6 6, 8 8)), "
+      "POLYGON ((4 4, 9 4, 9 9, 4 9, 4 4)), "
+      "MULTIPOLYGON (((47 47, 52 47, 52 52, 47 52, 47 47)))"
+      ")");
+
+  TestJoinerWKT(multi_gc_side_1, multi_gc_side_2, Predicate::kIntersects);
 }
 }  // namespace gpuspatial

@@ -483,7 +483,6 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateGeometryCollection(
   auto ps_rings = gc_array.get_prefix_sum_num_rings();
   auto ps_points = gc_array.get_prefix_sum_num_points();
   auto feature_types = gc_array.get_feature_types();
-  auto vertices = gc_array.get_vertices();
   auto mbrs = gc_array.get_mbrs();
 
   rmm::device_uvector<INDEX_T> counts(ids_size, stream);
@@ -536,6 +535,7 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateGeometryCollection(
           [=] __device__(INDEX_T idx) {
             auto it = thrust::upper_bound(thrust::seq, ps_counts_view.begin(),
                                           ps_counts_view.end(), idx);
+            // The index into the original candidate pair arrays (gc_ids, other_ids)
             INDEX_T pair_idx = cuda::std::distance(ps_counts_view.begin(), it) - 1;
             INDEX_T local_geom = idx - ps_counts_view[pair_idx];
             INDEX_T gc_id = gc_ids_view[pair_idx];
@@ -594,15 +594,7 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateGeometryCollection(
     auto sub_zip_end = thrust::copy_if(
         rmm::exec_policy_nosync(stream), cand_zip_begin, cand_zip_end, sub_zip_begin,
         [=] __device__(const thrust::tuple<INDEX_T, INDEX_T>& t) {
-          INDEX_T geom_idx = thrust::get<0>(t);
-          if (feature_types[geom_idx] != target_type) return false;
-          if (target_type == GeometryType::kPoint && predicate != Predicate::kDisjoint) {
-            auto part_idx = ps_parts[geom_idx];
-            auto ring_idx = ps_rings[part_idx];
-            auto point_idx = ps_points[ring_idx];
-            if (vertices[point_idx].empty()) return false;
-          }
-          return true;
+          return feature_types[thrust::get<0>(t)] == target_type;
         });
     size_t n = cuda::std::distance(sub_zip_begin, sub_zip_end);
     sub_gc_ids.resize(n, stream);
