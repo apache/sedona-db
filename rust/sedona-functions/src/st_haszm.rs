@@ -21,13 +21,14 @@ use arrow_array::builder::BooleanBuilder;
 use arrow_schema::DataType;
 use datafusion_common::{DataFusionError, error::Result};
 use datafusion_expr::{ColumnarValue, Volatility};
-use geo_traits::Dimensions;
+use geo_traits::{Dimensions, GeometryCollectionTrait, GeometryTrait, GeometryType};
 use sedona_expr::{
     item_crs::ItemCrsKernel,
     scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
 };
-use sedona_geometry::wkb_header::WkbHeader;
+use sedona_geometry::{types::GeometryTypeId, wkb_header::WkbHeader};
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
+use wkb::reader::read_wkb;
 
 pub fn st_hasz_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
@@ -89,6 +90,16 @@ impl SedonaScalarKernel for STHasZm {
 }
 
 fn invoke_scalar(buf: &[u8], dim_index: usize) -> Result<Option<bool>> {
+    Ok(Some(has_dimension(buf, dim_index)?))
+}
+
+/// Whether the geometry in `buf`, or any member of it, has Z (`dim_index` 2)
+/// or M (`dim_index` 3) values.
+///
+/// As in GEOS, a geometry collection has Z (or M) when any of its members
+/// does, empty or not, and its members need not share its dimensions, e.g.
+/// GEOMETRYCOLLECTION (POINT (1 2), POINT M (3 4 5)).
+fn has_dimension(buf: &[u8], dim_index: usize) -> Result<bool> {
     let header = WkbHeader::try_new(buf).map_err(|e| DataFusionError::External(Box::new(e)))?;
     let top_level_dimensions = header
         .dimensions()
@@ -96,26 +107,35 @@ fn invoke_scalar(buf: &[u8], dim_index: usize) -> Result<Option<bool>> {
 
     // Infer dimension based on first coordinate dimension for cases where it differs from top-level
     // e.g GEOMETRYCOLLECTION (POINT Z (1 2 3))
-    let dimensions;
-    if let Some(first_geom_dimensions) = header.first_geom_dimensions() {
-        dimensions = first_geom_dimensions;
-    } else {
-        dimensions = top_level_dimensions;
+    let dimensions = header
+        .first_geom_dimensions()
+        .unwrap_or(top_level_dimensions);
+
+    let found = match dim_index {
+        2 => matches!(dimensions, Dimensions::Xyz | Dimensions::Xyzm),
+        3 => matches!(dimensions, Dimensions::Xym | Dimensions::Xyzm),
+        _ => false,
+    };
+    if found {
+        return Ok(true);
     }
 
-    if dim_index == 2 {
-        return Ok(Some(matches!(
-            dimensions,
-            Dimensions::Xyz | Dimensions::Xyzm
-        )));
+    // A later member of a collection may have the dimension the first lacks
+    let geometry_type = header
+        .geometry_type_id()
+        .map_err(|e| DataFusionError::External(Box::new(e)))?;
+    if geometry_type != GeometryTypeId::GeometryCollection {
+        return Ok(false);
     }
-    if dim_index == 3 {
-        return Ok(Some(matches!(
-            dimensions,
-            Dimensions::Xym | Dimensions::Xyzm
-        )));
+    let wkb = read_wkb(buf).map_err(|e| DataFusionError::External(Box::new(e)))?;
+    if let GeometryType::GeometryCollection(collection) = wkb.as_type() {
+        for member in collection.geometries() {
+            if has_dimension(member.buf(), dim_index)? {
+                return Ok(true);
+            }
+        }
     }
-    Ok(Some(false))
+    Ok(false)
 }
 
 #[cfg(test)]
@@ -204,6 +224,50 @@ mod tests {
             .invoke_wkb_scalar(Some("GEOMETRYCOLLECTION EMPTY"))
             .unwrap();
         m_tester.assert_scalar_result_equals(result, ScalarValue::Boolean(Some(false)));
+
+        // Z or M in a later member only, empty or nested, as in GEOS
+        for (wkt, has_z, has_m) in [
+            (
+                "GEOMETRYCOLLECTION (POINT (1 2), POINT Z (3 4 5))",
+                true,
+                false,
+            ),
+            (
+                "GEOMETRYCOLLECTION (POINT (1 2), POINT M (3 4 5))",
+                false,
+                true,
+            ),
+            (
+                "GEOMETRYCOLLECTION (POINT (1 2), POINT ZM (3 4 5 6))",
+                true,
+                true,
+            ),
+            (
+                "GEOMETRYCOLLECTION (POINT (1 2), POINT M EMPTY)",
+                false,
+                true,
+            ),
+            (
+                "GEOMETRYCOLLECTION (POINT (1 2), LINESTRING Z EMPTY)",
+                true,
+                false,
+            ),
+            (
+                "GEOMETRYCOLLECTION (POINT (1 2), GEOMETRYCOLLECTION (POINT (3 4), POINT M (5 6 7)))",
+                false,
+                true,
+            ),
+            (
+                "GEOMETRYCOLLECTION (POINT (1 2), POINT (3 4))",
+                false,
+                false,
+            ),
+        ] {
+            let result = z_tester.invoke_wkb_scalar(Some(wkt)).unwrap();
+            z_tester.assert_scalar_result_equals(result, ScalarValue::Boolean(Some(has_z)));
+            let result = m_tester.invoke_wkb_scalar(Some(wkt)).unwrap();
+            m_tester.assert_scalar_result_equals(result, ScalarValue::Boolean(Some(has_m)));
+        }
 
         // Empty geometry collections with Z or M dimensions
         let result = z_tester
