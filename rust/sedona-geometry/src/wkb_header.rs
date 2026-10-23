@@ -263,6 +263,23 @@ pub fn read_point_xy(buf: &[u8]) -> Result<Option<(f64, f64)>, SedonaGeometryErr
     }
 }
 
+/// Whether any part of the WKB geometry in `buf` has dimensions for which
+/// `wanted` is true.
+///
+/// The parts are the points, line strings, and polygons at any depth, and any
+/// empty collection (which has only its own header). Each part's dimensions
+/// are read from its own header: the members of a geometry collection need not
+/// share its dimensions (e.g. GEOMETRYCOLLECTION (POINT (1 2), POINT M (3 4 5))),
+/// nor do the points of a multi point declared XY whose points carry Z (the
+/// inferred-dimension encoding). Every header is read once and coordinates are
+/// skipped, not read, so the cost is linear in the number of parts and rings.
+pub fn any_part_dimensions(
+    buf: &[u8],
+    wanted: impl Fn(Dimensions) -> bool,
+) -> Result<bool, SedonaGeometryError> {
+    WkbBuffer::new(buf).any_part_dimensions(&wanted)
+}
+
 // A helper struct for calculating the WKBHeader
 struct WkbBuffer<'a> {
     buf: &'a [u8],
@@ -357,6 +374,79 @@ impl<'a> WkbBuffer<'a> {
         let x = self.read_coord()?;
         let y = self.read_coord()?;
         Ok((x, y))
+    }
+
+    // Whether any part of the geometry starting at the current offset has
+    // dimensions for which `wanted` is true (see [any_part_dimensions]),
+    // leaving the offset after the geometry where it has to read it all
+    fn any_part_dimensions(
+        &mut self,
+        wanted: &dyn Fn(Dimensions) -> bool,
+    ) -> Result<bool, SedonaGeometryError> {
+        self.read_endian()?;
+        let geometry_type = self.read_u32()?;
+        let geometry_type_id = GeometryTypeId::try_from_wkb_id(geometry_type & 0x7)?;
+        let dimensions = calc_dimensions(geometry_type)?;
+
+        // Skip the SRID if it's present
+        if geometry_type & SRID_FLAG_BIT != 0 {
+            self.read_u32()?;
+        }
+
+        let coord_bytes = 8 * dimensions.size();
+        match geometry_type_id {
+            GeometryTypeId::Point => {
+                self.skip_coords(1, coord_bytes)?;
+                Ok(wanted(dimensions))
+            }
+            GeometryTypeId::LineString => {
+                let num_points = self.read_u32()?;
+                self.skip_coords(num_points, coord_bytes)?;
+                Ok(wanted(dimensions))
+            }
+            GeometryTypeId::Polygon => {
+                let num_rings = self.read_u32()?;
+                for _ in 0..num_rings {
+                    let num_points = self.read_u32()?;
+                    self.skip_coords(num_points, coord_bytes)?;
+                }
+                Ok(wanted(dimensions))
+            }
+            GeometryTypeId::MultiPoint
+            | GeometryTypeId::MultiLineString
+            | GeometryTypeId::MultiPolygon
+            | GeometryTypeId::GeometryCollection => {
+                let num_geometries = self.read_u32()?;
+                if num_geometries == 0 {
+                    return Ok(wanted(dimensions));
+                }
+                for _ in 0..num_geometries {
+                    if self.any_part_dimensions(wanted)? {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+            _ => Err(SedonaGeometryError::Invalid(format!(
+                "Unexpected geometry type: {geometry_type_id:?}"
+            ))),
+        }
+    }
+
+    // Skip `count` coordinates of `coord_bytes` bytes each
+    fn skip_coords(&mut self, count: u32, coord_bytes: usize) -> Result<(), SedonaGeometryError> {
+        let bytes = (count as usize).checked_mul(coord_bytes);
+        match bytes {
+            Some(bytes) if bytes <= self.remaining => {
+                self.offset += bytes;
+                self.remaining -= bytes;
+                Ok(())
+            }
+            _ => Err(SedonaGeometryError::Invalid(format!(
+                "Invalid WKB: buffer too small. At offset: {}. Need {count} coordinates of {coord_bytes} bytes.",
+                self.offset
+            ))),
+        }
     }
 
     fn read_endian(&mut self) -> Result<(), SedonaGeometryError> {
@@ -1004,6 +1094,106 @@ mod tests {
         let wkb = make_wkb("GEOMETRYCOLLECTION ZM EMPTY");
         let header = WkbHeader::try_new(&wkb).unwrap();
         assert_eq!(header.first_geom_dimensions(), None);
+    }
+
+    fn has_z(buf: &[u8]) -> Result<bool, SedonaGeometryError> {
+        any_part_dimensions(buf, |d| matches!(d, Dimensions::Xyz | Dimensions::Xyzm))
+    }
+
+    fn has_m(buf: &[u8]) -> Result<bool, SedonaGeometryError> {
+        any_part_dimensions(buf, |d| matches!(d, Dimensions::Xym | Dimensions::Xyzm))
+    }
+
+    #[test]
+    fn any_part_dimensions_of_each_part() {
+        for (wkt_value, z, m) in [
+            ("POINT (1 2)", false, false),
+            ("POINT Z (1 2 3)", true, false),
+            ("LINESTRING M (0 0 1, 1 1 2)", false, true),
+            (
+                "POLYGON ZM ((0 0 0 0, 1 0 0 0, 1 1 0 0, 0 0 0 0))",
+                true,
+                true,
+            ),
+            ("POINT M EMPTY", false, true),
+            ("GEOMETRYCOLLECTION EMPTY", false, false),
+            ("GEOMETRYCOLLECTION Z EMPTY", true, false),
+            ("MULTIPOINT M EMPTY", false, true),
+            // A later member only, empty or nested
+            (
+                "GEOMETRYCOLLECTION (POINT (1 2), POINT M (3 4 5))",
+                false,
+                true,
+            ),
+            (
+                "GEOMETRYCOLLECTION (POINT (1 2), POINT M EMPTY)",
+                false,
+                true,
+            ),
+            (
+                "GEOMETRYCOLLECTION (POLYGON ((0 0, 1 0, 1 1, 0 0)), LINESTRING Z (0 0 0, 1 1 1))",
+                true,
+                false,
+            ),
+            (
+                "GEOMETRYCOLLECTION (POINT (1 2), GEOMETRYCOLLECTION (POINT (3 4), POINT ZM (5 6 7 8)))",
+                true,
+                true,
+            ),
+            (
+                "GEOMETRYCOLLECTION (GEOMETRYCOLLECTION EMPTY, POINT Z (1 2 3))",
+                true,
+                false,
+            ),
+            (
+                "GEOMETRYCOLLECTION (POINT (1 2), POINT (3 4))",
+                false,
+                false,
+            ),
+        ] {
+            let wkb = make_wkb(wkt_value);
+            assert_eq!(has_z(&wkb).unwrap(), z, "{wkt_value} has_z");
+            assert_eq!(has_m(&wkb).unwrap(), m, "{wkt_value} has_m");
+        }
+    }
+
+    #[test]
+    fn any_part_dimensions_reads_each_header() {
+        // A multi point declared XY whose point declares Z, nested before
+        // another member: its size comes from the point's own header
+        let point_xy = make_wkb("POINT (1 2)");
+        let mut wkb = vec![0x01, 0x07, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00];
+        wkb.extend_from_slice(&point_xy);
+        wkb.extend_from_slice(&MULTIPOINT_WITH_INFERRED_Z_DIMENSION_WKB);
+        wkb.extend_from_slice(&point_xy);
+        assert!(has_z(&wkb).unwrap());
+        assert!(!has_m(&wkb).unwrap());
+
+        // A collection header that declares Z doesn't give its XY members Z
+        let mut wkb = vec![0x01, 0xef, 0x03, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00];
+        wkb.extend_from_slice(&point_xy);
+        assert!(!has_z(&wkb).unwrap());
+
+        // EWKB with an SRID, big-endian, as a later member
+        let mut wkb = vec![0x00, 0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x02];
+        wkb.extend_from_slice(&point_xy);
+        wkb.extend_from_slice(&[0x00, 0x60, 0x00, 0x00, 0x01, 0x00, 0x00, 0x10, 0xe6]);
+        wkb.extend_from_slice(&[0u8; 24]);
+        assert!(!has_z(&wkb).unwrap());
+        assert!(has_m(&wkb).unwrap());
+    }
+
+    #[test]
+    fn any_part_dimensions_of_invalid_buffers() {
+        // Every truncation of a collection whose last member has M
+        let wkb = make_wkb("GEOMETRYCOLLECTION (LINESTRING (0 0, 1 1), POINT M (1 2 3))");
+        for i in 0..wkb.len() {
+            assert!(has_m(&wkb[0..i]).is_err(), "0..{i} unexpectedly succeeded");
+        }
+
+        // A coordinate count past the buffer (and past usize when multiplied)
+        let wkb = [0x01, 0x02, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff];
+        assert!(has_z(&wkb).is_err());
     }
 
     #[test]

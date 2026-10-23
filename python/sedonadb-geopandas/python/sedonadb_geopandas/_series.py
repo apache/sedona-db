@@ -1588,6 +1588,13 @@ def _normalize_crs(crs):
         raise ValueError(f"Invalid CRS {crs!r}: {err}") from err
 
 
+def _empty(geometry):
+    """Whether a geometry expression is empty as GeoPandas (GEOS) defines
+    it: it has no coordinates. The engine's `ST_IsEmpty` calls a collection
+    of empty parts (`MULTIPOINT (EMPTY)`) non-empty."""
+    return geometry.geo.n_points() == lit(0)
+
+
 def _check_align(align):
     """GeoPandas' `align` argument.
 
@@ -1628,6 +1635,48 @@ class GeoSeries(Series):
 
         return Series(self._df, expr.funcs.coalesce(lit(False)), name)
 
+    def _parameter(self, value, method, name, valid=None, nan=True):
+        """A numeric parameter of a geometry method, as a float64 expression.
+
+        One number, or a numeric `Series` of this frame applied row by row, as
+        GeoPandas takes an array. A NaN gives a missing result, as Shapely
+        mostly does; with `nan=False` it is refused instead, when the method
+        is called or, for a row, when the result is computed. `valid`, a test
+        on one number and what it requires, refuses a number outside the
+        parameter's range when the method is called; a row outside it fails
+        in the engine when the result is computed.
+        """
+        missing = lit(pa.scalar(None, pa.float64()))
+        message = f"{method}() {name} must not be NaN"
+        if isinstance(value, Series):
+            expr = _operand(self._df, value)
+            if _kind(value._dtype()) != "number":
+                raise TypeError(
+                    f"{method}() {name} must be a number or a numeric Series of "
+                    f"this frame, got a Series of {value._dtype()}"
+                )
+            expr = expr.cast(pa.float64())
+            if nan:
+                return expr.funcs.nanvl(missing)
+            return expr + _fail_where(expr.funcs.isnan(), message)
+        # Validated like any other operand (arrays are rejected), then
+        # resolved to a plain number, so NumPy, Arrow, and lit() scalars are
+        # accepted like floats.
+        _operand(self._df, value)
+        number = _numeric_value(value)
+        if not isinstance(number, numbers.Real) or isinstance(number, bool):
+            raise TypeError(
+                f"{method}() {name} must be a number or a numeric Series of this "
+                f"frame, got {type(value).__name__}"
+            )
+        if math.isnan(number):
+            if not nan:
+                raise ValueError(message)
+            return missing
+        if valid is not None and not valid[0](number):
+            raise ValueError(f"{method}() {name} must be {valid[1]}, got {value!r}")
+        return lit(float(number))
+
     # -- properties --------------------------------------------------------
 
     @property
@@ -1651,8 +1700,14 @@ class GeoSeries(Series):
 
     @property
     def is_empty(self):
-        """Whether each geometry is empty (`ST_IsEmpty`); False if missing."""
-        return self._flag(self._expr.geo.is_empty(), "is_empty")
+        """Whether each geometry is empty; False if missing.
+
+        As in GeoPandas (GEOS), a geometry is empty when it has no
+        coordinates, so a collection of empty parts (`MULTILINESTRING
+        (EMPTY)`) is empty too, where the engine's `ST_IsEmpty` says it is
+        not.
+        """
+        return self._flag(_empty(self._expr), "is_empty")
 
     @property
     def is_simple(self):
@@ -1666,8 +1721,62 @@ class GeoSeries(Series):
 
     @property
     def has_z(self):
-        """Whether each geometry has Z coordinates (`ST_HasZ`); False if missing."""
+        """Whether each geometry has Z coordinates (`ST_HasZ`); False if missing.
+
+        As in GeoPandas, a collection has Z when any of its members does,
+        empty or not.
+        """
         return self._flag(self._expr.geo.has_z(), "has_z")
+
+    @property
+    def has_m(self):
+        """Whether each geometry has M values (`ST_HasM`); False if missing.
+
+        As in GeoPandas, a collection has M when any of its members does,
+        empty or not.
+        """
+        return self._flag(self._expr.geo.has_m(), "has_m")
+
+    def _is_line(self):
+        """Whether each geometry is a single line (a ring reads as one)."""
+        return self._expr.geo.geometry_type() == lit("ST_LineString")
+
+    @property
+    def is_closed(self):
+        """Whether each line's ends meet (`ST_IsClosed`); False if missing.
+
+        As in GeoPandas, only a `LineString` or `MultiLineString` can be
+        closed, and only if none of its lines is empty: the engine calls every
+        point and polygon closed, as PostGIS does, and passes over an empty
+        line in a `MultiLineString`; those answers are replaced with False
+        here.
+        """
+        geo = self._expr.geo
+        multi = geo.geometry_type() == lit("ST_MultiLineString")
+        linear = self._is_line() | multi
+        # An empty line: a line with no coordinates, or a line of a
+        # multi-line that a planar simplification without tolerance drops.
+        # That drops nothing else, as every line keeps its two end points,
+        # however degenerate; a geography's spherical simplification can drop
+        # a degenerate line (one that doubles back, or has no length), so a
+        # geography's lines are simplified as planar ones.
+        planar = geo.to_geometry().geo if self._is_geography() else geo
+        dropped = planar.simplify(0.0).geo.num_geometries() < geo.num_geometries()
+        empty_line = _empty(self._expr) | (multi & dropped)
+        closed = geo.is_closed() & linear & ~empty_line
+        return self._flag(closed, "is_closed")
+
+    @property
+    def is_ring(self):
+        """Whether each geometry is a closed, simple line; False if missing.
+
+        GEOS' definition, which GeoPandas follows: a `LineString` (or ring)
+        that is closed (`ST_IsClosed`) and simple (`ST_IsSimple`). Any other
+        geometry, a `MultiLineString` included, is not a ring; the engine's
+        `ST_IsRing` would raise for those rather than answer False.
+        """
+        expr = self._is_line() & self._expr.geo.is_closed() & self._expr.geo.is_simple()
+        return self._flag(expr, "is_ring")
 
     @property
     def x(self):
@@ -1727,6 +1836,60 @@ class GeoSeries(Series):
             [row[c].iloc[0] for c in ("minx", "miny", "maxx", "maxy")], dtype=float
         )
 
+    # -- measures ---------------------------------------------------------
+
+    def is_valid_reason(self):
+        """Why each geometry is invalid, or `"Valid Geometry"` (`ST_IsValidReason`).
+
+        GEOS' wording, as in GeoPandas; missing for a missing geometry.
+        """
+        return Series(self._df, self._expr.geo.is_valid_reason(), "is_valid_reason")
+
+    def _count(self, expr, name):
+        """A count as GeoPandas gives it: 32-bit, and 0 for a missing geometry."""
+        int32 = pa.int32()
+        count = expr.cast(int32).funcs.coalesce(lit(pa.scalar(0, int32)))
+        return Series(self._df, count, name)
+
+    def count_coordinates(self):
+        """The number of coordinates in each geometry (`ST_NPoints`)."""
+        return self._count(self._expr.geo.n_points(), "count_coordinates")
+
+    def count_geometries(self):
+        """The number of parts of each geometry (`ST_NumGeometries`).
+
+        As in GeoPandas, a single-part geometry is one part even when empty
+        (the engine counts none), and a multi-part geometry or collection
+        counts its parts.
+        """
+        int32 = pa.int32()
+        parts = self._expr.geo.num_geometries().cast(int32)
+        # A missing geometry takes the engine's count, missing, and so 0.
+        collection = self._expr.geo.is_collection().funcs.coalesce(lit(True))
+        count = _choose(collection, parts, lit(pa.scalar(1, int32)))
+        return self._count(count, "count_geometries")
+
+    def count_interior_rings(self):
+        """The number of holes in each polygon (`ST_NumInteriorRings`).
+
+        0 for any other geometry, a `MultiPolygon` included, as in GeoPandas.
+        """
+        return self._count(self._expr.geo.num_interior_rings(), "count_interior_rings")
+
+    def minimum_clearance(self):
+        """The minimum clearance of each geometry (`ST_MinimumClearance`).
+
+        The smallest distance a vertex could move to make the geometry
+        invalid; infinite where no move can (a single point, say), as in
+        GeoPandas.
+        """
+        return Series(self._df, self._expr.geo.minimum_clearance(), "minimum_clearance")
+
+    def minimum_clearance_line(self):
+        """The line along which each geometry's minimum clearance is measured
+        (`ST_MinimumClearanceLine`); empty where the clearance is infinite."""
+        return self._geo(self._expr.geo.minimum_clearance_line())
+
     # -- constructive methods ---------------------------------------------
 
     def buffer(
@@ -1771,37 +1934,57 @@ class GeoSeries(Series):
         """The bounding rectangle of each geometry (`ST_Envelope`).
 
         The envelope of an empty geometry is `POINT EMPTY`, as in GeoPandas,
-        whatever the empty geometry's type (the engine keeps the type). For a
-        geography column the engine's envelope is a planar longitude/latitude
-        box (geometry, not geography), and it stays one here.
+        whatever the empty geometry's type (the engine keeps the type), and a
+        box with no width or no height is a polygon with no area, as GeoPandas
+        (GEOS) gives it, where the engine gives a line. For a geography column
+        the engine's envelope is a planar longitude/latitude box (geometry, not
+        geography), and it stays one here.
         """
         import shapely
 
-        envelope = self._expr.geo.envelope()
+        envelope = self._flat_boxes(self._expr.geo.envelope())
+        return self._geo(self._empty_as(envelope, shapely.Point()))
+
+    def _empty_as(self, result, empty):
+        """`result`, but `empty` (a Shapely geometry) where this geometry is
+        empty, as GeoPandas defines it (see `_empty`)."""
+        replacement = self._df._ctx.lit(empty.wkb)
+        return self._replace_where(_empty(self._expr), replacement, result)
+
+    def _replace_where(self, condition, replacement, result):
+        """`result`, but `replacement` (WKB) where `condition` is true.
+
+        The choice is made on WKB, and the result rebuilt with `result`'s own
+        spatial kind and CRS: the engine's result type, which need not be this
+        column's (a geography's envelope is planar geometry).
+        """
         ctx = self._df._ctx
-        # Per row: POINT EMPTY's WKB where the input is empty, the envelope's
-        # otherwise. nvl2 picks its second argument where the first is
+        # Per row: the replacement where the condition holds, the result's
+        # WKB otherwise. nvl2 picks its second argument where the first is
         # non-null, and all three must share a type, hence the binary flag.
-        empty = self._expr.geo.is_empty().funcs.nullif(ctx.lit(False))
-        flag = empty.cast(pa.string()).cast(pa.binary())
-        wkb = flag.funcs.nvl2(ctx.lit(shapely.Point().wkb), envelope.geo.as_binary())
-        # WKB carries neither spatial kind nor CRS, so the result is rebuilt
-        # with the envelope's own: the engine's envelope type, which for a
-        # geography input is planar geometry, not the column's type.
-        result_type = self._df.select(envelope.alias("x")).schema.field("x").type
+        holds = condition.funcs.nullif(ctx.lit(False))
+        flag = holds.cast(pa.string()).cast(pa.binary())
+        wkb = flag.funcs.nvl2(replacement, result.geo.as_binary())
+        result_type = self._df.select(result.alias("x")).schema.field("x").type
         spherical = "SPHERICAL" in str(getattr(result_type, "edge_type", "")).upper()
-        if spherical:
-            expr = wkb.funcs.st_geogfromwkb()
-        else:
-            expr = wkb.funcs.st_geomfromwkb()
-        crs = result_type.crs
-        if crs is not None:
-            expr = expr.funcs.st_setcrs(ctx.lit(crs.to_json()))
-        elif spherical:
-            # The geography constructor synthesizes CRS84; SRID 0 clears it
-            # without touching the value.
-            expr = expr.funcs.st_setsrid(ctx.lit(0))
-        return self._geo(expr)
+        return _geometry_from_wkb(wkb, spherical, result_type.crs, ctx)
+
+    def _flat_boxes(self, envelope):
+        """`envelope`, with each box that has no width or no height as a
+        polygon with no area rather than a line.
+
+        The engine gives a line there, as PostGIS does; GEOS, and so
+        GeoPandas, gives a polygon with the box's corners (and a point only
+        when the box has neither width nor height, as the engine does too).
+        """
+        geo = envelope.geo
+        flat = (geo.geometry_type() == lit("ST_LineString")).funcs.coalesce(lit(False))
+        corners = geo.x_min().funcs.st_makeenvelope(
+            geo.y_min(), geo.x_max(), geo.y_max()
+        )
+        # ST_MakeEnvelope goes round the box clockwise, GEOS counterclockwise.
+        box = corners.geo.reverse().geo.as_binary()
+        return self._replace_where(flat, box, envelope)
 
     @property
     def convex_hull(self):
@@ -1859,6 +2042,138 @@ class GeoSeries(Series):
     def representative_point(self):
         """A point guaranteed to lie on each geometry (`ST_PointOnSurface`)."""
         return self._geo(self._expr.geo.point_on_surface())
+
+    def concave_hull(self, ratio=0.0, allow_holes=False):
+        """The concave hull of each geometry (`ST_ConcaveHull`).
+
+        `ratio` runs from 0 (the tightest hull) to 1 (the convex hull), as in
+        GeoPandas. Only GeoPandas' default `allow_holes=False` is supported.
+        """
+        if allow_holes:
+            raise NotImplementedError(
+                "concave_hull() supports allow_holes=False only: the engine's "
+                "concave hull has no holes"
+            )
+        ratio = self._parameter(
+            ratio, "concave_hull", "ratio", (lambda x: 0 <= x <= 1, "between 0 and 1")
+        )
+        return self._geo(self._expr.geo.concave_hull(ratio))
+
+    def segmentize(self, max_segment_length):
+        """Add vertices so that no segment is longer than `max_segment_length`
+        (`ST_Segmentize`); an infinite length adds none, as in GeoPandas.
+
+        Two differences from GeoPandas, where GEOS does more than densify: an
+        invalid polygon is densified as it is rather than repaired, and a
+        multi-line with one part stays multi-part rather than becoming a
+        single line. On a geography column the length is in meters, along
+        great circles.
+        """
+        if not isinstance(max_segment_length, Series):
+            value = _numeric_value(max_segment_length)
+            if isinstance(value, numbers.Real) and value == math.inf:
+                return self._geo(self._expr)
+        length = self._parameter(
+            max_segment_length,
+            "segmentize",
+            "max_segment_length",
+            (lambda x: x > 0, "positive"),
+        )
+        if not isinstance(max_segment_length, Series):
+            return self._geo(self._expr.geo.segmentize(length))
+        # Row by row, the engine refuses an infinite length, so those rows
+        # get a missing length instead, and keep their geometry.
+        infinite = (length == lit(math.inf)).funcs.coalesce(lit(False))
+        finite = _choose(~infinite, length, lit(pa.scalar(None, pa.float64())))
+        segmented = self._expr.geo.segmentize(finite)
+        original = self._expr.geo.as_binary()
+        return self._geo(self._replace_where(infinite, original, segmented))
+
+    def reverse(self):
+        """Each geometry with its vertices in reverse order (`ST_Reverse`)."""
+        return self._geo(self._expr.geo.reverse())
+
+    def set_precision(self, grid_size, mode="valid_output"):
+        """Snap each geometry's coordinates to a grid of `grid_size`
+        (`ST_ReducePrecision`); 0 leaves the coordinates as they are.
+
+        Only GeoPandas' default `mode="valid_output"` is supported. As in
+        GeoPandas, an invalid geometry may raise (when the result is
+        computed), or come back invalid, or collapse to an empty one.
+        """
+        if mode not in ("valid_output", 0):
+            raise NotImplementedError(
+                f"set_precision() supports mode='valid_output' only, got {mode!r}"
+            )
+        grid_size = self._parameter(grid_size, "set_precision", "grid_size")
+        return self._geo(self._expr.geo.reduce_precision(grid_size))
+
+    def line_merge(self, directed=False):
+        """Each geometry's lines, merged into as few lines as possible
+        (`ST_LineMerge`).
+
+        A polygon's rings merge as lines, and other parts (the points of a
+        collection) are left out. A geometry with no lines or rings merges to
+        an empty geometry collection, as in GeoPandas, empty input included
+        (the engine keeps an empty input's type). Only GeoPandas' default
+        `directed=False` is supported.
+        """
+        import shapely
+
+        if directed:
+            raise NotImplementedError(
+                "line_merge() supports directed=False only: the engine merges "
+                "lines regardless of their direction"
+            )
+        merged = self._expr.geo.line_merge()
+        return self._geo(self._empty_as(merged, shapely.GeometryCollection()))
+
+    def force_2d(self):
+        """Each geometry without Z or M values (`ST_Force2D`)."""
+        return self._geo(self._expr.geo.force2d())
+
+    def force_3d(self, z=0):
+        """Each geometry with Z values (`ST_Force3D`): `z` where it has none.
+
+        `z` is a number or a numeric `Series` of this frame; NaN is refused,
+        as in GeoPandas. A geometry that has Z keeps its values, and M values
+        are dropped. GeoPandas leaves a geometry with M but no Z as it is, and
+        replaces the Z values of one with both.
+        """
+        z = self._parameter(z, "force_3d", "z", nan=False)
+        return self._geo(self._expr.geo.force3d(z))
+
+    def get_geometry(self, index):
+        """The part at `index` of each geometry (`ST_GeometryN`), counting
+        from 0, or back from the end when negative, as in GeoPandas.
+
+        A single-part geometry is its own part 0; missing where there is no
+        such part. `index` is an integer or an integer `Series` of this frame.
+        """
+        # From the end, the position counts back from the number of parts as
+        # GeoPandas counts them (a single-part geometry has one, even empty).
+        count = self.count_geometries()._expr.cast(pa.int64())
+        one = lit(1)
+        if isinstance(index, Series):
+            position = _operand(self._df, index)
+            if not pa.types.is_integer(index._dtype()):
+                raise TypeError(
+                    f"get_geometry() index must be an integer or an integer "
+                    f"Series of this frame, got a Series of {index._dtype()}"
+                )
+            position = position.cast(pa.int64())
+            forward = (position >= lit(0)).funcs.coalesce(lit(True))
+            n = _choose(forward, position + one, count + position + one)
+        else:
+            _operand(self._df, index)
+            value = _numeric_value(index)
+            if not isinstance(value, numbers.Integral) or isinstance(value, bool):
+                raise TypeError(
+                    f"get_geometry() index must be an integer or an integer "
+                    f"Series of this frame, got {type(index).__name__}"
+                )
+            n = lit(int(value) + 1) if value >= 0 else count + lit(int(value) + 1)
+        return self._geo(self._expr.geo.geometry_n(n))
 
     def explode(self, ignore_index=False, index_parts=False):
         """One element per part of each multi-part geometry, as in GeoPandas.
@@ -1987,9 +2302,37 @@ class GeoSeries(Series):
         other_expr = self._other(other)
         # Two empty geometries are equal, whatever their types, as in
         # GeoPandas; the engine says they are not.
-        both_empty = self._expr.geo.is_empty() & other_expr.geo.is_empty()
+        both_empty = _empty(self._expr) & _empty(other_expr)
         expr = self._expr.geo.equals(other_expr) | both_empty
         return Series(self._df, expr.funcs.coalesce(lit(False)), "geom_equals")
+
+    def relate(self, other, align=None):
+        """The DE-9IM matrix of each geometry with `other` (`ST_Relate`), as
+        a 9-character string; missing where either side is missing."""
+        _check_align(align)
+        expr = self._expr.geo.relate(self._other(other))
+        return Series(self._df, expr, "relate")
+
+    def relate_pattern(self, other, pattern, align=None):
+        """Whether each geometry's DE-9IM matrix with `other` matches
+        `pattern` (`ST_Relate`); False where either side is missing.
+
+        `pattern` is 9 characters, each one of `T`, `F`, `*`, `0`, `1`, `2`
+        (either case), as in GeoPandas.
+        """
+        _check_align(align)
+        if (
+            not isinstance(pattern, str)
+            or len(pattern) != 9
+            or set(pattern.upper()) - set("TF*012")
+        ):
+            # Checked here: GEOS would only refuse it once computed.
+            raise ValueError(
+                f"relate_pattern() pattern must be 9 characters of T, F, *, 0, 1, "
+                f"or 2, got {pattern!r}"
+            )
+        expr = self._expr.geo.relate(self._other(other), lit(pattern))
+        return Series(self._df, expr.funcs.coalesce(lit(False)), "relate_pattern")
 
     def dwithin(self, other, distance, align=None):
         """Whether each geometry is within `distance` of `other` (`ST_DWithin`).
@@ -2038,6 +2381,33 @@ class GeoSeries(Series):
         other_expr = self._other(other)
         return Series(self._df, self._expr.geo.distance(other_expr), "distance")
 
+    def hausdorff_distance(self, other, align=None, densify=None):
+        """The Hausdorff distance from each geometry to `other`
+        (`ST_HausdorffDistance`).
+
+        `densify`, a fraction in (0, 1], splits each segment into equal parts
+        of at most that fraction of its length first, as in GeoPandas.
+        Missing where either side is missing or empty, as in GeoPandas.
+        """
+        _check_align(align)
+        other_expr = self._other(other)
+        if densify is None:
+            expr = self._expr.geo.hausdorff_distance(other_expr)
+        else:
+            value = _numeric_value(densify)
+            if (
+                not isinstance(value, numbers.Real)
+                or isinstance(value, bool)
+                or not 0 < value <= 1
+            ):
+                # Checked here: GEOS would only refuse it once computed.
+                raise ValueError(
+                    f"hausdorff_distance() densify must be a fraction in (0, 1], "
+                    f"got {densify!r}"
+                )
+            expr = self._expr.geo.hausdorff_distance(other_expr, float(value))
+        return Series(self._df, expr, "hausdorff_distance")
+
     def intersection(self, other, align=None):
         """The intersection of each geometry with `other` (`ST_Intersection`)."""
         _check_align(align)
@@ -2057,6 +2427,18 @@ class GeoSeries(Series):
         """The symmetric difference of each geometry and `other` (`ST_SymDifference`)."""
         _check_align(align)
         return self._geo(self._expr.geo.sym_difference(self._other(other)))
+
+    def snap(self, other, tolerance, align=None):
+        """Each geometry with its vertices snapped to `other`'s within
+        `tolerance` (`ST_Snap`).
+
+        `tolerance` is a number or a numeric `Series` of this frame. An empty
+        geometry stays as it is, where GeoPandas (GEOS) can give a 3D empty,
+        or one of another type (`POLYGON EMPTY` becomes `LINEARRING Z EMPTY`).
+        """
+        _check_align(align)
+        tolerance = self._parameter(tolerance, "snap", "tolerance")
+        return self._geo(self._expr.geo.snap(self._other(other), tolerance))
 
     # -- serialization and CRS --------------------------------------------
 
