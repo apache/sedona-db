@@ -445,6 +445,9 @@ impl SedonaContext {
         // Always register default function set
         out.register_function_set(sedona_functions::register::default_function_set());
 
+        // Use geoarrow-c's fast WKT/WKB parsers and Ryu-backed WKT writer.
+        out.register_scalar_kernels(sedona_geoarrow_c::register::scalar_kernels().into_iter())?;
+
         // Register geos scalar kernels if built with geos support
         #[cfg(feature = "geos")]
         out.register_scalar_kernels(sedona_geos::register::scalar_kernels().into_iter())?;
@@ -1508,11 +1511,38 @@ mod tests {
             .await?;
         assert_batches_eq!(
             [
-                "+--------------+",
-                "| geom         |",
-                "+--------------+",
-                "| POINT(30 10) |",
-                "+--------------+",
+                "+---------------+",
+                "| geom          |",
+                "+---------------+",
+                "| POINT (30 10) |",
+                "+---------------+",
+            ],
+            &batches
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn st_astext_precision_sql() -> Result<()> {
+        let ctx = SedonaContext::new();
+
+        let batches = ctx
+            .sql(
+                "SELECT ST_AsText(\
+                    ST_GeomFromWKT('POINT (1.123456789 2.5)'), 6\
+                ) AS geom",
+            )
+            .await?
+            .collect()
+            .await?;
+        assert_batches_eq!(
+            [
+                "+----------------------+",
+                "| geom                 |",
+                "+----------------------+",
+                "| POINT (1.123457 2.5) |",
+                "+----------------------+",
             ],
             &batches
         );

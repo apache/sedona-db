@@ -35,9 +35,9 @@
   } while (0)
 #endif
 
-#define GEOARROW_THROW_NOT_OK(ERR, EXPR)                                             \
-  _GEOARROW_THROW_NOT_OK_IMPL(_GEOARROW_MAKE_NAME(errno_status_, __COUNTER__), EXPR, \
-                              #EXPR, ERR)
+#define GEOARROW_THROW_NOT_OK(ERR, EXPR) \
+  _GEOARROW_THROW_NOT_OK_IMPL(           \
+      _GEOARROW_MAKE_NAME(errno_status_, _GEOARROW_UNIQUE_SUFFIX), EXPR, #EXPR, ERR)
 
 namespace geoarrow {
 
@@ -2016,10 +2016,6 @@ struct MultiPolygonArray
 
 
 
-
-#ifndef GEOARROW_NATIVE_ENDIAN
-#define GEOARROW_NATIVE_ENDIAN 0x01
-#endif
 
 /// \defgroup hpp-binary-utility Binary iteration utilities
 ///

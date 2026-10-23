@@ -23,7 +23,7 @@ test_that("basic usage with sedonadb integration works", {
 
   expect_identical(
     as.data.frame(df_out),
-    data.frame(x = 1, y = 2, geom = "POINT(1 2)")
+    data.frame(x = 1, y = 2, geom = "POINT (1 2)")
   )
 })
 

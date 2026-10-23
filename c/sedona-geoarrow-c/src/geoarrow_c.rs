@@ -62,8 +62,21 @@ impl ArrayReader {
         visitor: &mut Visitor,
         error: &mut CError,
     ) -> Result<(), GeoArrowCError> {
+        self.visit_range(array, 0, array.len(), visitor, error)
+    }
+
+    /// Visit a range of an array of the appropriate type.
+    pub fn visit_range(
+        &mut self,
+        array: &ArrayRef,
+        offset: usize,
+        length: usize,
+        visitor: &mut Visitor,
+        error: &mut CError,
+    ) -> Result<(), GeoArrowCError> {
         let (ffi_array, _) = arrow_array::ffi::to_ffi(&array.to_data())?;
-        let array_len = array.len().try_into()?;
+        let offset = offset.try_into()?;
+        let length = length.try_into()?;
 
         unsafe {
             error.reset();
@@ -74,7 +87,7 @@ impl ArrayReader {
 
             visitor.set_error(error);
             let code =
-                SedonaDBGeoArrowArrayReaderVisit(self.ptr_mut(), 0, array_len, visitor.ptr_mut());
+                SedonaDBGeoArrowArrayReaderVisit(self.ptr_mut(), offset, length, visitor.ptr_mut());
             visitor.reset_error();
 
             error.msg_not_ok(code)?;
@@ -126,6 +139,16 @@ impl ArrayWriter {
 
     fn ptr_mut(&mut self) -> *mut GeoArrowArrayWriter {
         &mut self.inner
+    }
+
+    /// Set the number of digits after the decimal point for WKT output.
+    pub fn set_precision(&mut self, precision: i32) -> Result<(), GeoArrowCError> {
+        let code = unsafe { SedonaDBGeoArrowArrayWriterSetPrecision(self.ptr_mut(), precision) };
+        if code == 0 {
+            Ok(())
+        } else {
+            Err(GeoArrowCError::Code(code))
+        }
     }
 
     /// Create a reference to the internal visitor pointing to this writer

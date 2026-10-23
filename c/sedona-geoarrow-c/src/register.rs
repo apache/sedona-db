@@ -14,19 +14,25 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-use sedona_expr::scalar_udf::ScalarKernelRef;
+use sedona_expr::{item_crs::ItemCrsKernel, scalar_udf::ScalarKernelRef};
 
 use crate::kernels::{
-    st_astext_impl, st_geogfromwkb_impl, st_geogfromwkt_impl, st_geomfromwkb_impl,
-    st_geomfromwkt_impl,
+    st_astext_impl, st_astext_precision_impl, st_geogfromwkb_impl, st_geogfromwkt_impl,
+    st_geomfromwkb_impl, st_geomfromwkt_impl,
 };
 
-pub fn scalar_kernels() -> Vec<(&'static str, ScalarKernelRef)> {
+fn st_astext_kernels() -> Vec<ScalarKernelRef> {
+    let mut kernels = ItemCrsKernel::wrap_impl(vec![st_astext_impl()]);
+    kernels.extend(st_astext_precision_impl());
+    kernels
+}
+
+pub fn scalar_kernels() -> Vec<(&'static str, Vec<ScalarKernelRef>)> {
     vec![
-        ("st_astext", st_astext_impl()),
-        ("st_geogfromwkb", st_geogfromwkb_impl()),
-        ("st_geogfromwkt", st_geogfromwkt_impl()),
-        ("st_geomfromwkb", st_geomfromwkb_impl()),
-        ("st_geomfromwkt", st_geomfromwkt_impl()),
+        ("st_astext", st_astext_kernels()),
+        ("st_geogfromwkb", vec![st_geogfromwkb_impl()]),
+        ("st_geogfromwkt", vec![st_geogfromwkt_impl()]),
+        ("st_geomfromwkb", vec![st_geomfromwkb_impl()]),
+        ("st_geomfromwkt", vec![st_geomfromwkt_impl()]),
     ]
 }
