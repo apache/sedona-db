@@ -1733,14 +1733,16 @@ class GeoSeries(Series):
         geo = self._expr.geo
         multi = geo.geometry_type() == lit("ST_MultiLineString")
         linear = self._is_line() | multi
-        # An empty line: the whole geometry has no coordinates, or a
-        # simplification without tolerance, which leaves every other part
-        # (degenerate ones included), drops one.
-        parts = geo.num_geometries()
-        empty_part = _empty(self._expr) | (
-            geo.simplify(0.0).geo.num_geometries() < parts
-        )
-        closed = geo.is_closed() & linear & ~empty_part
+        # An empty line: a line with no coordinates, or a line of a
+        # multi-line that a planar simplification without tolerance drops.
+        # That drops nothing else, as every line keeps its two end points,
+        # however degenerate; a geography's spherical simplification can drop
+        # a degenerate line (one that doubles back, or has no length), so a
+        # geography's lines are simplified as planar ones.
+        planar = geo.to_geometry().geo if self._is_geography() else geo
+        dropped = planar.simplify(0.0).geo.num_geometries() < geo.num_geometries()
+        empty_line = _empty(self._expr) | (multi & dropped)
+        closed = geo.is_closed() & linear & ~empty_line
         return self._flag(closed, "is_closed")
 
     @property
