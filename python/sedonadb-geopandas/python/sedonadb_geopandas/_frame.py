@@ -28,6 +28,7 @@ from shapely.geometry.base import BaseGeometry
 from sedonadb_geopandas._series import (
     GeoSeries,
     Series,
+    _geometry_from_wkb,
     _same_crs,
     is_scalar,
     normalize_scalar,
@@ -201,13 +202,7 @@ def _explode_parts(df, column):
         member, staged[dump]["geom"].cast(pa.binary())
     )
     # WKB carries neither the spatial kind nor the CRS: both are restored.
-    part = from_wkb(wkb)
-    if crs is not None:
-        part = part.funcs.st_setcrs(ctx.lit(crs.to_json()))
-    elif spherical:
-        # The geography constructor assigns OGC:CRS84; SRID 0 clears it, as
-        # the column had no CRS.
-        part = part.geo.set_srid(ctx.lit(0))
+    part = _geometry_from_wkb(wkb, spherical, crs, ctx)
     return staged.select(*[staged[name] for name in others], part.alias(column))
 
 
@@ -568,6 +563,105 @@ class GeoDataFrame:
             )
         return GeoDataFrame(self._df.limit(n), self._geometry_name)
 
+    def groupby(
+        self,
+        by=None,
+        *,
+        level=None,
+        as_index=True,
+        sort=True,
+        group_keys=True,
+        observed=None,
+        dropna=True,
+    ):
+        """Group the rows by `by` (a column name, a Series of this frame, or a
+        list of them), as pandas does, to aggregate each group.
+
+        As in pandas, rows with a missing key are dropped unless
+        `dropna=False`, and groups are sorted by key unless `sort=False`; keys
+        compare as pandas compares them (NaN and None are one key, as are
+        -0.0 and 0.0). There is no index to hold the keys, so they are
+        columns of the result whatever `as_index` says. Only the groups that
+        occur are kept (`observed=True`).
+        """
+        from sedonadb_geopandas._groupby import GroupBy
+
+        if level is not None:
+            raise NotImplementedError("groupby() groups by columns: there is no index")
+        if by is None:
+            raise TypeError("You have to supply one of 'by' and 'level'")
+        keys = []
+        for i, key in enumerate(by if isinstance(by, list) else [by]):
+            if isinstance(key, str):
+                if key not in self.columns:
+                    raise KeyError(key)
+                keys.append((key, self[key]))
+            elif isinstance(key, Series):
+                if not self._accepts(key):
+                    raise ValueError(
+                        "Cannot group by a Series that comes from a different "
+                        "DataFrame: there is no row alignment."
+                    )
+                name = key._name if key._name is not None else f"key_{i}"
+                keys.append((name, type(key)(self._df, key._expr, name)))
+            else:
+                raise NotImplementedError(
+                    f"groupby() groups by column names or Series of this frame, "
+                    f"not a {type(key).__name__}"
+                )
+        return GroupBy(self, keys, sort=sort, dropna=dropna)
+
+    def merge(
+        self,
+        right,
+        how="inner",
+        on=None,
+        left_on=None,
+        right_on=None,
+        left_index=False,
+        right_index=False,
+        sort=False,
+        suffixes=("_x", "_y"),
+        copy=None,
+        indicator=False,
+        validate=None,
+    ):
+        """Join `right` (a frame, or a pandas DataFrame) on columns, as pandas
+        does.
+
+        `how` is "inner", "left", "right", "outer", or "cross"; the keys are
+        `on` (the columns both frames have, by default) or `left_on` and
+        `right_on`. As in pandas, and unlike SQL, a missing key matches a
+        missing key (NaN included), and -0.0 matches 0.0. A key both frames
+        share appears once, holding the left's value where there is one;
+        other columns both have take `suffixes`. `indicator` adds a column
+        saying where each row came from ("left_only", "right_only", "both"),
+        `validate` checks that keys are unique as it says (which computes),
+        and `sort` sorts by the keys. The active geometry is this frame's,
+        under its name in the result.
+
+        Without an index, rows don't keep this frame's order (`sort=True`
+        orders them by key), and `left_index`/`right_index` are not
+        supported.
+        """
+        from sedonadb_geopandas._relational import merge
+
+        return merge(
+            self,
+            right,
+            how=how,
+            on=on,
+            left_on=left_on,
+            right_on=right_on,
+            left_index=left_index,
+            right_index=right_index,
+            sort=sort,
+            suffixes=suffixes,
+            copy=copy,
+            indicator=indicator,
+            validate=validate,
+        )
+
     def copy(self, deep=True):
         """A copy of this frame, as in pandas.
 
@@ -737,15 +831,9 @@ class GeoDataFrame:
             raise ValueError("drop_duplicates() needs at least one column to compare")
         keys, exprs = [], []
         for name in names:
-            column = self[name]
-            if isinstance(column, GeoSeries):
-                key = column._expr.geo.as_binary()
-            else:
-                key = column._decoded()
-                if column._is_floating():
-                    # The engine groups NaN apart from null and -0.0 apart
-                    # from 0.0; pandas' duplicate test holds them equal.
-                    key = key.funcs.nanvl(lit(None)) + lit(0.0)
+            # As pandas' duplicate test compares them: NaN equal to a missing
+            # value, -0.0 to 0.0, and geometries by WKB.
+            key, _ = self[name]._key()
             keys.append(_unused_name(self._df, f"__{name}", reserved=keys))
             exprs.append(key.alias(keys[-1]))
         # One projection for all keys: one per key makes the plan, and the

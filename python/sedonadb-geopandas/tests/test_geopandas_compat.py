@@ -2097,26 +2097,24 @@ def test_int64_min_duration_tick_is_missing():
     assert pd.isna(divided.tolist()[0])
 
 
-def test_non_identity_float_duration_arithmetic_matches_pandas():
-    # Routing every integral-valued float through exact integer arithmetic
-    # silently changed in-range results: pandas computes `* 3.0` in float64,
-    # losing sub-tick precision above 2**53, and matching pandas there
-    # matters more than improving on it. The identities ±1.0 stay exact —
-    # pandas loses precision even on those above 2**53, a corruption of an
-    # operation that should return its input; that one this layer does not
-    # reproduce.
-
-    pdf = pd.DataFrame({"t": [pd.Timedelta(2**53 + 1)]})
+def test_float_duration_arithmetic_is_exact_for_integral_floats():
+    # An integral-valued float multiplies and divides a duration exactly, as
+    # the same integer does (and as pandas does, as of pandas 3.1): float64
+    # would lose sub-tick precision above 2**53, even on the identities ±1.0.
+    # Any other float computes in float64, as in pandas.
+    pdf = pd.DataFrame({"t": [pd.Timedelta(2**53 + 1), pd.Timedelta(-7)]})
     gdf = GeoDataFrame(sgpd.default_context().create_data_frame(pdf))
-    for operand in (3.0, 1 / 3):
-        assert (gdf["t"] * operand).to_pandas().tolist()[0] == (
-            pdf["t"] * operand
-        ).tolist()[0]
-        assert (gdf["t"] / operand).to_pandas().tolist()[0] == (
-            pdf["t"] / operand
-        ).tolist()[0]
-    assert (gdf["t"] * 1.0).to_pandas().tolist()[0] == pd.Timedelta(2**53 + 1)
-    assert (gdf["t"] * -1.0).to_pandas().tolist()[0] == pd.Timedelta(-(2**53) - 1)
+    for integral in (3.0, -3.0, 1.0, -1.0, 2.0):
+        exact = int(integral)
+        assert (gdf["t"] * integral).to_pandas().tolist() == (pdf["t"] * exact).tolist()
+        assert (gdf["t"] / integral).to_pandas().tolist() == (pdf["t"] / exact).tolist()
+    for fractional in (1 / 3, 2.5, 0.5):
+        assert (gdf["t"] * fractional).to_pandas().tolist() == (
+            pdf["t"] * fractional
+        ).tolist()
+        assert (gdf["t"] / fractional).to_pandas().tolist() == (
+            pdf["t"] / fractional
+        ).tolist()
 
 
 def test_negative_float_overflow_and_exact_boundary():

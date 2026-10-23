@@ -187,6 +187,69 @@ def _logical_type(dtype):
     return dtype
 
 
+def _matching_key(value, dtype):
+    """`value` (an expression of logical type `dtype`) as a key that compares
+    as pandas compares values, with the type it then has: a float's NaN is
+    missing and -0.0 is 0.0, where the engine's float ordering tells both
+    apart. For grouping, deduplicating, and joining on keys."""
+    if pa.types.is_floating(dtype):
+        return value.funcs.nanvl(lit(None)) + lit(0.0), pa.float64()
+    return value, dtype
+
+
+def _placeholder(dtype):
+    """A value of `dtype` to stand in for a missing key."""
+    if pa.types.is_boolean(dtype):
+        return pa.scalar(False)
+    if (
+        pa.types.is_string(dtype)
+        or pa.types.is_large_string(dtype)
+        or pa.types.is_string_view(dtype)
+    ):
+        return pa.scalar("", dtype)
+    if pa.types.is_binary(dtype) or pa.types.is_large_binary(dtype):
+        return pa.scalar(b"", dtype)
+    for source in (pa.int64(), pa.int32()):
+        try:
+            return pa.array([0], source).cast(dtype)[0]
+        except (pa.ArrowInvalid, pa.ArrowNotImplementedError):
+            continue
+    raise TypeError(f"Values of type {dtype} can't be compared as keys")
+
+
+def _key_columns(value, dtype, key, missing):
+    """Columns `key` and `missing` holding a matching key `value` (of type
+    `dtype`) so that keys compare as plain equality, a missing key matching a
+    missing one as pandas has it: the key with a placeholder for a missing
+    value, and whether it was missing. Plain equality keeps a join a hash
+    join, and lets per-group results be joined back on the keys."""
+    if pa.types.is_null(dtype):
+        stand_in = lit(False)  # only missing keys, all alike
+    else:
+        stand_in = value.funcs.coalesce(lit(_placeholder(dtype)))
+    return [stand_in.alias(key), value.is_null().alias(missing)]
+
+
+def _with_crs(value, geography, crs, ctx):
+    """A geometry (or geography) `value` with `crs` (a CRS from a column's
+    type), or with none: the geography constructor assigns CRS84, which SRID
+    0 clears without touching the value."""
+    if crs is not None:
+        return value.funcs.st_setcrs(ctx.lit(crs.to_json()))
+    if geography:
+        return value.funcs.st_setsrid(ctx.lit(0))
+    return value
+
+
+def _geometry_from_wkb(wkb, geography, crs, ctx):
+    """A geometry, or geography if `geography`, built from `wkb`, with `crs`:
+    WKB carries neither the spatial kind nor the CRS. Built from those alone,
+    not from a frame, so it applies to any frame's columns, aggregates
+    included."""
+    value = wkb.funcs.st_geogfromwkb() if geography else wkb.funcs.st_geomfromwkb()
+    return _with_crs(value, geography, crs, ctx)
+
+
 def _numeric_value(other):
     """Resolve an operand to its numeric payload, unwrapping supported wrappers.
 
@@ -461,6 +524,14 @@ class Series:
     def _stored_dtype(self):
         """This expression's Arrow type as stored, encodings included."""
         return pa.schema(self._df.select(self._expr.alias("x")).schema).field("x").type
+
+    def _key(self):
+        """This column as a key that compares as pandas compares values, with
+        its type (see `_matching_key`)."""
+        stored = self._stored_dtype()
+        dtype = _logical_type(stored)
+        value = self._expr if dtype == stored else self._expr.cast(dtype)
+        return _matching_key(value, dtype)
 
     def _decoded(self):
         """This expression with any dictionary or run-end encoding cast away.
@@ -922,35 +993,68 @@ class Series:
         dtype = self._dtype()
         if isinstance(dtype, pa.ExtensionType):
             raise NotImplementedError(f"{method}() is not supported for geometry")
-        values = self._valued()
-        if pa.types.is_floating(dtype):
-            # -0.0 and 0.0 are one value to pandas, two to the engine's
-            # float ordering; adding 0.0 turns -0.0 into 0.0.
-            values = (values + lit(0.0)).cast(dtype)
+        # As keys compare, in the column's own type.
+        values, key_type = _matching_key(self._decoded(), dtype)
+        if key_type != dtype:
+            values = values.cast(dtype)
         return self._df.select(values.alias("x"))
 
-    def sum(self):
-        """The sum of the values, skipping missing ones; 0 when there are none.
+    def _aggregate(self, func, ddof=1, min_count=0):
+        """The aggregate expression for the reduction `func` of this column,
+        skipping missing values as pandas does, and a function finishing its
+        result (identity but for geometry).
+
+        Shared by this column's own reductions and by grouped aggregation.
+        """
+        if func == "sum":
+            total = self._numeric("sum").funcs.sum()
+            if min_count > 0:
+                # Missing, as in pandas, with fewer than min_count values.
+                enough = self._valued().funcs.count() >= lit(min_count)
+                return _choose(enough, total, lit(None)), _same
+            return total.funcs.coalesce(lit(0)), _same
+        if func in ("mean", "median"):
+            name = "avg" if func == "mean" else "median"
+            values = self._numeric(func).cast(pa.float64())
+            return getattr(values.funcs, name)(), _same
+        if func == "std":
+            return self._spread("std", ddof, "stddev", "stddev_pop"), _same
+        if func == "var":
+            return self._spread("var", ddof, "var_samp", "var_pop"), _same
+        if func in ("min", "max"):
+            return getattr(self._ordered(func).funcs, func)(), _same
+        if func in ("first", "last"):
+            # A value that is not missing: with no row order to take the first
+            # or last by, the smallest or the largest.
+            extreme = "min" if func == "first" else "max"
+            return getattr(self._ordered(func).funcs, extreme)(), _same
+        if func == "count":
+            return self._valued().funcs.count(), _same
+        raise ValueError(f"{func!r} is not a supported aggregation")
+
+    def sum(self, min_count=0):
+        """The sum of the values, skipping missing ones; 0 when there are none
+        (missing with fewer than `min_count` values).
 
         Computes the result. As in pandas, booleans count as 0 and 1.
         """
-        return self._reduce(self._numeric("sum").funcs.sum().funcs.coalesce(lit(0)))
+        return self._reduce(self._aggregate("sum", min_count=min_count)[0])
 
     def mean(self):
         """The mean of the values, skipping missing ones; NaN when there are none."""
-        return self._reduce(self._numeric("mean").cast(pa.float64()).funcs.avg())
+        return self._reduce(self._aggregate("mean")[0])
 
     def median(self):
         """The median of the values, skipping missing ones; NaN when there are none."""
-        return self._reduce(self._numeric("median").cast(pa.float64()).funcs.median())
+        return self._reduce(self._aggregate("median")[0])
 
     def std(self, ddof=1):
         """The standard deviation, skipping missing values (`ddof` 1 or 0)."""
-        return self._reduce(self._spread("std", ddof, "stddev", "stddev_pop"))
+        return self._reduce(self._aggregate("std", ddof=ddof)[0])
 
     def var(self, ddof=1):
         """The variance, skipping missing values (`ddof` 1 or 0)."""
-        return self._reduce(self._spread("var", ddof, "var_samp", "var_pop"))
+        return self._reduce(self._aggregate("var", ddof=ddof)[0])
 
     def _spread(self, method, ddof, sample, population):
         if ddof not in (0, 1):
@@ -969,12 +1073,12 @@ class Series:
         return self._extreme("max")
 
     def _extreme(self, method):
-        result = self._reduce(getattr(self._ordered(method).funcs, method)())
+        result = self._reduce(self._aggregate(method)[0])
         return math.nan if result is None else result
 
     def count(self):
         """The number of values that are not missing (NaN counts as missing)."""
-        return self._reduce(self._valued().funcs.count())
+        return self._reduce(self._aggregate("count")[0])
 
     def quantile(self, q=0.5, interpolation="linear"):
         """The `q` quantile(s), skipping missing values, interpolated linearly.
@@ -1325,6 +1429,10 @@ def _fail_where(condition, message):
     flag = passing.funcs.nullif(lit(True)).cast(pa.string())
     text = flag.funcs.replace(lit("false"), lit(message))
     return text.funcs.coalesce(lit("0")).cast(pa.int64())
+
+
+def _same(value):
+    return value
 
 
 def _choose(keep, chosen, other):
@@ -1803,13 +1911,16 @@ class GeoSeries(Series):
             return expr
         return self._as_column_kind(expr, own_crs=projected.field("x").type.crs)
 
+    def _key(self):
+        """A geometry compares as a key by its WKB, as in GeoPandas."""
+        return self._expr.geo.as_binary(), pa.binary()
+
     def _as_column_kind(self, expr, own_crs):
         """A geometry scalar with this column's spatial kind and a CRS.
 
         `own_crs` is the CRS the scalar carries itself, if any; otherwise this
         column's applies (or none, if the column has none).
         """
-        ctx = self._df._ctx
         geography = self._is_geography()
         scalar = self._df.select(expr.alias("x")).schema.field("x").type
         scalar_geography = "SPHERICAL" in str(getattr(scalar, "edge_type", "")).upper()
@@ -1818,12 +1929,7 @@ class GeoSeries(Series):
             # synthesizes CRS84, so the CRS is always applied explicitly below.
             expr = expr.geo.as_binary().funcs.st_geogfromwkb()
         crs = own_crs if own_crs is not None else self.crs
-        if crs is not None:
-            return expr.funcs.st_setcrs(ctx.lit(crs.to_json()))
-        if geography:
-            # SRID 0 clears the synthesized CRS without touching the value.
-            return expr.funcs.st_setsrid(ctx.lit(0))
-        return expr
+        return _with_crs(expr, geography, crs, self._df._ctx)
 
     def _predicate(self, name, other, align=None):
         """A GeoPandas binary predicate: False where either side is missing."""
@@ -2069,6 +2175,28 @@ class GeoSeries(Series):
         wkb = _choose(keep, self._expr.geo.as_binary().cast(pa.binary()), replacement)
         rebuilt = self._as_column_kind(wkb.funcs.st_geomfromwkb(), own_crs=None)
         return self._geo(rebuilt)
+
+    def _aggregate(self, func, ddof=1, min_count=0):
+        """As for any column, for geometry: `count`, and `first`/`last`, which
+        take the smallest or largest WKB (a geometry that is not missing, as
+        there is no row order) and rebuild it with this column's spatial kind
+        and CRS once aggregated."""
+        if func == "count":
+            return self._expr.funcs.count(), _same
+        if func not in ("first", "last"):
+            # Refused as for any column that holds no numbers.
+            return super()._aggregate(func, ddof=ddof, min_count=min_count)
+        extreme = "min" if func == "first" else "max"
+        wkb = getattr(self._expr.geo.as_binary().funcs, extreme)()
+        ctx = self._df._ctx
+        geography, crs = self._is_geography(), self.crs
+
+        def rebuild(value):
+            # From the aggregated WKB, not this column's frame, which has no
+            # aggregate result to resolve it against.
+            return _geometry_from_wkb(value, geography, crs, ctx)
+
+        return wkb, rebuild
 
     def _replacement(self, other, method):
         """`other` as WKB, to put in this column, with its type (None if

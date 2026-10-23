@@ -285,7 +285,7 @@ def test_rs_value_matches_rasterio(con):
     )
 
     # Map pixel-space positions to world coordinates via the shared affine.
-    xs, ys = zip(*(affine * (u, v) for u, v in pixel_points))
+    xs, ys = zip(*(affine @ (u, v) for u, v in pixel_points))
 
     # rasterio reference: a real GDAL read of the same array (no CRS).
     with MemoryFile() as mem:
@@ -581,7 +581,7 @@ def test_rs_values_matches_rasterio(con):
     )
 
     # Map pixel-space positions to world coordinates via the shared affine.
-    xs, ys = zip(*(affine * (u, v) for u, v in pixel_points))
+    xs, ys = zip(*(affine @ (u, v) for u, v in pixel_points))
 
     # rasterio reference: a real GDAL read of the same array (no CRS).
     with MemoryFile() as mem:
