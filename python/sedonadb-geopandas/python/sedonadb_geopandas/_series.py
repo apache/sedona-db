@@ -1744,42 +1744,21 @@ class GeoSeries(Series):
 
     @property
     def has_z(self):
-        """Whether each geometry has Z coordinates; False if missing.
+        """Whether each geometry has Z coordinates (`ST_HasZ`); False if missing.
 
-        As in GeoPandas, a collection has Z when any of its members does; see
-        `_has_dimension`.
+        As in GeoPandas, a collection has Z when any of its members does,
+        empty or not.
         """
-        return self._flag(self._has_dimension("z"), "has_z")
+        return self._flag(self._expr.geo.has_z(), "has_z")
 
     @property
     def has_m(self):
-        """Whether each geometry has M values; False if missing.
+        """Whether each geometry has M values (`ST_HasM`); False if missing.
 
-        As in GeoPandas, a collection has M when any of its members does; see
-        `_has_dimension`.
+        As in GeoPandas, a collection has M when any of its members does,
+        empty or not.
         """
-        return self._flag(self._has_dimension("m"), "has_m")
-
-    def _has_dimension(self, dimension):
-        """Whether any coordinate of each geometry has Z (or M) values.
-
-        The engine's `ST_HasZ`/`ST_HasM` answer from a collection's first
-        member, so a Z (or M) value in a later one is found another way:
-        every coordinate without one is given NaN (`ST_Force3D` or
-        `ST_Force3DM`), and the largest value, which skips NaN, is a number
-        only where some coordinate has a value of its own. The engine's
-        answer still counts, for an empty geometry that carries the
-        dimension. Missed: a collection whose only such member is empty or
-        has only NaN values.
-        """
-        geo = self._expr.geo
-        nan = lit(math.nan)
-        if dimension == "z":
-            flagged, largest = geo.has_z(), geo.force3d(nan).geo.z_max()
-        else:
-            flagged, largest = geo.has_m(), geo.force3dm(nan).geo.m_max()
-        valued = ~largest.funcs.isnan().funcs.coalesce(lit(True))
-        return flagged | valued
+        return self._flag(self._expr.geo.has_m(), "has_m")
 
     def _is_line(self):
         """Whether each geometry is a single line (a ring reads as one)."""
