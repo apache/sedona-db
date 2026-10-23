@@ -80,6 +80,8 @@ pub fn default_function_set() -> FunctionSet {
         crate::st_isclosed::st_isclosed_udf,
         crate::st_iscollection::st_iscollection_udf,
         crate::st_isempty::st_isempty_udf,
+        crate::st_ispolygoncw::st_ispolygonccw_udf,
+        crate::st_ispolygoncw::st_ispolygoncw_udf,
         crate::st_knn::st_knn_udf,
         crate::st_makeenvelope::st_makeenvelope_udf,
         crate::st_makeline::st_makeline_udf,
