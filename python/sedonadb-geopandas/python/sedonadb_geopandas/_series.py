@@ -2353,10 +2353,8 @@ class GeoSeries(Series):
         """This geometry where it is not empty (see `_empty`), and missing
         where it is: for engine functions that fail on an empty geometry,
         where GeoPandas leaves it out or defines the result another way."""
-        present = (~_empty(self._expr)).funcs.coalesce(lit(False))
         missing = lit(pa.scalar(None, pa.binary()))
-        wkb = _choose(present, self._expr.geo.as_binary(), missing)
-        return _geometry_from_wkb(wkb, self._is_geography(), self.crs, self._df._ctx)
+        return self._replace_where(_empty(self._expr), missing, self._expr)
 
     def project(self, other, normalized=False, align=None):
         """The distance along each line to the point on it nearest `other`

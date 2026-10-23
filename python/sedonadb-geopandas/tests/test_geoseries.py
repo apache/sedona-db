@@ -812,6 +812,31 @@ def test_centroid_origin_leaves_collections_of_empty_parts(call):
     _assert_same_geometries(call(gdf.geometry), call(gs))
 
 
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda g: g.interpolate(0.5),
+        lambda g: g.rotate(30, origin="centroid"),
+    ],
+    ids=["interpolate", "centroid"],
+)
+def test_leaving_empties_out_keeps_a_wkb_view_column(call):
+    # ST_GeomFromWKB stores its WKB as a binary view, which the empty
+    # geometries left out must not be mixed with plain binary for.
+    wkts = ["LINESTRING (0 0, 2 0)", "LINESTRING EMPTY", "MULTILINESTRING (EMPTY)"]
+    values = ", ".join(f"('{w}')" for w in wkts) + ", (NULL)"
+    gdf = sgpd.GeoDataFrame(
+        sgpd.default_context().sql(
+            "SELECT ST_GeomFromWKB(ST_AsBinary(ST_GeomFromWKT(w))) AS g "
+            f"FROM (VALUES {values}) AS t(w)"
+        ),
+        geometry="g",
+    )
+    assert "View" in str(gdf._df.schema.field("g").type)
+    gs = gpd.GeoSeries.from_wkt([*wkts, None])
+    _assert_same_geometries(call(gdf.geometry), call(gs))
+
+
 def test_interpolate_of_a_multi_line_raises_when_computed():
     _, gdf = _geoseries(["MULTILINESTRING ((0 0, 1 0), (5 0, 6 0))"])
     result = gdf.geometry.interpolate(0.5)
