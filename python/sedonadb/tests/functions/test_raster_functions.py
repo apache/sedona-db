@@ -85,12 +85,14 @@ def test_rs_srid_from_wkt():
     )
 
 
-def test_rs_srid_from_authorityless_wkt_errors(con):
-    """A WKT with no authority code anywhere has no SRID to extract."""
-    with pytest.raises(Exception, match="SRID"):
-        con.sql(
-            f"SELECT RS_SRID(RS_SetCRS(RS_Example(), '{WKT_LCC_NO_AUTHORITY}'))"
-        ).to_arrow_table()
+def test_rs_srid_from_authorityless_wkt_is_zero(con):
+    """A WKT with no authority code anywhere is a valid, usable CRS but has no
+    integer SRID, so RS_SRID yields 0 (the same value as a missing CRS) rather
+    than erroring. RS_CRS still carries the full definition."""
+    result = con.sql(
+        f"SELECT RS_SRID(RS_SetCRS(RS_Example(), '{WKT_LCC_NO_AUTHORITY}')) AS srid"
+    ).to_arrow_table()
+    assert result["srid"][0].as_py() == 0
 
 
 def test_rs_ensureloaded(con, sedona_testing):
@@ -798,3 +800,97 @@ def test_rs_as_raster_sets_output_nodata(con, sedona_testing):
     expected = np.full((10, 10), 9, dtype="uint8")
     expected[0, 0] = 5
     np.testing.assert_array_equal(raster.bands[0].to_numpy(), expected)
+
+
+# Pixel functions over an OutDb raster (RS_FromPath) whose raster argument
+# already has a loader somewhere below it. The planner wraps the argument in
+# RS_EnsureLoaded regardless; the inner loader materialises the pixels and
+# the outer call passes them through. These shapes used to fail with
+# 'async functions should not be called directly'.
+
+
+@pytest.fixture()
+def grid_tiff(tmp_path):
+    """A 3x3 single-band GeoTIFF holding 1..9 row by row."""
+    pytest.importorskip("rasterio")
+    from sedonadb.raster_testing import write_geotiff
+
+    path = tmp_path / "grid.tif"
+    pixels = np.arange(1, 10, dtype="float64").reshape(1, 3, 3)
+    write_geotiff(path, pixels, bbox=(0.0, 0.0, 3.0, 3.0))
+    return str(path)
+
+
+def test_pixel_function_over_metadata_function_over_pixel_function(con, grid_tiff):
+    """RS_SetSRID neither reads pixels nor promises loaded output."""
+    sql = """
+        SELECT RS_Value(
+            RS_SetSRID(RS_SetValue(RS_FromPath($1), 1, 2, 2, 70), 4326), 2, 2, 1)
+    """
+    got = con.sql(sql, params=(grid_tiff,)).to_arrow_table().column(0)
+    assert got.to_pylist() == [70.0]
+
+
+def test_summary_stats_over_nodata_change_over_clip(con, grid_tiff):
+    """Pixels 2..9 remain once 1 is the nodata value."""
+    sql = """
+        SELECT RS_SummaryStats(
+            RS_SetBandNoDataValue(
+                RS_Clip(RS_FromPath($1), 1,
+                        ST_GeomFromText('POLYGON ((0 0, 3 0, 3 3, 0 3, 0 0))')),
+                1, 1),
+            'mean', 1)
+    """
+    got = con.sql(sql, params=(grid_tiff,)).to_arrow_table().column(0)
+    assert got.to_pylist() == [44.0 / 8.0]
+
+
+def test_pixel_function_with_loader_in_a_non_raster_argument(con, grid_tiff):
+    """The loader feeds only the nodata value (the width, 3); the raster that
+    reaches RS_Value is the unloaded RS_FromPath and still needs loading."""
+    sql = """
+        SELECT RS_Value(
+            RS_SetBandNoDataValue(
+                RS_FromPath($1), 1, RS_Width(RS_EnsureLoaded(RS_FromPath($1)))),
+            2, 2, 1)
+    """
+    got = con.sql(sql, params=(grid_tiff,)).to_arrow_table().column(0)
+    assert got.to_pylist() == [5.0]
+
+
+def test_pixel_function_in_a_case_branch_loads_only_its_rows(con, grid_tiff):
+    """A pixel function in a CASE branch is evaluated only for the rows that
+    reach it. The other row names a GeoTIFF that does not exist, so loading
+    it would fail: the CASE must stay lazy around the loader."""
+    got = con.sql(
+        """
+        SELECT CASE WHEN ok THEN RS_Value(RS_FromPath(path), 2, 2, 1) ELSE -1 END AS v
+        FROM (VALUES (true, $1), (false, '/nonexistent/missing.tif')) AS t(ok, path)
+        ORDER BY v
+        """,
+        params=(grid_tiff,),
+    ).to_arrow_table()
+    assert got["v"].to_pylist() == [-1.0, 5.0]
+
+
+def test_aggregate_over_pixel_function_across_partitions(con, grid_tiff):
+    """With several partitions the planner builds a partial and a final
+    aggregate stage carrying the same expressions. Only the partial stage
+    reads rows and loads rasters; the final stage reads partial state, where
+    the raster column does not exist."""
+    con.sql("SET datafusion.execution.target_partitions TO 4").execute()
+    sql = """
+        SELECT id, SUM(RS_Value(RS_FromPath(path), 2, 2, 1)) AS s
+        FROM (VALUES (1, $1), (1, $1), (2, $1)) AS t(id, path)
+        GROUP BY id
+        ORDER BY id
+    """
+    plan = con.sql("EXPLAIN " + sql, params=(grid_tiff,)).to_arrow_table()
+    physical = plan.column("plan").to_pylist()[1]
+    assert "mode=Partial" in physical, physical
+    assert "mode=Final" in physical, physical
+    assert physical.count("RasterBatchSplitExec") == 1, physical
+
+    got = con.sql(sql, params=(grid_tiff,)).to_arrow_table()
+    assert got["id"].to_pylist() == [1, 2]
+    assert got["s"].to_pylist() == [10.0, 5.0]

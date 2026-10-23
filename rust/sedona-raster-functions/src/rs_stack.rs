@@ -102,7 +102,10 @@ impl SedonaScalarKernel for RsStack {
                 .map(|r| r.get(i))
                 .collect::<std::result::Result<Vec<_>, _>>()?;
             let row: Vec<&dyn RasterRef> = row.iter().map(|r| r as &dyn RasterRef).collect();
-            stack(&mut builder, &row)?;
+            stack("RS_Stack", &mut builder, &row, &|k| match k {
+                0 => "the first raster".to_string(),
+                k => format!("raster {}", k + 1),
+            })?;
         }
 
         RasterExecutor::finish_over(args, Arc::new(builder.finish()?))
@@ -110,11 +113,17 @@ impl SedonaScalarKernel for RsStack {
 }
 
 /// Append one raster holding every band of `rasters`, in order, under the first
-/// raster's header.
-fn stack(builder: &mut RasterBuilder, rasters: &[&dyn RasterRef]) -> Result<()> {
+/// raster's header. `func` names the calling function in errors, and
+/// `label(k)` names the `k`th raster (e.g. "raster 2").
+pub(crate) fn stack(
+    func: &str,
+    builder: &mut RasterBuilder,
+    rasters: &[&dyn RasterRef],
+    label: &dyn Fn(usize) -> String,
+) -> Result<()> {
     let first = rasters[0];
     for (k, raster) in rasters.iter().enumerate().skip(1) {
-        check_same_grid(first, *raster, k + 1)?;
+        check_same_grid(func, first, *raster, &label(0), &label(k))?;
     }
 
     let (x_dim, y_dim) = (first.x_dim(), first.y_dim());
@@ -134,10 +143,11 @@ fn stack(builder: &mut RasterBuilder, rasters: &[&dyn RasterRef]) -> Result<()> 
                     d if d == from_x => Ok(x_dim),
                     d if d == from_y => Ok(y_dim),
                     d if d == x_dim || d == y_dim => exec_err!(
-                        "RS_Stack: band {} of raster {} has a non-spatial dimension named \
-                         '{d}', the name of one of the first raster's spatial dimensions",
+                        "{func}: band {} of {} has a non-spatial dimension named '{d}', the \
+                         name of one of {}'s spatial dimensions",
                         band_idx + 1,
-                        k + 1
+                        label(k),
+                        label(0)
                     ),
                     d => Ok(d),
                 })
@@ -157,21 +167,28 @@ fn stack(builder: &mut RasterBuilder, rasters: &[&dyn RasterRef]) -> Result<()> 
     Ok(())
 }
 
-/// Error unless `raster` (the `k`th argument) is on the first raster's grid:
-/// the same width, height, geotransform and CRS.
-fn check_same_grid(first: &dyn RasterRef, raster: &dyn RasterRef, k: usize) -> Result<()> {
+/// Error unless `raster` is on the `first` raster's grid: the same width,
+/// height, geotransform and CRS. `first_label` and `label` name the two in
+/// errors.
+fn check_same_grid(
+    func: &str,
+    first: &dyn RasterRef,
+    raster: &dyn RasterRef,
+    first_label: &str,
+    label: &str,
+) -> Result<()> {
     let (width, height) = (first.width()?, first.height()?);
     let (w, h) = (raster.width()?, raster.height()?);
     if (w, h) != (width, height) {
         return exec_err!(
-            "RS_Stack: raster {k} is {w} x {h}, but the first raster is {width} x {height}; \
-             every raster must be on the same grid"
+            "{func}: {label} is {w} x {h}, but {first_label} is {width} x {height}; every \
+             raster must be on the same grid"
         );
     }
     if raster.transform() != first.transform() {
         return exec_err!(
-            "RS_Stack: raster {k} has geotransform {:?}, but the first raster has {:?}; \
-             every raster must be on the same grid",
+            "{func}: {label} has geotransform {:?}, but {first_label} has {:?}; every raster \
+             must be on the same grid",
             raster.transform(),
             first.transform()
         );
@@ -186,8 +203,8 @@ fn check_same_grid(first: &dyn RasterRef, raster: &dyn RasterRef, k: usize) -> R
         };
     if !same_crs {
         return exec_err!(
-            "RS_Stack: raster {k} has a different CRS than the first raster; every raster must \
-             be on the same grid"
+            "{func}: {label} has a different CRS than {first_label}; every raster must be on \
+             the same grid"
         );
     }
     Ok(())

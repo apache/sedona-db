@@ -33,7 +33,11 @@ __all__ = ["connect", "options"]
 configure_proj("auto")
 configure_gdal("auto")
 
-# During interpreter shutdown, leave GDAL datasets open instead of closing them:
-# on Windows, closing a dataset while GDAL's library is being unloaded aborts the
-# process. Registered here so it runs before the extension is torn down.
-atexit.register(_lib.begin_gdal_shutdown)
+# From interpreter shutdown on, leave GDAL objects (e.g. datasets) unfreed
+# instead of closing them. This guards Windows process exit, which unloads GDAL's
+# library before the extension's thread-local destructors would close their
+# datasets and abort the process; a Python atexit callback is the latest hook
+# that reliably runs before that. GDAL itself keeps working, so atexit callbacks
+# that run after this one can still use SedonaDB. Registered here so it runs
+# before the extension is torn down.
+atexit.register(_lib.leak_gdal_objects_on_drop)
