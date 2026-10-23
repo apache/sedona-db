@@ -2379,19 +2379,18 @@ class GeoSeries(Series):
         (`ST_LineLocatePoint`), or that fraction of its length with
         `normalized=True`.
 
-        `other` is a point, scalar or a `GeoSeries` of this frame. As in
-        GeoPandas (GEOS), the normalized form is the distance over the
-        length, so NaN for a line of no length, and an empty line or point
-        gives NaN. A multi-line raises when the result is computed: the
-        engine locates points along single lines only.
+        `other` is a point, scalar or a `GeoSeries` of this frame. On a line
+        of no length, the point is at 0 either way, as current GEOS gives it
+        (older GEOS, and so GeoPandas with it, divided the distance by the
+        length, giving NaN normalized); an empty line or point gives NaN.
+        A multi-line raises when the result is computed: the engine locates
+        points along single lines only.
         """
         _check_align(align)
-        length = self._expr.geo.length()
         fraction = self._expr.geo.line_locate_point(self._other(other))
-        distance = fraction * length
         if normalized:
-            distance = distance / length
-        return Series(self._df, distance, "project")
+            return Series(self._df, fraction, "project")
+        return Series(self._df, fraction * self._expr.geo.length(), "project")
 
     def explode(self, ignore_index=False, index_parts=False):
         """One element per part of each multi-part geometry, as in GeoPandas.

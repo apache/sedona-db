@@ -780,8 +780,10 @@ def test_interpolate_of_a_multi_line_raises_when_computed():
 @pytest.mark.parametrize("operand", ["column", "scalar"])
 def test_project_matches_geopandas(normalized, operand):
     # The distance along each line to the point on it nearest the operand,
-    # or that over the length (NaN for a line of no length, as GEOS divides
-    # by it); NaN for an empty line or point and for a missing one.
+    # or that as a fraction of the length; NaN for an empty line or point and
+    # for a missing one. On a line of no length the point is at 0 either way,
+    # as current GEOS gives it; older GEOS gave NaN normalized, so that row is
+    # checked on its own.
     points = ["POINT (3 1)", "POINT (-5 3)", "POINT (15 3)", "POINT EMPTY"] + [
         "POINT (0.5 0.5)"
     ] * 3
@@ -798,8 +800,11 @@ def test_project_matches_geopandas(normalized, operand):
         warnings.simplefilter("ignore")
         got = gdf.geometry.project(other, normalized=normalized).to_pandas().tolist()
         expected = gs.project(reference_other, normalized=normalized, align=False)
-    for value, reference in zip(got, expected.tolist(), strict=True):
-        assert _same(value, reference), (value, reference)
+    no_length = LINES.index("LINESTRING (1 1, 1 1)")
+    assert got[no_length] == 0.0
+    for i, (value, reference) in enumerate(zip(got, expected.tolist(), strict=True)):
+        if i != no_length:
+            assert _same(value, reference), (value, reference)
 
 
 def test_project_along_a_multi_line_raises_when_computed():
