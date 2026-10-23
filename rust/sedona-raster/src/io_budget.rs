@@ -265,11 +265,15 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::time::{Duration, Instant};
 
-    /// Spin until `n` threads are queued on `budget`.
+    /// Spin until `budget` has exactly `n` threads queued.
     fn queued(budget: &RasterIoBudget, n: usize) {
         let deadline = Instant::now() + Duration::from_secs(10);
-        while budget.waiting() < n {
-            assert!(Instant::now() < deadline, "{n} waiter(s) never queued");
+        while budget.waiting() != n {
+            assert!(
+                Instant::now() < deadline,
+                "never saw {n} waiter(s) queued; {} are",
+                budget.waiting()
+            );
             std::thread::sleep(Duration::from_millis(1));
         }
     }
@@ -464,21 +468,31 @@ mod tests {
         let budget = RasterIoBudget::new(1);
         let held = budget.try_acquire().unwrap();
         let order = Mutex::new(Vec::new());
+        // The first waiter keeps its permit until the test has looked at the
+        // budget, so the second is still in line when the assertions run.
+        let (release_first, first_released) = std::sync::mpsc::channel::<()>();
         std::thread::scope(|scope| {
-            scope.spawn(|| {
+            let (budget, order) = (&budget, &order);
+            scope.spawn(move || {
                 let _permit = budget.acquire_blocking();
                 order.lock().unwrap().push("first");
+                first_released.recv().unwrap();
             });
-            queued(&budget, 1);
+            queued(budget, 1);
             scope.spawn(|| {
                 let _permit = budget.acquire_blocking();
                 order.lock().unwrap().push("second");
             });
-            queued(&budget, 2);
-            // A free slot is the first waiter's, not a newcomer's.
+            queued(budget, 2);
+            // The freed slot goes to the first waiter; the second stays in
+            // line, and a newcomer gets nothing.
             drop(held);
+            queued(budget, 1);
+            assert_eq!(*order.lock().unwrap(), ["first"]);
+            assert_eq!(budget.in_use(), 1);
             assert!(budget.try_acquire().is_none());
             assert_eq!(budget.available(), 0);
+            release_first.send(()).unwrap();
         });
         assert_eq!(*order.lock().unwrap(), ["first", "second"]);
         assert_eq!(budget.waiting(), 0);
