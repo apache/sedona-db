@@ -2098,10 +2098,11 @@ class GeoSeries(Series):
 
     def set_precision(self, grid_size, mode="valid_output"):
         """Snap each geometry's coordinates to a grid of `grid_size`
-        (`ST_ReducePrecision`), keeping it valid; 0 keeps full precision.
+        (`ST_ReducePrecision`); 0 leaves the coordinates as they are.
 
         Only GeoPandas' default `mode="valid_output"` is supported. As in
-        GeoPandas, an invalid geometry fails (when the result is computed).
+        GeoPandas, an invalid geometry may raise (when the result is
+        computed), or come back invalid, or collapse to an empty one.
         """
         if mode not in ("valid_output", 0):
             raise NotImplementedError(
@@ -2114,9 +2115,11 @@ class GeoSeries(Series):
         """Each geometry's lines, merged into as few lines as possible
         (`ST_LineMerge`).
 
-        Anything but lines merges to an empty geometry collection, as in
-        GeoPandas, empty input included (the engine keeps an empty input's
-        type). Only GeoPandas' default `directed=False` is supported.
+        A polygon's rings merge as lines, and other parts (the points of a
+        collection) are left out. A geometry with no lines or rings merges to
+        an empty geometry collection, as in GeoPandas, empty input included
+        (the engine keeps an empty input's type). Only GeoPandas' default
+        `directed=False` is supported.
         """
         import shapely
 
@@ -2631,8 +2634,8 @@ class GeoSeries(Series):
         `tolerance` (`ST_Snap`).
 
         `tolerance` is a number or a numeric `Series` of this frame. An empty
-        geometry stays as it is, where GeoPandas (GEOS) gives a 3D empty of
-        another type.
+        geometry stays as it is, where GeoPandas (GEOS) can give a 3D empty,
+        or one of another type (`POLYGON EMPTY` becomes `LINEARRING Z EMPTY`).
         """
         _check_align(align)
         tolerance = self._parameter(tolerance, "snap", "tolerance")
