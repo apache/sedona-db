@@ -185,6 +185,32 @@ def test_properties_look_at_every_part(name):
     assert got.to_pandas().tolist() == getattr(gs, name).tolist()
 
 
+@pytest.mark.parametrize("constructor", ["ST_GeomFromWKT", "ST_GeogFromWKT"])
+def test_is_closed_keeps_degenerate_lines(constructor):
+    # A line that doubles back or has no length is not empty, and is closed
+    # where its ends meet, on geography as on geometry; only an empty line
+    # makes a multi-line not closed. (A geography's spherical simplification
+    # drops such lines, so it can't tell them from empty ones.)
+    wkts = [
+        "LINESTRING (0 0, 1 1, 0 0)",
+        "LINESTRING (0 0, 0 0)",
+        "MULTILINESTRING ((0 0, 1 1, 0 0), (5 5, 6 5, 6 6, 5 5))",
+        "MULTILINESTRING ((0 0, 0 0))",
+        "MULTILINESTRING ((0 0, 1 0, 1 1, 0 0), EMPTY)",
+        "MULTILINESTRING (EMPTY)",
+        "LINESTRING (0 0, 1 1)",
+    ]
+    values = ", ".join(f"('{wkt}')" for wkt in wkts)
+    gdf = sgpd.GeoDataFrame(
+        sgpd.default_context().sql(
+            f"SELECT {constructor}(w) AS g FROM (VALUES {values}) AS t(w)"
+        ),
+        geometry="g",
+    )
+    expected = gpd.GeoSeries.from_wkt(wkts).is_closed.tolist()
+    assert gdf.geometry.is_closed.to_pandas().tolist() == expected
+
+
 def test_empty_collections_equal_any_empty_geometry():
     wkts = [
         "MULTIPOINT (EMPTY)",
