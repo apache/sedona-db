@@ -1963,19 +1963,24 @@ class GeoSeries(Series):
 
     def _empty_as(self, result, empty):
         """`result`, but `empty` (a Shapely geometry) where this geometry is
-        empty.
+        empty, as GeoPandas defines it (see `_empty`)."""
+        replacement = self._df._ctx.lit(empty.wkb)
+        return self._replace_where(_empty(self._expr), replacement, result)
+
+    def _replace_where(self, condition, replacement, result):
+        """`result`, but `replacement` (WKB) where `condition` is true.
 
         The choice is made on WKB, and the result rebuilt with `result`'s own
         spatial kind and CRS: the engine's result type, which need not be this
         column's (a geography's envelope is planar geometry).
         """
         ctx = self._df._ctx
-        # Per row: the empty geometry's WKB where the input is empty, the
-        # result's otherwise. nvl2 picks its second argument where the first
-        # is non-null, and all three must share a type, hence the binary flag.
-        is_empty = self._expr.geo.is_empty().funcs.nullif(ctx.lit(False))
-        flag = is_empty.cast(pa.string()).cast(pa.binary())
-        wkb = flag.funcs.nvl2(ctx.lit(empty.wkb), result.geo.as_binary())
+        # Per row: the replacement where the condition holds, the result's
+        # WKB otherwise. nvl2 picks its second argument where the first is
+        # non-null, and all three must share a type, hence the binary flag.
+        holds = condition.funcs.nullif(ctx.lit(False))
+        flag = holds.cast(pa.string()).cast(pa.binary())
+        wkb = flag.funcs.nvl2(replacement, result.geo.as_binary())
         result_type = self._df.select(result.alias("x")).schema.field("x").type
         spherical = "SPHERICAL" in str(getattr(result_type, "edge_type", "")).upper()
         return _geometry_from_wkb(wkb, spherical, result_type.crs, ctx)
@@ -2073,7 +2078,15 @@ class GeoSeries(Series):
             "max_segment_length",
             (lambda x: x > 0, "positive"),
         )
-        return self._geo(self._expr.geo.segmentize(length))
+        if not isinstance(max_segment_length, Series):
+            return self._geo(self._expr.geo.segmentize(length))
+        # Row by row, the engine refuses an infinite length, so those rows
+        # get a missing length instead, and keep their geometry.
+        infinite = (length == lit(math.inf)).funcs.coalesce(lit(False))
+        finite = _choose(~infinite, length, lit(pa.scalar(None, pa.float64())))
+        segmented = self._expr.geo.segmentize(finite)
+        original = self._expr.geo.as_binary()
+        return self._geo(self._replace_where(infinite, original, segmented))
 
     def reverse(self):
         """Each geometry with its vertices in reverse order (`ST_Reverse`)."""
