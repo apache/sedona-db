@@ -137,14 +137,12 @@ pub fn append_as_outdb_raster(gdal: &Gdal, path: &str, builder: &mut RasterBuild
         let nodata_bytes = band_nodata_to_bytes(&band)?;
 
         // Out-db band: location + band selector in the `#band=N` URI; empty data.
-        let outdb_uri = format!("{path}#band={band_idx}");
-        builder.start_band(StartBandArgs {
-            nodata: nodata_bytes.as_deref(),
-            outdb_uri: Some(&outdb_uri),
-            ..StartBandArgs::new(&["y", "x"], &[height as i64, width as i64], band_data_type)
-        })?;
-        builder.band_data_writer().append_value([]);
-        builder.finish_band()?;
+        builder.append_outdb_band_2d(
+            path,
+            band_idx as u32,
+            band_data_type,
+            nodata_bytes.as_deref(),
+        )?;
     }
 
     builder.finish_raster()?;
