@@ -223,6 +223,17 @@ def test_coordinates_of_non_points_raise_when_computed():
         ("make_valid", ()),
         ("representative_point", ()),
         ("minimum_clearance_line", ()),
+        ("concave_hull", ()),
+        ("concave_hull", (0.4,)),
+        ("reverse", ()),
+        ("line_merge", ()),
+        ("force_2d", ()),
+        ("force_3d", ()),
+        ("force_3d", (2.5,)),
+        ("get_geometry", (0,)),
+        ("get_geometry", (1,)),
+        ("get_geometry", (-1,)),
+        ("get_geometry", (-2,)),
         ("buffer", (0.5,)),
         ("centroid", ()),
     ],
@@ -254,6 +265,271 @@ def test_constructive_methods_match_geopandas(call):
             # dimension, which is what the topology-preserving mode does too.
             reference = shapely.force_2d(reference)
         assert _same(value, reference), (value, reference)
+
+
+def _geoseries(wkts, crs="EPSG:3857", **columns):
+    """A GeoPandas GeoSeries and the same column wrapped, with extra columns."""
+    gs = gpd.GeoSeries.from_wkt(wkts, crs=crs)
+    gdf = sgpd.from_geopandas(gpd.GeoDataFrame(columns, geometry=gs))
+    return gs, gdf
+
+
+def _assert_same_geometries(got, expected):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        values = got.to_pandas().tolist()
+    expected = list(expected)
+    assert len(values) == len(expected)
+    for value, reference in zip(values, expected):
+        assert _same(value, reference), (value, reference)
+
+
+# Valid geometries only: GEOS repairs an invalid polygon while densifying it,
+# and GeoPandas' set_precision() raises for one, like the engine.
+VALID_CORPUS = [
+    wkt for wkt in MEASURE_CORPUS if wkt is None or shapely.from_wkt(wkt).is_valid
+]
+
+
+def test_line_merge_merges_lines_and_empties_to_a_collection():
+    # Merged where the parts meet, and an empty geometry collection for
+    # anything else, empty input included: the engine keeps an empty input's
+    # own type there.
+    wkts = [
+        "MULTILINESTRING ((0 0, 1 0), (1 0, 1 1), (5 5, 6 6))",
+        "MULTILINESTRING ((0 0, 1 0), (2 0, 1 0))",
+        "LINESTRING (0 0, 1 1)",
+        "POINT (1 1)",
+        "LINESTRING EMPTY",
+        "MULTILINESTRING EMPTY",
+        "POINT EMPTY",
+        None,
+    ]
+    gs, gdf = _geoseries(wkts)
+    _assert_same_geometries(gdf.geometry.line_merge(), gs.line_merge())
+
+
+def test_line_merge_keeps_a_geography_columns_kind_and_crs():
+    # The empty case is rebuilt from WKB, which carries neither.
+    gdf = sgpd.GeoDataFrame(
+        sgpd.default_context().sql(
+            "SELECT ST_SetSRID(ST_GeogFromWKT(w), 4326) AS g FROM (VALUES "
+            "('MULTILINESTRING ((0 0, 1 0), (1 0, 1 1))'), ('POINT EMPTY')) AS t(w)"
+        ),
+        geometry="g",
+    )
+    geography = gdf.geometry
+    merged = geography.line_merge()
+    assert merged._is_geography()
+    assert merged.crs == geography.crs
+    values = merged.to_pandas().tolist()
+    assert values[0].equals(shapely.from_wkt("LINESTRING (0 0, 1 0, 1 1)"))
+    assert values[1].geom_type == "GeometryCollection" and values[1].is_empty
+
+
+def test_segmentize_matches_geopandas_on_valid_geometries():
+    # A multi-line with one part is left out here; see the next test.
+    wkts = [
+        wkt for wkt in VALID_CORPUS if wkt != "MULTILINESTRING ((0 0, 1 0, 1 1, 0 0))"
+    ]
+    gs, gdf = _geoseries(wkts)
+    for length in (0.5, 1.5, np.float32(0.25)):
+        expected = gs.segmentize(float(length))
+        _assert_same_geometries(gdf.geometry.segmentize(length), expected)
+    # An infinite length adds no vertices, as in GeoPandas.
+    _assert_same_geometries(gdf.geometry.segmentize(math.inf), gs)
+
+
+def test_segmentize_only_densifies():
+    # GEOS repairs an invalid polygon (with buffer(0)) and turns a one-part
+    # multi-line into a single line while densifying; the engine only adds
+    # vertices, so the type and the (invalid) shape stay as they are.
+    wkts = ["POLYGON ((0 0, 2 2, 2 0, 0 2, 0 0))", "MULTILINESTRING ((0 0, 2 0))"]
+    _, gdf = _geoseries(wkts)
+    got = gdf.geometry.segmentize(1.0).to_pandas().tolist()
+    assert got[0].geom_type == "Polygon" and not got[0].is_valid
+    # Two vertices more on each diagonal side, one more on each other side.
+    assert shapely.get_num_coordinates(got[0]) == 11
+    assert got[1].equals(shapely.from_wkt("MULTILINESTRING ((0 0, 1 0, 2 0))"))
+    assert got[1].geom_type == "MultiLineString"
+
+
+def test_set_precision_matches_geopandas():
+    gs, gdf = _geoseries(VALID_CORPUS)
+    for grid_size in (0.0, 0.1, 1.0):
+        expected = gs.set_precision(grid_size)
+        _assert_same_geometries(gdf.geometry.set_precision(grid_size), expected)
+
+
+def test_set_precision_of_an_invalid_geometry_fails_when_computed():
+    _, gdf = _geoseries(["POLYGON ((0 0, 2 2, 2 0, 0 2, 0 0))"])
+    result = gdf.geometry.set_precision(0.1)
+    with pytest.raises(Exception, match="(?i)topology"):
+        result.to_pandas()
+
+
+def test_force_3d_keeps_z_and_drops_m():
+    # GeoPandas (Shapely) leaves an XYM geometry as it is and replaces an
+    # XYZM geometry's Z values; here Z is kept, or added, and M dropped.
+    wkts = ["POINT M (1 2 3)", "LINESTRING ZM (0 0 7 8, 1 1 9 10)", "POINT (1 2)"]
+    _, gdf = _geoseries(wkts)
+    got = gdf.geometry.force_3d(5).to_pandas().tolist()
+    assert [g.wkt for g in got] == [
+        "POINT Z (1 2 5)",
+        "LINESTRING Z (0 0 7, 1 1 9)",
+        "POINT Z (1 2 5)",
+    ]
+
+
+def test_force_3d_refuses_nan():
+    # A NaN read from pandas is missing (a missing geometry here), so the
+    # frame is built in SQL to hold one.
+    gdf = sgpd.GeoDataFrame(
+        sgpd.default_context().sql(
+            "SELECT ST_Point(1, 2) AS g, z FROM (VALUES (1.0), "
+            "(CAST('NaN' AS DOUBLE))) AS t(z)"
+        ),
+        geometry="g",
+    )
+    with pytest.raises(ValueError, match="NaN"):
+        gdf.geometry.force_3d(np.nan)
+    # Row by row, the NaN row fails when the result is computed.
+    result = gdf.geometry.force_3d(gdf["z"])
+    with pytest.raises(Exception, match="must not be NaN"):
+        result.to_pandas()
+
+
+def test_get_geometry_counts_back_from_the_number_of_parts():
+    # A single-part geometry is its own part, even empty, so -1 is itself;
+    # past either end, there is no part.
+    wkts = [
+        "MULTIPOINT ((0 0), (1 1), (2 2))",
+        "POINT EMPTY",
+        "POLYGON ((0 0, 1 0, 1 1, 0 0))",
+        "GEOMETRYCOLLECTION EMPTY",
+        None,
+    ]
+    gs, gdf = _geoseries(wkts)
+    for index in (0, 2, 3, -1, -3, -4):
+        _assert_same_geometries(
+            gdf.geometry.get_geometry(index), gs.get_geometry(index)
+        )
+
+
+def test_get_geometry_takes_a_row_wise_index():
+    wkts = ["MULTIPOINT ((0 0), (1 1), (2 2))"] * 4 + [None]
+    index = [0, -1, 5, None, 1]
+    gs, gdf = _geoseries(wkts, i=pd.array(index, dtype="Int64"))
+    expected = [
+        None if i is None or g is None else shapely.get_geometry(g, i)
+        for g, i in zip(gs, index)
+    ]
+    _assert_same_geometries(gdf.geometry.get_geometry(gdf["i"]), expected)
+
+
+@pytest.mark.parametrize("index", [1.0, "1", True])
+def test_get_geometry_takes_an_integer(index):
+    _, gdf = _geoseries(["POINT (1 2)"], f=[1.0])
+    with pytest.raises(TypeError, match="integer"):
+        gdf.geometry.get_geometry(index)
+    with pytest.raises(TypeError, match="integer"):
+        gdf.geometry.get_geometry(gdf["f"])
+
+
+@pytest.mark.parametrize("operand", ["column", "scalar"])
+def test_snap_matches_geopandas(operand):
+    left, right, g, b = _binary_case()
+    scalar = shapely.from_wkt("LINESTRING (0 0.1, 1 0.1, 4 4.1)")
+    other, reference_other = (b, right) if operand == "column" else (scalar, scalar)
+    for tolerance in (0.0, 0.2, 1.5):
+        got = g.snap(other, tolerance).to_pandas().tolist()
+        expected = left.snap(reference_other, tolerance).tolist()
+        for value, reference, source in zip(got, expected, left.tolist()):
+            if source is not None and source.is_empty:
+                # GEOS turns an empty geometry into a 3D empty of another type
+                # (POLYGON EMPTY becomes LINEARRING Z EMPTY); it stays here.
+                assert value is not None and value.wkt == source.wkt
+                continue
+            assert _same(value, reference), (value, reference)
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        lambda g, v: g.segmentize(v),
+        lambda g, v: g.set_precision(v),
+        lambda g, v: g.concave_hull(v),
+        lambda g, v: g.force_3d(v),
+        lambda g, v: g.snap(shapely.Point(0, 0.1), v),
+    ],
+    ids=["segmentize", "set_precision", "concave_hull", "force_3d", "snap"],
+)
+def test_numeric_parameters_apply_row_by_row(method):
+    # A numeric Series of the frame gives each row its own value, as an array
+    # does in GeoPandas (which takes only one concave hull ratio).
+    wkts = ["MULTIPOINT ((0 0), (10 0), (5 3), (3 9))", "LINESTRING (0 0, 10 0)"]
+    values = [0.4, 1.0]
+    gs, gdf = _geoseries(wkts, v=values)
+    expected = [
+        method(gpd.GeoSeries([g]), v).iloc[0] for g, v in zip(gs, values, strict=True)
+    ]
+    _assert_same_geometries(method(gdf.geometry, gdf["v"]), expected)
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        lambda g, v: g.segmentize(v),
+        lambda g, v: g.set_precision(v),
+        lambda g, v: g.snap(shapely.Point(0, 0.1), v),
+    ],
+    ids=["segmentize", "set_precision", "snap"],
+)
+def test_nan_parameters_give_missing_geometries(method):
+    # As in GeoPandas (Shapely), for one value and row by row. A NaN read from
+    # pandas is missing, so the frame is built in SQL to hold one.
+    wkts = ["LINESTRING (0 0, 10 0)", "POINT (1 1)"]
+    gdf = sgpd.GeoDataFrame(
+        sgpd.default_context().sql(
+            "SELECT ST_SetSRID(ST_GeomFromWKT(w), 3857) AS g, v FROM (VALUES "
+            f"('{wkts[0]}', CAST('NaN' AS DOUBLE)), ('{wkts[1]}', 1.0)) AS t(w, v)"
+        ),
+        geometry="g",
+    )
+    assert method(gdf.geometry, np.nan).to_pandas().tolist() == [None, None]
+    gs = gpd.GeoSeries.from_wkt(wkts, crs="EPSG:3857")
+    expected = method(gs, np.array([np.nan, 1.0]))
+    _assert_same_geometries(method(gdf.geometry, gdf["v"]), expected)
+
+
+@pytest.mark.parametrize(
+    "call, error",
+    [
+        (lambda g: g.segmentize(0), ValueError),
+        (lambda g: g.segmentize(-1.0), ValueError),
+        (lambda g: g.concave_hull(1.5), ValueError),
+        (lambda g: g.concave_hull(-0.1), ValueError),
+        (lambda g: g.segmentize("1"), TypeError),
+        (lambda g: g.set_precision(True), TypeError),
+        (lambda g: g.snap(shapely.Point(0, 0), np.array([1.0])), TypeError),
+        (lambda g: g.force_3d(g), TypeError),
+        (lambda g: g.concave_hull(allow_holes=True), NotImplementedError),
+        (lambda g: g.line_merge(directed=True), NotImplementedError),
+        (lambda g: g.set_precision(0.1, mode="pointwise"), NotImplementedError),
+    ],
+)
+def test_geometry_method_arguments_are_checked_when_called(call, error):
+    # Refused when called, not when the lazy result is computed.
+    _, gdf = _geoseries(["LINESTRING (0 0, 10 0)"])
+    with pytest.raises(error):
+        call(gdf.geometry)
+
+
+def test_numeric_parameters_come_from_the_same_frame():
+    _, gdf = _geoseries(["LINESTRING (0 0, 10 0)"], v=[1.0])
+    _, other = _geoseries(["LINESTRING (0 0, 10 0)"], v=[1.0])
+    with pytest.raises(ValueError):
+        gdf.geometry.segmentize(other["v"])
 
 
 def test_boundary_matches_geopandas_except_collections():
