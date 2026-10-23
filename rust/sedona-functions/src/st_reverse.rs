@@ -32,7 +32,7 @@ use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::{
     error::SedonaGeometryError,
     wkb_factory::{
-        WKB_MIN_PROBABLE_BYTES, write_wkb_geometrycollection_header, write_wkb_linestring_header,
+        write_wkb_geometrycollection_header, write_wkb_linestring_header,
         write_wkb_multilinestring_header, write_wkb_multipolygon_header, write_wkb_polygon_header,
         write_wkb_polygon_ring_header,
     },
@@ -44,7 +44,7 @@ use sedona_schema::{
 use wkb::Endianness;
 use wkb::reader::Wkb;
 
-use crate::executor::WkbExecutor;
+use crate::executor::{WkbExecutor, visible_wkb_bytes};
 
 /// ST_Reverse() scalar UDF
 ///
@@ -82,7 +82,7 @@ impl SedonaScalarKernel for STReverse {
         let executor = WkbExecutor::new(arg_types, args);
         let mut builder = BinaryBuilder::with_capacity(
             executor.num_iterations(),
-            WKB_MIN_PROBABLE_BYTES * executor.num_iterations(),
+            visible_wkb_bytes(&arg_types[0], &args[0])?,
         );
 
         executor.execute_wkb_void(|maybe_wkb| {
@@ -215,6 +215,7 @@ fn write_reversed_coords(
 
 #[cfg(test)]
 mod tests {
+
     use datafusion_common::ScalarValue;
     use rstest::rstest;
     use sedona_schema::datatypes::{WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY_ITEM_CRS};
