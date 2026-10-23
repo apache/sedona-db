@@ -15,7 +15,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! Byte-bounded batches for raster materialization.
+//! Physical planning of raster materialization: byte-bounded load batches,
+//! pass-through filters over raster streams, and loads spread by raster
+//! source.
 //!
 //! `datafusion.execution.batch_size` counts rows, but a row holding a
 //! raster can carry megabytes of pixels, so a batch of a few thousand OutDb
@@ -25,7 +27,7 @@
 //! `ensure_loaded` logical rule has wrapped the raster arguments of pixel
 //! functions) evaluates it over each input batch in full.
 //!
-//! [`RasterBatchBudgetRule`] therefore puts a [`RasterBatchSplitExec`] under
+//! [`RasterMaterializationRule`] therefore puts a [`RasterBatchSplitExec`] under
 //! every such node. It re-slices each input batch so that the *estimated*
 //! bytes of the rasters the node is about to load stay within
 //! `sedona.raster.max_batch_bytes`, and the node then evaluates each slice
@@ -82,6 +84,10 @@
 //! Sedona-owned operators. See
 //! <https://github.com/apache/datafusion/issues/23385>, which tracks the
 //! coalescers' lack of memory awareness.
+//!
+//! The rule also decides *where* rasters are loaded: see
+//! [`raster_source_spread`](crate::raster_source_spread), which
+//! hash-partitions the split's input by raster source.
 
 use std::fmt;
 use std::sync::Arc;
@@ -96,19 +102,28 @@ use datafusion_execution::{SendableRecordBatchStream, TaskContext};
 use datafusion_expr::Operator;
 use datafusion_physical_expr::expressions::{BinaryExpr, CaseExpr, Column};
 use datafusion_physical_expr::{PhysicalExpr, ScalarFunctionExpr};
-use datafusion_physical_plan::aggregates::{AggregateExec, AggregateInputMode, PhysicalGroupBy};
+use datafusion_physical_plan::aggregates::{
+    AggregateExec, AggregateInputMode, AggregateMode, PhysicalGroupBy,
+};
+use datafusion_physical_plan::coalesce_partitions::CoalescePartitionsExec;
 use datafusion_physical_plan::execution_plan::CardinalityEffect;
 use datafusion_physical_plan::filter::{FilterExec, FilterExecBuilder};
 use datafusion_physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
 use datafusion_physical_plan::projection::{ProjectionExec, ProjectionExpr};
+use datafusion_physical_plan::repartition::RepartitionExec;
 use datafusion_physical_plan::stream::RecordBatchStreamAdapter;
-use datafusion_physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties};
+use datafusion_physical_plan::{
+    DisplayAs, DisplayFormatType, ExecutionPlan, ExecutionPlanProperties, Partitioning,
+    PlanProperties,
+};
 use futures::{StreamExt, stream};
 use sedona_common::option::{DEFAULT_RASTER_MAX_BATCH_BYTES, SedonaOptions};
 use sedona_common::sedona_internal_datafusion_err;
 use sedona_raster::array::RasterStructArray;
 use sedona_raster::size::estimated_row_bytes;
 use sedona_schema::datatypes::SedonaType;
+
+use crate::raster_source_spread::{RasterSourceKeyExpr, raster_source_spread};
 
 /// Name of the UDF whose raster argument sizes the slices. Kept in sync
 /// with `sedona_raster_functions::rs_ensure_loaded` (this crate can't
@@ -126,11 +141,13 @@ const ENSURE_LOADED_NAME: &str = "rs_ensureloaded";
 /// byte-bounded slices produced upstream keep their boundaries.
 pub const PASSTHROUGH_BATCH_SIZE: usize = 1;
 
-/// Physical optimizer rule that keeps raster batches byte-bounded:
+/// Physical optimizer rule that plans raster materialization:
 ///
 /// - puts a [`RasterBatchSplitExec`] under every `ProjectionExec`,
 ///   `FilterExec` and `AggregateExec` whose expressions call
-///   `rs_ensureloaded`, sized by the calls' raster arguments;
+///   `rs_ensureloaded`, sized by the calls' raster arguments, and
+///   hash-partitions the split's input by raster source where that is safe
+///   (see [`crate::raster_source_spread`]);
 /// - sets the batch size of every `FilterExec` whose output schema carries
 ///   a raster column to [`PASSTHROUGH_BATCH_SIZE`], so it forwards batches
 ///   instead of merging them back up to `datafusion.execution.batch_size`
@@ -141,22 +158,26 @@ pub const PASSTHROUGH_BATCH_SIZE: usize = 1;
 /// final placement of the loading nodes. Plans without raster columns are
 /// untouched.
 #[derive(Debug, Default)]
-pub struct RasterBatchBudgetRule;
+pub struct RasterMaterializationRule;
 
-impl PhysicalOptimizerRule for RasterBatchBudgetRule {
+impl PhysicalOptimizerRule for RasterMaterializationRule {
     fn optimize(
         &self,
         plan: Arc<dyn ExecutionPlan>,
-        _config: &ConfigOptions,
+        config: &ConfigOptions,
     ) -> Result<Arc<dyn ExecutionPlan>> {
+        let target_partitions = config.execution.target_partitions;
         plan.transform_up(|node| {
-            split_under_loading_node(node)?.transform_data(forward_raster_filter_batches)
+            // The pass-through batch size first: a loading filter is rebuilt
+            // below with the batch size it has at that point.
+            forward_raster_filter_batches(node)?
+                .transform_data(|node| split_under_loading_node(node, target_partitions))
         })
         .data()
     }
 
     fn name(&self) -> &str {
-        "sedona.raster_batch_budget"
+        "sedona.raster_materialization"
     }
 
     fn schema_check(&self) -> bool {
@@ -233,6 +254,20 @@ struct SizedArgs {
     /// file once); a genuinely nondeterministic argument written twice in
     /// one node therefore yields the same raster twice.
     exprs: Vec<Arc<dyn PhysicalExpr>>,
+    /// The first sized argument, which keys the raster-source spread. When
+    /// several `rs_ensureloaded` calls share a node they usually read
+    /// rasters from the same catalog row, and one key is all a
+    /// partitioning can follow.
+    key: Option<SizedKey>,
+}
+
+/// Where a sized argument is read from (see [`SizedArgs`]).
+#[derive(Debug, Clone, Copy)]
+enum SizedKey {
+    /// An input column.
+    Column(usize),
+    /// The `k`-th appended expression column.
+    Expr(usize),
 }
 
 impl SizedArgs {
@@ -258,13 +293,17 @@ impl SizedArgs {
                 if !self.columns.contains(&column.index()) {
                     self.columns.push(column.index());
                 }
-            } else if !conditional
-                && !self
+                self.key.get_or_insert(SizedKey::Column(column.index()));
+            } else if !conditional {
+                let k = self
                     .exprs
                     .iter()
-                    .any(|known| known.as_ref() == arg.as_ref())
-            {
-                self.exprs.push(Arc::clone(arg));
+                    .position(|known| known.as_ref() == arg.as_ref())
+                    .unwrap_or_else(|| {
+                        self.exprs.push(Arc::clone(arg));
+                        self.exprs.len() - 1
+                    });
+                self.key.get_or_insert(SizedKey::Expr(k));
             }
             return;
         }
@@ -307,52 +346,103 @@ struct HoistedArg {
 
 /// The subtree the rule puts under a loading node.
 struct SplitInput {
-    /// The [`RasterBatchSplitExec`], over a `ProjectionExec` that appends the
-    /// hoisted argument expressions when there are any.
+    /// The [`RasterBatchSplitExec`], over the raster-source repartition when
+    /// the input is spread, over a `ProjectionExec` that appends the hoisted
+    /// argument expressions when there are any.
     plan: Arc<dyn ExecutionPlan>,
     hoisted: Vec<HoistedArg>,
+    /// The input was a single partition that is now spread, so the rebuilt
+    /// node is merged back to one partition (see [`merged_back`]).
+    merge_back: bool,
 }
 
-fn split_input(input: &Arc<dyn ExecutionPlan>, sized: &SizedArgs) -> Result<SplitInput> {
-    if sized.exprs.is_empty() {
-        return Ok(SplitInput {
-            plan: Arc::new(RasterBatchSplitExec::try_new(
-                Arc::clone(input),
-                sized.columns.clone(),
-            )?),
-            hoisted: Vec::new(),
-        });
-    }
-    let input_schema = input.schema();
-    let input_columns = input_schema.fields().len();
-    let mut projection: Vec<ProjectionExpr> = input_schema
-        .fields()
-        .iter()
-        .enumerate()
-        .map(|(idx, field)| {
-            ProjectionExpr::new(
-                Arc::new(Column::new(field.name(), idx)) as Arc<dyn PhysicalExpr>,
-                field.name().clone(),
-            )
-        })
-        .collect();
+/// The subtree under a loading node whose input is `input` and whose
+/// slices are sized by `sized`. `spread_target` is the session's target
+/// partitions when the node allows its input to be spread by raster source
+/// (see [`raster_source_spread`]), `None` when it does not.
+///
+/// From the top: the [`RasterBatchSplitExec`], the raster-source
+/// `RepartitionExec` when the input is spread, the `ProjectionExec` that
+/// appends the hoisted argument expressions when there are any, then the
+/// input (or what the planner's own repartitioning below the node read).
+/// The hash and the sizing both read a hoisted argument from its appended
+/// column, so it is evaluated exactly once per batch, on the input's
+/// partitions (for a single-partition input, on that one partition): the
+/// price of evaluating it once rather than again after the spread, which
+/// for `RS_FromPath` would repeat every file open.
+fn split_input(
+    input: &Arc<dyn ExecutionPlan>,
+    sized: &SizedArgs,
+    spread_target: Option<usize>,
+) -> Result<SplitInput> {
+    let spread = spread_target.and_then(|target| raster_source_spread(input, target));
+    let source = match &spread {
+        Some((source, _)) => Arc::clone(source),
+        None => Arc::clone(input),
+    };
+    let source_schema = source.schema();
+    let input_columns = source_schema.fields().len();
     let mut sized_columns = sized.columns.clone();
     let mut hoisted = Vec::with_capacity(sized.exprs.len());
-    for (k, expr) in sized.exprs.iter().enumerate() {
-        let name = format!("__ensure_loaded_arg_{k}");
-        let index = input_columns + k;
-        projection.push(ProjectionExpr::new(Arc::clone(expr), name.clone()));
-        hoisted.push(HoistedArg {
-            expr: Arc::clone(expr),
-            column: Arc::new(Column::new(&name, index)),
-        });
-        sized_columns.push(index);
-    }
-    let args = Arc::new(ProjectionExec::try_new(projection, Arc::clone(input))?);
+    let args = if sized.exprs.is_empty() {
+        source
+    } else {
+        let mut projection: Vec<ProjectionExpr> = source_schema
+            .fields()
+            .iter()
+            .enumerate()
+            .map(|(idx, field)| {
+                ProjectionExpr::new(
+                    Arc::new(Column::new(field.name(), idx)) as Arc<dyn PhysicalExpr>,
+                    field.name().clone(),
+                )
+            })
+            .collect();
+        for (k, expr) in sized.exprs.iter().enumerate() {
+            let name = format!("__ensure_loaded_arg_{k}");
+            let index = input_columns + k;
+            projection.push(ProjectionExpr::new(Arc::clone(expr), name.clone()));
+            hoisted.push(HoistedArg {
+                expr: Arc::clone(expr),
+                column: Arc::new(Column::new(&name, index)),
+            });
+            sized_columns.push(index);
+        }
+        Arc::new(ProjectionExec::try_new(projection, source)?) as Arc<dyn ExecutionPlan>
+    };
+    let below_split = match spread {
+        Some((_, partitions)) => {
+            let key_column = match sized.key {
+                Some(SizedKey::Column(idx)) => idx,
+                Some(SizedKey::Expr(k)) => input_columns + k,
+                None => return internal_err!("sized arguments without a key"),
+            };
+            let key = Column::new(args.schema().field(key_column).name(), key_column);
+            Arc::new(RepartitionExec::try_new(
+                args,
+                Partitioning::Hash(
+                    vec![Arc::new(RasterSourceKeyExpr::new(Arc::new(key)))],
+                    partitions,
+                ),
+            )?)
+        }
+        None => args,
+    };
     Ok(SplitInput {
-        plan: Arc::new(RasterBatchSplitExec::try_new(args, sized_columns)?),
+        plan: Arc::new(RasterBatchSplitExec::try_new(below_split, sized_columns)?),
         hoisted,
+        merge_back: spread.is_some() && input.output_partitioning().partition_count() == 1,
     })
+}
+
+/// The rebuilt loading `node` as the rule leaves it: merged back to one
+/// partition when `merge` says its single input partition was spread.
+fn merged_back(node: Arc<dyn ExecutionPlan>, merge: bool) -> Arc<dyn ExecutionPlan> {
+    if merge {
+        Arc::new(CoalescePartitionsExec::new(node))
+    } else {
+        node
+    }
 }
 
 /// `expr` with every `rs_ensureloaded` call whose argument was hoisted
@@ -382,9 +472,11 @@ fn read_hoisted_args(
 }
 
 /// Put a [`RasterBatchSplitExec`] under `node` if its expressions call
-/// `rs_ensureloaded`.
+/// `rs_ensureloaded`, and spread its input by raster source over
+/// `target_partitions` where the node allows it (see [`split_input`]).
 fn split_under_loading_node(
     node: Arc<dyn ExecutionPlan>,
+    target_partitions: usize,
 ) -> Result<Transformed<Arc<dyn ExecutionPlan>>> {
     // Already split (the rule ran on this plan before); never stack a second.
     if node
@@ -405,7 +497,7 @@ fn split_under_loading_node(
         if sized.is_empty() {
             return Ok(Transformed::no(node));
         }
-        let split = split_input(projection.input(), &sized)?;
+        let split = split_input(projection.input(), &sized, Some(target_partitions))?;
         let exprs = projection
             .expr()
             .iter()
@@ -416,9 +508,8 @@ fn split_under_loading_node(
                 ))
             })
             .collect::<Result<Vec<_>>>()?;
-        return Ok(Transformed::yes(Arc::new(ProjectionExec::try_new(
-            exprs, split.plan,
-        )?)));
+        let projection = Arc::new(ProjectionExec::try_new(exprs, split.plan)?);
+        return Ok(Transformed::yes(merged_back(projection, split.merge_back)));
     }
 
     if let Some(filter) = node.downcast_ref::<FilterExec>() {
@@ -426,7 +517,11 @@ fn split_under_loading_node(
         if sized.is_empty() {
             return Ok(Transformed::no(node));
         }
-        let split = split_input(filter.input(), &sized)?;
+        // A filter with a fetch is not spread: over a single partition the
+        // fetch is the query's limit, which a spread merged back would
+        // multiply by the partitions.
+        let spread_target = filter.fetch().is_none().then_some(target_partitions);
+        let split = split_input(filter.input(), &sized, spread_target)?;
         let predicate = read_hoisted_args(Arc::clone(filter.predicate()), &split.hoisted)?;
         // The filter's output is its input's columns (or the projection of
         // them it already had); when the input grew by hoisted arguments,
@@ -442,7 +537,10 @@ fn split_under_loading_node(
             .with_fetch(filter.fetch())
             .apply_projection(projection)?
             .build()?;
-        return Ok(Transformed::yes(Arc::new(filter)));
+        return Ok(Transformed::yes(merged_back(
+            Arc::new(filter),
+            split.merge_back,
+        )));
     }
 
     if let Some(aggregate) = node.downcast_ref::<AggregateExec>() {
@@ -465,7 +563,15 @@ fn split_under_loading_node(
         if sized.is_empty() {
             return Ok(Transformed::no(node));
         }
-        let split = split_input(aggregate.input(), &sized)?;
+        // Only a `Partial` stage runs on any number of partitions, so only
+        // its input is spread; a `Single` stage over a single partition
+        // must stay one, loads and all, and a `SinglePartitioned` one has
+        // a hash-partitioned input. A limit on the stage is a per-partition
+        // limit and is left alone like a filter's fetch.
+        let spread_target = (*aggregate.mode() == AggregateMode::Partial
+            && aggregate.limit_options().is_none())
+        .then_some(target_partitions);
+        let split = split_input(aggregate.input(), &sized, spread_target)?;
         let rewrite =
             |expr: &Arc<dyn PhysicalExpr>| read_hoisted_args(Arc::clone(expr), &split.hoisted);
         let rewrite_named = |pairs: &[(Arc<dyn PhysicalExpr>, String)]| {
@@ -490,7 +596,7 @@ fn split_under_loading_node(
             // arguments or order-bys, and the rewrite keeps both.
             let Some(rewritten) = aggr.with_new_expressions(args, order_bys) else {
                 return internal_err!(
-                    "RasterBatchBudgetRule: aggregate {} rejected its rewritten arguments",
+                    "RasterMaterializationRule: aggregate {} rejected its rewritten arguments",
                     aggr.name()
                 );
             };
@@ -521,7 +627,10 @@ fn split_under_loading_node(
             input_schema,
         )?
         .with_limit_options(aggregate.limit_options());
-        return Ok(Transformed::yes(Arc::new(aggregate)));
+        return Ok(Transformed::yes(merged_back(
+            Arc::new(aggregate),
+            split.merge_back,
+        )));
     }
 
     Ok(Transformed::no(node))
@@ -599,7 +708,8 @@ fn estimate_rows(batch: &RecordBatch, sized_columns: &[usize]) -> Result<Vec<u64
 /// Re-slices its input's batches by the estimated bytes of the rasters in
 /// `sized_columns`, so the node above loads at most
 /// `sedona.raster.max_batch_bytes` of pixels per batch. The schema, order and
-/// partitioning are the input's. See the module docs.
+/// partitioning are the input's, except over a raster-source spread (see
+/// [`RasterBatchSplitExec::try_new`]). See the module docs.
 #[derive(Debug)]
 pub struct RasterBatchSplitExec {
     input: Arc<dyn ExecutionPlan>,
@@ -610,6 +720,15 @@ pub struct RasterBatchSplitExec {
 }
 
 impl RasterBatchSplitExec {
+    /// Over a raster-source spread (a `RepartitionExec` hashed by a
+    /// [`RasterSourceKeyExpr`]) the split reports
+    /// `Partitioning::UnknownPartitioning` over that many partitions instead
+    /// of passing `Hash([raster_source(..)], n)` up. That hash is not a
+    /// distribution any other plan can match: rows without an out-DB file
+    /// draw their key from a running counter, so evaluating the same
+    /// expression elsewhere would not reproduce it. The spread is a
+    /// load-balancing device, not a guarantee, and no parent (nor a later
+    /// rewrite of the plan) can rely on it.
     pub fn try_new(input: Arc<dyn ExecutionPlan>, sized_columns: Vec<usize>) -> Result<Self> {
         if sized_columns.is_empty() {
             return internal_err!("RasterBatchSplitExec requires at least one column to size by");
@@ -632,8 +751,24 @@ impl RasterBatchSplitExec {
                 }
             }
         }
+        let cache = match input.output_partitioning() {
+            Partitioning::Hash(keys, n)
+                if keys
+                    .iter()
+                    .any(|key| key.downcast_ref::<RasterSourceKeyExpr>().is_some()) =>
+            {
+                Arc::new(
+                    input
+                        .properties()
+                        .as_ref()
+                        .clone()
+                        .with_partitioning(Partitioning::UnknownPartitioning(*n)),
+                )
+            }
+            _ => Arc::clone(input.properties()),
+        };
         Ok(Self {
-            cache: Arc::clone(input.properties()),
+            cache,
             input,
             sized_columns,
             metrics: ExecutionPlanMetricsSet::new(),
@@ -760,13 +895,13 @@ impl ExecutionPlan for RasterBatchSplitExec {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::hash::{Hash, Hasher};
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use arrow_array::{ArrayRef, Int32Array};
+    use arrow_array::{ArrayRef, Int32Array, Int64Array};
     use arrow_schema::{DataType, Field, FieldRef, Schema, SchemaRef};
     use datafusion::datasource::memory::MemorySourceConfig;
     use datafusion::execution::SessionStateBuilder;
@@ -873,7 +1008,7 @@ mod tests {
     }
 
     /// `rs_ensureloaded(arg)` as the mock, recording into `calls`.
-    fn ensure_loaded_call(
+    pub(crate) fn ensure_loaded_call(
         calls: &Arc<Mutex<Vec<usize>>>,
         arg: Arc<dyn PhysicalExpr>,
         schema: &Schema,
@@ -927,7 +1062,7 @@ mod tests {
         }
     }
 
-    fn counted_raster_call(
+    pub(crate) fn counted_raster_call(
         evaluations: &Arc<AtomicUsize>,
         arg: Arc<dyn PhysicalExpr>,
         schema: &Schema,
@@ -942,7 +1077,7 @@ mod tests {
         )
     }
 
-    fn task_context(max_batch_bytes: usize) -> Arc<TaskContext> {
+    pub(crate) fn task_context(max_batch_bytes: usize) -> Arc<TaskContext> {
         let config = SessionConfig::new().with_option_extension(SedonaOptions {
             raster: RasterOptions {
                 max_batch_bytes,
@@ -976,8 +1111,11 @@ mod tests {
             .unwrap(),
         );
         let expected_schema = projection.schema();
-        let plan = RasterBatchBudgetRule
-            .optimize(projection, &ConfigOptions::default())
+        // One target partition: the test observes a single stream's slices.
+        let mut config = ConfigOptions::default();
+        config.execution.target_partitions = 1;
+        let plan = RasterMaterializationRule
+            .optimize(projection, &config)
             .unwrap();
         assert_eq!(plan.schema(), expected_schema, "schema must be unchanged");
         (plan, calls, expected_schema)
@@ -1092,8 +1230,11 @@ mod tests {
             .unwrap(),
         );
         let expected_schema = projection.schema();
-        let plan = RasterBatchBudgetRule
-            .optimize(projection, &ConfigOptions::default())
+        // One target partition: the test observes a single stream's slices.
+        let mut config = ConfigOptions::default();
+        config.execution.target_partitions = 1;
+        let plan = RasterMaterializationRule
+            .optimize(projection, &config)
             .unwrap();
         assert_eq!(plan.schema(), expected_schema);
 
@@ -1156,8 +1297,11 @@ mod tests {
         let projection: Arc<dyn ExecutionPlan> = Arc::new(
             ProjectionExec::try_new(vec![ProjectionExpr::new(outer, "loaded")], input).unwrap(),
         );
-        let plan = RasterBatchBudgetRule
-            .optimize(projection, &ConfigOptions::default())
+        // One target partition: the test observes a single stream's slices.
+        let mut config = ConfigOptions::default();
+        config.execution.target_partitions = 1;
+        let plan = RasterMaterializationRule
+            .optimize(projection, &config)
             .unwrap();
         let split = plan
             .downcast_ref::<ProjectionExec>()
@@ -1196,9 +1340,10 @@ mod tests {
             )
             .unwrap(),
         );
-        let plan = RasterBatchBudgetRule
-            .optimize(filter, &ConfigOptions::default())
-            .unwrap();
+        // One target partition: the test observes a single stream's slices.
+        let mut config = ConfigOptions::default();
+        config.execution.target_partitions = 1;
+        let plan = RasterMaterializationRule.optimize(filter, &config).unwrap();
         assert_eq!(plan.schema(), schema);
         let filter = plan.downcast_ref::<FilterExec>().expect("filter kept");
         assert_eq!(filter.batch_size(), PASSTHROUGH_BATCH_SIZE);
@@ -1236,9 +1381,10 @@ mod tests {
             )
             .unwrap(),
         );
-        let plan = RasterBatchBudgetRule
-            .optimize(filter, &ConfigOptions::default())
-            .unwrap();
+        // One target partition: the test observes a single stream's slices.
+        let mut config = ConfigOptions::default();
+        config.execution.target_partitions = 1;
+        let plan = RasterMaterializationRule.optimize(filter, &config).unwrap();
         // The filter's input grew by the hoisted argument; its output did not.
         assert_eq!(plan.schema(), schema);
         let filter = plan.downcast_ref::<FilterExec>().expect("filter kept");
@@ -1293,8 +1439,11 @@ mod tests {
             .unwrap(),
         );
         let expected_schema = aggregate.schema();
-        let plan = RasterBatchBudgetRule
-            .optimize(aggregate, &ConfigOptions::default())
+        // One target partition: the test observes a single stream's slices.
+        let mut config = ConfigOptions::default();
+        config.execution.target_partitions = 1;
+        let plan = RasterMaterializationRule
+            .optimize(aggregate, &config)
             .unwrap();
         assert_eq!(plan.schema(), expected_schema);
         let aggregate = plan
@@ -1319,7 +1468,7 @@ mod tests {
             .flat_map(|b| {
                 b.column(0)
                     .as_any()
-                    .downcast_ref::<arrow_array::Int64Array>()
+                    .downcast_ref::<Int64Array>()
                     .unwrap()
                     .values()
                     .to_vec()
@@ -1346,8 +1495,11 @@ mod tests {
         let (budgeted, calls, _) = budgeted_projection(&[Some(16); 6]);
         let filtered: Arc<dyn ExecutionPlan> =
             Arc::new(FilterExec::try_new(lit(true), budgeted).unwrap());
-        let plan = RasterBatchBudgetRule
-            .optimize(filtered, &ConfigOptions::default())
+        // One target partition: the test observes a single stream's slices.
+        let mut config = ConfigOptions::default();
+        config.execution.target_partitions = 1;
+        let plan = RasterMaterializationRule
+            .optimize(filtered, &config)
             .unwrap();
         let filter = plan.downcast_ref::<FilterExec>().expect("filter kept");
         assert_eq!(filter.batch_size(), PASSTHROUGH_BATCH_SIZE);
@@ -1371,8 +1523,11 @@ mod tests {
             )
             .unwrap(),
         );
-        let plan = RasterBatchBudgetRule
-            .optimize(Arc::clone(&projection), &ConfigOptions::default())
+        // One target partition: the test observes a single stream's slices.
+        let mut config = ConfigOptions::default();
+        config.execution.target_partitions = 1;
+        let plan = RasterMaterializationRule
+            .optimize(Arc::clone(&projection), &config)
             .unwrap();
         assert!(
             Arc::ptr_eq(&plan, &projection),
@@ -1392,8 +1547,11 @@ mod tests {
         let filter: Arc<dyn ExecutionPlan> =
             Arc::new(FilterExec::try_new(lit(true), input).unwrap());
 
-        let plan = RasterBatchBudgetRule
-            .optimize(Arc::clone(&filter), &ConfigOptions::default())
+        // One target partition: the test observes a single stream's slices.
+        let mut config = ConfigOptions::default();
+        config.execution.target_partitions = 1;
+        let plan = RasterMaterializationRule
+            .optimize(Arc::clone(&filter), &config)
             .unwrap();
         assert!(
             Arc::ptr_eq(&plan, &filter),
@@ -1458,8 +1616,11 @@ mod tests {
             .unwrap(),
         );
         let projection = project(Arc::clone(&in_branch));
-        let plan = RasterBatchBudgetRule
-            .optimize(Arc::clone(&projection), &ConfigOptions::default())
+        // One target partition: the test observes a single stream's slices.
+        let mut config = ConfigOptions::default();
+        config.execution.target_partitions = 1;
+        let plan = RasterMaterializationRule
+            .optimize(Arc::clone(&projection), &config)
             .unwrap();
         assert!(
             Arc::ptr_eq(&plan, &projection),
@@ -1533,8 +1694,8 @@ mod tests {
         ];
         for (expr, hoisted) in shapes {
             let projection = project(Arc::clone(&expr));
-            let plan = RasterBatchBudgetRule
-                .optimize(Arc::clone(&projection), &ConfigOptions::default())
+            let plan = RasterMaterializationRule
+                .optimize(Arc::clone(&projection), &config)
                 .unwrap();
             if hoisted {
                 let split = plan
@@ -1606,9 +1767,12 @@ mod tests {
             .unwrap(),
         );
         let expected_schema = final_stage.schema();
+        // One target partition: the test observes a single stream's slices.
+        let mut config = ConfigOptions::default();
+        config.execution.target_partitions = 1;
 
-        let plan = RasterBatchBudgetRule
-            .optimize(final_stage, &ConfigOptions::default())
+        let plan = RasterMaterializationRule
+            .optimize(final_stage, &config)
             .unwrap();
         assert_eq!(plan.schema(), expected_schema);
         let final_stage = plan.downcast_ref::<AggregateExec>().expect("final kept");
@@ -1687,7 +1851,7 @@ mod tests {
         let expected_schema = filter.schema();
         assert_eq!(expected_schema.fields().len(), 1);
 
-        let plan = RasterBatchBudgetRule
+        let plan = RasterMaterializationRule
             .optimize(filter, &ConfigOptions::default())
             .unwrap();
         assert_eq!(plan.schema(), expected_schema);
@@ -1749,8 +1913,11 @@ mod tests {
             )
             .unwrap(),
         );
-        let plan = RasterBatchBudgetRule
-            .optimize(projection, &ConfigOptions::default())
+        // One target partition: the test observes a single stream's slices.
+        let mut config = ConfigOptions::default();
+        config.execution.target_partitions = 1;
+        let plan = RasterMaterializationRule
+            .optimize(projection, &config)
             .unwrap();
         let split = plan
             .downcast_ref::<ProjectionExec>()
@@ -1803,8 +1970,11 @@ mod tests {
             )
             .unwrap(),
         );
-        let plan = RasterBatchBudgetRule
-            .optimize(projection, &ConfigOptions::default())
+        // One target partition: the test observes a single stream's slices.
+        let mut config = ConfigOptions::default();
+        config.execution.target_partitions = 1;
+        let plan = RasterMaterializationRule
+            .optimize(projection, &config)
             .unwrap();
         let projection = plan.downcast_ref::<ProjectionExec>().unwrap();
         let split = projection
