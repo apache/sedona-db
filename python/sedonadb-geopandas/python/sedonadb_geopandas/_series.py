@@ -1670,6 +1670,39 @@ class GeoSeries(Series):
         return self._flag(self._expr.geo.has_z(), "has_z")
 
     @property
+    def has_m(self):
+        """Whether each geometry has M values (`ST_HasM`); False if missing."""
+        return self._flag(self._expr.geo.has_m(), "has_m")
+
+    def _is_line(self):
+        """Whether each geometry is a single line (a ring reads as one)."""
+        return self._expr.geo.geometry_type() == lit("ST_LineString")
+
+    @property
+    def is_closed(self):
+        """Whether each line's ends meet (`ST_IsClosed`); False if missing.
+
+        As in GeoPandas, only a `LineString` or `MultiLineString` can be
+        closed: the engine calls every point and polygon closed, as PostGIS
+        does, and that answer is replaced with False here.
+        """
+        multi = self._expr.geo.geometry_type() == lit("ST_MultiLineString")
+        linear = self._is_line() | multi
+        return self._flag(self._expr.geo.is_closed() & linear, "is_closed")
+
+    @property
+    def is_ring(self):
+        """Whether each geometry is a closed, simple line; False if missing.
+
+        GEOS' definition, which GeoPandas follows: a `LineString` (or ring)
+        that is closed (`ST_IsClosed`) and simple (`ST_IsSimple`). Any other
+        geometry, a `MultiLineString` included, is not a ring; the engine's
+        `ST_IsRing` would raise for those rather than answer False.
+        """
+        expr = self._is_line() & self._expr.geo.is_closed() & self._expr.geo.is_simple()
+        return self._flag(expr, "is_ring")
+
+    @property
     def x(self):
         """The X coordinate of each point (`ST_X`); NaN for empty or missing.
 
@@ -1726,6 +1759,60 @@ class GeoSeries(Series):
         return np.array(
             [row[c].iloc[0] for c in ("minx", "miny", "maxx", "maxy")], dtype=float
         )
+
+    # -- measures ---------------------------------------------------------
+
+    def is_valid_reason(self):
+        """Why each geometry is invalid, or `"Valid Geometry"` (`ST_IsValidReason`).
+
+        GEOS' wording, as in GeoPandas; missing for a missing geometry.
+        """
+        return Series(self._df, self._expr.geo.is_valid_reason(), "is_valid_reason")
+
+    def _count(self, expr, name):
+        """A count as GeoPandas gives it: 32-bit, and 0 for a missing geometry."""
+        int32 = pa.int32()
+        count = expr.cast(int32).funcs.coalesce(lit(pa.scalar(0, int32)))
+        return Series(self._df, count, name)
+
+    def count_coordinates(self):
+        """The number of coordinates in each geometry (`ST_NPoints`)."""
+        return self._count(self._expr.geo.n_points(), "count_coordinates")
+
+    def count_geometries(self):
+        """The number of parts of each geometry (`ST_NumGeometries`).
+
+        As in GeoPandas, a single-part geometry is one part even when empty
+        (the engine counts none), and a multi-part geometry or collection
+        counts its parts.
+        """
+        int32 = pa.int32()
+        parts = self._expr.geo.num_geometries().cast(int32)
+        # A missing geometry takes the engine's count, missing, and so 0.
+        collection = self._expr.geo.is_collection().funcs.coalesce(lit(True))
+        count = _choose(collection, parts, lit(pa.scalar(1, int32)))
+        return self._count(count, "count_geometries")
+
+    def count_interior_rings(self):
+        """The number of holes in each polygon (`ST_NumInteriorRings`).
+
+        0 for any other geometry, a `MultiPolygon` included, as in GeoPandas.
+        """
+        return self._count(self._expr.geo.num_interior_rings(), "count_interior_rings")
+
+    def minimum_clearance(self):
+        """The minimum clearance of each geometry (`ST_MinimumClearance`).
+
+        The smallest distance a vertex could move to make the geometry
+        invalid; infinite where no move can (a single point, say), as in
+        GeoPandas.
+        """
+        return Series(self._df, self._expr.geo.minimum_clearance(), "minimum_clearance")
+
+    def minimum_clearance_line(self):
+        """The line along which each geometry's minimum clearance is measured
+        (`ST_MinimumClearanceLine`); empty where the clearance is infinite."""
+        return self._geo(self._expr.geo.minimum_clearance_line())
 
     # -- constructive methods ---------------------------------------------
 
@@ -1991,6 +2078,34 @@ class GeoSeries(Series):
         expr = self._expr.geo.equals(other_expr) | both_empty
         return Series(self._df, expr.funcs.coalesce(lit(False)), "geom_equals")
 
+    def relate(self, other, align=None):
+        """The DE-9IM matrix of each geometry with `other` (`ST_Relate`), as
+        a 9-character string; missing where either side is missing."""
+        _check_align(align)
+        expr = self._expr.geo.relate(self._other(other))
+        return Series(self._df, expr, "relate")
+
+    def relate_pattern(self, other, pattern, align=None):
+        """Whether each geometry's DE-9IM matrix with `other` matches
+        `pattern` (`ST_Relate`); False where either side is missing.
+
+        `pattern` is 9 characters, each one of `T`, `F`, `*`, `0`, `1`, `2`
+        (either case), as in GeoPandas.
+        """
+        _check_align(align)
+        if (
+            not isinstance(pattern, str)
+            or len(pattern) != 9
+            or set(pattern.upper()) - set("TF*012")
+        ):
+            # Checked here: GEOS would only refuse it once computed.
+            raise ValueError(
+                f"relate_pattern() pattern must be 9 characters of T, F, *, 0, 1, "
+                f"or 2, got {pattern!r}"
+            )
+        expr = self._expr.geo.relate(self._other(other), lit(pattern))
+        return Series(self._df, expr.funcs.coalesce(lit(False)), "relate_pattern")
+
     def dwithin(self, other, distance, align=None):
         """Whether each geometry is within `distance` of `other` (`ST_DWithin`).
 
@@ -2037,6 +2152,33 @@ class GeoSeries(Series):
         _check_align(align)
         other_expr = self._other(other)
         return Series(self._df, self._expr.geo.distance(other_expr), "distance")
+
+    def hausdorff_distance(self, other, align=None, densify=None):
+        """The Hausdorff distance from each geometry to `other`
+        (`ST_HausdorffDistance`).
+
+        `densify`, a fraction in (0, 1], splits each segment into equal parts
+        of at most that fraction of its length first, as in GeoPandas.
+        Missing where either side is missing or empty, as in GeoPandas.
+        """
+        _check_align(align)
+        other_expr = self._other(other)
+        if densify is None:
+            expr = self._expr.geo.hausdorff_distance(other_expr)
+        else:
+            value = _numeric_value(densify)
+            if (
+                not isinstance(value, numbers.Real)
+                or isinstance(value, bool)
+                or not 0 < value <= 1
+            ):
+                # Checked here: GEOS would only refuse it once computed.
+                raise ValueError(
+                    f"hausdorff_distance() densify must be a fraction in (0, 1], "
+                    f"got {densify!r}"
+                )
+            expr = self._expr.geo.hausdorff_distance(other_expr, float(value))
+        return Series(self._df, expr, "hausdorff_distance")
 
     def intersection(self, other, align=None):
         """The intersection of each geometry with `other` (`ST_Intersection`)."""
