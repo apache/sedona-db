@@ -248,6 +248,13 @@ def test_st_azimuth(eng, geom1, geom2, expected):
             "POINT (3 7)"
         ),
         (
+            "POINT (1 2)",
+            2.0, 3.0,
+            5.0, 7.0,
+            1.0, 1.0,
+            "POINT (9 20)"
+        ),
+        (
             "LINESTRING (0 0, 1 1)",
             1.0, 0.0,
             0.0, 1.0,
@@ -312,6 +319,14 @@ def test_st_affine_2d(eng, geom, a, b, d, e, xoff, yoff, expected):
             0.0, 0.0, 2.0,
             1.0, 3.0, 5.0,
             "POINT Z (3 7 11)",
+        ),
+        (
+            "POINT Z (1 2 3)",
+            1.0, 2.0, 3.0,
+            4.0, 5.0, 6.0,
+            7.0, 8.0, 9.0,
+            10.0, 11.0, 12.0,
+            "POINT Z (24 43 62)",
         ),
     ],
 )
