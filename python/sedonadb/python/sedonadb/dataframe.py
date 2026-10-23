@@ -1542,6 +1542,7 @@ class DataFrame:
         single_file_output: Optional[bool] = None,
         geoparquet_version: Literal["1.0", "1.1", "2.0", "none", None] = None,
         overwrite_bbox_columns: Optional[bool] = None,
+        write_bbox_columns: Optional[bool] = None,
         max_row_group_size: Optional[int] = None,
         compression: Optional[str] = None,
     ):
@@ -1590,6 +1591,12 @@ class DataFrame:
                 that already exist in the input. This is useful in a read -> modify
                 -> write scenario to ensure these columns are up-to-date. If `False`
                 (the default), an error will be raised if a bbox column already exists.
+            write_bbox_columns: Use `True` or `False` to explicitly request or omit
+                bounding box (covering) columns, independent of `geoparquet_version`.
+                By default, these columns are written only for GeoParquet 1.1. Bounding
+                box columns can be requested for GeoParquet 1.1 or 2.0 (GeoParquet 1.0
+                cannot declare them, so requesting them with 1.0 or "none" raises an
+                error).
             max_row_group_size: Target maximum number of rows in each row group. Defaults
                 to the global configuration value (1M rows).
             compression: Sets the Parquet compression codec. Valid values are: uncompressed,
@@ -1625,6 +1632,9 @@ class DataFrame:
 
         if overwrite_bbox_columns is not None:
             options["overwrite_bbox_columns"] = str(overwrite_bbox_columns)
+
+        if write_bbox_columns is not None:
+            options["write_bbox_columns"] = str(write_bbox_columns)
 
         if single_file_output is None:
             single_file_output = partition_by is None and str(path).endswith(".parquet")
