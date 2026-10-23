@@ -95,6 +95,25 @@ GeoPandas' `align=False`; there is no index to align on. `touches` inherits
 an engine issue with geometry collections that mix dimensions
 (apache/sedona-db#1383).
 
+The numeric parameters of geometry methods (`segmentize()`, `set_precision()`,
+`concave_hull()`, `force_3d()`, `snap()`, `get_geometry()`) take a number or a
+numeric `Series` of the same frame, applied row by row. `segmentize()` only
+adds vertices, where GEOS also repairs an invalid polygon and turns a one-part
+multi-line into a line; `force_3d()` keeps Z values and drops M, where Shapely
+leaves a geometry with M but no Z as it is and replaces the Z values of one
+with both; and `snap()` leaves an empty geometry as it is, where GEOS can turn
+it into a 3D empty, or one of another type (`POLYGON EMPTY` becomes
+`LINEARRING Z EMPTY`). `concave_hull(allow_holes=True)`,
+`line_merge(directed=True)`, and `set_precision()` modes other than
+`"valid_output"` are not supported.
+
+The affine transformations (`affine_transform()`, `translate()`, `rotate()`,
+`scale()`, `skew()`) give Shapely's coordinates to the last bit, but keep M
+values, which Shapely drops (and overwrites, with Z, as NaN in a geometry
+with both). `interpolate()` and `project()` raise for a multi-line when the
+result is computed, as the engine works along single lines only, and
+`interpolate()` gives a 2D point on a 3D line.
+
 `explode()` takes parts one level deep and drops rows whose geometry has no
 parts, as GeoPandas does. Without an index it cannot number the parts
 (`index_parts=True`), and it explodes the active geometry column only:
