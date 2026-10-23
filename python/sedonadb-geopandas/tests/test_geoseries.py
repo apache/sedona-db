@@ -156,12 +156,16 @@ MEASURE_CORPUS = CORPUS + [
 ]
 
 
-# Geometries whose parts differ: Z or M in a later member only, empties that
-# carry a dimension, and empty parts alone or beside non-empty ones.
+# Geometries whose parts differ: Z or M in a later member only (empty, nested,
+# or with NaN values), empties that carry a dimension, and empty parts alone or
+# beside non-empty ones.
 MIXED_PARTS = [
     "GEOMETRYCOLLECTION (POINT (1 2), POINT M (3 4 5))",
     "GEOMETRYCOLLECTION (POINT (1 2), GEOMETRYCOLLECTION (POINT M (3 4 5)))",
     "GEOMETRYCOLLECTION (POINT (1 2), POINT Z (3 4 5))",
+    "GEOMETRYCOLLECTION (POINT (1 2), POINT M EMPTY)",
+    "GEOMETRYCOLLECTION (POINT (1 2), LINESTRING Z EMPTY)",
+    "GEOMETRYCOLLECTION (POINT (1 2), POINT M (3 4 NaN))",
     "GEOMETRYCOLLECTION (POINT M (1 2 3), POINT (3 4))",
     "POINT M EMPTY",
     "POINT Z EMPTY",
@@ -176,10 +180,10 @@ MIXED_PARTS = [
 
 @pytest.mark.parametrize("name", ["is_empty", "has_z", "has_m", "is_closed", "is_ring"])
 def test_properties_look_at_every_part(name):
-    # The engine answers from a collection's first member (Z and M), calls a
-    # collection of empty parts non-empty, and passes over an empty line in a
-    # closed multi-line; GeoPandas looks at every part. The stored geometry
-    # keeps a later member's Z or M values, so the answer is not moot.
+    # GeoPandas looks at every part: the engine's ST_IsEmpty calls a
+    # collection of empty parts non-empty, and its ST_IsClosed passes over an
+    # empty line in a closed multi-line. The stored geometry keeps a later
+    # member's Z or M values, so those answers are not moot.
     gs = gpd.GeoSeries.from_wkt(MIXED_PARTS, crs="EPSG:3857")
     got = getattr(sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry, name)
     assert got.to_pandas().tolist() == getattr(gs, name).tolist()
