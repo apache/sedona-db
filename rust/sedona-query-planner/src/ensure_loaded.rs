@@ -363,18 +363,12 @@ mod tests {
     use super::*;
 
     use std::collections::HashMap;
-    use std::hash::{Hash, Hasher};
 
-    use arrow_schema::{DataType, Field, FieldRef, Schema};
-    use async_trait::async_trait;
+    use arrow_schema::{DataType, Field, Schema};
     use datafusion::execution::session_state::SessionStateBuilder;
     use datafusion_common::tree_node::TreeNodeRecursion;
-    use datafusion_expr::async_udf::{AsyncScalarUDF, AsyncScalarUDFImpl};
     use datafusion_expr::registry::FunctionRegistry;
-    use datafusion_expr::{
-        ColumnarValue, EmptyRelation, LogicalPlanBuilder, ReturnFieldArgs, ScalarFunctionArgs,
-        ScalarUDF, ScalarUDFImpl, Signature, Volatility, col,
-    };
+    use datafusion_expr::{EmptyRelation, LogicalPlanBuilder, ScalarUDF, Volatility, col};
     use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarUDF, SimpleSedonaScalarKernel};
     use sedona_schema::matchers::ArgMatcher;
 
@@ -788,66 +782,6 @@ mod tests {
         );
     }
 
-    /// An `AsyncScalarUDF` stand-in for the real `rs_ensureloaded`, so the
-    /// whole optimizer runs on it as in a `SedonaContext`: this rule wraps,
-    /// `WrapAsyncUdfRule` stamps `sd_restore_metadata`, CSE hoists, and
-    /// `OptimizeProjections` merges. Returns its argument's (raster) field.
-    #[derive(Debug)]
-    struct FakeAsyncEnsureLoaded {
-        signature: Signature,
-    }
-
-    impl PartialEq for FakeAsyncEnsureLoaded {
-        fn eq(&self, _other: &Self) -> bool {
-            true
-        }
-    }
-    impl Eq for FakeAsyncEnsureLoaded {}
-    impl Hash for FakeAsyncEnsureLoaded {
-        fn hash<H: Hasher>(&self, state: &mut H) {
-            "rs_ensureloaded".hash(state);
-        }
-    }
-
-    impl ScalarUDFImpl for FakeAsyncEnsureLoaded {
-        fn name(&self) -> &str {
-            "rs_ensureloaded"
-        }
-
-        fn signature(&self) -> &Signature {
-            &self.signature
-        }
-
-        fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
-            Ok(SedonaType::Raster
-                .to_storage_field("", true)?
-                .data_type()
-                .clone())
-        }
-
-        fn return_field_from_args(&self, args: ReturnFieldArgs) -> Result<FieldRef> {
-            Ok(Arc::clone(&args.arg_fields[0]))
-        }
-
-        fn invoke_with_args(&self, _args: ScalarFunctionArgs) -> Result<ColumnarValue> {
-            unreachable!("stub; never executed")
-        }
-    }
-
-    #[async_trait]
-    impl AsyncScalarUDFImpl for FakeAsyncEnsureLoaded {
-        async fn invoke_async_with_args(&self, _args: ScalarFunctionArgs) -> Result<ColumnarValue> {
-            unreachable!("stub; never executed")
-        }
-    }
-
-    fn fake_async_ensure_loaded_udf() -> ScalarUDF {
-        AsyncScalarUDF::new(Arc::new(FakeAsyncEnsureLoaded {
-            signature: Signature::any(1, Volatility::Stable),
-        }))
-        .into_scalar_udf()
-    }
-
     /// `(total rs_ensureloaded calls in the plan, how many of them have another
     /// rs_ensureloaded somewhere in their arguments)`.
     fn loader_stats(plan: &LogicalPlan) -> (usize, usize) {
@@ -1004,10 +938,8 @@ mod tests {
     /// The reported shape, through the whole optimizer to its fixpoint: two
     /// `needs_pixels` calls sharing a raster column over a scan. Each pass used
     /// to add a loader around the column CSE had hoisted the previous one
-    /// into, ending with `rs_ensureloaded(sd_restore_metadata(rs_ensureloaded(..)))`
-    /// that the physical planner can't hoist (apache/datafusion#20031), so the
-    /// outer call ran synchronously and the query failed with "async functions
-    /// should not be called directly".
+    /// into, ending with `rs_ensureloaded(rs_ensureloaded(..))`: a redundant
+    /// load per pass.
     #[tokio::test]
     async fn optimizer_fixpoint_keeps_one_loader_for_calls_sharing_a_raster() {
         use crate::optimizer::register_ensure_loaded_optimizer;
@@ -1019,7 +951,7 @@ mod tests {
             register_ensure_loaded_optimizer(SessionStateBuilder::new().with_default_features())
                 .unwrap();
         let ctx = SessionContext::new_with_state(builder.build());
-        ctx.register_udf(fake_async_ensure_loaded_udf());
+        ctx.register_udf(ScalarUDF::clone(&fake_ensure_loaded_udf()));
         ctx.register_udf(ScalarUDF::clone(&needs_bytes_udf("rs_mock_a")));
         ctx.register_udf(ScalarUDF::clone(&needs_bytes_udf("rs_mock_b")));
         let schema = Arc::new(Schema::new(vec![
@@ -1041,10 +973,9 @@ mod tests {
             optimized.display_indent()
         );
 
-        // The one loader is the AsyncFuncExec's; nothing calls it synchronously.
+        // The physical plan evaluates that one loader once per batch.
         let physical = df.create_physical_plan().await.unwrap();
         let physical_str = displayable(physical.as_ref()).indent(true).to_string();
-        assert!(physical_str.contains("AsyncFuncExec"), "{physical_str}");
         assert_eq!(
             physical_str.matches("rs_ensureloaded").count(),
             1,

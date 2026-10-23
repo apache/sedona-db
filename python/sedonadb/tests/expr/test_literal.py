@@ -264,9 +264,9 @@ def test_pandas_timestamp_literal():
     assert lit_array.type == pa.timestamp("ns")
     assert lit_array[0].as_py() == stamp
 
-    aware = pd.Timestamp("2026-01-01 00:00:00.000000001", tz="US/Pacific")
+    aware = pd.Timestamp("2026-01-01 00:00:00.000000001", tz="America/Los_Angeles")
     lit_array = pa.array(lit(aware))
-    assert lit_array.type == pa.timestamp("ns", "US/Pacific")
+    assert lit_array.type == pa.timestamp("ns", "America/Los_Angeles")
     assert lit_array[0].as_py() == aware
 
     # A coarser-unit Timestamp keeps its unit rather than being forced to ns

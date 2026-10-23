@@ -52,7 +52,9 @@ use datafusion_common::not_impl_err;
 use datafusion_common::TableReference;
 use datafusion_expr::dml::InsertOp;
 use datafusion_expr::sqlparser::dialect::{dialect_from_str, Dialect};
-use datafusion_expr::{AggregateUDFImpl, LogicalPlan, LogicalPlanBuilder, ScalarUDFImpl, SortExpr};
+use datafusion_expr::{
+    AggregateUDFImpl, LogicalPlan, LogicalPlanBuilder, ScalarUDF, ScalarUDFImpl, SortExpr,
+};
 use parking_lot::Mutex;
 use sedona_catalog::SedonaCatalogList;
 use sedona_common::{sedona_internal_datafusion_err, SedonaOptions};
@@ -397,8 +399,8 @@ impl SedonaContext {
 
         // Stash a clone of the shared registry handle inside
         // `ConfigOptions` via the `RasterLoaderConfig` extension. The
-        // RS_EnsureLoaded async UDF reads from there at dispatch time —
-        // `AsyncScalarUDFImpl::invoke_async_with_args` only receives
+        // RS_EnsureLoaded UDF reads from there at dispatch time —
+        // `ScalarUDFImpl::invoke_with_args` only receives
         // `Arc<ConfigOptions>`, so this is the path that keeps the
         // registry reachable at the UDF's invocation site. Mirrors how
         // `SedonaRuntime` works inside `SedonaOptions`.
@@ -413,18 +415,15 @@ impl SedonaContext {
         );
         drop(state);
 
-        // Register the RS_EnsureLoaded async UDF. It pulls the registry
-        // out of `args.config_options` at dispatch time, so it doesn't
-        // need to close over the Arc itself — the UDF instance is
+        // Register the RS_EnsureLoaded UDF. It pulls the registry out of
+        // `args.config_options` at dispatch time, so it doesn't need to
+        // close over the Arc itself — the UDF instance is
         // session-agnostic. The logical optimizer rule registered above
         // (`register_ensure_loaded_optimizer`) resolves this UDF from the
         // function registry at rewrite time, so it must be registered
         // before any query is planned.
-        {
-            use datafusion_expr::async_udf::AsyncScalarUDF;
-            let udf = AsyncScalarUDF::new(Arc::new(RsEnsureLoaded::new()));
-            out.ctx.register_udf(udf.into_scalar_udf());
-        };
+        out.ctx
+            .register_udf(ScalarUDF::new_from_impl(RsEnsureLoaded::new()));
 
         // Register the GDAL raster byte loader. `sedona-raster-gdal` is a
         // mandatory dep on `sedona`, but libgdal itself is dlopen'd
@@ -1483,8 +1482,7 @@ mod tests {
             .await
             .unwrap();
         let plan = pretty_format_batches(&explain).unwrap().to_string();
-        assert!(plan.contains("EnsureLoadedExec"), "{plan}");
-        assert!(!plan.contains("AsyncFuncExec"), "{plan}");
+        assert!(plan.contains("RasterBatchSplitExec"), "{plan}");
 
         let batches = ctx
             .sql("SELECT RS_EnsureLoaded(rast) AS r FROM tiles")
