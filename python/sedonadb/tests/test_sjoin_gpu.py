@@ -218,6 +218,13 @@ def test_spatial_join_mixed_geometry_gpu():
     assert gpu_probe_res.equals(cpu_probe_res)
     assert gpu_build_res.equals(cpu_build_res)
     assert set(gpu_probe_res["probe_id"].tolist()) == {
-        104, 105, 106, 108, 110, 112, 114, 116, 118
+        104,
+        105,
+        106,
+        108,
+        110,
+        112,
+        114,
+        116,
+        118,
     }
-

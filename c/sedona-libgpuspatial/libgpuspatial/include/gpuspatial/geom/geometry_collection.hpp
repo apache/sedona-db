@@ -252,23 +252,23 @@ class GeometryCollectionArrayView {
   }
 
   DEV_HOST_INLINE INDEX_T locate_geom(INDEX_T geom_idx) const {
-    auto it = thrust::upper_bound(thrust::seq, ps_num_geoms_.begin(),
-                                  ps_num_geoms_.end(), geom_idx);
+    auto it = thrust::upper_bound(thrust::seq, ps_num_geoms_.begin(), ps_num_geoms_.end(),
+                                  geom_idx);
     assert(it != ps_num_geoms_.end());
     return thrust::distance(ps_num_geoms_.begin(), it) - 1;
   }
 
   DEV_HOST_INLINE INDEX_T locate_part(INDEX_T part_idx) const {
-    auto it = thrust::upper_bound(thrust::seq, ps_num_parts_.begin(),
-                                  ps_num_parts_.end(), part_idx);
+    auto it = thrust::upper_bound(thrust::seq, ps_num_parts_.begin(), ps_num_parts_.end(),
+                                  part_idx);
     assert(it != ps_num_parts_.end());
     INDEX_T geom_idx = thrust::distance(ps_num_parts_.begin(), it) - 1;
     return locate_geom(geom_idx);
   }
 
   DEV_HOST_INLINE INDEX_T locate_ring(INDEX_T ring_idx) const {
-    auto it = thrust::upper_bound(thrust::seq, ps_num_rings_.begin(),
-                                  ps_num_rings_.end(), ring_idx);
+    auto it = thrust::upper_bound(thrust::seq, ps_num_rings_.begin(), ps_num_rings_.end(),
+                                  ring_idx);
     assert(it != ps_num_rings_.end());
     INDEX_T part_idx = thrust::distance(ps_num_rings_.begin(), it) - 1;
     return locate_part(part_idx);
