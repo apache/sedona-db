@@ -1588,6 +1588,22 @@ def _normalize_crs(crs):
         raise ValueError(f"Invalid CRS {crs!r}: {err}") from err
 
 
+def _number(value, method, name):
+    """`value` as a float, for a parameter GeoPandas takes as one number."""
+    number = _numeric_value(value)
+    if not isinstance(number, numbers.Real) or isinstance(number, bool):
+        raise TypeError(
+            f"{method}() {name} must be a number, got {type(value).__name__}"
+        )
+    return float(number)
+
+
+def _snapped(value):
+    """A sine, cosine, or tangent as Shapely's affine transformations use
+    it: 0 where it is within rounding of 0 (so a quarter turn is exact)."""
+    return 0.0 if abs(value) < 2.5e-16 else value
+
+
 def _check_align(align):
     """GeoPandas' `align` argument.
 
@@ -1639,7 +1655,14 @@ class GeoSeries(Series):
         parameter's range when the method is called; a row outside it fails
         in the engine when the result is computed.
         """
-        missing = lit(pa.scalar(None, pa.float64()))
+        value = self._parameter_value(value, method, name, valid, nan)
+        if isinstance(value, Expr):
+            return value
+        return lit(pa.scalar(value, pa.float64()))
+
+    def _parameter_value(self, value, method, name, valid=None, nan=True):
+        """As `_parameter`, but one number stays a float (None for a NaN),
+        for arithmetic that a literal does not take."""
         message = f"{method}() {name} must not be NaN"
         if isinstance(value, Series):
             expr = _operand(self._df, value)
@@ -1650,7 +1673,7 @@ class GeoSeries(Series):
                 )
             expr = expr.cast(pa.float64())
             if nan:
-                return expr.funcs.nanvl(missing)
+                return expr.funcs.nanvl(lit(pa.scalar(None, pa.float64())))
             return expr + _fail_where(expr.funcs.isnan(), message)
         # Validated like any other operand (arrays are rejected), then
         # resolved to a plain number, so NumPy, Arrow, and lit() scalars are
@@ -1665,10 +1688,10 @@ class GeoSeries(Series):
         if math.isnan(number):
             if not nan:
                 raise ValueError(message)
-            return missing
+            return None
         if valid is not None and not valid[0](number):
             raise ValueError(f"{method}() {name} must be {valid[1]}, got {value!r}")
-        return lit(float(number))
+        return float(number)
 
     # -- properties --------------------------------------------------------
 
@@ -2104,6 +2127,189 @@ class GeoSeries(Series):
                 )
             n = lit(int(value) + 1) if value >= 0 else count + lit(int(value) + 1)
         return self._geo(self._expr.geo.geometry_n(n))
+
+    # -- affine transformations -------------------------------------------
+    #
+    # As in GeoPandas, each follows Shapely's `shapely.affinity` step for
+    # step (the same matrix, the same rounding of a near-zero sine or cosine,
+    # the same arithmetic for the offsets), so the coordinates are the same
+    # to the last bit. Unlike Shapely, M values are kept: Shapely drops them,
+    # and writes NaN over the Z and M values of a geometry with both.
+
+    def affine_transform(self, matrix):
+        """Each geometry under the affine transformation `matrix` (`ST_Affine`).
+
+        `[a, b, d, e, xoff, yoff]` for 2D, or `[a, b, c, d, e, f, g, h, i,
+        xoff, yoff, zoff]` for 3D, as in GeoPandas.
+        """
+        values = [_number(v, "affine_transform", "matrix") for v in matrix]
+        if len(values) not in (6, 12):
+            raise ValueError(
+                f"affine_transform() matrix must have 6 or 12 elements, got {len(values)}"
+            )
+        return self._geo(self._expr.geo.affine(*values))
+
+    def translate(self, xoff=0.0, yoff=0.0, zoff=0.0):
+        """Each geometry shifted by the given offsets (`ST_Translate`)."""
+        offsets = [
+            _number(v, "translate", n)
+            for v, n in ((xoff, "xoff"), (yoff, "yoff"), (zoff, "zoff"))
+        ]
+        return self._geo(self._expr.geo.translate(*offsets))
+
+    def rotate(self, angle, origin="center", use_radians=False):
+        """Each geometry rotated counterclockwise by `angle` about `origin`
+        (`ST_Affine`).
+
+        `origin` is `"center"` (each geometry's bounding box center, the
+        default), `"centroid"` (each geometry's centroid), or a point, as a
+        Shapely `Point` or an `(x, y)` tuple, as in GeoPandas. `angle` is in
+        degrees, or radians with `use_radians=True`.
+        """
+        angle = _number(angle, "rotate", "angle")
+        if not use_radians:
+            angle = angle * math.pi / 180.0
+        cosp, sinp = _snapped(math.cos(angle)), _snapped(math.sin(angle))
+        x0, y0, _ = self._origin(origin, "rotate")
+        xoff = x0 - x0 * cosp + y0 * sinp
+        yoff = y0 - x0 * sinp - y0 * cosp
+        return self._geo(self._expr.geo.affine(cosp, -sinp, sinp, cosp, xoff, yoff))
+
+    def scale(self, xfact=1.0, yfact=1.0, zfact=1.0, origin="center"):
+        """Each geometry scaled by the given factors about `origin`
+        (`ST_Affine`); `origin` as for `rotate`, with Z 0 unless a 3D point
+        gives it."""
+        xfact, yfact, zfact = (
+            _number(v, "scale", n)
+            for v, n in ((xfact, "xfact"), (yfact, "yfact"), (zfact, "zfact"))
+        )
+        x0, y0, z0 = self._origin(origin, "scale")
+        return self._geo(
+            self._expr.geo.affine(
+                xfact,
+                0.0,
+                0.0,
+                0.0,
+                yfact,
+                0.0,
+                0.0,
+                0.0,
+                zfact,
+                x0 - x0 * xfact,
+                y0 - y0 * yfact,
+                z0 - z0 * zfact,
+            )
+        )
+
+    def skew(self, xs=0.0, ys=0.0, origin="center", use_radians=False):
+        """Each geometry sheared by the angles `xs` (along x) and `ys` (along
+        y) about `origin` (`ST_Affine`); angles and `origin` as for `rotate`."""
+        xs, ys = _number(xs, "skew", "xs"), _number(ys, "skew", "ys")
+        if not use_radians:
+            xs, ys = xs * math.pi / 180.0, ys * math.pi / 180.0
+        tanx, tany = _snapped(math.tan(xs)), _snapped(math.tan(ys))
+        x0, y0, _ = self._origin(origin, "skew")
+        return self._geo(
+            self._expr.geo.affine(1.0, tanx, tany, 1.0, y0 * -tanx, x0 * -tany)
+        )
+
+    def _origin(self, origin, method):
+        """The origin of an affine transformation, as Shapely interprets it:
+        each geometry's bounding box center or centroid (expressions, with Z
+        0), or one point given as a Shapely `Point` or a 2- or 3-tuple
+        (numbers, with Z 0 unless given)."""
+        geo = self._expr.geo
+        if isinstance(origin, str):
+            if origin == "center":
+                x0 = (geo.x_max() + geo.x_min()) / 2.0
+                y0 = (geo.y_max() + geo.y_min()) / 2.0
+            elif origin == "centroid":
+                centroid = geo.centroid().geo
+                x0, y0 = centroid.x(), centroid.y()
+            else:
+                raise ValueError(f"{method}() origin {origin!r} is not recognized")
+            # An empty geometry has neither bounds nor a centroid, and any
+            # origin leaves it as it is (a missing one stays missing anyway).
+            zero = lit(0.0)
+            return x0.funcs.coalesce(zero), y0.funcs.coalesce(zero), 0.0
+        if getattr(origin, "geom_type", None) == "Point":
+            origin = origin.coords[0]
+        try:
+            point = [_number(v, method, "origin") for v in origin]
+        except TypeError:
+            raise TypeError(
+                f"{method}() origin must be 'center', 'centroid', a Point, or an "
+                f"(x, y) or (x, y, z) tuple, got {origin!r}"
+            ) from None
+        if len(point) not in (2, 3):
+            raise ValueError(
+                f"{method}() origin must have 2 or 3 coordinates, got {len(point)}"
+            )
+        return point[0], point[1], point[2] if len(point) == 3 else 0.0
+
+    # -- positions along lines --------------------------------------------
+
+    def interpolate(self, distance, normalized=False):
+        """The point `distance` along each line (`ST_LineInterpolatePoint`),
+        or that fraction of its length with `normalized=True`.
+
+        As in GeoPandas, a negative distance counts back from the end, a
+        distance past either end stops there, and an empty line gives an
+        empty point; `distance` is a number or a numeric `Series` of this
+        frame. Two engine limits: a multi-line raises when the result is
+        computed, as the engine interpolates along single lines only, and the
+        point on a 3D line is 2D (without the Z value GeoPandas interpolates).
+        """
+        import shapely
+
+        geo = self._expr.geo
+        along = self._parameter_value(distance, "interpolate", "distance")
+        # Where a negative distance counts back from: the end of the line.
+        end = 1.0 if normalized else geo.length()
+        if along is None:
+            fraction = lit(pa.scalar(None, pa.float64()))
+        else:
+            if isinstance(along, Expr):
+                backward = (along < lit(0.0)).funcs.coalesce(lit(False))
+                along = _choose(backward, along + end, along)
+            elif along < 0:
+                along = along + end
+            if normalized:
+                fraction = along
+            else:
+                # Of a line of no length, its only point (the engine gives an
+                # empty point for the infinite or NaN fraction a division by
+                # its length would give); past either end of any other line,
+                # the engine stops at that end.
+                has_length = (end > lit(0.0)).funcs.coalesce(lit(False))
+                fraction = _choose(has_length, along / end, lit(0.0))
+        # The engine refuses an empty line, so it is given a missing line
+        # instead, and the result for it is an empty point.
+        ctx = self._df._ctx
+        present = (~geo.is_empty()).funcs.coalesce(lit(False))
+        wkb = _choose(present, geo.as_binary(), lit(pa.scalar(None, pa.binary())))
+        line = _geometry_from_wkb(wkb, self._is_geography(), self.crs, ctx)
+        point = line.geo.line_interpolate_point(fraction)
+        return self._geo(self._empty_as(point, shapely.Point()))
+
+    def project(self, other, normalized=False, align=None):
+        """The distance along each line to the point on it nearest `other`
+        (`ST_LineLocatePoint`), or that fraction of its length with
+        `normalized=True`.
+
+        `other` is a point, scalar or a `GeoSeries` of this frame. As in
+        GeoPandas (GEOS), the normalized form is the distance over the
+        length, so NaN for a line of no length, and an empty line or point
+        gives NaN. A multi-line raises when the result is computed: the
+        engine locates points along single lines only.
+        """
+        _check_align(align)
+        length = self._expr.geo.length()
+        fraction = self._expr.geo.line_locate_point(self._other(other))
+        distance = fraction * length
+        if normalized:
+            distance = distance / length
+        return Series(self._df, distance, "project")
 
     def explode(self, ignore_index=False, index_parts=False):
         """One element per part of each multi-part geometry, as in GeoPandas.

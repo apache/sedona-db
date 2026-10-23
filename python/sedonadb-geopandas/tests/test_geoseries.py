@@ -234,6 +234,16 @@ def test_coordinates_of_non_points_raise_when_computed():
         ("get_geometry", (1,)),
         ("get_geometry", (-1,)),
         ("get_geometry", (-2,)),
+        ("affine_transform", ([2, 0.5, -1, 3, 10, 20],)),
+        ("affine_transform", ([2, 0.5, 0.25, -1, 3, 0.75, 0.1, 0.2, 4, 1, 2, 3],)),
+        ("translate", (1, 2, 3)),
+        ("rotate", (90,)),
+        ("rotate", (33, "centroid")),
+        ("rotate", (1.1, (2, 3), True)),
+        ("scale", (2, -3, 4)),
+        ("scale", (2, 3, 4, (1, 1, 1))),
+        ("skew", (30, 10)),
+        ("skew", (0.3, 0.1, shapely.Point(1, 2), True)),
         ("buffer", (0.5,)),
         ("centroid", ()),
     ],
@@ -530,6 +540,177 @@ def test_numeric_parameters_come_from_the_same_frame():
     _, other = _geoseries(["LINESTRING (0 0, 10 0)"], v=[1.0])
     with pytest.raises(ValueError):
         gdf.geometry.segmentize(other["v"])
+
+
+TRANSFORMS = [
+    ("affine_transform", ([2, 0.5, -1, 3, 10, 20],), {}),
+    ("affine_transform", ([2, 0.5, 0.25, -1, 3, 0.75, 0.1, 0.2, 4, 1, 2, 3],), {}),
+    ("translate", (1.5, -2, 3), {}),
+    ("rotate", (33,), {}),
+    ("rotate", (90,), {"origin": shapely.Point(1, 1)}),
+    ("rotate", (1.1,), {"origin": (2, 3), "use_radians": True}),
+    ("scale", (2, -3, 4), {}),
+    ("scale", (0.5, 2, 3), {"origin": (1, 2, 3)}),
+    ("skew", (30, 10), {}),
+    ("skew", (0.3, 0.1), {"origin": shapely.Point(1, 2, 5), "use_radians": True}),
+]
+
+
+@pytest.mark.parametrize(
+    "call", TRANSFORMS, ids=lambda call: f"{call[0]}{list(call[1])}{call[2] or ''}"
+)
+def test_affine_transformations_match_shapely_exactly(call):
+    # The same matrix and the same arithmetic as shapely.affinity, so the
+    # same coordinates to the last bit (Z included), not merely close ones.
+    name, args, kwargs = call
+    wkts = [
+        "POINT (1.1 2.2)",
+        "POINT Z (1 2 3)",
+        "LINESTRING (0 0, 3 4, 10 -1)",
+        "POLYGON Z ((0 0 1, 4 0 2, 4 4 3, 0 4 4, 0 0 1))",
+        "MULTIPOINT ((0.1 0.2), (3.3 -7.7))",
+        "POINT EMPTY",
+        None,
+    ]
+    gs, gdf = _geoseries(wkts)
+    got = getattr(gdf.geometry, name)(*args, **kwargs).to_pandas().tolist()
+    expected = getattr(gs, name)(*args, **kwargs).tolist()
+    for value, reference in zip(got, expected, strict=True):
+        if reference is None:
+            assert value is None
+            continue
+        assert value.geom_type == reference.geom_type
+        assert value.has_z == reference.has_z
+        np.testing.assert_array_equal(
+            shapely.get_coordinates(value, include_z=value.has_z),
+            shapely.get_coordinates(reference, include_z=reference.has_z),
+        )
+
+
+def test_affine_transformations_keep_m():
+    # Shapely drops M values, and writes NaN over the Z and M values of a
+    # geometry with both; they are kept here.
+    _, gdf = _geoseries(["POINT M (1 2 3)", "LINESTRING ZM (0 0 1 2, 1 1 3 4)"])
+    g = gdf.geometry
+    for result in (g.translate(1, 1), g.rotate(90, origin=(0, 0)), g.scale(2, 2)):
+        values = result.to_pandas().tolist()
+        assert [v.has_m for v in values] == [True, True]
+        assert shapely.get_coordinates(values[0], include_m=True)[0, 2] == 3
+        assert shapely.get_coordinates(values[1], include_z=True)[:, 2].tolist() == [
+            1,
+            3,
+        ]
+
+
+@pytest.mark.parametrize(
+    "call, error",
+    [
+        (lambda g: g.affine_transform([1, 0, 0, 1]), ValueError),
+        (lambda g: g.affine_transform([1, 0, 0, 1, 0, "0"]), TypeError),
+        (lambda g: g.translate("1"), TypeError),
+        (lambda g: g.rotate(np.array([1.0])), TypeError),
+        (lambda g: g.rotate(45, origin="middle"), ValueError),
+        (lambda g: g.rotate(45, origin=(1,)), ValueError),
+        (lambda g: g.scale(2, origin=("a", "b")), TypeError),
+        (lambda g: g.skew(True), TypeError),
+    ],
+)
+def test_affine_transformation_arguments_are_checked(call, error):
+    _, gdf = _geoseries(["LINESTRING (0 0, 10 0)"])
+    with pytest.raises(error):
+        call(gdf.geometry)
+
+
+LINES = [
+    "LINESTRING (0 0, 10 0)",
+    "LINESTRING (0 0, 3 4, 10 4)",
+    "LINEARRING (0 0, 1 0, 1 1, 0 0)",
+    "LINESTRING Z (0 0 0, 10 0 10)",
+    "LINESTRING (1 1, 1 1)",
+    "LINESTRING EMPTY",
+    None,
+]
+
+
+@pytest.mark.parametrize("normalized", [False, True])
+def test_interpolate_matches_geopandas(normalized):
+    # Along each line from the start, back from the end when negative, and
+    # stopping at either end; a line of no length is its one point, and an
+    # empty line gives an empty point.
+    gs, gdf = _geoseries(LINES)
+    distances = [0.0, 0.3, 2.5, -0.3, -2.5, 25.0, -25.0]
+    if normalized:
+        distances = [0.0, 0.25, 1.0, -0.25, -1.0, 1.5, -1.5]
+    for distance in distances:
+        got = gdf.geometry.interpolate(distance, normalized=normalized)
+        # The engine's point on a 3D line is 2D.
+        expected = gs.interpolate(distance, normalized=normalized).force_2d()
+        _assert_same_geometries(got, expected)
+
+
+def test_interpolate_takes_a_row_wise_distance():
+    wkts = ["LINESTRING (0 0, 10 0)"] * 3 + ["LINESTRING EMPTY"]
+    distances = [2.5, -1.0, 30.0, 1.0]
+    gs, gdf = _geoseries(wkts, d=distances)
+    expected = gs.interpolate(np.array(distances))
+    _assert_same_geometries(gdf.geometry.interpolate(gdf["d"]), expected)
+
+
+def test_interpolate_of_a_multi_line_raises_when_computed():
+    _, gdf = _geoseries(["MULTILINESTRING ((0 0, 1 0), (5 0, 6 0))"])
+    result = gdf.geometry.interpolate(0.5)
+    with pytest.raises(Exception):
+        result.to_pandas()
+
+
+@pytest.mark.parametrize("normalized", [False, True])
+@pytest.mark.parametrize("operand", ["column", "scalar"])
+def test_project_matches_geopandas(normalized, operand):
+    # The distance along each line to the point on it nearest the operand,
+    # or that over the length (NaN for a line of no length, as GEOS divides
+    # by it); NaN for an empty line or point and for a missing one.
+    points = ["POINT (3 1)", "POINT (-5 3)", "POINT (15 3)", "POINT EMPTY"] + [
+        "POINT (0.5 0.5)"
+    ] * 3
+    gs, gdf = _geoseries(LINES, p=gpd.GeoSeries.from_wkt(points, crs="EPSG:3857"))
+    scalar = shapely.Point(3, 1)
+    if operand == "column":
+        other, reference_other = (
+            gdf["p"],
+            gpd.GeoSeries.from_wkt(points, crs="EPSG:3857"),
+        )
+    else:
+        other, reference_other = scalar, scalar
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        got = gdf.geometry.project(other, normalized=normalized).to_pandas().tolist()
+        expected = gs.project(reference_other, normalized=normalized, align=False)
+    for value, reference in zip(got, expected.tolist(), strict=True):
+        assert _same(value, reference), (value, reference)
+
+
+def test_project_along_a_multi_line_raises_when_computed():
+    _, gdf = _geoseries(["MULTILINESTRING ((0 0, 1 0), (5 0, 6 0))"])
+    result = gdf.geometry.project(shapely.Point(0.5, 1))
+    with pytest.raises(Exception):
+        result.to_pandas()
+
+
+def test_line_positions_on_geography_are_in_meters():
+    gdf = sgpd.GeoDataFrame(
+        sgpd.default_context().sql(
+            "SELECT ST_GeogFromWKT('LINESTRING (0 0, 0 10)') AS g"
+        ),
+        geometry="g",
+    )
+    g = gdf.geometry
+    (length,) = g.length.to_pandas().tolist()
+    point = g.interpolate(length / 2)
+    assert point._is_geography()
+    (value,) = point.to_pandas().tolist()
+    assert value.x == pytest.approx(0) and value.y == pytest.approx(5, abs=1e-6)
+    (along,) = g.project(shapely.Point(0, 5)).to_pandas().tolist()
+    assert along == pytest.approx(length / 2, rel=1e-9)
 
 
 def test_boundary_matches_geopandas_except_collections():
