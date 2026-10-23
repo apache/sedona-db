@@ -2049,7 +2049,7 @@
     <span class="p">),</span>
 <span class="p">)</span>
 </code></pre></div>
-<p></p>
+<p><a class="glightbox" data-type="image" data-width="100%" data-height="auto" href="../image/zarr-chunks-ndarray-map.png" data-desc-position="bottom"><img alt="The cube's chunk envelopes drawn as a grid over a world basemap" src="../image/zarr-chunks-ndarray-map.png"></a></p>
 <p>Because each year tiles into a <code>4 × 4</code> grid, the envelopes lay out that grid over the mapped extent — a picture of the cube's layout, drawn entirely from metadata. A <code>LIMIT</code> or row filter trims which chunks you draw (and, later, fetch).</p>
 <h2 id="bring-a-plane-into-numpy">Bring a plane into NumPy<a class="headerlink" href="#bring-a-plane-into-numpy" title="Permanent link">¶</a></h2>
 <p>A raster band carries its bytes, shape, and pixel type, so a materialized band decodes to a correctly-shaped, correctly-typed NumPy array in one call — <code>Band.to_numpy()</code>:</p>
