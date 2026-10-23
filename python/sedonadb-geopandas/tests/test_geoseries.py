@@ -156,6 +156,48 @@ MEASURE_CORPUS = CORPUS + [
 ]
 
 
+# Geometries whose parts differ: Z or M in a later member only, empties that
+# carry a dimension, and empty parts alone or beside non-empty ones.
+MIXED_PARTS = [
+    "GEOMETRYCOLLECTION (POINT (1 2), POINT M (3 4 5))",
+    "GEOMETRYCOLLECTION (POINT (1 2), GEOMETRYCOLLECTION (POINT M (3 4 5)))",
+    "GEOMETRYCOLLECTION (POINT (1 2), POINT Z (3 4 5))",
+    "GEOMETRYCOLLECTION (POINT M (1 2 3), POINT (3 4))",
+    "POINT M EMPTY",
+    "POINT Z EMPTY",
+    "MULTILINESTRING (EMPTY)",
+    "MULTILINESTRING ((0 0, 1 0, 1 1, 0 0), EMPTY)",
+    "MULTILINESTRING ((0 0, 0 0), (1 1, 2 2, 1 1))",
+    "MULTIPOINT (EMPTY)",
+    "GEOMETRYCOLLECTION (LINESTRING EMPTY, GEOMETRYCOLLECTION (POINT EMPTY))",
+    None,
+]
+
+
+@pytest.mark.parametrize("name", ["is_empty", "has_z", "has_m", "is_closed", "is_ring"])
+def test_properties_look_at_every_part(name):
+    # The engine answers from a collection's first member (Z and M), calls a
+    # collection of empty parts non-empty, and passes over an empty line in a
+    # closed multi-line; GeoPandas looks at every part. The stored geometry
+    # keeps a later member's Z or M values, so the answer is not moot.
+    gs = gpd.GeoSeries.from_wkt(MIXED_PARTS, crs="EPSG:3857")
+    got = getattr(sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry, name)
+    assert got.to_pandas().tolist() == getattr(gs, name).tolist()
+
+
+def test_empty_collections_equal_any_empty_geometry():
+    wkts = [
+        "MULTIPOINT (EMPTY)",
+        "GEOMETRYCOLLECTION (LINESTRING EMPTY)",
+        "POINT (1 1)",
+    ]
+    gs = gpd.GeoSeries.from_wkt(wkts, crs="EPSG:3857")
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    for other in (shapely.Point(), shapely.from_wkt("POLYGON EMPTY")):
+        got = g.geom_equals(other).to_pandas().tolist()
+        assert got == gs.geom_equals(other).tolist() == [True, True, False]
+
+
 @pytest.mark.parametrize("name", ["is_closed", "is_ring", "has_m"])
 def test_line_and_m_properties_match_geopandas(name):
     # The engine calls points and polygons closed, and its ring test raises
@@ -314,6 +356,13 @@ def test_line_merge_merges_lines_and_empties_to_a_collection():
         "MULTILINESTRING EMPTY",
         "POINT EMPTY",
         None,
+        # Empty parts: a collection of nothing but empty parts is empty, as
+        # in GeoPandas, though the engine calls it non-empty.
+        "MULTILINESTRING (EMPTY)",
+        "MULTIPOINT (EMPTY)",
+        "GEOMETRYCOLLECTION (LINESTRING EMPTY, GEOMETRYCOLLECTION (POINT EMPTY))",
+        "MULTILINESTRING ((0 0, 1 0), EMPTY, (1 0, 1 1))",
+        "GEOMETRYCOLLECTION (POINT EMPTY, LINESTRING (0 0, 1 1))",
     ]
     gs, gdf = _geoseries(wkts)
     _assert_same_geometries(gdf.geometry.line_merge(), gs.line_merge())
@@ -348,6 +397,25 @@ def test_segmentize_matches_geopandas_on_valid_geometries():
         _assert_same_geometries(gdf.geometry.segmentize(length), expected)
     # An infinite length adds no vertices, as in GeoPandas.
     _assert_same_geometries(gdf.geometry.segmentize(math.inf), gs)
+
+
+def test_segmentize_keeps_rows_of_infinite_length():
+    # As one infinite length does, row by row: the engine refuses one.
+    wkts = ["LINESTRING (0 0, 10 0)", "LINESTRING (0 0, 3 0)", None, "POINT EMPTY"]
+    lengths = [np.inf, 1.0, np.inf, np.inf]
+    gs, gdf = _geoseries(wkts, v=lengths)
+    got = gdf.geometry.segmentize(gdf["v"])
+    _assert_same_geometries(got, gs.segmentize(np.array(lengths)))
+
+
+def test_envelope_of_a_collection_of_empty_parts_is_point_empty():
+    wkts = [
+        "MULTIPOINT (EMPTY)",
+        "GEOMETRYCOLLECTION (LINESTRING EMPTY)",
+        "POINT (1 1)",
+    ]
+    gs, gdf = _geoseries(wkts)
+    _assert_same_geometries(gdf.geometry.envelope, gs.envelope)
 
 
 def test_segmentize_only_densifies():
