@@ -969,6 +969,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#sedonadb.context.ConfigurationWarning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;ConfigurationWarning
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#sedonadb.context.SedonaContext" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2380,6 +2391,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#sedonadb.context.ConfigurationWarning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;ConfigurationWarning
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#sedonadb.context.SedonaContext" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3061,6 +3083,43 @@
 
 
 
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="sedonadb.context.ConfigurationWarning" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">ConfigurationWarning</span>
+
+
+<a href="#sedonadb.context.ConfigurationWarning" class="headerlink" title="Permanent link">¶</a></h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><a class="autorefs autorefs-external" href="https://docs.python.org/3/builtins/exceptions.html#UserWarning">UserWarning</a></code></p>
+
+
+
+        <p>Warning issued when an optional native dependency can't be configured</p>
+<p>SedonaDB attempts to locate PROJ and GDAL when it is imported (see
+<code>configure_proj()</code> and <code>configure_gdal()</code>). Most functionality
+works without them, so a failure to find either is reported with this
+warning rather than an error. To skip the automatic configuration on
+import entirely, set the <code>SEDONADB_AUTO_CONFIGURE</code> environment variable
+to <code>false</code>.</p>
+
+
+
+
+
+
+
+
+
+    </div>
+
+</div>
 
 <div class="doc doc-object doc-class">
 
@@ -3867,7 +3926,8 @@ operation has been performed, subsequent configuration has no effect.</p>
             <p>One of:
 - None: Use a custom <code>shared_library</code> path.
 - auto: Try all presets in the order rasterio, pyogrio, conda,
-  homebrew, system and warn if none succeeded.
+  homebrew, system and warn (with
+  <code>ConfigurationWarning</code>) if none succeeded.
 - pyogrio: Attempt to use the GDAL shared library bundled with
   pyogrio. This aligns the GDAL version with the one used by
   <code>read_pyogrio()</code> / <code>geopandas.read_file()</code>.
@@ -3956,7 +4016,8 @@ been called, subsequent configuration has no effect.</p>
 - None: Use custom values of shared_library and/or other keyword
   arguments.
 - auto: Try all presets in the order pyproj, conda, homebrew,
-  system and warn if none succeeded.
+  system and warn (with <code>ConfigurationWarning</code>)
+  if none succeeded.
 - pyproj: Attempt to use shared libraries bundled with pyproj.
   This aligns transformations with those performed by geopandas
   and is the option that is tried first.
