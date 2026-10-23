@@ -455,6 +455,43 @@ def test_geography_envelope_is_planar_and_empty_is_point_empty():
     assert math.isclose(areas[2], 1.0, rel_tol=1e-9)
 
 
+def test_envelope_of_a_flat_box_is_a_polygon():
+    # A box with no width or no height is a polygon with no area, corner for
+    # corner as GeoPandas (GEOS) gives it; the engine gives a line there, as
+    # PostGIS does. A box with neither is a point, as in both.
+    wkts = [
+        "LINESTRING (0 0, 2 0)",
+        "LINESTRING (0 0, 0 2)",
+        "LINESTRING Z (0 0 1, 2 0 5)",
+        "MULTIPOINT ((0 0), (3 0))",
+        "GEOMETRYCOLLECTION (POINT (0 0), POINT (0 3))",
+        "POLYGON ((0 0, 2 0, 1 0, 0 0))",
+        "MULTIPOINT ((1 1), (1 1))",
+        "POINT (1 2)",
+        "LINESTRING EMPTY",
+        None,
+    ]
+    gs = gpd.GeoSeries.from_wkt(wkts, crs="EPSG:3857")
+    envelope = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry.envelope
+    assert envelope.crs == gs.crs
+    got = [None if g is None else g.wkt for g in envelope.to_pandas()]
+    assert got == [None if g is None else g.wkt for g in gs.envelope]
+
+
+def test_geography_envelope_of_a_flat_box_is_a_planar_polygon():
+    gdf = sgpd.GeoDataFrame(
+        sgpd.default_context().sql(
+            "SELECT ST_GeogFromWKT('LINESTRING (10 0, 10 20)') AS g"
+        ),
+        geometry="g",
+    )
+    envelope = gdf.geometry.envelope
+    assert not envelope._is_geography()
+    (value,) = envelope.to_pandas().tolist()
+    assert value.geom_type == "Polygon" and value.area == 0
+    assert value.bounds == pytest.approx((10, 0, 10, 20))
+
+
 @pytest.mark.parametrize(
     "cap_style,join_style",
     [
