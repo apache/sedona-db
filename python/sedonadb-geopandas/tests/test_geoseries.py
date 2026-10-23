@@ -364,14 +364,18 @@ VALID_CORPUS = [
 
 
 def test_line_merge_merges_lines_and_empties_to_a_collection():
-    # Merged where the parts meet, and an empty geometry collection for
-    # anything else, empty input included: the engine keeps an empty input's
-    # own type there.
+    # Merged where the parts meet, a polygon's rings as lines, and an empty
+    # geometry collection for a geometry with neither, empty input included:
+    # the engine keeps an empty input's own type there.
     wkts = [
         "MULTILINESTRING ((0 0, 1 0), (1 0, 1 1), (5 5, 6 6))",
         "MULTILINESTRING ((0 0, 1 0), (2 0, 1 0))",
         "LINESTRING (0 0, 1 1)",
+        "GEOMETRYCOLLECTION (POINT (5 5), LINESTRING (0 0, 1 1), LINESTRING (1 1, 2 2))",
+        "POLYGON ((0 0, 1 0, 1 1, 0 0))",
+        "GEOMETRYCOLLECTION (POLYGON ((0 0, 1 0, 1 1, 0 0)), LINESTRING (0 0, 1 1))",
         "POINT (1 1)",
+        "MULTIPOINT ((1 1), (2 2))",
         "LINESTRING EMPTY",
         "MULTILINESTRING EMPTY",
         "POINT EMPTY",
@@ -459,8 +463,16 @@ def test_set_precision_matches_geopandas():
         _assert_same_geometries(gdf.geometry.set_precision(grid_size), expected)
 
 
-def test_set_precision_of_an_invalid_geometry_fails_when_computed():
-    _, gdf = _geoseries(["POLYGON ((0 0, 2 2, 2 0, 0 2, 0 0))"])
+def test_set_precision_of_an_invalid_geometry():
+    # As in GeoPandas, a bow-tie stays as it is on no grid, collapses on a
+    # coarse one, and fails on a fine one, when the result is computed.
+    wkts = ["POLYGON ((0 0, 2 2, 2 0, 0 2, 0 0))"]
+    gs, gdf = _geoseries(wkts)
+    for grid_size in (0.0, 10.0):
+        expected = gs.set_precision(grid_size)
+        _assert_same_geometries(gdf.geometry.set_precision(grid_size), expected)
+    assert not gdf.geometry.set_precision(0.0).to_pandas()[0].is_valid
+    assert gdf.geometry.set_precision(10.0).to_pandas()[0].wkt == "POLYGON EMPTY"
     result = gdf.geometry.set_precision(0.1)
     with pytest.raises(Exception, match="(?i)topology"):
         result.to_pandas()
@@ -544,8 +556,9 @@ def test_snap_matches_geopandas(operand):
         expected = left.snap(reference_other, tolerance).tolist()
         for value, reference, source in zip(got, expected, left.tolist()):
             if source is not None and source.is_empty:
-                # GEOS turns an empty geometry into a 3D empty of another type
-                # (POLYGON EMPTY becomes LINEARRING Z EMPTY); it stays here.
+                # GEOS can turn an empty geometry into a 3D empty, or one of
+                # another type (POLYGON EMPTY becomes LINEARRING Z EMPTY); it
+                # stays here.
                 assert value is not None and value.wkt == source.wkt
                 continue
             assert _same(value, reference), (value, reference)

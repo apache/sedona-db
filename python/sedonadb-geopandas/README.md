@@ -101,8 +101,9 @@ numeric `Series` of the same frame, applied row by row. `segmentize()` only
 adds vertices, where GEOS also repairs an invalid polygon and turns a one-part
 multi-line into a line; `force_3d()` keeps Z values and drops M, where Shapely
 leaves a geometry with M but no Z as it is and replaces the Z values of one
-with both; and `snap()` leaves an empty geometry as it is, where GEOS turns it
-into a 3D empty of another type. `concave_hull(allow_holes=True)`,
+with both; and `snap()` leaves an empty geometry as it is, where GEOS can turn
+it into a 3D empty, or one of another type (`POLYGON EMPTY` becomes
+`LINEARRING Z EMPTY`). `concave_hull(allow_holes=True)`,
 `line_merge(directed=True)`, and `set_precision()` modes other than
 `"valid_output"` are not supported.
 
