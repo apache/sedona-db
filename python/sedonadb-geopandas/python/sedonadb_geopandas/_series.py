@@ -1588,6 +1588,13 @@ def _normalize_crs(crs):
         raise ValueError(f"Invalid CRS {crs!r}: {err}") from err
 
 
+def _empty(geometry):
+    """Whether a geometry expression is empty as GeoPandas (GEOS) defines
+    it: it has no coordinates. The engine's `ST_IsEmpty` calls a collection
+    of empty parts (`MULTIPOINT (EMPTY)`) non-empty."""
+    return geometry.geo.n_points() == lit(0)
+
+
 def _check_align(align):
     """GeoPandas' `align` argument.
 
@@ -1693,8 +1700,14 @@ class GeoSeries(Series):
 
     @property
     def is_empty(self):
-        """Whether each geometry is empty (`ST_IsEmpty`); False if missing."""
-        return self._flag(self._expr.geo.is_empty(), "is_empty")
+        """Whether each geometry is empty; False if missing.
+
+        As in GeoPandas (GEOS), a geometry is empty when it has no
+        coordinates, so a collection of empty parts (`MULTILINESTRING
+        (EMPTY)`) is empty too, where the engine's `ST_IsEmpty` says it is
+        not.
+        """
+        return self._flag(_empty(self._expr), "is_empty")
 
     @property
     def is_simple(self):
@@ -1708,13 +1721,42 @@ class GeoSeries(Series):
 
     @property
     def has_z(self):
-        """Whether each geometry has Z coordinates (`ST_HasZ`); False if missing."""
-        return self._flag(self._expr.geo.has_z(), "has_z")
+        """Whether each geometry has Z coordinates; False if missing.
+
+        As in GeoPandas, a collection has Z when any of its members does; see
+        `_has_dimension`.
+        """
+        return self._flag(self._has_dimension("z"), "has_z")
 
     @property
     def has_m(self):
-        """Whether each geometry has M values (`ST_HasM`); False if missing."""
-        return self._flag(self._expr.geo.has_m(), "has_m")
+        """Whether each geometry has M values; False if missing.
+
+        As in GeoPandas, a collection has M when any of its members does; see
+        `_has_dimension`.
+        """
+        return self._flag(self._has_dimension("m"), "has_m")
+
+    def _has_dimension(self, dimension):
+        """Whether any coordinate of each geometry has Z (or M) values.
+
+        The engine's `ST_HasZ`/`ST_HasM` answer from a collection's first
+        member, so a Z (or M) value in a later one is found another way:
+        every coordinate without one is given NaN (`ST_Force3D` or
+        `ST_Force3DM`), and the largest value, which skips NaN, is a number
+        only where some coordinate has a value of its own. The engine's
+        answer still counts, for an empty geometry that carries the
+        dimension. Missed: a collection whose only such member is empty or
+        has only NaN values.
+        """
+        geo = self._expr.geo
+        nan = lit(math.nan)
+        if dimension == "z":
+            flagged, largest = geo.has_z(), geo.force3d(nan).geo.z_max()
+        else:
+            flagged, largest = geo.has_m(), geo.force3dm(nan).geo.m_max()
+        valued = ~largest.funcs.isnan().funcs.coalesce(lit(True))
+        return flagged | valued
 
     def _is_line(self):
         """Whether each geometry is a single line (a ring reads as one)."""
@@ -1725,12 +1767,23 @@ class GeoSeries(Series):
         """Whether each line's ends meet (`ST_IsClosed`); False if missing.
 
         As in GeoPandas, only a `LineString` or `MultiLineString` can be
-        closed: the engine calls every point and polygon closed, as PostGIS
-        does, and that answer is replaced with False here.
+        closed, and only if none of its lines is empty: the engine calls every
+        point and polygon closed, as PostGIS does, and passes over an empty
+        line in a `MultiLineString`; those answers are replaced with False
+        here.
         """
-        multi = self._expr.geo.geometry_type() == lit("ST_MultiLineString")
+        geo = self._expr.geo
+        multi = geo.geometry_type() == lit("ST_MultiLineString")
         linear = self._is_line() | multi
-        return self._flag(self._expr.geo.is_closed() & linear, "is_closed")
+        # An empty line: the whole geometry has no coordinates, or a
+        # simplification without tolerance, which leaves every other part
+        # (degenerate ones included), drops one.
+        parts = geo.num_geometries()
+        empty_part = _empty(self._expr) | (
+            geo.simplify(0.0).geo.num_geometries() < parts
+        )
+        closed = geo.is_closed() & linear & ~empty_part
+        return self._flag(closed, "is_closed")
 
     @property
     def is_ring(self):
@@ -2232,7 +2285,7 @@ class GeoSeries(Series):
         other_expr = self._other(other)
         # Two empty geometries are equal, whatever their types, as in
         # GeoPandas; the engine says they are not.
-        both_empty = self._expr.geo.is_empty() & other_expr.geo.is_empty()
+        both_empty = _empty(self._expr) & _empty(other_expr)
         expr = self._expr.geo.equals(other_expr) | both_empty
         return Series(self._df, expr.funcs.coalesce(lit(False)), "geom_equals")
 

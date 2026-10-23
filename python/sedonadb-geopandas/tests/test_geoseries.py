@@ -156,6 +156,48 @@ MEASURE_CORPUS = CORPUS + [
 ]
 
 
+# Geometries whose parts differ: Z or M in a later member only, empties that
+# carry a dimension, and empty parts alone or beside non-empty ones.
+MIXED_PARTS = [
+    "GEOMETRYCOLLECTION (POINT (1 2), POINT M (3 4 5))",
+    "GEOMETRYCOLLECTION (POINT (1 2), GEOMETRYCOLLECTION (POINT M (3 4 5)))",
+    "GEOMETRYCOLLECTION (POINT (1 2), POINT Z (3 4 5))",
+    "GEOMETRYCOLLECTION (POINT M (1 2 3), POINT (3 4))",
+    "POINT M EMPTY",
+    "POINT Z EMPTY",
+    "MULTILINESTRING (EMPTY)",
+    "MULTILINESTRING ((0 0, 1 0, 1 1, 0 0), EMPTY)",
+    "MULTILINESTRING ((0 0, 0 0), (1 1, 2 2, 1 1))",
+    "MULTIPOINT (EMPTY)",
+    "GEOMETRYCOLLECTION (LINESTRING EMPTY, GEOMETRYCOLLECTION (POINT EMPTY))",
+    None,
+]
+
+
+@pytest.mark.parametrize("name", ["is_empty", "has_z", "has_m", "is_closed", "is_ring"])
+def test_properties_look_at_every_part(name):
+    # The engine answers from a collection's first member (Z and M), calls a
+    # collection of empty parts non-empty, and passes over an empty line in a
+    # closed multi-line; GeoPandas looks at every part. The stored geometry
+    # keeps a later member's Z or M values, so the answer is not moot.
+    gs = gpd.GeoSeries.from_wkt(MIXED_PARTS, crs="EPSG:3857")
+    got = getattr(sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry, name)
+    assert got.to_pandas().tolist() == getattr(gs, name).tolist()
+
+
+def test_empty_collections_equal_any_empty_geometry():
+    wkts = [
+        "MULTIPOINT (EMPTY)",
+        "GEOMETRYCOLLECTION (LINESTRING EMPTY)",
+        "POINT (1 1)",
+    ]
+    gs = gpd.GeoSeries.from_wkt(wkts, crs="EPSG:3857")
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    for other in (shapely.Point(), shapely.from_wkt("POLYGON EMPTY")):
+        got = g.geom_equals(other).to_pandas().tolist()
+        assert got == gs.geom_equals(other).tolist() == [True, True, False]
+
+
 @pytest.mark.parametrize("name", ["is_closed", "is_ring", "has_m"])
 def test_line_and_m_properties_match_geopandas(name):
     # The engine calls points and polygons closed, and its ring test raises
