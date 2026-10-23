@@ -2953,6 +2953,28 @@ def test_st_hasm(eng, geom, expected):
     eng.assert_query_result(f"SELECT ST_HasM({geom_or_null(geom)})", expected)
 
 
+@pytest.mark.parametrize(
+    ("geom", "has_z", "has_m"),
+    [
+        ("GEOMETRYCOLLECTION (POINT (0 0), POINT Z (1 1 1))", True, False),
+        ("GEOMETRYCOLLECTION (POINT (0 0), POINT M (1 1 1))", False, True),
+        ("GEOMETRYCOLLECTION (POINT (0 0), POINT M EMPTY)", False, True),
+        (
+            "GEOMETRYCOLLECTION (POINT (0 0), GEOMETRYCOLLECTION (POINT ZM (1 1 1 1)))",
+            True,
+            True,
+        ),
+        ("GEOMETRYCOLLECTION (POINT (0 0), POINT (1 1))", False, False),
+    ],
+)
+def test_st_haszm_of_a_later_member(geom, has_z, has_m):
+    # A collection has Z (or M) when any member does, empty or not, as in
+    # GEOS. PostGIS can't mix dimensions in a collection, so SedonaDB only.
+    eng = SedonaDB.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_HasZ({geom_or_null(geom)})", has_z)
+    eng.assert_query_result(f"SELECT ST_HasM({geom_or_null(geom)})", has_m)
+
+
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
     ("geom", "expected"),
