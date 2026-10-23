@@ -2290,7 +2290,9 @@ class GeoSeries(Series):
                 x0 = (geo.x_max() + geo.x_min()) / 2.0
                 y0 = (geo.y_max() + geo.y_min()) / 2.0
             elif origin == "centroid":
-                centroid = geo.centroid().geo
+                # The engine fails on the centroid of a collection of empty
+                # parts (MULTIPOINT (EMPTY)), so empties are left out.
+                centroid = self._present().geo.centroid().geo
                 x0, y0 = centroid.x(), centroid.y()
             else:
                 raise ValueError(f"{method}() origin {origin!r} is not recognized")
@@ -2351,12 +2353,26 @@ class GeoSeries(Series):
                 fraction = _choose(has_length, along / end, lit(0.0))
         # The engine refuses an empty line, so it is given a missing line
         # instead, and the result for it is an empty point.
-        ctx = self._df._ctx
-        present = (~geo.is_empty()).funcs.coalesce(lit(False))
-        wkb = _choose(present, geo.as_binary(), lit(pa.scalar(None, pa.binary())))
-        line = _geometry_from_wkb(wkb, self._is_geography(), self.crs, ctx)
-        point = line.geo.line_interpolate_point(fraction)
-        return self._geo(self._empty_as(point, shapely.Point()))
+        point = self._present().geo.line_interpolate_point(fraction)
+        if along is None:
+            # A NaN distance has no point, as in GeoPandas, whatever the line.
+            return self._geo(point)
+        result = self._empty_as(point, shapely.Point())
+        if isinstance(along, Expr):
+            # Nor has a row's NaN distance (missing by now), which an empty
+            # line or a line of no length would otherwise give one.
+            missing = lit(pa.scalar(None, pa.binary()))
+            result = self._replace_where(along.is_null(), missing, result)
+        return self._geo(result)
+
+    def _present(self):
+        """This geometry where it is not empty (see `_empty`), and missing
+        where it is: for engine functions that fail on an empty geometry,
+        where GeoPandas leaves it out or defines the result another way."""
+        present = (~_empty(self._expr)).funcs.coalesce(lit(False))
+        missing = lit(pa.scalar(None, pa.binary()))
+        wkb = _choose(present, self._expr.geo.as_binary(), missing)
+        return _geometry_from_wkb(wkb, self._is_geography(), self.crs, self._df._ctx)
 
     def project(self, other, normalized=False, align=None):
         """The distance along each line to the point on it nearest `other`

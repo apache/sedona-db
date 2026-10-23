@@ -724,6 +724,51 @@ def test_interpolate_takes_a_row_wise_distance():
     _assert_same_geometries(gdf.geometry.interpolate(gdf["d"]), expected)
 
 
+@pytest.mark.parametrize("normalized", [False, True])
+def test_interpolate_at_a_nan_distance_gives_no_point(normalized):
+    # Whatever the line, for one distance and row by row, as in GeoPandas:
+    # an empty line or a line of no length has no point there either. A NaN
+    # read from pandas is missing, so the frame is built in SQL to hold one.
+    wkts = ["LINESTRING EMPTY", "LINESTRING (1 1, 1 1)", "LINESTRING (0 0, 10 0)"]
+    values = ", ".join(f"('{w}', CAST('NaN' AS DOUBLE))" for w in wkts)
+    gdf = sgpd.GeoDataFrame(
+        sgpd.default_context().sql(
+            f"SELECT ST_GeomFromWKT(w) AS g, d FROM (VALUES {values}) AS t(w, d)"
+        ),
+        geometry="g",
+    )
+    gs = gpd.GeoSeries.from_wkt(wkts)
+    expected = gs.interpolate(np.nan, normalized=normalized).tolist()
+    assert expected == [None, None, None]
+    g = gdf.geometry
+    assert g.interpolate(np.nan, normalized=normalized).to_pandas().tolist() == expected
+    assert (
+        g.interpolate(gdf["d"], normalized=normalized).to_pandas().tolist() == expected
+    )
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda g: g.rotate(30, origin="centroid"),
+        lambda g: g.scale(2, 3, origin="centroid"),
+        lambda g: g.skew(10, 5, origin="centroid"),
+    ],
+    ids=["rotate", "scale", "skew"],
+)
+def test_centroid_origin_leaves_collections_of_empty_parts(call):
+    # The engine fails on the centroid of a collection of empty parts;
+    # GeoPandas leaves such a geometry as it is, as any empty one.
+    wkts = [
+        "MULTIPOINT (EMPTY)",
+        "GEOMETRYCOLLECTION (POINT EMPTY)",
+        "POINT (1 1)",
+        None,
+    ]
+    gs, gdf = _geoseries(wkts)
+    _assert_same_geometries(call(gdf.geometry), call(gs))
+
+
 def test_interpolate_of_a_multi_line_raises_when_computed():
     _, gdf = _geoseries(["MULTILINESTRING ((0 0, 1 0), (5 0, 6 0))"])
     result = gdf.geometry.interpolate(0.5)
