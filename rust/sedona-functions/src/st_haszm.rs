@@ -21,14 +21,13 @@ use arrow_array::builder::BooleanBuilder;
 use arrow_schema::DataType;
 use datafusion_common::{DataFusionError, error::Result};
 use datafusion_expr::{ColumnarValue, Volatility};
-use geo_traits::{Dimensions, GeometryCollectionTrait, GeometryTrait, GeometryType};
+use geo_traits::Dimensions;
 use sedona_expr::{
     item_crs::ItemCrsKernel,
     scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
 };
-use sedona_geometry::{types::GeometryTypeId, wkb_header::WkbHeader};
+use sedona_geometry::wkb_header::any_part_dimensions;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
-use wkb::reader::read_wkb;
 
 pub fn st_hasz_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
@@ -90,52 +89,17 @@ impl SedonaScalarKernel for STHasZm {
 }
 
 fn invoke_scalar(buf: &[u8], dim_index: usize) -> Result<Option<bool>> {
-    Ok(Some(has_dimension(buf, dim_index)?))
-}
-
-/// Whether the geometry in `buf`, or any member of it, has Z (`dim_index` 2)
-/// or M (`dim_index` 3) values.
-///
-/// As in GEOS, a geometry collection has Z (or M) when any of its members
-/// does, empty or not, and its members need not share its dimensions, e.g.
-/// GEOMETRYCOLLECTION (POINT (1 2), POINT M (3 4 5)).
-fn has_dimension(buf: &[u8], dim_index: usize) -> Result<bool> {
-    let header = WkbHeader::try_new(buf).map_err(|e| DataFusionError::External(Box::new(e)))?;
-    let top_level_dimensions = header
-        .dimensions()
-        .map_err(|e| DataFusionError::External(Box::new(e)))?;
-
-    // Infer dimension based on first coordinate dimension for cases where it differs from top-level
-    // e.g GEOMETRYCOLLECTION (POINT Z (1 2 3))
-    let dimensions = header
-        .first_geom_dimensions()
-        .unwrap_or(top_level_dimensions);
-
-    let found = match dim_index {
+    // As in GEOS, a geometry has Z (or M) when any of its parts does, read
+    // from each part's own header: a collection's members may have dimensions
+    // the collection's header doesn't, e.g. GEOMETRYCOLLECTION (POINT Z (1 2 3))
+    // or GEOMETRYCOLLECTION (POINT (1 2), POINT M EMPTY).
+    let found = any_part_dimensions(buf, |dimensions| match dim_index {
         2 => matches!(dimensions, Dimensions::Xyz | Dimensions::Xyzm),
         3 => matches!(dimensions, Dimensions::Xym | Dimensions::Xyzm),
         _ => false,
-    };
-    if found {
-        return Ok(true);
-    }
-
-    // A later member of a collection may have the dimension the first lacks
-    let geometry_type = header
-        .geometry_type_id()
-        .map_err(|e| DataFusionError::External(Box::new(e)))?;
-    if geometry_type != GeometryTypeId::GeometryCollection {
-        return Ok(false);
-    }
-    let wkb = read_wkb(buf).map_err(|e| DataFusionError::External(Box::new(e)))?;
-    if let GeometryType::GeometryCollection(collection) = wkb.as_type() {
-        for member in collection.geometries() {
-            if has_dimension(member.buf(), dim_index)? {
-                return Ok(true);
-            }
-        }
-    }
-    Ok(false)
+    })
+    .map_err(|e| DataFusionError::External(Box::new(e)))?;
+    Ok(Some(found))
 }
 
 #[cfg(test)]
@@ -279,6 +243,47 @@ mod tests {
             .invoke_wkb_scalar(Some("GEOMETRYCOLLECTION M EMPTY"))
             .unwrap();
         m_tester.assert_scalar_result_equals(result, ScalarValue::Boolean(Some(true)));
+    }
+
+    // A collection of an XY point, the inferred-dimension multi point, and
+    // another XY point: the multi point's size has to come from its points'
+    // own headers for the last member to be found where it starts
+    fn collection_around_inferred_z_multipoint(nested: bool) -> Vec<u8> {
+        let point_xy = [
+            0x01, // byte-order
+            0x01, 0x00, 0x00, 0x00, // point with xy-dimension specified
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x3f, // x-coordinate of point
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, // y-coordinate of point
+        ];
+        let mut members = vec![];
+        members.extend_from_slice(&point_xy);
+        members.extend_from_slice(&MULTIPOINT_WITH_INFERRED_Z_DIMENSION_WKB);
+        members.extend_from_slice(&point_xy);
+
+        let mut wkb = vec![0x01, 0x07, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00];
+        wkb.extend_from_slice(&members);
+        if nested {
+            let mut outer = vec![0x01, 0x07, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00];
+            outer.extend_from_slice(&point_xy);
+            outer.extend_from_slice(&wkb);
+            return outer;
+        }
+        wkb
+    }
+
+    #[rstest]
+    fn inferred_z_dimension_inside_a_collection(#[values(false, true)] nested: bool) {
+        let z_tester = ScalarUdfTester::new(st_hasz_udf().into(), vec![WKB_GEOMETRY]);
+        let m_tester = ScalarUdfTester::new(st_hasm_udf().into(), vec![WKB_GEOMETRY]);
+        let scalar = ScalarValue::Binary(Some(collection_around_inferred_z_multipoint(nested)));
+        assert_eq!(
+            z_tester.invoke_scalar(scalar.clone()).unwrap(),
+            ScalarValue::Boolean(Some(true))
+        );
+        assert_eq!(
+            m_tester.invoke_scalar(scalar).unwrap(),
+            ScalarValue::Boolean(Some(false))
+        );
     }
 
     #[test]
