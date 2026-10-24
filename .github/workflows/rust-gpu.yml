@@ -255,7 +255,12 @@ jobs:
           cmake --preset=default-with-tests -S . -B build -DCMAKE_CUDA_ARCHITECTURES=75 2>&1 | tee /tmp/cmake_config.log
           STATUS=${PIPESTATUS[0]}
           if [ $STATUS -ne 0 ]; then
-            echo "::error::CMake configure failed with status $STATUS"
+            MSG=$(tail -n 40 /tmp/cmake_config.log | awk '{printf "%s%%0A", $0}')
+            echo "::error::CMake configure failed with status $STATUS: $MSG"
+            find build -name "*.log" 2>/dev/null | while read logfile; do
+              FMSG=$(tail -n 30 "$logfile" | awk '{printf "%s%%0A", $0}')
+              echo "::error::FILE $logfile: $FMSG"
+            done
             echo "### CMake Configure Failed ($STATUS)" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             tail -n 200 /tmp/cmake_config.log >> $GITHUB_STEP_SUMMARY
@@ -265,7 +270,8 @@ jobs:
           cmake --build build --target all 2>&1 | tee /tmp/cmake_build.log
           STATUS=${PIPESTATUS[0]}
           if [ $STATUS -ne 0 ]; then
-            echo "::error::CMake build failed with status $STATUS"
+            MSG=$(tail -n 40 /tmp/cmake_build.log | awk '{printf "%s%%0A", $0}')
+            echo "::error::CMake build failed with status $STATUS: $MSG"
             echo "### CMake Build Failed ($STATUS)" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             tail -n 200 /tmp/cmake_build.log >> $GITHUB_STEP_SUMMARY
