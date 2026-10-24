@@ -137,6 +137,12 @@ add_library(gpuspatial
             src/rt/rt_engine.cpp
             src/memory_manager.cc
             src/relate_engine.cu
+            src/relate/relate_bvh.cu
+            src/relate/relate_rt.cu
+            src/relate/relate_point.cu
+            src/relate/relate_linestring.cu
+            src/relate/relate_polygon.cu
+            src/relate/relate_geometry_collection.cu
             src/rt_spatial_index.cu
             src/rt_spatial_refiner.cu
             ${PTX_FILES})
