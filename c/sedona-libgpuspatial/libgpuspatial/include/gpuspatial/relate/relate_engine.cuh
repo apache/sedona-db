@@ -109,6 +109,32 @@ class RelateEngine {
                 Predicate predicate, rmm::device_uvector<INDEX_T>& ids1,
                 rmm::device_uvector<INDEX_T>& ids2);
 
+  template <typename GEOM2_ARRAY_VIEW_T>
+  void Evaluate(const rmm::cuda_stream_view& stream,
+                const GeometryCollectionArrayView<POINT_T, INDEX_T>& geom_array1,
+                const GEOM2_ARRAY_VIEW_T& geom_array2, Predicate predicate,
+                rmm::device_uvector<INDEX_T>& ids1, rmm::device_uvector<INDEX_T>& ids2);
+
+  template <typename GEOM1_ARRAY_VIEW_T>
+  void Evaluate(const rmm::cuda_stream_view& stream,
+                const GEOM1_ARRAY_VIEW_T& geom_array1,
+                const GeometryCollectionArrayView<POINT_T, INDEX_T>& geom_array2,
+                Predicate predicate, rmm::device_uvector<INDEX_T>& ids1,
+                rmm::device_uvector<INDEX_T>& ids2);
+
+  void Evaluate(const rmm::cuda_stream_view& stream,
+                const GeometryCollectionArrayView<POINT_T, INDEX_T>& geom_array1,
+                const GeometryCollectionArrayView<POINT_T, INDEX_T>& geom_array2,
+                Predicate predicate, rmm::device_uvector<INDEX_T>& ids1,
+                rmm::device_uvector<INDEX_T>& ids2);
+
+  template <bool GC_IS_FIRST, typename OTHER_ARRAY_VIEW_T>
+  void EvaluateGeometryCollection(
+      const rmm::cuda_stream_view& stream,
+      const GeometryCollectionArrayView<POINT_T, INDEX_T>& gc_array,
+      const OTHER_ARRAY_VIEW_T& other_array, Predicate predicate,
+      rmm::device_uvector<INDEX_T>& gc_ids, rmm::device_uvector<INDEX_T>& other_ids);
+
   void EvaluateImpl(const rmm::cuda_stream_view& stream,
                     const PointArrayView<POINT_T, INDEX_T>& point_array,
                     const MultiPointArrayView<POINT_T, INDEX_T>& multi_point_array,
@@ -158,7 +184,7 @@ class RelateEngine {
 
  private:
   Config config_;
-  const DeviceGeometries<POINT_T, INDEX_T>* geoms1_;
-  const RTEngine* rt_engine_;
+  const DeviceGeometries<POINT_T, INDEX_T>* geoms1_ = nullptr;
+  const RTEngine* rt_engine_ = nullptr;
 };
 }  // namespace gpuspatial
