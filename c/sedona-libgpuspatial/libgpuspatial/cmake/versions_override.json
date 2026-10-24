@@ -1,0 +1,9 @@
+{
+  "packages": {
+    "CCCL": {
+      "version": "3.4.0",
+      "url": "https://github.com/NVIDIA/cccl/archive/207502e57019cefacf6f21d3bb6045aeebef2a3e.tar.gz",
+      "url_hash": "SHA256=a71a14671bd7e72a45783f6c6e51ba3ea81d39e937e756f322f1be77d10555ee"
+    }
+  }
+}

@@ -57,7 +57,7 @@ rapids_cmake_build_type(Release)
 # =============================================================================
 include(FetchContent)
 
-rapids_cpm_init()
+rapids_cpm_init(OVERRIDE "${CMAKE_CURRENT_SOURCE_DIR}/cmake/versions_override.json")
 if(GPUSPATIAL_BUILD_TESTS)
   set(NANOARROW_IPC ON)
   set(NANOARROW_IPC_WITH_ZSTD ON)
