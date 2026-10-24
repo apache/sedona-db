@@ -69,7 +69,7 @@ jobs:
         name: [ "clippy", "build" ]
 
     name: "${{ matrix.name }}"
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
       CARGO_INCREMENTAL: 0
@@ -80,6 +80,7 @@ jobs:
       CARGO_BUILD_JOBS: 4
       CUDA_HOME: /usr/local/cuda
       CMAKE_CUDA_ARCHITECTURES: 75
+      LIBRARY_PATH: /usr/local/cuda/lib64/stubs:/usr/local/cuda/targets/x86_64-linux/lib/stubs
 
     steps:
       - uses: actions/checkout@v7
@@ -143,7 +144,8 @@ jobs:
           cmake --version
 
           # Add NVIDIA repository and install CUDA
-          wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+          UBUNTU_REPO="ubuntu$(lsb_release -rs | tr -d '.')"
+          wget "https://developer.download.nvidia.com/compute/cuda/repos/${UBUNTU_REPO}/x86_64/cuda-keyring_1.1-1_all.deb"
           sudo dpkg -i cuda-keyring_1.1-1_all.deb
           sudo apt-get update
 
