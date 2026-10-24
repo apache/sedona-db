@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::{iter::zip, sync::Arc};
+use std::{collections::HashMap, iter::zip, sync::Arc};
 
 use arrow_array::{
     ffi::{FFI_ArrowArray, FFI_ArrowSchema},
@@ -46,11 +46,22 @@ use crate::{
     error::PySedonaError,
     expr::PyExpr,
     import_from::{
-        check_pycapsule, import_arg_matcher, import_arrow_array, import_sedona_ffi_scalar_kernel,
-        import_sedona_type,
+        arg_matcher_from_name, check_pycapsule, import_arg_matcher, import_arrow_array,
+        import_sedona_ffi_scalar_kernel, import_sedona_type,
     },
     schema::PySedonaType,
 };
+
+#[pyfunction(name = "_type_matcher_type_if_null")]
+pub fn type_matcher_type_if_null(name: &str) -> Result<PySedonaType, PySedonaError> {
+    let matcher = arg_matcher_from_name(name)?;
+    let sedona_type = matcher.type_if_null().ok_or_else(|| {
+        PySedonaError::SedonaPython(format!(
+            "Type matcher '{name}' does not provide an unambiguous type for null values"
+        ))
+    })?;
+    Ok(PySedonaType::new(sedona_type))
+}
 
 /// General [ScalarUDF] wrapper
 ///
@@ -237,11 +248,18 @@ pub fn sedona_scalar_udf<'py>(
     py_input_types: Option<Vec<Py<PyAny>>>,
     volatility: &str,
     name: &str,
+    metadata: Option<HashMap<String, String>>,
 ) -> Result<PySedonaScalarUdf, PySedonaError> {
     let volatility = parse_volatility(volatility)?;
 
     let scalar_kernel = sedona_scalar_kernel(py, py_input_types, py_return_type, py_invoke_batch)?;
-    let sedona_scalar_udf = SedonaScalarUDF::new(name, vec![Arc::new(scalar_kernel)], volatility);
+    let mut sedona_scalar_udf =
+        SedonaScalarUDF::new(name, vec![Arc::new(scalar_kernel)], volatility);
+    if let Some(metadata) = metadata {
+        for (k, v) in metadata {
+            sedona_scalar_udf = sedona_scalar_udf.with_metadata(k, v)
+        }
+    }
 
     Ok(PySedonaScalarUdf {
         inner: sedona_scalar_udf,
