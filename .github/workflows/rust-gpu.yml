@@ -136,7 +136,17 @@ jobs:
           sudo apt-get update
 
           # Install build tools and dependencies
-          sudo apt-get install -y build-essential pkg-config cmake flex bison libclang-dev libgeos-dev
+          sudo apt-get install -y build-essential pkg-config cmake ninja-build flex bison libclang-dev libgeos-dev
+
+          # Ensure GCC 14 is used (Ubuntu 26.04 ships with GCC 15/16 which breaks snappy and nvcc host compiler)
+          if apt-cache show gcc-14 >/dev/null 2>&1; then
+            sudo apt-get install -y gcc-14 g++-14
+            sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100 --slave /usr/bin/g++ g++ /usr/bin/g++-14
+            sudo update-alternatives --set gcc /usr/bin/gcc-14
+            echo "CC=gcc-14" >> $GITHUB_ENV
+            echo "CXX=g++-14" >> $GITHUB_ENV
+            echo "CUDAHOSTCXX=/usr/bin/g++-14" >> $GITHUB_ENV
+          fi
 
           # Verify compiler versions
           gcc --version
@@ -194,7 +204,7 @@ jobs:
         with:
           path: vcpkg/packages
           # Bump the number at the end of this line to force a new dependency build
-          key: vcpkg-installed-${{ runner.os }}-${{ runner.arch }}-${{ env.VCPKG_REF }}-3
+          key: vcpkg-installed-${{ runner.os }}-${{ runner.arch }}-${{ env.VCPKG_REF }}-4
 
       # Install vcpkg dependencies from vcpkg.json manifest
       - name: Install vcpkg dependencies
