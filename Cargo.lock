@@ -1105,7 +1105,7 @@ dependencies = [
  "regex",
  "rustc-hash",
  "shlex 2.0.1",
- "syn 2.0.117",
+ "syn 3.0.5",
 ]
 
 [[package]]
@@ -4163,9 +4163,9 @@ dependencies = [
 
 [[package]]
 name = "lru"
-version = "0.18.0"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a860605968fce16869fd239cf4237a82f3ac470723415db603b0e8b6c8d4fb9"
+checksum = "4a9f71e3591c7ec44d3e563e87bf14ddc2bada8519dca046e5b0e560cd004e2d"
 dependencies = [
  "hashbrown 0.17.1",
 ]
@@ -6008,7 +6008,7 @@ version = "0.6.0"
 dependencies = [
  "geo-traits",
  "geo-types",
- "lru 0.18.0",
+ "lru 0.19.0",
  "rstest",
  "sedona-testing",
  "serde",
@@ -6191,7 +6191,7 @@ dependencies = [
  "async-trait",
  "datafusion-common",
  "futures",
- "lru 0.18.0",
+ "lru 0.19.0",
  "sedona-common",
  "sedona-schema",
  "sedona-testing",
@@ -6239,7 +6239,7 @@ dependencies = [
  "datafusion-common-runtime",
  "datafusion-expr",
  "futures",
- "lru 0.18.0",
+ "lru 0.19.0",
  "sedona-common",
  "sedona-expr",
  "sedona-functions",
@@ -6267,7 +6267,7 @@ dependencies = [
  "datafusion-common",
  "futures",
  "log",
- "lru 0.18.0",
+ "lru 0.19.0",
  "object_store",
  "sedona-common",
  "sedona-raster",
@@ -6318,7 +6318,7 @@ dependencies = [
  "arrow-schema",
  "criterion",
  "datafusion-common",
- "lru 0.18.0",
+ "lru 0.19.0",
  "sedona-common",
  "sedona-geometry",
  "serde_json",
