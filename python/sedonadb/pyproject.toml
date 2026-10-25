@@ -33,6 +33,8 @@ dynamic = ["version"]
 test = [
     "adbc-driver-manager[dbapi]",
     "adbc-driver-postgresql",
+    # Tests use the `@` operator for Affine matrix multiplication (affine>=3.0).
+    "affine>=3.0",
     "datafusion",
     "duckdb",
     "geoarrow-c>=0.4.0",
