@@ -109,12 +109,18 @@ static bool EvaluateGeosPredicate(gpuspatial::Predicate predicate,
   switch (predicate) {
     case gpuspatial::Predicate::kContains:
       return geom1->contains(geom2);
+    case gpuspatial::Predicate::kCovers:
+      return geom1->covers(geom2);
     case gpuspatial::Predicate::kIntersects:
       return geom1->intersects(geom2);
     case gpuspatial::Predicate::kWithin:
       return geom1->within(geom2);
+    case gpuspatial::Predicate::kCoveredBy:
+      return geom1->coveredBy(geom2);
     case gpuspatial::Predicate::kEquals:
       return geom1->equals(geom2);
+    case gpuspatial::Predicate::kDisjoint:
+      return geom1->disjoint(geom2);
     case gpuspatial::Predicate::kTouches:
       return geom1->touches(geom2);
     default:
@@ -263,3 +269,293 @@ void sort_vectors_by_index(std::vector<KeyType>& keys, std::vector<ValueType>& v
 }
 
 }  // namespace TestUtils
+
+#ifdef GPUSPATIAL_RELATE_TEST
+#include "array_stream.hpp"
+#include "gpuspatial/loader/parallel_wkb_loader.hpp"
+#include "gpuspatial/relate/relate.hpp"
+
+#include <geos/io/WKTReader.h>
+#include <geos/operation/relateng/RelateGeometry.h>
+#include <geos/operation/relateng/RelateMatrixPredicate.h>
+#include <geos/operation/relateng/RelateNG.h>
+#include <geos/operation/relateng/RelatePredicate.h>
+
+namespace gpuspatial {
+
+using point_t = Point<double, 2>;
+using index_t = uint32_t;
+using box_t = Box<Point<float, 2>>;
+using loader_t = ParallelWkbLoader<point_t, index_t>;
+
+inline const std::string NE_POINT = "POINT (1 1)";
+inline const std::string NE_LINE = "LINESTRING (1 1, 2 2)";
+inline const std::string NE_POLY = "POLYGON ((1 1, 1 2, 2 1, 1 1))";
+
+inline const std::string E_POINT = "POINT EMPTY";
+inline const std::string E_LINE = "LINESTRING EMPTY";
+inline const std::string E_POLY = "POLYGON EMPTY";
+inline const std::string E_MPOINT = "MULTIPOINT EMPTY";
+inline const std::string E_MLINE = "MULTILINESTRING EMPTY";
+inline const std::string E_MPOLY = "MULTIPOLYGON EMPTY";
+
+template <typename POINT_T, typename INDEX_T>
+struct Context {
+  PinnedVector<POINT_T> points;
+  PinnedVector<INDEX_T> prefix_sum1;
+  PinnedVector<INDEX_T> prefix_sum2;
+  PinnedVector<INDEX_T> prefix_sum3;
+  PinnedVector<box_t> mbrs;
+};
+
+template <typename POINT_T>
+inline void ParseWKTPoint(const char* wkt, POINT_T& point) {
+  nanoarrow::UniqueArrayStream stream;
+  ArrayStreamFromWKT({{wkt}}, GEOARROW_TYPE_WKB, stream.get());
+  nanoarrow::UniqueArray array;
+  nanoarrow::UniqueSchema schema;
+  nanoarrow::UniqueArrayView array_view;
+  ArrowError error;
+
+  ASSERT_EQ(ArrowArrayStreamGetSchema(stream.get(), schema.get(), &error), NANOARROW_OK)
+      << error.message;
+  ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK)
+      << error.message;
+  ASSERT_EQ(ArrowArrayViewInitFromSchema(array_view.get(), schema.get(), &error),
+            NANOARROW_OK)
+      << error.message;
+  ASSERT_EQ(ArrowArrayViewSetArray(array_view.get(), array.get(), &error), NANOARROW_OK)
+      << error.message;
+
+  loader_t loader;
+  auto cuda_stream = rmm::cuda_stream_default;
+
+  loader.Init();
+  loader.Parse(cuda_stream, array_view.get(), 0, array->length);
+  auto device_geometries = loader.Finish(cuda_stream);
+  auto h_vec = TestUtils::ToVector(cuda_stream, device_geometries.get_points());
+  cuda_stream.synchronize();
+  point = h_vec[0];
+}
+
+template <typename POINT_T, typename INDEX_T>
+inline void ParseWKTMultiPoint(Context<POINT_T, INDEX_T>& ctx, const char* wkt,
+                               MultiPoint<POINT_T>& multi_point) {
+  nanoarrow::UniqueArrayStream stream;
+  ArrayStreamFromWKT({{wkt}}, GEOARROW_TYPE_WKB, stream.get());
+  nanoarrow::UniqueArray array;
+  nanoarrow::UniqueSchema schema;
+  nanoarrow::UniqueArrayView array_view;
+  ArrowError error;
+
+  ASSERT_EQ(ArrowArrayStreamGetSchema(stream.get(), schema.get(), &error), NANOARROW_OK)
+      << error.message;
+  ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK)
+      << error.message;
+  ASSERT_EQ(ArrowArrayViewInitFromSchema(array_view.get(), schema.get(), &error),
+            NANOARROW_OK)
+      << error.message;
+  ASSERT_EQ(ArrowArrayViewSetArray(array_view.get(), array.get(), &error), NANOARROW_OK)
+      << error.message;
+  loader_t loader;
+  auto cuda_stream = rmm::cuda_stream_default;
+
+  loader.Init();
+  loader.Parse(cuda_stream, array_view.get(), 0, array->length);
+  auto device_geometries = loader.Finish(cuda_stream);
+
+  ctx.prefix_sum1 = TestUtils::ToVector(
+      cuda_stream, device_geometries.get_offsets().multi_point_offsets.ps_num_points);
+  ctx.points = TestUtils::ToVector(cuda_stream, device_geometries.get_points());
+  ctx.mbrs = TestUtils::ToVector(cuda_stream, device_geometries.get_mbrs());
+  cuda_stream.synchronize();
+  MultiPointArrayView<POINT_T, INDEX_T> multi_point_array_view(
+      ArrayView<INDEX_T>(ctx.prefix_sum1.data(), ctx.prefix_sum1.size()),
+      ArrayView<POINT_T>(ctx.points.data(), ctx.points.size()),
+      ArrayView<box_t>(ctx.mbrs.data(), ctx.mbrs.size()));
+  multi_point = multi_point_array_view[0];
+}
+
+template <typename POINT_T, typename INDEX_T>
+inline void ParseWKTLineString(Context<POINT_T, INDEX_T>& ctx, const char* wkt,
+                               LineString<POINT_T>& ls) {
+  nanoarrow::UniqueArrayStream stream;
+  ArrayStreamFromWKT({{wkt}}, GEOARROW_TYPE_WKB, stream.get());
+  nanoarrow::UniqueArray array;
+  nanoarrow::UniqueSchema schema;
+  nanoarrow::UniqueArrayView array_view;
+  ArrowError error;
+
+  ASSERT_EQ(ArrowArrayStreamGetSchema(stream.get(), schema.get(), &error), NANOARROW_OK)
+      << error.message;
+  ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK)
+      << error.message;
+  ASSERT_EQ(ArrowArrayViewInitFromSchema(array_view.get(), schema.get(), &error),
+            NANOARROW_OK)
+      << error.message;
+  ASSERT_EQ(ArrowArrayViewSetArray(array_view.get(), array.get(), &error), NANOARROW_OK)
+      << error.message;
+
+  loader_t loader;
+  auto cuda_stream = rmm::cuda_stream_default;
+
+  loader.Init();
+  loader.Parse(cuda_stream, array_view.get(), 0, array->length);
+  auto device_geometries = loader.Finish(cuda_stream);
+  ctx.prefix_sum1 = TestUtils::ToVector(
+      cuda_stream, device_geometries.get_offsets().line_string_offsets.ps_num_points);
+  ctx.points = TestUtils::ToVector(cuda_stream, device_geometries.get_points());
+  ctx.mbrs = TestUtils::ToVector(cuda_stream, device_geometries.get_mbrs());
+  cuda_stream.synchronize();
+  LineStringArrayView<POINT_T, INDEX_T> ls_array_view(
+      ArrayView<INDEX_T>(ctx.prefix_sum1.data(), ctx.prefix_sum1.size()),
+      ArrayView<POINT_T>(ctx.points.data(), ctx.points.size()),
+      ArrayView<box_t>(ctx.mbrs.data(), ctx.mbrs.size()));
+  ls = ls_array_view[0];
+}
+
+template <typename POINT_T, typename INDEX_T>
+inline void ParseWKTMultiLineString(Context<POINT_T, INDEX_T>& ctx, const char* wkt,
+                                    MultiLineString<POINT_T, INDEX_T>& m_ls) {
+  nanoarrow::UniqueArrayStream stream;
+  ArrayStreamFromWKT({{wkt}}, GEOARROW_TYPE_WKB, stream.get());
+  nanoarrow::UniqueArray array;
+  nanoarrow::UniqueSchema schema;
+  nanoarrow::UniqueArrayView array_view;
+  ArrowError error;
+
+  ASSERT_EQ(ArrowArrayStreamGetSchema(stream.get(), schema.get(), &error), NANOARROW_OK)
+      << error.message;
+  ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK)
+      << error.message;
+  ASSERT_EQ(ArrowArrayViewInitFromSchema(array_view.get(), schema.get(), &error),
+            NANOARROW_OK)
+      << error.message;
+  ASSERT_EQ(ArrowArrayViewSetArray(array_view.get(), array.get(), &error), NANOARROW_OK)
+      << error.message;
+  loader_t loader;
+  auto cuda_stream = rmm::cuda_stream_default;
+
+  loader.Init();
+  loader.Parse(cuda_stream, array_view.get(), 0, array->length);
+  auto device_geometries = loader.Finish(cuda_stream);
+  ctx.prefix_sum1 = TestUtils::ToVector(
+      cuda_stream,
+      device_geometries.get_offsets().multi_line_string_offsets.ps_num_parts);
+  ctx.prefix_sum2 = TestUtils::ToVector(
+      cuda_stream,
+      device_geometries.get_offsets().multi_line_string_offsets.ps_num_points);
+  ctx.points = TestUtils::ToVector(cuda_stream, device_geometries.get_points());
+  ctx.mbrs = TestUtils::ToVector(cuda_stream, device_geometries.get_mbrs());
+  cuda_stream.synchronize();
+  MultiLineStringArrayView<POINT_T, INDEX_T> m_ls_array_view(
+      ArrayView<INDEX_T>(ctx.prefix_sum1.data(), ctx.prefix_sum1.size()),
+      ArrayView<INDEX_T>(ctx.prefix_sum2.data(), ctx.prefix_sum2.size()),
+      ArrayView<POINT_T>(ctx.points.data(), ctx.points.size()),
+      ArrayView<box_t>(ctx.mbrs.data(), ctx.mbrs.size()));
+  m_ls = m_ls_array_view[0];
+}
+
+template <typename POINT_T, typename INDEX_T>
+inline void ParseWKTPolygon(Context<POINT_T, INDEX_T>& ctx, const char* wkt,
+                            Polygon<POINT_T, INDEX_T>& poly) {
+  nanoarrow::UniqueArrayStream stream;
+  ArrayStreamFromWKT({{wkt}}, GEOARROW_TYPE_WKB, stream.get());
+  nanoarrow::UniqueArray array;
+  nanoarrow::UniqueSchema schema;
+  nanoarrow::UniqueArrayView array_view;
+  ArrowError error;
+
+  ASSERT_EQ(ArrowArrayStreamGetSchema(stream.get(), schema.get(), &error), NANOARROW_OK)
+      << error.message;
+  ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK)
+      << error.message;
+  ASSERT_EQ(ArrowArrayViewInitFromSchema(array_view.get(), schema.get(), &error),
+            NANOARROW_OK)
+      << error.message;
+  ASSERT_EQ(ArrowArrayViewSetArray(array_view.get(), array.get(), &error), NANOARROW_OK)
+      << error.message;
+
+  loader_t loader;
+  auto cuda_stream = rmm::cuda_stream_default;
+
+  loader.Init();
+  loader.Parse(cuda_stream, array_view.get(), 0, array->length);
+  auto device_geometries = loader.Finish(cuda_stream);
+  ctx.prefix_sum1 = TestUtils::ToVector(
+      cuda_stream, device_geometries.get_offsets().polygon_offsets.ps_num_rings);
+  ctx.prefix_sum2 = TestUtils::ToVector(
+      cuda_stream, device_geometries.get_offsets().polygon_offsets.ps_num_points);
+  ctx.points = TestUtils::ToVector(cuda_stream, device_geometries.get_points());
+  ctx.mbrs = TestUtils::ToVector(cuda_stream, device_geometries.get_mbrs());
+  cuda_stream.synchronize();
+  PolygonArrayView<POINT_T, INDEX_T> poly_array_view(
+      ArrayView<INDEX_T>(ctx.prefix_sum1.data(), ctx.prefix_sum1.size()),
+      ArrayView<INDEX_T>(ctx.prefix_sum2.data(), ctx.prefix_sum2.size()),
+      ArrayView<POINT_T>(ctx.points.data(), ctx.points.size()),
+      ArrayView<box_t>(ctx.mbrs.data(), ctx.mbrs.size()));
+  poly = poly_array_view[0];
+}
+
+template <typename POINT_T, typename INDEX_T>
+inline void ParseWKTMultiPolygon(Context<POINT_T, INDEX_T>& ctx, const char* wkt,
+                                 MultiPolygon<POINT_T, INDEX_T>& poly) {
+  nanoarrow::UniqueArrayStream stream;
+  ArrayStreamFromWKT({{wkt}}, GEOARROW_TYPE_WKB, stream.get());
+  nanoarrow::UniqueArray array;
+  nanoarrow::UniqueSchema schema;
+  nanoarrow::UniqueArrayView array_view;
+  ArrowError error;
+
+  ASSERT_EQ(ArrowArrayStreamGetSchema(stream.get(), schema.get(), &error), NANOARROW_OK)
+      << error.message;
+  ASSERT_EQ(ArrowArrayStreamGetNext(stream.get(), array.get(), &error), NANOARROW_OK)
+      << error.message;
+  ASSERT_EQ(ArrowArrayViewInitFromSchema(array_view.get(), schema.get(), &error),
+            NANOARROW_OK)
+      << error.message;
+  ASSERT_EQ(ArrowArrayViewSetArray(array_view.get(), array.get(), &error), NANOARROW_OK)
+      << error.message;
+  loader_t loader;
+  auto cuda_stream = rmm::cuda_stream_default;
+
+  loader.Init();
+  loader.Parse(cuda_stream, array_view.get(), 0, array->length);
+  auto device_geometries = loader.Finish(cuda_stream);
+  ctx.prefix_sum1 = TestUtils::ToVector(
+      cuda_stream, device_geometries.get_offsets().multi_polygon_offsets.ps_num_parts);
+  ctx.prefix_sum2 = TestUtils::ToVector(
+      cuda_stream, device_geometries.get_offsets().multi_polygon_offsets.ps_num_rings);
+  ctx.prefix_sum3 = TestUtils::ToVector(
+      cuda_stream, device_geometries.get_offsets().multi_polygon_offsets.ps_num_points);
+  ctx.points = TestUtils::ToVector(cuda_stream, device_geometries.get_points());
+  ctx.mbrs = TestUtils::ToVector(cuda_stream, device_geometries.get_mbrs());
+  cuda_stream.synchronize();
+  MultiPolygonArrayView<POINT_T, INDEX_T> poly_array_view(
+      ArrayView<INDEX_T>(ctx.prefix_sum1.data(), ctx.prefix_sum1.size()),
+      ArrayView<INDEX_T>(ctx.prefix_sum2.data(), ctx.prefix_sum2.size()),
+      ArrayView<INDEX_T>(ctx.prefix_sum3.data(), ctx.prefix_sum3.size()),
+      ArrayView<POINT_T>(ctx.points.data(), ctx.points.size()),
+      ArrayView<box_t>(ctx.mbrs.data(), ctx.mbrs.size()));
+  poly = poly_array_view[0];
+}
+
+template <typename GEOMETRY1_T, typename GEOMETRY2_T>
+inline void TestRelate(const char* wkt1, const char* wkt2, const GEOMETRY1_T& g1,
+                       const GEOMETRY2_T& g2) {
+  geos::io::WKTReader r;
+  auto a = r.read(wkt1);
+  auto b = r.read(wkt2);
+
+  geos::operation::relateng::RelateMatrixPredicate pred;
+  geos::operation::relateng::RelateNG::relate(a.get(), b.get(), pred);
+  std::string actualVal = pred.getIM()->toString();
+
+  int val = relate(g1, g2);
+  char res[10];
+  IntersectionMatrix::ToString(val, res);
+  ASSERT_STREQ(actualVal.c_str(), res);
+}
+
+}  // namespace gpuspatial
+#endif  // GPUSPATIAL_RELATE_TEST
