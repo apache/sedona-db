@@ -297,8 +297,10 @@ def test_coordinates_of_non_points_raise_when_computed():
         ("minimum_clearance_line", ()),
         ("concave_hull", ()),
         ("concave_hull", (0.4,)),
+        ("concave_hull", (0.4, True)),
         ("reverse", ()),
         ("line_merge", ()),
+        ("line_merge", (True,)),
         ("force_2d", ()),
         ("force_3d", ()),
         ("force_3d", (2.5,)),
@@ -363,7 +365,27 @@ VALID_CORPUS = [
 ]
 
 
-def test_line_merge_merges_lines_and_empties_to_a_collection():
+def test_concave_hull_has_holes_only_when_allowed():
+    # Points two deep around the border of a square: a tight hull of them
+    # has the empty middle as a hole, if it may have holes at all.
+    frame = shapely.MultiPoint(
+        [
+            (x, y)
+            for x in range(11)
+            for y in range(11)
+            if not (2 <= x <= 8 and 2 <= y <= 8)
+        ]
+    )
+    gs, gdf = _geoseries([frame.wkt])
+    for allow_holes in (False, True):
+        got = gdf.geometry.concave_hull(0.1, allow_holes=allow_holes)
+        expected = gs.concave_hull(0.1, allow_holes=allow_holes)
+        _assert_same_geometries(got, expected)
+        assert len(got.to_pandas()[0].interiors) == int(allow_holes)
+
+
+@pytest.mark.parametrize("directed", [False, True])
+def test_line_merge_merges_lines_and_empties_to_a_collection(directed):
     # Merged where the parts meet, a polygon's rings as lines, and an empty
     # geometry collection for a geometry with neither, empty input included:
     # the engine keeps an empty input's own type there.
@@ -389,7 +411,8 @@ def test_line_merge_merges_lines_and_empties_to_a_collection():
         "GEOMETRYCOLLECTION (POINT EMPTY, LINESTRING (0 0, 1 1))",
     ]
     gs, gdf = _geoseries(wkts)
-    _assert_same_geometries(gdf.geometry.line_merge(), gs.line_merge())
+    expected = gs.line_merge(directed=directed)
+    _assert_same_geometries(gdf.geometry.line_merge(directed=directed), expected)
 
 
 def test_line_merge_keeps_a_geography_columns_kind_and_crs():
@@ -624,8 +647,6 @@ def test_nan_parameters_give_missing_geometries(method):
         (lambda g: g.set_precision(True), TypeError),
         (lambda g: g.snap(shapely.Point(0, 0), np.array([1.0])), TypeError),
         (lambda g: g.force_3d(g), TypeError),
-        (lambda g: g.concave_hull(allow_holes=True), NotImplementedError),
-        (lambda g: g.line_merge(directed=True), NotImplementedError),
         (lambda g: g.set_precision(0.1, mode="pointwise"), NotImplementedError),
     ],
 )
