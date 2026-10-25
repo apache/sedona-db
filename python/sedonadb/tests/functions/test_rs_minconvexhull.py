@@ -53,7 +53,7 @@ def _rasterio_min_convex_hull(path, bands):
         return None
     left, top, right, bottom = cols.min(), rows.min(), cols.max() + 1, rows.max() + 1
     ring = [(left, top), (right, top), (right, bottom), (left, bottom), (left, top)]
-    return [affine * (int(col), int(row)) for col, row in ring]
+    return [affine @ (int(col), int(row)) for col, row in ring]
 
 
 def _sedonadb_min_convex_hull(con, path, band=None):

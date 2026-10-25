@@ -98,6 +98,31 @@ pub fn append_as_indb_raster(dataset: &Dataset, builder: &mut RasterBuilder) -> 
 
 /// Append a raster source path as a single out-db raster to the provided [`RasterBuilder`].
 pub fn append_as_outdb_raster(gdal: &Gdal, path: &str, builder: &mut RasterBuilder) -> Result<()> {
+    read_outdb_header(gdal, path)?.append_to(path, builder)
+}
+
+/// What an out-db raster reference records about its source file: the grid,
+/// the CRS and each band's type and nodata. Read by [`read_outdb_header`] and
+/// appended by [`OutDbHeader::append_to`].
+///
+/// The two halves are separate so the header can be read on another thread
+/// (GDAL handles never leave the thread that opened them; this struct owns
+/// no GDAL state) and appended in row order on the caller's.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct OutDbHeader {
+    grid: Grid,
+    crs: Option<String>,
+    bands: Vec<OutDbBandHeader>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct OutDbBandHeader {
+    data_type: BandDataType,
+    nodata: Option<Vec<u8>>,
+}
+
+/// Open `path` with GDAL and read its [`OutDbHeader`]. No pixels are read.
+pub(crate) fn read_outdb_header(gdal: &Gdal, path: &str) -> Result<OutDbHeader> {
     let gdal_path = normalize_outdb_source_path(path);
     let dataset = gdal
         .open_ex_with_options(
@@ -122,33 +147,45 @@ pub fn append_as_outdb_raster(gdal: &Gdal, path: &str, builder: &mut RasterBuild
         .ok()
         .and_then(|sr: SpatialRef| sr.to_projjson().ok());
 
-    grid.start_raster_into(builder, crs.as_deref())?;
-
     let band_count = dataset.raster_count();
+    let mut bands = Vec::with_capacity(band_count);
     for band_idx in 1..=band_count {
         let band = dataset
             .rasterband(band_idx)
             .with_context(|| format!("Failed to get band {band_idx}"))?;
 
         let gdal_type = band.band_type();
-        let band_data_type = gdal_to_band_data_type(gdal_type)
+        let data_type = gdal_to_band_data_type(gdal_type)
             .map_err(|_| exec_datafusion_err!("Unsupported band data type: {:?}", gdal_type))?;
-
-        let nodata_bytes = band_nodata_to_bytes(&band)?;
-
-        // Out-db band: location + band selector in the `#band=N` URI; empty data.
-        let outdb_uri = format!("{path}#band={band_idx}");
-        builder.start_band(StartBandArgs {
-            nodata: nodata_bytes.as_deref(),
-            outdb_uri: Some(&outdb_uri),
-            ..StartBandArgs::new(&["y", "x"], &[height as i64, width as i64], band_data_type)
-        })?;
-        builder.band_data_writer().append_value([]);
-        builder.finish_band()?;
+        let nodata = band_nodata_to_bytes(&band)?;
+        bands.push(OutDbBandHeader { data_type, nodata });
     }
 
-    builder.finish_raster()?;
-    Ok(())
+    Ok(OutDbHeader { grid, crs, bands })
+}
+
+impl OutDbHeader {
+    /// Append one out-db raster referencing `path` (the path as the user gave
+    /// it, before GDAL path normalization) to `builder`.
+    pub(crate) fn append_to(&self, path: &str, builder: &mut RasterBuilder) -> Result<()> {
+        self.grid.start_raster_into(builder, self.crs.as_deref())?;
+
+        let (width, height) = (self.grid.width, self.grid.height);
+        for (band_idx, band) in (1..).zip(&self.bands) {
+            // Out-db band: location + band selector in the `#band=N` URI; empty data.
+            let outdb_uri = format!("{path}#band={band_idx}");
+            builder.start_band(StartBandArgs {
+                nodata: band.nodata.as_deref(),
+                outdb_uri: Some(&outdb_uri),
+                ..StartBandArgs::new(&["y", "x"], &[height, width], band.data_type)
+            })?;
+            builder.band_data_writer().append_value([]);
+            builder.finish_band()?;
+        }
+
+        builder.finish_raster()?;
+        Ok(())
+    }
 }
 
 /// Materialize a single GDAL dataset as an in-db raster `StructArray`.
