@@ -182,9 +182,10 @@ fn forward_raster_filter_batches(
     }
 }
 
-/// Whether `field` is a Sedona raster: by the `sedona.raster` extension
-/// metadata, or structurally by the raster storage type, since DataFusion
-/// drops field metadata on async UDF outputs (see `sd_restore_metadata`).
+/// Whether `field` is a Sedona raster: by its `sedona.raster` extension
+/// metadata, or structurally by the raster storage type. A raster can reach
+/// the planner as a plain struct (an array built in Python without the
+/// extension type, say), and `rs_ensureloaded` accepts it either way.
 fn is_raster_field(field: &Field) -> bool {
     matches!(
         SedonaType::from_storage_field(field),
@@ -1409,7 +1410,7 @@ mod tests {
         // A scan column carries the extension metadata.
         let (raster_schema, _) = raster_batch(&[Some(2)]);
         assert!(has_raster_column(&raster_schema));
-        // The raster storage type without the metadata counts too.
+        // A raster built without it (a plain struct from Python) counts too.
         let bare = Schema::new(vec![
             raster_schema
                 .field(0)

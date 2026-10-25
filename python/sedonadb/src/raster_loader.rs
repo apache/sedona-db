@@ -323,7 +323,7 @@ impl From<PyViewEntry> for ViewEntry {
 }
 
 /// Python-visible band data type wrapper
-#[pyclass(skip_from_py_object)]
+#[pyclass]
 #[derive(Clone, Copy)]
 pub struct PyBandDataType(pub BandDataType);
 

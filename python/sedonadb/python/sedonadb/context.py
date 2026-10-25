@@ -62,6 +62,18 @@ from sedonadb.utility import sedona  # noqa: F401
 _DEFAULT_PYOGRIO_EXTENSIONS = ("fgb", "gpkg", "shp", "geojson")
 
 
+class ConfigurationWarning(UserWarning):
+    """Warning issued when an optional native dependency can't be configured
+
+    SedonaDB attempts to locate PROJ and GDAL when it is imported (see
+    `configure_proj()` and `configure_gdal()`). Most functionality
+    works without them, so a failure to find either is reported with this
+    warning rather than an error. To skip the automatic configuration on
+    import entirely, set the `SEDONADB_AUTO_CONFIGURE` environment variable
+    to `false`.
+    """
+
+
 class SedonaContext:
     """Context for executing queries using Sedona
 
@@ -626,7 +638,8 @@ def configure_proj(
             - None: Use custom values of shared_library and/or other keyword
               arguments.
             - auto: Try all presets in the order pyproj, conda, homebrew,
-              system and warn if none succeeded.
+              system and warn (with `ConfigurationWarning`)
+              if none succeeded.
             - pyproj: Attempt to use shared libraries bundled with pyproj.
               This aligns transformations with those performed by geopandas
               and is the option that is tried first.
@@ -687,7 +700,9 @@ def configure_proj(
             all_errors = "\n".join(errors)
             warnings.warn(
                 "Failed to configure PROJ. Is pyproj or a system install of PROJ available?"
-                f"\nDetails: tried {tried}\n{all_errors}"
+                f"\nDetails: tried {tried}\n{all_errors}",
+                ConfigurationWarning,
+                stacklevel=2,
             )
             return
         else:
@@ -847,7 +862,8 @@ def configure_gdal(
         preset: One of:
             - None: Use a custom `shared_library` path.
             - auto: Try all presets in the order rasterio, pyogrio, conda,
-              homebrew, system and warn if none succeeded.
+              homebrew, system and warn (with
+              `ConfigurationWarning`) if none succeeded.
             - pyogrio: Attempt to use the GDAL shared library bundled with
               pyogrio. This aligns the GDAL version with the one used by
               `read_pyogrio()` / `geopandas.read_file()`.
@@ -910,7 +926,9 @@ def configure_gdal(
             all_errors = "\n".join(errors)
             warnings.warn(
                 "Failed to configure GDAL. Is rasterio, pyogrio, or a system install of GDAL available?"
-                f"\nDetails: tried {tried}\n{all_errors}"
+                f"\nDetails: tried {tried}\n{all_errors}",
+                ConfigurationWarning,
+                stacklevel=2,
             )
             return
         else:
