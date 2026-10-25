@@ -2049,18 +2049,13 @@ class GeoSeries(Series):
     def concave_hull(self, ratio=0.0, allow_holes=False):
         """The concave hull of each geometry (`ST_ConcaveHull`).
 
-        `ratio` runs from 0 (the tightest hull) to 1 (the convex hull), as in
-        GeoPandas. Only GeoPandas' default `allow_holes=False` is supported.
+        `ratio` runs from 0 (the tightest hull) to 1 (the convex hull), and
+        `allow_holes` lets the hull have holes, as in GeoPandas.
         """
-        if allow_holes:
-            raise NotImplementedError(
-                "concave_hull() supports allow_holes=False only: the engine's "
-                "concave hull has no holes"
-            )
         ratio = self._parameter(
             ratio, "concave_hull", "ratio", (lambda x: 0 <= x <= 1, "between 0 and 1")
         )
-        return self._geo(self._expr.geo.concave_hull(ratio))
+        return self._geo(self._expr.funcs.st_concavehull(ratio, bool(allow_holes)))
 
     def segmentize(self, max_segment_length):
         """Add vertices so that no segment is longer than `max_segment_length`
@@ -2118,17 +2113,12 @@ class GeoSeries(Series):
         A polygon's rings merge as lines, and other parts (the points of a
         collection) are left out. A geometry with no lines or rings merges to
         an empty geometry collection, as in GeoPandas, empty input included
-        (the engine keeps an empty input's type). Only GeoPandas' default
-        `directed=False` is supported.
+        (the engine keeps an empty input's type). With `directed=True`, lines
+        merge only where one ends where the next starts.
         """
         import shapely
 
-        if directed:
-            raise NotImplementedError(
-                "line_merge() supports directed=False only: the engine merges "
-                "lines regardless of their direction"
-            )
-        merged = self._expr.geo.line_merge()
+        merged = self._expr.funcs.st_linemerge(bool(directed))
         return self._geo(self._empty_as(merged, shapely.GeometryCollection()))
 
     def force_2d(self):
