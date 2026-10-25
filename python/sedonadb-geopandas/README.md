@@ -103,9 +103,8 @@ multi-line into a line; `force_3d()` keeps Z values and drops M, where Shapely
 leaves a geometry with M but no Z as it is and replaces the Z values of one
 with both; and `snap()` leaves an empty geometry as it is, where GEOS can turn
 it into a 3D empty, or one of another type (`POLYGON EMPTY` becomes
-`LINEARRING Z EMPTY`). `concave_hull(allow_holes=True)`,
-`line_merge(directed=True)`, and `set_precision()` modes other than
-`"valid_output"` are not supported.
+`LINEARRING Z EMPTY`). `set_precision()` modes other than `"valid_output"` are
+not supported.
 
 `explode()` takes parts one level deep and drops rows whose geometry has no
 parts, as GeoPandas does. Without an index it cannot number the parts
