@@ -2425,7 +2425,12 @@ class GeoSeries(Series):
         collected, geometry = self._collected(name)
         if node:
             geometry = geometry.geo.unary_union()
-        built = _explode_parts(collected.select(build(geometry).alias(name)), name)
+        built = collected.select(build(geometry).alias(name))
+        # An empty result is nothing built, though not always an empty
+        # collection (ST_BuildArea of empty geometries is an empty polygon),
+        # which exploding would keep as a row.
+        built = built.filter(~_empty(built[name]))
+        built = _explode_parts(built, name)
         return GeoSeries(built, built[name], name)
 
     def union_all(self, method="unary", *, grid_size=None):

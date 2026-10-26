@@ -1675,15 +1675,32 @@ def test_polygons_from_linework_match_geopandas(method, node):
 
 @pytest.mark.parametrize(
     "wkts",
-    [None, [None], ["POINT (0 0)", "POINT EMPTY"], ["LINESTRING (0 0, 1 1)"]],
-    ids=["no rows", "missing", "points", "open line"],
+    [
+        None,
+        [None],
+        # ST_BuildArea makes an empty polygon of these, where GeoPandas
+        # builds nothing.
+        ["LINESTRING EMPTY", "POLYGON EMPTY", None],
+        ["POINT (0 0)", "POINT EMPTY"],
+        ["LINESTRING (0 0, 1 1)"],
+    ],
+    ids=["no rows", "missing", "empty", "points", "open line"],
 )
-@pytest.mark.parametrize("method", ["delaunay_triangles", "polygonize", "build_area"])
-def test_aggregates_with_nothing_to_build_give_no_rows(method, wkts):
+@pytest.mark.parametrize(
+    "method, options",
+    [
+        ("delaunay_triangles", {}),
+        ("polygonize", {"node": True}),
+        ("polygonize", {"node": False}),
+        ("build_area", {"node": True}),
+        ("build_area", {"node": False}),
+    ],
+)
+def test_aggregates_with_nothing_to_build_give_no_rows(method, options, wkts):
     gs, g = _nothing(wkts)
-    expected = getattr(gs, method)()
+    expected = getattr(gs, method)(**options)
     assert len(expected) == 0
-    _assert_same_parts(getattr(g, method)(), expected)
+    _assert_same_parts(getattr(g, method)(**options), expected)
 
 
 @pytest.mark.parametrize(
