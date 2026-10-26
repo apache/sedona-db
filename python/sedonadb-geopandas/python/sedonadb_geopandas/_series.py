@@ -1924,38 +1924,56 @@ class GeoSeries(Series):
     def _in_box(self, key):
         """Whether each geometry intersects the box `key` selects in `cx`.
 
-        A number is a range of that one value, and a step is ignored with a
-        warning, as in GeoPandas. An open side is unbounded: it is closed past
-        each geometry's own bounds, where GeoPandas closes it at the bounds of
-        all the geometries, which would need them computed (and which reaches
-        back to the geometries at the edge for a range starting past it).
+        The box is one in coordinates, as in GeoPandas, so a geography is
+        tested as planar geometry: a spherical box's edges would bow away
+        from its corners. A number is a range of that one value, and a step
+        is ignored with a warning, as in GeoPandas.
+
+        An open side is unbounded: it is closed at each geometry's own bound,
+        and a geometry wholly past the other side is left out explicitly, as
+        the box would otherwise turn around to reach it. GeoPandas closes an
+        open side at the bounds of all the geometries, which would need them
+        computed (and which reaches back to the geometries at the edge for a
+        range starting past it).
         """
         if not isinstance(key, tuple) or len(key) != 2:
             raise TypeError("cx takes an x and a y range: cx[xmin:xmax, ymin:ymax]")
         ctx = self._df._ctx
-        geometry = self._expr.geo
-        sides = []
+        geometry, crs = self._expr, self.crs
+        if self._is_geography():
+            geometry, crs = geometry.geo.as_binary().funcs.st_geomfromwkb(), None
+
+        def bound(value):
+            if value is None:
+                return None
+            number = _numeric_value(value)
+            if not isinstance(number, numbers.Real) or isinstance(number, bool):
+                raise TypeError(
+                    f"cx bounds must be numbers, got {type(value).__name__}"
+                )
+            return ctx.lit(float(number))
+
+        sides, within = [], []
         for bounds, low, high in (
-            (key[0], geometry.x_min(), geometry.x_max()),
-            (key[1], geometry.y_min(), geometry.y_max()),
+            (key[0], geometry.geo.x_min(), geometry.geo.x_max()),
+            (key[1], geometry.geo.y_min(), geometry.geo.y_max()),
         ):
             if not isinstance(bounds, slice):
                 bounds = slice(bounds, bounds)
             if bounds.step is not None:
                 warnings.warn("Ignoring step - full interval is used.", stacklevel=4)
-            for value, past in ((bounds.start, low - 1.0), (bounds.stop, high + 1.0)):
-                if value is None:
-                    sides.append(past)
-                    continue
-                number = _numeric_value(value)
-                if not isinstance(number, numbers.Real) or isinstance(number, bool):
-                    raise TypeError(
-                        f"cx bounds must be numbers, got {type(value).__name__}"
-                    )
-                sides.append(ctx.lit(float(number)))
+            start, stop = bound(bounds.start), bound(bounds.stop)
+            sides += [low if start is None else start, high if stop is None else stop]
+            if stop is None and start is not None:
+                within.append(high >= start)
+            if start is None and stop is not None:
+                within.append(low <= stop)
         xmin, xmax, ymin, ymax = sides
-        box = xmin.funcs.st_makeenvelope(ymin, xmax, ymax)
-        return self._expr.geo.intersects(self._as_column_kind(box, own_crs=None))
+        box = _with_crs(xmin.funcs.st_makeenvelope(ymin, xmax, ymax), False, crs, ctx)
+        result = geometry.geo.intersects(box)
+        for condition in within:
+            result = result & condition
+        return result
 
     # -- measures ---------------------------------------------------------
 

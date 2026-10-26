@@ -1109,6 +1109,54 @@ def test_cx_open_side_is_unbounded():
     assert gdf.geometry.cx[:-20, :].to_pandas().tolist() == []
 
 
+@pytest.mark.parametrize(
+    "key, ids",
+    [
+        ((slice(1e17, None), slice(None, None)), [2]),
+        ((slice(None, -1e17), slice(None, None)), []),
+        ((slice(1e16, None), slice(None, None)), [1, 2, 4]),
+        ((slice(None, None), slice(1, 2)), [4]),
+        ((slice(None, None), slice(None, None)), [1, 2, 3, 4]),
+    ],
+    ids=["past the right", "past the left", "at the edge", "line", "open"],
+)
+def test_cx_open_side_is_unbounded_at_any_scale(key, ids):
+    # Coordinates too large for a fixed margin to move them, and a line with
+    # no width (an open side stops at its own bounds).
+    wkts = [
+        "POINT (1e16 0)",
+        "POINT (2e17 0)",
+        "POINT (-1e16 0)",
+        "LINESTRING (1e16 -5, 1e16 5)",
+        "POINT EMPTY",
+        None,
+    ]
+    _, gdf = _geoseries(wkts, id=range(1, len(wkts) + 1))
+    assert gdf.cx[key].to_geopandas()["id"].tolist() == ids
+
+
+def test_cx_on_geography_is_a_coordinate_box():
+    # A box in coordinates, as GeoPandas has it, not a spherical polygon,
+    # whose edges would bow north past y = 10 and could not reach the pole.
+    # The rows stay geography.
+    gdf = sgpd.GeoDataFrame(
+        sgpd.default_context().sql(
+            "SELECT * FROM (VALUES "
+            "(1, ST_GeogFromWKT('POINT (5 10.01)')), "
+            "(2, ST_GeogFromWKT('POINT (0 90)')), "
+            "(3, ST_GeogFromWKT('POINT (5 5)'))) AS t(id, g)"
+        ),
+        geometry="g",
+    )
+    boxed = gdf.cx[0:10, 0:10]
+    assert boxed.to_geopandas()["id"].tolist() == [3]
+    assert boxed.geometry._is_geography()
+    assert gdf.cx[:, :].to_geopandas()["id"].tolist() == [1, 2, 3]
+    series = gdf.geometry.cx[0:10, 0:10]
+    assert series._is_geography()
+    assert len(series.to_pandas()) == 1
+
+
 def test_cx_takes_an_x_and_a_y_range():
     _, gdf = _geoseries(CX_CORPUS)
     with pytest.raises(TypeError, match="cx"):
