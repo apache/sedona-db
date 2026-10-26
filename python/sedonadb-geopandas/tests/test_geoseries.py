@@ -1563,7 +1563,9 @@ FLAT_CORPUS = [
 
 
 def _nothing(wkts):
-    """A column with no rows, or with only missing geometries."""
+    """A GeoPandas column and the same column wrapped, for inputs an
+    aggregate makes nothing of: with `None`, a column with no rows;
+    otherwise the geometries `wkts` (WKT, or None for a missing one)."""
     if wkts is None:
         _, gdf = _geoseries(["POINT (0 0)"], a=[1])
         return gpd.GeoSeries([], crs="EPSG:3857"), gdf[gdf["a"] > 1].geometry
