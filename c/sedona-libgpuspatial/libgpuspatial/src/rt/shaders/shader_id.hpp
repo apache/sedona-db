@@ -92,4 +92,14 @@ template <typename POINT_T>
 inline std::string GetMultiPolygonPointQueryShaderId() {
   return detail::GetShaderPointTypeId<POINT_T>() + "_multipolygon_point_query.ptx";
 }
+
+template <typename POINT_T>
+inline std::string GetPolygonPolygonQueryShaderId() {
+  return detail::GetShaderPointTypeId<POINT_T>() + "_polygon_polygon_query.ptx";
+}
+
+template <typename POINT_T>
+inline std::string GetMultiPolygonPolygonQueryShaderId() {
+  return detail::GetShaderPointTypeId<POINT_T>() + "_multipolygon_polygon_query.ptx";
+}
 }  // namespace gpuspatial

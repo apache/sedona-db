@@ -19,8 +19,10 @@ include(cmake/nvcuda_compile_module.cmake)
 function(CONFIG_SHADERS SHADER_PTX_FILES)
   set(SHADER_POINT_TYPES "SHADER_POINT_FLOAT_2D;SHADER_POINT_DOUBLE_2D")
 
-  set(SHADERS_DEPS "${PROJECT_SOURCE_DIR}/include/gpuspatial/geom"
-                   "${PROJECT_SOURCE_DIR}/include/gpuspatial/rt")
+  set(SHADERS_DEPS
+      "${PROJECT_SOURCE_DIR}/include/gpuspatial/geom"
+      "${PROJECT_SOURCE_DIR}/include/gpuspatial/relate"
+      "${PROJECT_SOURCE_DIR}/include/gpuspatial/rt")
 
   set(OUTPUT_DIR "${PROJECT_BINARY_DIR}/shaders_ptx")
   set(OPTIX_MODULE_EXTENSION ".ptx")
@@ -127,6 +129,54 @@ function(CONFIG_SHADERS SHADER_PTX_FILES)
 
     nvcuda_compile_module(SOURCES
                           "${PROJECT_SOURCE_DIR}/src/rt/shaders/multipolygon_point_query.cu"
+                          DEPENDENCIES
+                          ${SHADERS_DEPS}
+                          TARGET_PATH
+                          "${OUTPUT_DIR}"
+                          PREFIX
+                          "${POINT_TYPE}_"
+                          EXTENSION
+                          "${OPTIX_MODULE_EXTENSION}"
+                          GENERATED_FILES
+                          PROGRAM_MODULES
+                          NVCC_OPTIONS
+                          "${OPTIX_PROGRAM_TARGET}"
+                          "--gpu-architecture=compute_75"
+                          "--relocatable-device-code=true"
+                          "--expt-relaxed-constexpr"
+                          "-Wno-deprecated-gpu-targets"
+                          "-std=c++17"
+                          "-I${optix_SOURCE_DIR}/include"
+                          "-I${PROJECT_SOURCE_DIR}/include"
+                          "-D${POINT_TYPE}")
+    list(APPEND ALL_GENERATED_FILES ${PROGRAM_MODULES})
+
+    nvcuda_compile_module(SOURCES
+                          "${PROJECT_SOURCE_DIR}/src/rt/shaders/polygon_polygon_query.cu"
+                          DEPENDENCIES
+                          ${SHADERS_DEPS}
+                          TARGET_PATH
+                          "${OUTPUT_DIR}"
+                          PREFIX
+                          "${POINT_TYPE}_"
+                          EXTENSION
+                          "${OPTIX_MODULE_EXTENSION}"
+                          GENERATED_FILES
+                          PROGRAM_MODULES
+                          NVCC_OPTIONS
+                          "${OPTIX_PROGRAM_TARGET}"
+                          "--gpu-architecture=compute_75"
+                          "--relocatable-device-code=true"
+                          "--expt-relaxed-constexpr"
+                          "-Wno-deprecated-gpu-targets"
+                          "-std=c++17"
+                          "-I${optix_SOURCE_DIR}/include"
+                          "-I${PROJECT_SOURCE_DIR}/include"
+                          "-D${POINT_TYPE}")
+    list(APPEND ALL_GENERATED_FILES ${PROGRAM_MODULES})
+
+    nvcuda_compile_module(SOURCES
+                          "${PROJECT_SOURCE_DIR}/src/rt/shaders/multipolygon_polygon_query.cu"
                           DEPENDENCIES
                           ${SHADERS_DEPS}
                           TARGET_PATH
