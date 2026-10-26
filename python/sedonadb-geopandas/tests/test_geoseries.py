@@ -266,10 +266,18 @@ def test_measures_match_geopandas(name):
 
 def test_point_coordinates_match_geopandas():
     gs = gpd.GeoSeries.from_wkt(
-        ["POINT Z (1 2 3)", "POINT (4 5)", "POINT EMPTY", None], crs="EPSG:3857"
+        [
+            "POINT Z (1 2 3)",
+            "POINT (4 5)",
+            "POINT M (6 7 8)",
+            "POINT ZM (1 2 3 4)",
+            "POINT EMPTY",
+            None,
+        ],
+        crs="EPSG:3857",
     )
     g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
-    for name in ("x", "y", "z"):
+    for name in ("x", "y", "z", "m"):
         got = getattr(g, name).to_pandas().tolist()
         assert all(_same(a, b) for a, b in zip(got, getattr(gs, name).tolist()))
 
@@ -281,6 +289,56 @@ def test_coordinates_of_non_points_raise_when_computed():
     x = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry.x
     with pytest.raises(Exception):
         x.to_pandas()
+
+
+def _mixes_dimensions(wkt):
+    """Whether a geometry collection's members differ in Z or M."""
+    if wkt is None:
+        return False
+    geometry = shapely.from_wkt(wkt)
+    if geometry.geom_type != "GeometryCollection":
+        return False
+    parts = shapely.get_parts(geometry)
+    return len({(part.has_z, part.has_m) for part in parts}) > 1
+
+
+MIXED_DIMENSIONS = [wkt for wkt in MIXED_PARTS if _mixes_dimensions(wkt)]
+
+
+def _assert_same_coordinates(wkts, include_z, include_m):
+    gs, gdf = _geoseries(wkts)
+    got = gdf.geometry.get_coordinates(include_z=include_z, include_m=include_m)
+    expected = gs.get_coordinates(include_z=include_z, include_m=include_m)
+    assert got.columns == list(expected.columns)
+    np.testing.assert_array_equal(
+        got.to_geopandas().to_numpy(dtype=float), expected.to_numpy(dtype=float)
+    )
+
+
+@pytest.mark.parametrize("include_m", [False, True])
+@pytest.mark.parametrize("include_z", [False, True])
+def test_get_coordinates_matches_geopandas(include_z, include_m):
+    # Every vertex in order, rings' closing ones and nested collections'
+    # included; empty and missing geometries have none, and a missing Z or M
+    # is NaN.
+    wkts = MEASURE_CORPUS + [wkt for wkt in MIXED_PARTS if wkt not in MIXED_DIMENSIONS]
+    _assert_same_coordinates(wkts, include_z, include_m)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="engine ST_Points writes each point in its member's dimension, under "
+    "the collection's, giving unreadable WKB (apache/sedona-db#1513)",
+)
+@pytest.mark.parametrize("wkt", MIXED_DIMENSIONS)
+def test_get_coordinates_of_collections_mixing_dimensions(wkt):
+    _assert_same_coordinates([wkt], include_z=True, include_m=True)
+
+
+def test_get_coordinates_cannot_number_parts():
+    _, gdf = _geoseries(["MULTIPOINT ((0 0), (1 1))"])
+    with pytest.raises(NotImplementedError, match="index_parts"):
+        gdf.geometry.get_coordinates(index_parts=True)
 
 
 @pytest.mark.parametrize(
@@ -975,6 +1033,94 @@ def test_total_bounds_matches_geopandas():
     assert np.isnan(gs.total_bounds).all()
 
 
+def test_contains_properly_leaves_out_the_boundary():
+    # Inside, on the boundary, reaching the boundary from inside, equal to
+    # the polygon, and empty or missing.
+    square = "POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))"
+    others = [
+        "POINT (2 2)",
+        "POINT (4 2)",
+        "LINESTRING (2 2, 4 2)",
+        square,
+        "POINT EMPTY",
+        None,
+    ]
+    left = gpd.GeoSeries.from_wkt([square] * len(others), crs="EPSG:3857")
+    right = gpd.GeoSeries.from_wkt(others, crs="EPSG:3857")
+    gdf = sgpd.from_geopandas(gpd.GeoDataFrame({"b": right}, geometry=left))
+    got = gdf.geometry.contains_properly(gdf["b"]).to_pandas().tolist()
+    assert got == left.contains_properly(right).tolist()
+    assert got == [True, False, False, False, False, False]
+    assert gdf.geometry.contains(gdf["b"]).to_pandas().tolist()[:4] == [
+        True,
+        False,
+        True,
+        True,
+    ]
+
+
+CX_CORPUS = [
+    "POINT (1 1)",
+    "POINT (5 5)",
+    "LINESTRING (0 0, 10 0)",
+    "POLYGON ((2 2, 3 2, 3 3, 2 3, 2 2))",
+    "POINT EMPTY",
+    None,
+    "POINT (3 3)",
+]
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        (slice(0, 2), slice(0, 2)),
+        (slice(2, None), slice(None, None)),
+        (slice(None, 2), slice(1, None)),
+        (slice(None, None), slice(None, None)),
+        (3, 3),
+        (slice(0, 10), 0),
+        (slice(4, 2), slice(4, 2)),
+    ],
+    ids=[
+        "closed",
+        "open right",
+        "open left and top",
+        "open",
+        "point",
+        "line",
+        "reversed",
+    ],
+)
+def test_cx_matches_geopandas(key):
+    gs, gdf = _geoseries(CX_CORPUS, id=range(len(CX_CORPUS)))
+    expected = gs.cx[key]
+    _assert_same_geometries(gdf.geometry.cx[key], expected)
+    frame = gdf.cx[key]
+    assert isinstance(frame, sgpd.GeoDataFrame)
+    assert frame.to_geopandas()["id"].tolist() == list(expected.index)
+
+
+def test_cx_open_side_is_unbounded():
+    # GeoPandas closes an open side at the total bounds, so a range that
+    # starts past them reaches back to the geometries at their edge (here
+    # the line ending at x = 10). Open, a side here has no bound at all.
+    _, gdf = _geoseries(CX_CORPUS)
+    assert gdf.geometry.cx[20:, :].to_pandas().tolist() == []
+    assert gdf.geometry.cx[:-20, :].to_pandas().tolist() == []
+
+
+def test_cx_takes_an_x_and_a_y_range():
+    _, gdf = _geoseries(CX_CORPUS)
+    with pytest.raises(TypeError, match="cx"):
+        gdf.geometry.cx[0:2]
+    with pytest.raises(TypeError, match="cx"):
+        gdf.cx[0:"2", :]
+    # As in GeoPandas, a step is ignored with a warning.
+    with pytest.warns(UserWarning, match="step"):
+        stepped = gdf.geometry.cx[0:2:1, 0:2]
+    assert len(stepped.to_pandas()) == 3
+
+
 def test_to_wkt_round_trips():
     # Equivalent to GeoPandas' WKT but not character-identical (spacing).
     gs = gpd.GeoSeries.from_wkt(CORPUS, crs="EPSG:3857")
@@ -1005,6 +1151,40 @@ def test_set_crs_follows_geopandas_override_rules():
     assert relabeled.to_geopandas().crs == "EPSG:32633"
     # The coordinates are relabeled, not transformed.
     assert relabeled.to_geopandas().tolist() == [shapely.Point(0, 0)]
+
+
+@pytest.mark.parametrize("crs", ["EPSG:4326", 4326, pyproj.CRS("EPSG:32633")], ids=str)
+def test_to_crs_matches_geopandas(crs):
+    gs, gdf = _geoseries(
+        [
+            "POINT (1000000 2000000)",
+            "LINESTRING (0 0, 100000 100000)",
+            "POINT EMPTY",
+            None,
+        ]
+    )
+    got = gdf.geometry.to_crs(crs)
+    expected = gs.to_crs(crs)
+    # The CRS as given, as in GeoPandas: not the engine's canonical form
+    # (OGC:CRS84 for EPSG:4326).
+    assert got.to_geopandas().crs == expected.crs
+    np.testing.assert_allclose(
+        got.get_coordinates().to_geopandas().to_numpy(dtype=float),
+        expected.get_coordinates().to_numpy(dtype=float),
+        rtol=1e-9,
+    )
+
+
+def test_to_crs_takes_epsg_and_refuses_naive_geometries():
+    gs, gdf = _geoseries(["POINT (1000000 2000000)"])
+    assert gdf.geometry.to_crs(epsg=4326).to_geopandas().crs == "EPSG:4326"
+    assert gdf.to_crs(epsg=4326).to_geopandas().crs == "EPSG:4326"
+    with pytest.raises(ValueError, match="crs or epsg"):
+        gdf.geometry.to_crs()
+    _, naive = _geoseries(["POINT (1 2)"], crs=None)
+    for transformable in (naive.geometry, naive):
+        with pytest.raises(ValueError, match="naive"):
+            transformable.to_crs("EPSG:4326")
 
 
 def test_set_crs_on_crs_less_geometry():
@@ -1315,6 +1495,7 @@ PREDICATES = [
     "covered_by",
     "disjoint",
     "geom_equals",
+    "contains_properly",
 ]
 SET_OPERATIONS = ["intersection", "union", "difference", "symmetric_difference"]
 
@@ -1328,7 +1509,10 @@ def _binary_case():
 
 
 @pytest.mark.parametrize(
-    "name", PREDICATES + ["distance", "hausdorff_distance", "relate"] + SET_OPERATIONS
+    "name",
+    PREDICATES
+    + ["distance", "hausdorff_distance", "relate", "shortest_line"]
+    + SET_OPERATIONS,
 )
 @pytest.mark.parametrize("operand", ["column", "scalar"])
 def test_binary_operations_match_geopandas(name, operand):
@@ -1344,6 +1528,18 @@ def test_binary_operations_match_geopandas(name, operand):
         expected = getattr(left, name)(reference_other).tolist()
     for value, reference in zip(got, expected):
         assert _same(value, reference), (name, value, reference)
+
+
+def test_shortest_line_runs_from_each_geometry_to_other():
+    # The comparison above is topological, which a reversed line passes.
+    gs, gdf = _geoseries(["POINT (0 0)", "LINESTRING (0 0, 0 4)"])
+    other = shapely.Point(3, 1)
+    got = gdf.geometry.shortest_line(other).to_pandas().tolist()
+    expected = gs.shortest_line(other).tolist()
+    assert [shapely.get_coordinates(line).tolist() for line in got] == [
+        shapely.get_coordinates(line).tolist() for line in expected
+    ]
+    assert shapely.get_coordinates(got[1]).tolist() == [[0, 1], [3, 1]]
 
 
 @pytest.mark.parametrize("operand", ["column", "scalar"])

@@ -95,6 +95,15 @@ GeoPandas' `align=False`; there is no index to align on. `touches` inherits
 an engine issue with geometry collections that mix dimensions
 (apache/sedona-db#1383).
 
+`cx[xmin:xmax, ymin:ymax]` keeps the geometries that intersect the box, as in
+GeoPandas, but an open side has no bound: GeoPandas closes it at the bounds of
+all the geometries, so a range that starts past them reaches back to the
+geometries at their edge. `get_coordinates()` gives a frame of x and y with no
+index (`index_parts=True` is not supported), and raises when the result is
+computed for a geometry collection whose members differ in Z or M, an engine
+issue in `ST_Points` (apache/sedona-db#1513). `to_crs()` labels the result with the CRS as given, as
+GeoPandas does, rather than with the engine's canonical form of it.
+
 The numeric parameters of geometry methods (`segmentize()`, `set_precision()`,
 `concave_hull()`, `force_3d()`, `snap()`, `get_geometry()`) take a number or a
 numeric `Series` of the same frame, applied row by row. `segmentize()` only

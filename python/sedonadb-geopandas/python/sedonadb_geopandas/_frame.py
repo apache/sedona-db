@@ -28,6 +28,7 @@ from shapely.geometry.base import BaseGeometry
 from sedonadb_geopandas._series import (
     GeoSeries,
     Series,
+    _CoordinateIndexer,
     _geometry_from_wkb,
     _same_crs,
     is_scalar,
@@ -870,13 +871,25 @@ class GeoDataFrame:
         self._ancestors = result._ancestors
         return None
 
-    def to_crs(self, crs):
-        """Reproject the geometry column to `crs` (`ST_Transform`)."""
+    def to_crs(self, crs=None, epsg=None):
+        """Reproject the geometry column to `crs` (`ST_Transform`), as
+        `GeoSeries.to_crs` does."""
         if self._geometry_name is None:
             raise ValueError("to_crs() requires an active geometry column")
-        transformed = self._df[self._geometry_name].geo.transform(lit(crs))
-        new_df = self._df.mutate(transformed.alias(self._geometry_name))
+        transformed = self.geometry.to_crs(crs, epsg)
+        new_df = self._df.mutate(transformed._expr.alias(self._geometry_name))
         return GeoDataFrame(new_df, self._geometry_name)
+
+    @property
+    def cx(self):
+        """Coordinate indexer: `cx[xmin:xmax, ymin:ymax]` keeps the rows whose
+        active geometry intersects that box; see `GeoSeries.cx`."""
+        geometry = self.geometry
+        return _CoordinateIndexer(
+            lambda key: GeoDataFrame(
+                self._df.filter(geometry._in_box(key)), self._geometry_name
+            )
+        )
 
     def sjoin(
         self,
