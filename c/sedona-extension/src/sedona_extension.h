@@ -296,35 +296,31 @@ struct SedonaCError {
 /// are thread safe. The view and its private data remain valid until the receiving
 /// kernel implementation is released.
 struct SedonaCConfigOptionsView {
-  /// \brief Get the data type of a property
+  /// \brief Get a configuration option
   ///
-  /// The "option" property has a non-null Utf8 schema. Successful outputs belong
-  /// to the caller. Unknown properties return ENOTSUP and leave out untouched.
-  int (*get_property_schema)(const struct SedonaCConfigOptionsView* self,
-                             const char* property, struct ArrowSchema* out,
-                             struct SedonaCError* err);
+  /// key must be non-NULL, null-terminated UTF-8. Returns a nullable, length-one
+  /// Arrow value for key together with its schema. ConfigOptions currently exposes
+  /// values as Utf8 strings. A missing or unset key is returned as a null value.
+  /// Successful outputs belong to the caller. Malformed arguments return EINVAL.
+  /// On error, both outputs are untouched.
+  int (*get_option)(const struct SedonaCConfigOptionsView* self, const char* key,
+                    struct ArrowSchema* out_schema, struct ArrowArray* out,
+                    struct SedonaCError* err);
 
-  /// \brief Get a configuration property
+  /// \brief Get a configuration option object
   ///
-  /// The "option" property accepts a JSON string key in args and returns one
-  /// non-null Utf8 value containing a JSON string, or JSON null for an unset key.
-  /// Successful outputs belong to the caller. Unknown properties return ENOTSUP;
-  /// malformed arguments return EINVAL. On error, out is untouched.
-  int (*get_property)(const struct SedonaCConfigOptionsView* self, const char* property,
-                      const char* args, struct ArrowArray* out, struct SedonaCError* err);
-
-  /// \brief Get a configuration extension
+  /// key must be non-NULL, null-terminated UTF-8 and identifies the object (for
+  /// example, "sedona.crs_engine"). object_type identifies an independently agreed
+  /// output layout. No object type constants are currently defined. Object resources
+  /// require their own documented lifetime and release rules; native Rust objects
+  /// must never be passed directly through this interface.
   ///
-  /// Extension IDs and output layouts must be agreed independently. No IDs are
-  /// currently defined. Extension resources require their own documented lifetime
-  /// and release rules; native Rust objects must never be passed directly through
-  /// this interface.
-  ///
-  /// out_size_bytes is the size of the caller-provided output buffer. Unsupported
-  /// IDs return ENOTSUP; malformed arguments return EINVAL. On error, out is
-  /// untouched.
-  int (*get_extension)(const struct SedonaCConfigOptionsView* self, int extension,
-                       void* out, size_t out_size_bytes, struct SedonaCError* err);
+  /// out_size_bytes is the size of the caller-provided output buffer. Unknown keys
+  /// or unsupported types return ENOTSUP; malformed arguments return EINVAL. On
+  /// error, out is untouched.
+  int (*get_option_object)(const struct SedonaCConfigOptionsView* self,
+                           const char* key, int object_type, void* out,
+                           size_t out_size_bytes, struct SedonaCError* err);
 
   /// \brief Reserved for future use. Must be NULL.
   void* reserved;

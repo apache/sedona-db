@@ -29,15 +29,20 @@ use crate::{
 };
 use arrow_array::{
     ffi::{FFI_ArrowArray, FFI_ArrowSchema},
-    new_empty_array,
+    make_array, new_empty_array, Array, StringArray,
 };
-use datafusion_common::{config::ConfigOptions, exec_err, DataFusionError, Result, ScalarValue};
+use arrow_schema::{DataType, Field};
+use datafusion_common::{
+    config::{ConfigField, ConfigOptions, Visit},
+    exec_err, DataFusionError, Result, ScalarValue,
+};
 use datafusion_expr::{ColumnarValue, ScalarUDFImpl, Volatility};
 use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel, SedonaScalarUDF};
 use sedona_schema::datatypes::SedonaType;
 use std::{
     collections::HashMap,
-    ffi::{c_char, c_int, c_void},
+    ffi::{c_char, c_int, c_void, CStr},
+    fmt::Display,
     ptr::{null, null_mut},
     sync::Arc,
 };
@@ -312,60 +317,105 @@ impl SedonaScalarKernel for ImportedScalarKernelV2 {
 
 fn config_view(config: &ConfigOptions) -> SedonaCConfigOptionsView {
     SedonaCConfigOptionsView {
-        get_property_schema: Some(config_schema),
-        get_property: Some(config_property),
-        get_extension: Some(config_extension),
+        get_option: Some(config_option),
+        get_option_object: Some(config_option_object),
         reserved: null_mut(),
         private_data: (config as *const ConfigOptions).cast(),
     }
 }
 
-unsafe extern "C" fn config_schema(
-    _: *const SedonaCConfigOptionsView,
-    property: *const c_char,
-    out: *mut FFI_ArrowSchema,
-    err: *mut SedonaCError,
-) -> c_int {
-    if cstr_from_ptr_or_empty(property) == "option" {
-        write_utf8_property_schema(out, err)
-    } else {
-        unsupported(err, "Unknown configuration property")
-    }
-}
-
-unsafe extern "C" fn config_property(
+unsafe extern "C" fn config_option(
     raw: *const SedonaCConfigOptionsView,
-    property: *const c_char,
-    args: *const c_char,
+    key: *const c_char,
+    out_schema: *mut FFI_ArrowSchema,
     out: *mut FFI_ArrowArray,
     err: *mut SedonaCError,
 ) -> c_int {
-    if cstr_from_ptr_or_empty(property) != "option" {
-        return unsupported(err, "Unknown configuration property");
+    if key.is_null() || out_schema.is_null() || out.is_null() {
+        set_ffi_error!(err, "Configuration option arguments must not be NULL");
+        return libc::EINVAL;
     }
-    let key = match parse_json_c_args::<String>(args) {
+    let key = match CStr::from_ptr(key).to_str() {
         Ok(key) => key,
         Err(e) => {
-            set_ffi_error!(err, "{}", e);
+            set_ffi_error!(err, "Configuration option key is not UTF-8: {}", e);
             return libc::EINVAL;
         }
     };
     let config = &*((*raw).private_data as *const ConfigOptions);
-    let value = config
-        .entries()
-        .into_iter()
-        .find(|e| e.key == key)
-        .and_then(|e| e.value);
-    write_json_property(&value, out, err)
+    let value = config_option_value(config, key);
+    let field = Field::new("value", DataType::Utf8, true);
+    let schema = match FFI_ArrowSchema::try_from(&field) {
+        Ok(schema) => schema,
+        Err(e) => {
+            set_ffi_error!(err, "Failed to export configuration option schema: {}", e);
+            return libc::EINVAL;
+        }
+    };
+    let array = StringArray::from(vec![value.as_deref()]);
+    std::ptr::write(out_schema, schema);
+    std::ptr::write(out, FFI_ArrowArray::new(&array.to_data()));
+    0
 }
-unsafe extern "C" fn config_extension(
+
+/// Look up one option without formatting every value in `ConfigOptions`.
+///
+/// DataFusion's visitor cannot stop early, but it passes values as `Display`, so
+/// non-matching built-in values never allocate. ExtensionOptions currently only
+/// exposes `entries()`, which limits extension lookup to the selected namespace.
+fn config_option_value(config: &ConfigOptions, key: &str) -> Option<String> {
+    if key.starts_with("datafusion.") {
+        struct FindValue<'a> {
+            key: &'a str,
+            value: Option<String>,
+        }
+
+        impl Visit for FindValue<'_> {
+            fn some<V: Display>(&mut self, key: &str, value: V, _: &'static str) {
+                if key == self.key {
+                    self.value = Some(value.to_string());
+                }
+            }
+
+            fn none(&mut self, _: &str, _: &'static str) {}
+        }
+
+        let mut visitor = FindValue { key, value: None };
+        config.visit(&mut visitor, "datafusion", "");
+        visitor.value
+    } else {
+        let prefix = key.split_once('.').map_or(key, |(prefix, _)| prefix);
+        config
+            .extensions
+            .iter()
+            .find(|(candidate, _)| *candidate == prefix)
+            .and_then(|(_, extension)| {
+                extension
+                    .entries()
+                    .into_iter()
+                    .find(|entry| entry.key == key)
+                    .and_then(|entry| entry.value)
+            })
+    }
+}
+
+unsafe extern "C" fn config_option_object(
     _: *const SedonaCConfigOptionsView,
+    key: *const c_char,
     _: c_int,
     _: *mut c_void,
     _: usize,
     err: *mut SedonaCError,
 ) -> c_int {
-    unsupported(err, "Unknown configuration extension")
+    if key.is_null() {
+        set_ffi_error!(err, "Configuration option object key must not be NULL");
+        return libc::EINVAL;
+    }
+    if let Err(e) = CStr::from_ptr(key).to_str() {
+        set_ffi_error!(err, "Configuration option object key is not UTF-8: {}", e);
+        return libc::EINVAL;
+    }
+    unsupported(err, "Unknown configuration option object")
 }
 
 unsafe fn unsupported(err: *mut SedonaCError, message: &str) -> c_int {
@@ -379,18 +429,48 @@ fn import_config(
     view: &SedonaCConfigOptionsView,
     defaults: &ConfigOptions,
 ) -> Result<ConfigOptions> {
-    let (Some(schema), Some(property)) = (view.get_property_schema, view.get_property) else {
+    let Some(get_option) = view.get_option else {
         return exec_err!("Invalid configuration view");
     };
     let mut config = defaults.clone();
     for entry in defaults.entries() {
-        let value: Option<String> = call_get_json_property_impl(
-            "option",
-            "SedonaCConfigOptionsView",
-            Some(&entry.key),
-            |p, out, err| unsafe { schema(view, p, out, err) },
-            |p, args, out, err| unsafe { property(view, p, args, out, err) },
-        )?;
+        let key = std::ffi::CString::new(entry.key.as_str())
+            .map_err(|e| DataFusionError::Execution(format!("Invalid configuration key: {e}")))?;
+        let mut schema = FFI_ArrowSchema::empty();
+        let mut array = FFI_ArrowArray::empty();
+        let mut err = SedonaCError::default();
+        let status = unsafe { get_option(view, key.as_ptr(), &mut schema, &mut array, &mut err) };
+        if status != 0 {
+            return exec_err!(
+                "SedonaCConfigOptionsView::get_option failed for '{}': {}",
+                entry.key,
+                err
+            );
+        }
+        let field = Field::try_from(&schema)?;
+        if field.data_type() != &DataType::Utf8 {
+            return exec_err!(
+                "Configuration option '{}' returned {:?}, expected Utf8",
+                entry.key,
+                field.data_type()
+            );
+        }
+        let data = unsafe { arrow_array::ffi::from_ffi_and_data_type(array, DataType::Utf8)? };
+        let values = make_array(data);
+        if values.len() != 1 {
+            return exec_err!(
+                "Configuration option '{}' returned {} values, expected one",
+                entry.key,
+                values.len()
+            );
+        }
+        let values = values
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .ok_or_else(|| {
+                DataFusionError::Execution("Expected Utf8 configuration option".into())
+            })?;
+        let value = (!values.is_null(0)).then(|| values.value(0).to_string());
         if let Some(value) = value {
             config.set(&entry.key, &value)?;
         }
@@ -552,10 +632,37 @@ mod tests {
             );
         }
         let view = config_view(&caller);
+        for (key, expected) in [
+            ("datafusion.execution.batch_size", Some("23")),
+            ("missing.option", None),
+        ] {
+            let key = std::ffi::CString::new(key).unwrap();
+            let mut schema = FFI_ArrowSchema::empty();
+            let mut array = FFI_ArrowArray::empty();
+            let mut err = SedonaCError::default();
+            let status = unsafe {
+                view.get_option.unwrap()(&view, key.as_ptr(), &mut schema, &mut array, &mut err)
+            };
+            assert_eq!(status, 0, "{err}");
+            let field = Field::try_from(&schema).unwrap();
+            assert_eq!(field.data_type(), &DataType::Utf8);
+            assert!(field.is_nullable());
+            let data = unsafe { arrow_array::ffi::from_ffi(array, &schema).unwrap() };
+            let values = make_array(data);
+            let values = values.as_any().downcast_ref::<StringArray>().unwrap();
+            assert_eq!((!values.is_null(0)).then(|| values.value(0)), expected);
+        }
         let mut sentinel = 123u64;
         let mut err = SedonaCError::default();
         let status = unsafe {
-            view.get_extension.unwrap()(&view, 999, (&mut sentinel as *mut u64).cast(), 8, &mut err)
+            view.get_option_object.unwrap()(
+                &view,
+                c"sedona.crs_engine".as_ptr(),
+                999,
+                (&mut sentinel as *mut u64).cast(),
+                8,
+                &mut err,
+            )
         };
         assert_eq!(status, libc::ENOTSUP);
         assert_eq!(sentinel, 123);

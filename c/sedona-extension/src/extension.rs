@@ -716,25 +716,24 @@ impl Drop for SedonaCScalarKernelV2 {
 #[derive(Default)]
 #[repr(C)]
 pub struct SedonaCConfigOptionsView {
-    pub get_property_schema: Option<
+    pub get_option: Option<
         unsafe extern "C" fn(
             *const Self,
             *const c_char,
             *mut FFI_ArrowSchema,
-            *mut SedonaCError,
-        ) -> c_int,
-    >,
-    pub get_property: Option<
-        unsafe extern "C" fn(
-            *const Self,
-            *const c_char,
-            *const c_char,
             *mut FFI_ArrowArray,
             *mut SedonaCError,
         ) -> c_int,
     >,
-    pub get_extension: Option<
-        unsafe extern "C" fn(*const Self, c_int, *mut c_void, usize, *mut SedonaCError) -> c_int,
+    pub get_option_object: Option<
+        unsafe extern "C" fn(
+            *const Self,
+            *const c_char,
+            c_int,
+            *mut c_void,
+            usize,
+            *mut SedonaCError,
+        ) -> c_int,
     >,
     pub reserved: *mut c_void,
     pub private_data: *const c_void,
