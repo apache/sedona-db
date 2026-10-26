@@ -443,9 +443,16 @@ class _RasterBatch:
         offsets = bands.offsets.to_pylist()
         first_offset = offsets[0]
         self.band_offsets = [offset - first_offset for offset in offsets]
-        self.bands = _BandBatch(bands.flatten())
+        self.band_validity = bands.is_valid().to_pylist() if bands.null_count else None
+        # Keep hidden values in null list slots so offsets still address the
+        # original bands. flatten() would remove those values and shift rows.
+        self.bands = _BandBatch(
+            bands.values.slice(first_offset, offsets[-1] - first_offset)
+        )
 
     def band_range(self, index: int) -> tuple[int, int]:
+        if self.band_validity is not None and not self.band_validity[index]:
+            return 0, 0
         return self.band_offsets[index], self.band_offsets[index + 1]
 
 
@@ -471,8 +478,11 @@ def iter_rasters(array) -> Iterator[Optional[Raster]]:
         raise TypeError(f"Expected a raster StructArray, not {type(storage).__name__}")
 
     batch = _RasterBatch(storage)
+    # Indexing a struct scalar just to check validity resolves its children,
+    # including every variadic pixel buffer. Read validity once per batch.
+    validity = storage.is_valid().to_pylist() if storage.null_count else None
     for i in range(len(storage)):
-        yield Raster._from_batch(batch, i) if storage[i].is_valid else None
+        yield Raster._from_batch(batch, i) if validity is None or validity[i] else None
 
 
 class RasterScalar(pa.ExtensionScalar):

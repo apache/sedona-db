@@ -117,6 +117,66 @@ def test_iter_rasters_handles_sliced_array_offsets():
     assert raster.bands[0].to_numpy().tolist() == [[22] * 4] * 4
 
 
+@pytest.mark.parametrize("parent_null", [False, True])
+@pytest.mark.parametrize("start", [0, 1, 2])
+def test_iter_rasters_null_bands_with_nonempty_offsets(parent_null, start):
+    storage = pa.concat_arrays(
+        [
+            Raster.from_numpy(np.full((4, 4), value, dtype=np.uint16))._array
+            for value in [11, 22, 33, 44]
+        ]
+    )
+    bands = storage.field("bands")
+    # Arrow permits a null list to have a nonempty range of hidden values.
+    bands = pa.ListArray.from_arrays(
+        bands.offsets,
+        bands.values,
+        type=bands.type,
+        mask=pa.array([False, True, False, False]),
+    )
+    storage = pa.StructArray.from_arrays(
+        [
+            bands if field.name == "bands" else storage.field(i)
+            for i, field in enumerate(storage.type)
+        ],
+        fields=list(storage.type),
+        mask=pa.array([False, parent_null, False, False]),
+    ).slice(start)
+    storage.validate(full=True)
+
+    rasters = list(iter_rasters(RasterType(storage.type).wrap_array(storage)))
+    assert len(rasters) == len(storage)
+    for i, raster in enumerate(rasters):
+        if parent_null and i + start == 1:
+            assert raster is None
+            continue
+        expected = Raster(storage, i).bands
+        assert len(raster.bands) == len(expected)
+        for actual_band, expected_band in zip(raster.bands, expected):
+            actual_pixels = actual_band.to_numpy()
+            expected_pixels = expected_band.to_numpy()
+            np.testing.assert_array_equal(actual_pixels, expected_pixels)
+            assert np.shares_memory(actual_pixels, expected_pixels)
+
+
+@pytest.mark.parametrize("start, length", [(0, 10), (3, 6), (3, 1), (4, 0)])
+def test_iter_rasters_sliced_validity(start, length):
+    raster = Raster.from_numpy(np.ones((4, 4), dtype=np.uint16))
+    storage = pa.concat_arrays([raster._array] * 10)
+    nulls = [True, False, False, True, False, False, False, True, False, True]
+    storage = pa.StructArray.from_arrays(
+        [storage.field(i) for i in range(storage.type.num_fields)],
+        fields=list(storage.type),
+        mask=pa.array(nulls),
+    ).slice(start, length)
+
+    rasters = list(iter_rasters(storage))
+    assert [raster is None for raster in rasters] == nulls[start : start + length]
+    for raster in rasters:
+        if raster is not None:
+            np.testing.assert_array_equal(raster.bands[0].to_numpy(), np.ones((4, 4)))
+
+
 def test_raster_accessors(con):
     t = con.sql("SELECT RS_Example() as raster")
     tab = t.to_arrow_table()
