@@ -16,7 +16,7 @@
 // under the License.
 use std::iter::zip;
 
-use arrow_array::ArrayRef;
+use arrow_array::{Array, ArrayRef};
 use arrow_schema::DataType;
 use datafusion_common::cast::{
     as_binary_array, as_binary_view_array, as_large_binary_array, as_struct_array,
@@ -351,8 +351,8 @@ pub type PointXYExecutor<'a, 'b> =
 
 pub(crate) fn visible_wkb_bytes(arg_type: &SedonaType, arg: &ColumnarValue) -> Result<usize> {
     match arg {
-        ColumnarValue::Array(array) => {
-           SedonaType::Wkb(_, _) => {
+        ColumnarValue::Array(array) => match arg_type {
+            SedonaType::Wkb(_, _) => {
                 let binary = as_binary_array(array)?;
                 let offsets = binary.offsets();
                 Ok((offsets[offsets.len() - 1] - offsets[0]) as usize)
@@ -385,7 +385,7 @@ pub(crate) fn visible_wkb_bytes(arg_type: &SedonaType, arg: &ColumnarValue) -> R
                 })?;
                 Ok(total)
             }
-        }
+        },
         ColumnarValue::Scalar(scalar) => {
             Ok(scalar.scalar_as_wkb_bytes()?.map_or(0, |wkb| wkb.len()))
         }
