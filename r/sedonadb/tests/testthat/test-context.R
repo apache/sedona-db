@@ -201,6 +201,18 @@ test_that("configure_proj() errors for invalid inputs", {
   )
 })
 
+test_that("configure_gdal() errors for invalid inputs", {
+  expect_error(
+    sd_configure_gdal("not a preset"),
+    "Unknown preset"
+  )
+
+  expect_error(
+    sd_configure_gdal(shared_library = "file that does not exist"),
+    "Failed to load GDAL"
+  )
+})
+
 test_that(".fns can have its contents listed", {
   expect_contains(names(.fns), "st_intersects")
   expect_contains(.DollarNames(.fns, "st_int"), "st_intersects")

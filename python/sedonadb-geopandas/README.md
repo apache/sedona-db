@@ -113,6 +113,59 @@ like pandas' `"string"` dtype rather than `str`, and formats floats the way
 Arrow does (`"1"`, `"NaN"`); `astype(object)` leaves the values as they are,
 since an Arrow-backed column has no object type.
 
+Reductions (`sum()`, `mean()`, `min()`, `max()`, `count()`, `median()`,
+`std()`, `var()`, `quantile()`, `nunique()`) compute their result, skipping
+missing values (NaN included) as pandas does by default; an integer column keeps
+its integer type where pandas, having turned its missing values into NaN, would
+report a float. `unique()` and `value_counts()` cannot follow the order of first
+appearance, since a lazy frame has no row order: `value_counts()` breaks ties by
+value.
+
+`where()`, `mask()`, and `clip()` keep a column to one kind of value: a
+replacement or bound of another kind (text in a number column, say) raises,
+where pandas would turn the column into Python objects. `round()` rounds half to
+even as pandas (NumPy) does, and raises for a non-numeric column, as pandas 2
+does (pandas 3 returns it unchanged). `dropna()` and `head()` on a column return
+a column of a new frame, which, like any column of another frame, can't be
+combined with the original's; `head()` takes no negative count, since there is
+no row order to count back from.
+
+`merge()` joins on columns as pandas does, including in matching a missing key
+(NaN or None) with a missing key, unlike SQL; without an index, its rows don't
+keep the left frame's order (`sort=True` orders them by key), and
+`left_index`/`right_index` are not supported. A key both frames share keeps the
+left's type in an inner or left join and the right's in a right join; in an
+outer join it takes a type both sides fit, which pandas chooses by whether some
+row lacks the left's key, but a lazy frame's types can't depend on its rows.
+When both frames have a geometry column of the same name, the left's stays
+active under its suffixed name, where
+GeoPandas keeps naming the unsuffixed column. `concat()` stacks rows only
+(`axis=0`), matching columns by name; a column holds one kind of value, so
+values of different kinds (numbers and text, say) raise rather than make a
+column of Python objects, and geometry columns must share their CRS, as in
+GeoPandas: one without a CRS takes the others' only if it holds no geometry,
+which is checked as the result is computed (GeoPandas relabels its coordinates
+whatever they are).
+
+`groupby()` aggregates as pandas does, skipping missing values and treating
+NaN and None (and -0.0 and 0.0) as one key, but there is no index to hold the
+keys, so they are columns of the result whatever `as_index` says. Several
+aggregations of one column (`agg({"v": ["sum", "max"]})`) would make two-level
+column names, which aren't supported: name each aggregate instead
+(`agg(total=("v", "sum"), largest=("v", "max"))`). Without a row order,
+`first()` and `last()` give a value of each group that is not missing, the
+smallest and the largest, rather than the first and last rows'.
+
+`fillna()` follows the same rule: a scalar fills the columns that hold its kind
+of value and leaves the others as they are (pandas would turn them into Python
+objects, and GeoPandas refuses a non-geometry value for a geometry column), and
+a dict value of another kind raises. `drop_duplicates()` keeps one row of each
+group of duplicates, but with no row order, `keep="first"` and `keep="last"`
+cannot say which. `dropna()` drops rows only (`axis=0`), since choosing columns
+would take computing the data first. `assign()` evaluates a value that is not a
+callable on the frame as it was, even if an earlier keyword replaced a column it
+reads, as pandas does.
+
 `dissolve()` aggregates non-geometry columns with `"first"`, which is an
 unordered aggregate: it returns *some* value from the group rather than the one
 from the first row, and unlike GeoPandas it does not skip missing values, so a
@@ -133,10 +186,7 @@ differences that come from SedonaDB's readers and GeoParquet writer:
   `geography`, `geom` or `geog`, else the first geometry column) rather than the
   file's metadata or the frame's active geometry. This matters only for files
   with several geometry columns (apache/sedona-db#1404).
-- A file that declares an unknown CRS (`"crs": null`, which GeoPandas writes for
-  a frame without one) reads back as OGC:CRS84, and `to_parquet()` refuses a
-  geometry column without a CRS (apache/sedona-db#1404). EPSG:4326 is written as
-  OGC:CRS84.
+- EPSG:4326 is written as OGC:CRS84.
 - The covering (bounding-box) columns a file's metadata declares are left out
   on read, as in GeoPandas, for local files only: a remote file's metadata is
   not read, so its coverings stay. A covering is written for every geometry

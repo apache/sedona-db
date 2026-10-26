@@ -780,7 +780,7 @@ mod test {
 
     use rstest::rstest;
     use sedona_geometry::types::Edges;
-    use sedona_schema::crs::{deserialize_crs, lnglat};
+    use sedona_schema::crs::deserialize_crs;
     use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY};
     use sedona_schema::schema::SedonaSchema;
     use sedona_testing::create::create_scalar;
@@ -815,10 +815,7 @@ mod test {
             .unwrap();
         assert_eq!(sedona_types.len(), 2);
         assert_eq!(sedona_types[0], SedonaType::Arrow(DataType::Utf8View));
-        assert_eq!(
-            sedona_types[1],
-            SedonaType::WkbView(Edges::Planar, lnglat())
-        );
+        assert_eq!(sedona_types[1], SedonaType::WkbView(Edges::Planar, None));
 
         // Check that the batches resulting from the actual execution also have
         // the correct schema
@@ -831,10 +828,7 @@ mod test {
             .unwrap();
         assert_eq!(sedona_types.len(), 2);
         assert_eq!(sedona_types[0], SedonaType::Arrow(DataType::Utf8View));
-        assert_eq!(
-            sedona_types[1],
-            SedonaType::WkbView(Edges::Planar, lnglat())
-        );
+        assert_eq!(sedona_types[1], SedonaType::WkbView(Edges::Planar, None));
 
         // Check that the content is the same as if it were read by the normal reader
         let unwrapped_batches: Vec<_> = batches
@@ -901,10 +895,7 @@ mod test {
             .unwrap();
         assert_eq!(sedona_types.len(), 2);
         assert_eq!(sedona_types[0], SedonaType::Arrow(DataType::Utf8View));
-        assert_eq!(
-            sedona_types[1],
-            SedonaType::WkbView(Edges::Planar, lnglat())
-        );
+        assert_eq!(sedona_types[1], SedonaType::WkbView(Edges::Planar, None));
 
         // Make sure all the rows show up!
         let batches = df.collect().await.unwrap();

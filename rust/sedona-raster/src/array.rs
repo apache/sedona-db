@@ -147,8 +147,10 @@ impl<'a> BandRef for BandRefImpl<'a> {
     fn nd_buffer(&self) -> Result<NdBuffer<'_>, RasterError> {
         if !self.is_indb() {
             return Err(RasterError::Invalid(
-                "OutDb byte access via nd_buffer() is not yet implemented; \
-                 backend-specific OutDb resolvers are tracked separately"
+                "band is stored out-of-database and its bytes are not loaded; \
+                 load the raster with RS_EnsureLoaded(raster) first (the planner \
+                 inserts this for functions that read pixels, so reaching this \
+                 from one means it missed the call)"
                     .to_string(),
             ));
         }

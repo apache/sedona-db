@@ -134,6 +134,136 @@ def test_properties_match_geopandas(name):
     assert got.to_pandas().tolist() == getattr(gs, name).tolist()
 
 
+# The shared corpus plus the shapes these measures tell apart: closed and open
+# lines (simple or not), a ring, multi-lines closed throughout or in part,
+# empties of each kind, a collection, M values, and polygons with two holes
+# and with a hole outside the shell.
+MEASURE_CORPUS = CORPUS + [
+    "LINESTRING (0 0, 1 0, 1 1, 0 0)",
+    "LINEARRING (0 0, 1 0, 1 1, 0 0)",
+    "LINESTRING (0 0, 2 2, 2 0, 0 2, 0 0)",
+    "MULTILINESTRING ((0 0, 1 0, 1 1, 0 0))",
+    "MULTILINESTRING ((0 0, 1 0, 1 1, 0 0), (2 2, 3 3))",
+    "LINESTRING EMPTY",
+    "MULTIPOLYGON EMPTY",
+    "GEOMETRYCOLLECTION EMPTY",
+    "GEOMETRYCOLLECTION (POINT (1 1), LINESTRING (0 0, 1 1))",
+    "POINT M (1 2 3)",
+    "LINESTRING ZM (0 0 0 0, 1 1 1 1)",
+    "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0), (0.2 0.2, 0.4 0.2, 0.4 0.4, 0.2 0.2), "
+    "(0.6 0.6, 0.8 0.6, 0.8 0.8, 0.6 0.6))",
+    "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0), (2 2, 3 2, 3 3, 2 2))",
+]
+
+
+# Geometries whose parts differ: Z or M in a later member only (empty, nested,
+# or with NaN values), empties that carry a dimension, and empty parts alone or
+# beside non-empty ones.
+MIXED_PARTS = [
+    "GEOMETRYCOLLECTION (POINT (1 2), POINT M (3 4 5))",
+    "GEOMETRYCOLLECTION (POINT (1 2), GEOMETRYCOLLECTION (POINT M (3 4 5)))",
+    "GEOMETRYCOLLECTION (POINT (1 2), POINT Z (3 4 5))",
+    "GEOMETRYCOLLECTION (POINT (1 2), POINT M EMPTY)",
+    "GEOMETRYCOLLECTION (POINT (1 2), LINESTRING Z EMPTY)",
+    "GEOMETRYCOLLECTION (POINT (1 2), POINT M (3 4 NaN))",
+    "GEOMETRYCOLLECTION (POINT M (1 2 3), POINT (3 4))",
+    "POINT M EMPTY",
+    "POINT Z EMPTY",
+    "MULTILINESTRING (EMPTY)",
+    "MULTILINESTRING ((0 0, 1 0, 1 1, 0 0), EMPTY)",
+    "MULTILINESTRING ((0 0, 0 0), (1 1, 2 2, 1 1))",
+    "MULTIPOINT (EMPTY)",
+    "GEOMETRYCOLLECTION (LINESTRING EMPTY, GEOMETRYCOLLECTION (POINT EMPTY))",
+    None,
+]
+
+
+@pytest.mark.parametrize("name", ["is_empty", "has_z", "has_m", "is_closed", "is_ring"])
+def test_properties_look_at_every_part(name):
+    # GeoPandas looks at every part: the engine's ST_IsEmpty calls a
+    # collection of empty parts non-empty, and its ST_IsClosed passes over an
+    # empty line in a closed multi-line. The stored geometry keeps a later
+    # member's Z or M values, so those answers are not moot.
+    gs = gpd.GeoSeries.from_wkt(MIXED_PARTS, crs="EPSG:3857")
+    got = getattr(sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry, name)
+    assert got.to_pandas().tolist() == getattr(gs, name).tolist()
+
+
+@pytest.mark.parametrize("constructor", ["ST_GeomFromWKT", "ST_GeogFromWKT"])
+def test_is_closed_keeps_degenerate_lines(constructor):
+    # A line that doubles back or has no length is not empty, and is closed
+    # where its ends meet, on geography as on geometry; only an empty line
+    # makes a multi-line not closed. (A geography's spherical simplification
+    # drops such lines, so it can't tell them from empty ones.)
+    wkts = [
+        "LINESTRING (0 0, 1 1, 0 0)",
+        "LINESTRING (0 0, 0 0)",
+        "MULTILINESTRING ((0 0, 1 1, 0 0), (5 5, 6 5, 6 6, 5 5))",
+        "MULTILINESTRING ((0 0, 0 0))",
+        "MULTILINESTRING ((0 0, 1 0, 1 1, 0 0), EMPTY)",
+        "MULTILINESTRING (EMPTY)",
+        "LINESTRING (0 0, 1 1)",
+    ]
+    values = ", ".join(f"('{wkt}')" for wkt in wkts)
+    gdf = sgpd.GeoDataFrame(
+        sgpd.default_context().sql(
+            f"SELECT {constructor}(w) AS g FROM (VALUES {values}) AS t(w)"
+        ),
+        geometry="g",
+    )
+    expected = gpd.GeoSeries.from_wkt(wkts).is_closed.tolist()
+    assert gdf.geometry.is_closed.to_pandas().tolist() == expected
+
+
+def test_empty_collections_equal_any_empty_geometry():
+    wkts = [
+        "MULTIPOINT (EMPTY)",
+        "GEOMETRYCOLLECTION (LINESTRING EMPTY)",
+        "POINT (1 1)",
+    ]
+    gs = gpd.GeoSeries.from_wkt(wkts, crs="EPSG:3857")
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    for other in (shapely.Point(), shapely.from_wkt("POLYGON EMPTY")):
+        got = g.geom_equals(other).to_pandas().tolist()
+        assert got == gs.geom_equals(other).tolist() == [True, True, False]
+
+
+@pytest.mark.parametrize("name", ["is_closed", "is_ring", "has_m"])
+def test_line_and_m_properties_match_geopandas(name):
+    # The engine calls points and polygons closed, and its ring test raises
+    # for anything but a line; GeoPandas answers False for both, and for a
+    # missing geometry.
+    gs = gpd.GeoSeries.from_wkt(MEASURE_CORPUS, crs="EPSG:3857")
+    got = getattr(sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry, name)
+    assert got.to_pandas().tolist() == getattr(gs, name).tolist()
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "is_valid_reason",
+        "count_coordinates",
+        "count_geometries",
+        "count_interior_rings",
+        "minimum_clearance",
+    ],
+)
+def test_measures_match_geopandas(name):
+    # Counts are 32-bit and 0 for a missing geometry, and an empty single-part
+    # geometry is one part, as in GeoPandas; the engine's counts are unsigned
+    # or 64-bit, missing there, and count no parts of an empty point.
+    gs = gpd.GeoSeries.from_wkt(MEASURE_CORPUS, crs="EPSG:3857")
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        got = getattr(g, name)().to_pandas()
+        expected = getattr(gs, name)()
+    if name.startswith("count_"):
+        assert got.dtype == expected.dtype
+    for value, reference in zip(got.tolist(), expected.tolist()):
+        assert _same(value, reference), (name, value, reference)
+
+
 def test_point_coordinates_match_geopandas():
     gs = gpd.GeoSeries.from_wkt(
         ["POINT Z (1 2 3)", "POINT (4 5)", "POINT EMPTY", None], crs="EPSG:3857"
@@ -164,6 +294,7 @@ def test_coordinates_of_non_points_raise_when_computed():
         ("normalize", ()),
         ("make_valid", ()),
         ("representative_point", ()),
+        ("minimum_clearance_line", ()),
         ("buffer", (0.5,)),
         ("centroid", ()),
     ],
@@ -567,7 +698,9 @@ def _binary_case():
     return left, right, gdf.geometry, gdf["b"]
 
 
-@pytest.mark.parametrize("name", PREDICATES + ["distance"] + SET_OPERATIONS)
+@pytest.mark.parametrize(
+    "name", PREDICATES + ["distance", "hausdorff_distance", "relate"] + SET_OPERATIONS
+)
 @pytest.mark.parametrize("operand", ["column", "scalar"])
 def test_binary_operations_match_geopandas(name, operand):
     # Against a column of the same frame (row by row) and against a single
@@ -592,6 +725,44 @@ def test_dwithin_matches_geopandas(operand):
     for distance in (0.0, 1.0, 5.0):
         got = g.dwithin(other, distance).to_pandas().tolist()
         assert got == left.dwithin(reference_other, distance).tolist()
+
+
+@pytest.mark.parametrize("operand", ["column", "scalar"])
+def test_relate_pattern_matches_geopandas(operand):
+    # False where either side is missing, as for any predicate; the pattern's
+    # letters may be either case, as GEOS reads them.
+    left, right, g, b = _binary_case()
+    scalar = shapely.from_wkt("POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))")
+    other, reference_other = (b, right) if operand == "column" else (scalar, scalar)
+    for pattern in ("T********", "FF*FF****", "t*f**f***", "2********"):
+        got = g.relate_pattern(other, pattern).to_pandas().tolist()
+        assert got == left.relate_pattern(reference_other, pattern).tolist()
+
+
+@pytest.mark.parametrize("densify", [0.25, 1.0, np.float32(0.5)])
+def test_hausdorff_distance_densify_matches_geopandas(densify):
+    left, _, g, _ = _binary_case()
+    scalar = shapely.from_wkt("LINESTRING (0 0, 5 5)")
+    got = g.hausdorff_distance(scalar, densify=densify).to_pandas().tolist()
+    expected = left.hausdorff_distance(scalar, densify=float(densify)).tolist()
+    for value, reference in zip(got, expected):
+        assert _same(value, reference), (value, reference)
+
+
+@pytest.mark.parametrize("densify", [0, 1.5, -0.1, float("nan"), True, "0.5"])
+def test_hausdorff_distance_rejects_densify_outside_a_fraction(densify):
+    # Refused when called, not when the lazy result is computed.
+    _, _, g, b = _binary_case()
+    with pytest.raises(ValueError, match="densify"):
+        g.hausdorff_distance(b, densify=densify)
+
+
+@pytest.mark.parametrize("pattern", ["T*******", "T*********", "XYZ******", 9])
+def test_relate_pattern_rejects_malformed_patterns(pattern):
+    # Refused when called, not when the lazy result is computed.
+    _, _, g, b = _binary_case()
+    with pytest.raises(ValueError, match="pattern"):
+        g.relate_pattern(b, pattern)
 
 
 def test_empty_operands_have_no_distance():

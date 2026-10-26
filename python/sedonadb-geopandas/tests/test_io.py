@@ -343,12 +343,13 @@ def test_to_parquet_validation(tmp_path):
     assert not (tmp_path / "out").exists()
 
 
-def test_to_parquet_needs_a_crs(tmp_path):
-    # GeoPandas writes an unknown CRS as null; SedonaDB's writer refuses.
+def test_to_parquet_writes_null_crs(tmp_path):
     gdf = sgpd.from_geopandas(_sample().set_crs(None, allow_override=True))
-    with pytest.raises(ValueError, match="set_crs"):
-        gdf.to_parquet(tmp_path / "out.parquet")
-    assert not (tmp_path / "out.parquet").exists()
+    path = tmp_path / "out.parquet"
+    gdf.to_parquet(path)
+
+    assert _geo_metadata(path)["columns"]["geometry"]["crs"] is None
+    assert sgpd.read_parquet(path).crs is None
 
 
 @pytest.mark.parametrize(

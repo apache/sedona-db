@@ -21,7 +21,7 @@ use crate::object_storage::ensure_object_store_registered;
 use datafusion::catalog::{CatalogProvider, CatalogProviderList, SchemaProvider};
 
 use async_trait::async_trait;
-use datafusion::common::plan_datafusion_err;
+use datafusion::common::{plan_datafusion_err, TableReference};
 use datafusion::datasource::TableProvider;
 use datafusion::error::Result;
 use datafusion::execution::context::SessionState;
@@ -64,6 +64,38 @@ impl SedonaCatalogRegistry {
     pub fn register_foreign(&self, catalogs: Arc<dyn SedonaCatalogList>) {
         let mut foreign = self.foreign.write();
         *foreign = foreign.iter().cloned().chain([catalogs]).collect();
+    }
+
+    /// Look up a table using the same catalog precedence as Sedona SQL.
+    ///
+    /// Bare and partially qualified references are resolved against the
+    /// session's default catalog and schema. Foreign catalogs are searched
+    /// newest-first before falling back to DataFusion's built-in catalogs.
+    pub async fn table(
+        &self,
+        table_ref: impl Into<TableReference>,
+    ) -> Result<Option<Arc<dyn TableProvider>>> {
+        let state = self
+            .state
+            .upgrade()
+            .ok_or_else(|| plan_datafusion_err!("session state is no longer available"))?
+            .read()
+            .clone();
+        let defaults = &state.config_options().catalog;
+        let resolved = table_ref
+            .into()
+            .resolve(&defaults.default_catalog, &defaults.default_schema);
+        if let Some(catalog) = self.foreign_catalog(&resolved.catalog).await? {
+            return catalog
+                .table(&[&resolved.catalog, &resolved.schema, &resolved.table])
+                .await;
+        }
+
+        if let Ok(schema) = state.schema_for_ref(resolved.clone()) {
+            schema.table(&resolved.table).await
+        } else {
+            Ok(None)
+        }
     }
 
     /// Resolve catalog ownership asynchronously, newest registration first.

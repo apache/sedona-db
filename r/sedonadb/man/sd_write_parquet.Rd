@@ -27,7 +27,9 @@ a parquet writer. Common options are exposed as other arguments to
 \code{sd_write_parquet()}; however, this argument allows setting any DataFusion
 Parquet writer option. If an option is specified here and by another
 argument to this function, the value specified as an explicit argument
-takes precedence.}
+takes precedence. Options whose names start with \code{aws.}, \code{gcp.}, or
+\code{azure.} (e.g., \code{aws.region}) instead configure the object store for a
+remote \code{path} (e.g., \verb{s3://}), as the \code{options} of \code{\link[=sd_read_parquet]{sd_read_parquet()}} do.}
 
 \item{partition_by}{A character vector of column names to partition by. If non-empty,
 applies hive-style partitioning to the output}

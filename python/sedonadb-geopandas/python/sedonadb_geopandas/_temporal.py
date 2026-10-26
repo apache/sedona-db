@@ -260,14 +260,13 @@ def duration_arith_expr(dtype, expr, op, other):
     if is_int and not -(2**63) <= int(value) < 2**63:
         raise OverflowError(f"{value} overflows the signed 64-bit tick range")
 
-    # Among floats, only the identities ±1.0 take the exact integer path:
-    # float64 cannot represent every int64 tick, so the float round trip
-    # would corrupt (or, at the extremes, null) a value the operation was
-    # supposed to return unchanged. Every other float stays on the float
-    # path — pandas computes those in float too, losing sub-tick precision
-    # above 2**53, and matching those in-range results matters more than
-    # improving on them.
-    exact = is_int or value in (1.0, -1.0)
+    # An integral-valued float (3.0) takes the exact integer path, as an
+    # integer does: float64 cannot represent every int64 tick, so the float
+    # round trip loses sub-tick precision above 2**53 (and would corrupt even
+    # the identities ±1.0). pandas computes these exactly too, as of pandas
+    # 3.1; earlier versions computed them in float. One past the tick range
+    # stays on the float path, whose range check raises for it.
+    exact = is_int or (float(value).is_integer() and abs(value) < 2**63)
     if exact:
         factor = int(value)
         if op == "*":

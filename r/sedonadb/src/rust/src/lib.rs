@@ -20,7 +20,9 @@ use std::ffi::c_void;
 use savvy::savvy;
 
 use savvy_ffi::R_NilValue;
+use sedona::native_library::NativeLibrary;
 use sedona_adbc::AdbcSedonadbDriverInit;
+use sedona_gdal::global::{configure_global_gdal_api, GdalApiBuilder};
 use sedona_proj::register::{configure_global_proj_engine, ProjCrsEngineBuilder};
 
 mod context;
@@ -64,6 +66,68 @@ fn configure_proj_shared(
         builder = builder.with_search_paths(vec![search_path.into()]);
     }
 
+    builder.build()?;
     configure_global_proj_engine(builder)?;
     Ok(())
+}
+
+#[savvy]
+fn configure_proj_prefix_native(prefix: &str) -> savvy::Result<()> {
+    let installation = NativeLibrary::Proj
+        .from_prefix(prefix.as_ref())
+        .map_err(savvy::Error::GeneralError)?;
+    configure_proj_shared(
+        Some(installation.shared_library.to_string_lossy().as_ref()),
+        Some(
+            installation
+                .data_dir
+                .join("proj.db")
+                .to_string_lossy()
+                .as_ref(),
+        ),
+        Some(installation.data_dir.to_string_lossy().as_ref()),
+    )
+}
+
+#[savvy]
+fn configure_proj_system_native() -> savvy::Result<()> {
+    let mut errors = Vec::new();
+    for candidate in NativeLibrary::Proj.system_candidates() {
+        match configure_proj_shared(Some(candidate.to_string_lossy().as_ref()), None, None) {
+            Ok(()) => return Ok(()),
+            Err(e) => errors.push(e.to_string()),
+        }
+    }
+    Err(savvy::Error::GeneralError(errors.join("; ")))
+}
+
+#[savvy]
+fn configure_gdal_shared(shared_library_path: Option<&str>) -> savvy::Result<()> {
+    let mut builder = GdalApiBuilder::default();
+    if let Some(shared_library_path) = shared_library_path {
+        builder = builder.with_shared_library(shared_library_path.into());
+    }
+    builder.build()?;
+    configure_global_gdal_api(builder)?;
+    Ok(())
+}
+
+#[savvy]
+fn configure_gdal_prefix_native(prefix: &str) -> savvy::Result<()> {
+    let installation = NativeLibrary::Gdal
+        .from_prefix(prefix.as_ref())
+        .map_err(savvy::Error::GeneralError)?;
+    configure_gdal_shared(Some(installation.shared_library.to_string_lossy().as_ref()))
+}
+
+#[savvy]
+fn configure_gdal_system_native() -> savvy::Result<()> {
+    let mut errors = Vec::new();
+    for candidate in NativeLibrary::Gdal.system_candidates() {
+        match configure_gdal_shared(Some(candidate.to_string_lossy().as_ref())) {
+            Ok(()) => return Ok(()),
+            Err(e) => errors.push(e.to_string()),
+        }
+    }
+    Err(savvy::Error::GeneralError(errors.join("; ")))
 }

@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import operator
 import sys
 
 import geoarrow.pyarrow as ga
@@ -148,6 +149,120 @@ def test_column_subset_keeps_geometry(cities):
 def test_filter_matches_geopandas(cities):
     # Same op applied to GeoPandas and to the wrapper yields the same result.
     assert_geopandas_expr_equal(cities, lambda df: df[df["pop"] > 150], sort_by="name")
+
+
+_COMPARED = """
+SELECT f, g, CAST(i AS BIGINT) AS i, s, CAST(t AS TIMESTAMP) AS t,
+    ST_Point(0, 0) AS geometry
+FROM (VALUES
+    (1.5, 1.5, 1, 'a', '2020-01-01'),
+    (CAST('NaN' AS DOUBLE), CAST('NaN' AS DOUBLE), 2, 'b', '2020-01-02'),
+    (NULL, 2.0, NULL, NULL, NULL),
+    (CAST('-0.0' AS DOUBLE), 0.0, 0, 'a', '2020-01-01')
+) AS v(f, g, i, s, t)
+"""
+
+
+@pytest.mark.parametrize("op", ["gt", "ge", "lt", "le", "eq", "ne"])
+@pytest.mark.parametrize(
+    "left, right",
+    [
+        ("f", 1.5),
+        ("f", 0),
+        ("f", -0.0),
+        ("f", np.nan),
+        ("f", None),
+        ("f", "g"),
+        ("i", 1),
+        ("i", "f"),
+        ("t", pd.Timestamp("2020-01-01")),
+    ],
+)
+def test_comparisons_follow_pandas(op, left, right):
+    # A missing value on either side (null, or NaN in a float column) compares
+    # False, and True for !=; -0.0 equals 0.0. The engine alone answers null
+    # for a null, puts NaN above every number, and -0.0 below 0.0.
+    gdf = GeoDataFrame(sgpd.default_context().sql(_COMPARED))
+    frame = gdf.to_geopandas()
+    ours_right = gdf[right] if right in ("f", "g") else right
+    theirs_right = frame[right] if right in ("f", "g") else right
+    got = getattr(operator, op)(gdf[left], ours_right).to_pandas().tolist()
+    assert got == getattr(operator, op)(frame[left], theirs_right).tolist()
+
+
+@pytest.mark.parametrize("op", ["gt", "ge", "lt", "le", "eq", "ne"])
+@pytest.mark.parametrize("value", [-0.0, 0.0, 1.5, np.nan, None])
+def test_comparisons_with_literals_follow_pandas(op, value):
+    # A lit() operand compares as the value it holds: its -0.0 equals 0.0,
+    # and a missing one compares False (True for !=).
+    gdf = GeoDataFrame(sgpd.default_context().sql(_COMPARED))
+    got = getattr(operator, op)(gdf["f"], lit(value)).to_pandas().tolist()
+    assert got == getattr(operator, op)(gdf.to_geopandas()["f"], value).tolist()
+
+
+@pytest.mark.parametrize("encode", ["dictionary", "run_end"])
+@pytest.mark.parametrize("value", [-0.0, 1.5, np.nan, None])
+def test_encoded_literals_compare_as_their_value(encode, value):
+    plain = pa.array([value], pa.float64())
+    if encode == "dictionary":
+        encoded = plain.dictionary_encode()
+    else:
+        encoded = pa.RunEndEncodedArray.from_arrays(pa.array([1], pa.int32()), plain)
+    gdf = GeoDataFrame(sgpd.default_context().sql(_COMPARED))
+    frame = gdf.to_geopandas()
+    for op in (operator.eq, operator.ne, operator.lt):
+        got = op(gdf["f"], lit(encoded)).to_pandas().tolist()
+        assert got == op(frame["f"], value).tolist()
+
+
+@pytest.mark.parametrize("values", [[-0.0, 1.0], []])
+def test_literals_of_other_than_one_value_are_rejected(values):
+    # Not compared against the first value, nor failing to find one.
+    gdf = GeoDataFrame(sgpd.default_context().sql(_COMPARED))
+    with pytest.raises(ValueError, match=f"resolving to {len(values)} values"):
+        gdf["f"] == lit(pa.array(values, pa.float64()))
+
+
+@pytest.mark.parametrize("type", [pa.float32(), pa.float64()])
+@pytest.mark.parametrize("encode", ["dictionary", "run_end"])
+def test_encoded_float_columns_compare_as_plain_ones(type, encode):
+    # isnan(), behind the missing-value checks, accepts no encoded type.
+    values = pa.array([1.0, np.nan, None, -0.0], type)
+    if encode == "dictionary":
+        encoded = values.dictionary_encode()
+    else:
+        ends = pa.array(range(1, len(values) + 1), pa.int32())
+        encoded = pa.RunEndEncodedArray.from_arrays(ends, values)
+    ctx = sgpd.default_context()
+    ours = GeoDataFrame(ctx.create_data_frame(pa.table({"x": encoded})))["x"]
+    plain = GeoDataFrame(ctx.create_data_frame(pa.table({"x": values})))["x"]
+    for f in [
+        lambda s: s == 1.0,
+        lambda s: s != 1.0,
+        lambda s: s <= 0.0,
+        lambda s: s == s,
+        lambda s: s.isna(),
+    ]:
+        assert f(ours).to_pandas().tolist() == f(plain).to_pandas().tolist()
+    assert ours.isin([np.nan]).to_pandas().tolist() == [False, True, True, False]
+
+
+def test_string_equality_with_missing_values():
+    gdf = GeoDataFrame(sgpd.default_context().sql(_COMPARED))
+    assert (gdf["s"] == "a").to_pandas().tolist() == [True, False, False, True]
+    assert (gdf["s"] != "a").to_pandas().tolist() == [False, True, True, False]
+
+
+def test_masks_with_missing_values_select_the_rows_pandas_does():
+    gdf = GeoDataFrame(sgpd.default_context().sql(_COMPARED))
+    frame = gdf.to_geopandas()
+    for ours, theirs in [
+        (gdf["f"] > 100, frame["f"] > 100),
+        (~(gdf["f"] > 100), ~(frame["f"] > 100)),
+        (gdf["f"] == gdf["f"], frame["f"] == frame["f"]),
+        ((gdf["f"] != 1.5) & (gdf["i"] > 0), (frame["f"] != 1.5) & (frame["i"] > 0)),
+    ]:
+        assert len(gdf[ours].to_geopandas()) == int(theirs.sum())
 
 
 def test_to_crs_matches_geopandas(cities):
@@ -1303,7 +1418,7 @@ def test_tz_aware_timestamp_scalars_keep_nanoseconds_and_zone():
         crs=3857,
     )
     gdf = sgpd.from_geopandas(points)
-    stamp = pd.Timestamp("2026-01-01 00:00:00.000000001", tz="US/Pacific")
+    stamp = pd.Timestamp("2026-01-01 00:00:00.000000001", tz="America/Los_Angeles")
     gdf["ts"] = stamp
     got = gdf.to_geopandas()["ts"]
     assert got.dt.tz is not None
@@ -1982,26 +2097,24 @@ def test_int64_min_duration_tick_is_missing():
     assert pd.isna(divided.tolist()[0])
 
 
-def test_non_identity_float_duration_arithmetic_matches_pandas():
-    # Routing every integral-valued float through exact integer arithmetic
-    # silently changed in-range results: pandas computes `* 3.0` in float64,
-    # losing sub-tick precision above 2**53, and matching pandas there
-    # matters more than improving on it. The identities ±1.0 stay exact —
-    # pandas loses precision even on those above 2**53, a corruption of an
-    # operation that should return its input; that one this layer does not
-    # reproduce.
-
-    pdf = pd.DataFrame({"t": [pd.Timedelta(2**53 + 1)]})
+def test_float_duration_arithmetic_is_exact_for_integral_floats():
+    # An integral-valued float multiplies and divides a duration exactly, as
+    # the same integer does (and as pandas does, as of pandas 3.1): float64
+    # would lose sub-tick precision above 2**53, even on the identities ±1.0.
+    # Any other float computes in float64, as in pandas.
+    pdf = pd.DataFrame({"t": [pd.Timedelta(2**53 + 1), pd.Timedelta(-7)]})
     gdf = GeoDataFrame(sgpd.default_context().create_data_frame(pdf))
-    for operand in (3.0, 1 / 3):
-        assert (gdf["t"] * operand).to_pandas().tolist()[0] == (
-            pdf["t"] * operand
-        ).tolist()[0]
-        assert (gdf["t"] / operand).to_pandas().tolist()[0] == (
-            pdf["t"] / operand
-        ).tolist()[0]
-    assert (gdf["t"] * 1.0).to_pandas().tolist()[0] == pd.Timedelta(2**53 + 1)
-    assert (gdf["t"] * -1.0).to_pandas().tolist()[0] == pd.Timedelta(-(2**53) - 1)
+    for integral in (3.0, -3.0, 1.0, -1.0, 2.0):
+        exact = int(integral)
+        assert (gdf["t"] * integral).to_pandas().tolist() == (pdf["t"] * exact).tolist()
+        assert (gdf["t"] / integral).to_pandas().tolist() == (pdf["t"] / exact).tolist()
+    for fractional in (1 / 3, 2.5, 0.5):
+        assert (gdf["t"] * fractional).to_pandas().tolist() == (
+            pdf["t"] * fractional
+        ).tolist()
+        assert (gdf["t"] / fractional).to_pandas().tolist() == (
+            pdf["t"] / fractional
+        ).tolist()
 
 
 def test_negative_float_overflow_and_exact_boundary():

@@ -194,7 +194,11 @@ CRS. `ST_SRID` / `RS_SRID` return the integer, and `ST_SetSRID` / `RS_SetSRID`
 set a CRS from one. SedonaDB maps between the two following the majority of SRID usage in the wild: SRID `0`
 means "no CRS", `4326` maps to `OGC:CRS84`, and any other value `N` maps to
 `EPSG:N`. A CRS only has an SRID when it carries an EPSG (or lon/lat) authority
-code; a purely custom WKT or PROJJSON definition with no authority has no SRID.
+code; a purely custom WKT or PROJJSON definition with no authority has no SRID,
+and `ST_SRID` / `RS_SRID` return `0` for it, the same value as for no CRS at
+all. The SRID is therefore a lossy view: `ST_SetSRID(geom, ST_SRID(other))`
+clears the CRS when `other` carries a custom definition. Use `ST_CRS` /
+`ST_SetCRS` (and `RS_CRS` / `RS_SetCRS`) to read and carry the full definition.
 
 ## Internals / design
 

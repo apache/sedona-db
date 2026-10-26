@@ -443,6 +443,38 @@ def test_dataframe_to_pandas(con):
     )
 
 
+def test_dataframe_to_parquet_file_url(con, tmp_path):
+    # A URL is passed through as given (a Path would collapse its `//`).
+    target = tmp_path / "with space.parquet"
+    con.sql("SELECT 1 AS a").to_parquet(target.as_uri())
+    assert target.is_file()
+    assert pd.read_parquet(target)["a"].tolist() == [1]
+
+
+def test_dataframe_to_parquet_object_store_options(con):
+    # Options for a remote path's object store go to the store, not the Parquet
+    # writer: an invalid one is rejected by the store's configuration, without
+    # any network access.
+    with pytest.raises(
+        sedonadb._lib.SedonaError,
+        match='Config value "skip_sig" not found on AwsOptions',
+    ):
+        con.sql("SELECT 1 AS a").to_parquet(
+            "s3://bucket/out.parquet", options={"aws.skip_sig": "true"}
+        )
+
+
+def test_dataframe_to_parquet_remote_url_reaches_the_store(con):
+    # A bucket that does not exist: the write gets as far as S3, rather than
+    # finding no object store for the URL.
+    with pytest.raises(sedonadb._lib.SedonaError) as err:
+        con.sql("SELECT 1 AS a").to_parquet(
+            "s3://sedona-nonexistent-write-test-bucket/out.parquet",
+            options={"aws.skip_signature": True, "aws.region": "us-west-2"},
+        )
+    assert "No suitable object store" not in str(err.value)
+
+
 def test_dataframe_to_parquet(con):
     df = con.sql(
         "SELECT * FROM (VALUES ('one', 1), ('two', 2), ('three', 3)) AS t(a, b)"
