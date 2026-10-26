@@ -395,6 +395,45 @@ def test_native_scalar_udf_register_protocol_selection(con, protocols):
 
     producer = {"legacy": LegacyProducer, "v2": V2Producer, "both": BothProducer}
     con.register(producer[protocols]())
-    assert con.sql("SELECT rt_protocol(ST_Point(1, 2)) AS col").to_arrow_table().equals(
-        con.sql("SELECT ST_AsBinary(ST_Point(1, 2)) AS col").to_arrow_table()
+    assert (
+        con.sql("SELECT rt_protocol(ST_Point(1, 2)) AS col")
+        .to_arrow_table()
+        .equals(con.sql("SELECT ST_AsBinary(ST_Point(1, 2)) AS col").to_arrow_table())
+    )
+
+
+def test_native_scalar_udf_v2_registration_validates_volatility(con):
+    def producer(volatility):
+        native = udf.sedona_native_scalar_udf(
+            con.funcs.st_asbinary.__sedonadb_scalar_udf__(),
+            name="rt_declarations",
+            volatility=volatility,
+        )
+
+        class Producer:
+            def __sedonadb_scalar_udf_v2__(self):
+                return native.__sedonadb_scalar_udf_v2__()
+
+            def __sedonadb_scalar_udf__(self):
+                return native.__sedonadb_scalar_udf__()
+
+        return Producer()
+
+    stable = producer("stable")
+    con.register(stable)
+    con.register(stable)
+    with pytest.raises(sedonadb._lib.SedonaError, match="Conflicting volatility"):
+        con.register(producer("immutable"))
+
+    class LegacyProducer:
+        def __sedonadb_scalar_udf__(self):
+            return stable.__sedonadb_scalar_udf__()
+
+    con.register(LegacyProducer())
+    # Legacy appends must preserve the registered function's stable declaration.
+    con.register(stable)
+    assert (
+        con.sql("SELECT rt_declarations(ST_Point(1, 2)) AS col")
+        .to_arrow_table()
+        .equals(con.sql("SELECT ST_AsBinary(ST_Point(1, 2)) AS col").to_arrow_table())
     )

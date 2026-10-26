@@ -34,7 +34,7 @@ use pyo3::{
     Bound, PyAny, Python,
 };
 use sedona::record_batch_reader_provider::RecordBatchReaderProvider;
-use sedona_expr::scalar_udf::ScalarKernelRef;
+use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarUDF};
 use sedona_extension::{
     catalog::ImportedCatalogProviderList,
     extension::{
@@ -43,7 +43,6 @@ use sedona_extension::{
     },
     runtime::RuntimeHandle,
     scalar_kernel::ImportedScalarKernel,
-    scalar_kernel_v2::ImportedScalarKernelV2,
     table_provider::ImportedTableProvider,
 };
 use sedona_schema::{
@@ -128,14 +127,25 @@ pub fn import_sedona_ffi_table_provider(
     Ok((Arc::new(provider), table_reference))
 }
 
+/// Import a V2 capsule as a complete UDF declaration, keeping function-level
+/// metadata and volatility separate from the executable kernel.
+pub fn import_sedona_ffi_scalar_udf(obj: &Bound<PyAny>) -> Result<SedonaScalarUDF, PySedonaError> {
+    let contents = check_pycapsule(obj, "sedonadb_scalar_kernel_v2")? as *mut SedonaCScalarKernelV2;
+    let raw = unsafe {
+        let raw = std::ptr::read(contents);
+        std::ptr::write_bytes(contents, 0, 1);
+        raw
+    };
+    Ok(SedonaScalarUDF::try_from(raw)?)
+}
+
 /// Import a natively-compiled scalar kernel from a `PyCapsule` wrapping a
-/// [`SedonaCScalarKernel`] or [`SedonaCScalarKernelV2`] -- the same Arrow-C-Data-Interface-style ABI
+/// [`SedonaCScalarKernel`] -- the same Arrow-C-Data-Interface-style ABI
 /// (opaque pointer + function-pointer vtable + explicit release) already
 /// used by `sedona-extension` to statically link in kernels at build time
 /// (see `c/sedona-s2geography`); this is the runtime counterpart, letting an
 /// out-of-tree plugin hand in a real `SedonaScalarKernel` -- no Python
-/// callback per invocation -- via `__sedonadb_scalar_udf__` (legacy) or
-/// `__sedonadb_scalar_udf_v2__`.
+/// callback per invocation -- via the legacy `__sedonadb_scalar_udf__` protocol.
 ///
 /// Returns the kernel's own declared name (read from the capsule via
 /// [`ImportedScalarKernel::function_name`], not supplied by the caller) so
@@ -146,24 +156,6 @@ pub fn import_sedona_ffi_table_provider(
 pub fn import_sedona_ffi_scalar_kernel(
     obj: &Bound<PyAny>,
 ) -> Result<(String, ScalarKernelRef), PySedonaError> {
-    if let Ok(contents) = check_pycapsule(obj, "sedonadb_scalar_kernel_v2") {
-        let contents = contents as *mut SedonaCScalarKernelV2;
-        let raw = unsafe {
-            let raw = std::ptr::read(contents);
-            std::ptr::write_bytes(contents, 0, 1);
-            raw
-        };
-        let imported = ImportedScalarKernelV2::try_from(raw)?;
-        let name = imported
-            .function_name()
-            .ok_or_else(|| {
-                PySedonaError::SedonaPython(
-                    "native scalar kernel capsule has no function name".into(),
-                )
-            })?
-            .to_string();
-        return Ok((name, Arc::new(imported)));
-    }
     let contents = check_pycapsule(obj, "sedonadb_scalar_kernel")? as *mut SedonaCScalarKernel;
 
     // Move the SedonaCScalarKernel out of the capsule into our

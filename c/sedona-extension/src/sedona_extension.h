@@ -310,9 +310,8 @@ struct SedonaCConfigOptionsView {
   /// non-null Utf8 value containing a JSON string, or JSON null for an unset key.
   /// Successful outputs belong to the caller. Unknown properties return ENOTSUP;
   /// malformed arguments return EINVAL. On error, out is untouched.
-  int (*get_property)(const struct SedonaCConfigOptionsView* self,
-                      const char* property, const char* args,
-                      struct ArrowArray* out, struct SedonaCError* err);
+  int (*get_property)(const struct SedonaCConfigOptionsView* self, const char* property,
+                      const char* args, struct ArrowArray* out, struct SedonaCError* err);
 
   /// \brief Get a configuration extension
   ///

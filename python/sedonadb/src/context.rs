@@ -453,9 +453,14 @@ impl InternalContext {
                 .call_method0(protocol)?
                 .extract::<Vec<Bound<PyAny>>>()?;
             let py_udf = crate::udf::sedona_native_scalar_udf(capsules, None, None)?;
-            let name = py_udf.inner.name().to_string();
-            let kernels = py_udf.inner.kernels().to_vec();
-            self.inner.append_sedona_scalar_kernels(&name, kernels)?;
+            if protocol == "__sedonadb_scalar_udf_v2__" {
+                self.inner.append_sedona_scalar_udf(py_udf.inner)?;
+            } else {
+                self.inner.append_sedona_scalar_kernels(
+                    py_udf.inner.name(),
+                    py_udf.inner.kernels().to_vec(),
+                )?;
+            }
             return Ok(());
         } else if let Ok(py_raster_loader) = component.extract::<PyRasterLoaderWrapper>() {
             self.inner.register_raster_loader(py_raster_loader.inner);

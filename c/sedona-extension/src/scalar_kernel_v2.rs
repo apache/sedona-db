@@ -165,21 +165,19 @@ unsafe extern "C" fn release(raw: *mut SedonaCScalarKernelV2) {
     (*raw).release = None;
 }
 
-/// An imported V2 kernel. Declarations are read once, before registration.
-pub struct ImportedScalarKernelV2 {
+/// Execution adapter for a V2 factory; function declarations live on the UDF.
+struct ImportedScalarKernelV2 {
     inner: SedonaCScalarKernelV2,
-    name: Option<String>,
-    metadata: HashMap<String, String>,
-    volatility: Volatility,
 }
 impl std::fmt::Debug for ImportedScalarKernelV2 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ImportedScalarKernelV2")
-            .field("name", &self.name)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
-impl TryFrom<SedonaCScalarKernelV2> for ImportedScalarKernelV2 {
+
+/// Import a V2 overload with its function-level declarations intact.
+impl TryFrom<SedonaCScalarKernelV2> for SedonaScalarUDF {
     type Error = DataFusionError;
     fn try_from(inner: SedonaCScalarKernelV2) -> Result<Self> {
         if inner.release.is_none()
@@ -189,7 +187,10 @@ impl TryFrom<SedonaCScalarKernelV2> for ImportedScalarKernelV2 {
         {
             return exec_err!("Invalid or released SedonaCScalarKernelV2");
         }
-        let name = get_property(&inner, "function_name", None)?;
+        let name: Option<String> = get_property(&inner, "function_name", None)?;
+        let name = name.ok_or_else(|| {
+            DataFusionError::Execution("native scalar kernel capsule has no function name".into())
+        })?;
         let volatility: String = get_property(&inner, "volatility", None)?;
         let volatility = match volatility.as_str() {
             "immutable" => Volatility::Immutable,
@@ -205,12 +206,15 @@ impl TryFrom<SedonaCScalarKernelV2> for ImportedScalarKernelV2 {
                 return exec_err!("Duplicate kernel metadata key: {key}");
             }
         }
-        Ok(Self {
-            inner,
-            name,
-            metadata,
+        let mut udf = SedonaScalarUDF::new(
+            &name,
+            vec![Arc::new(ImportedScalarKernelV2 { inner })],
             volatility,
-        })
+        );
+        for (key, value) in metadata {
+            udf = udf.with_metadata(key, value);
+        }
+        Ok(udf)
     }
 }
 fn get_property<T: serde::de::DeserializeOwned>(
@@ -227,9 +231,6 @@ fn get_property<T: serde::de::DeserializeOwned>(
     )
 }
 impl ImportedScalarKernelV2 {
-    pub fn function_name(&self) -> Option<&str> {
-        self.name.as_deref()
-    }
     fn implementation(
         &self,
         config: Option<&SedonaCConfigOptionsView>,
@@ -258,12 +259,6 @@ impl ImportedScalarKernelV2 {
     }
 }
 impl SedonaScalarKernel for ImportedScalarKernelV2 {
-    fn metadata(&self) -> Option<&HashMap<String, String>> {
-        Some(&self.metadata)
-    }
-    fn volatility(&self) -> Option<Volatility> {
-        Some(self.volatility)
-    }
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         self.return_type_from_args_and_scalars(args, &vec![None; args.len()])
     }
@@ -417,20 +412,18 @@ mod tests {
         .with_metadata("needs_pixels", "true")
         .with_metadata("arbitrary.\"key", "unicode: 🦆\0value")
     }
-    fn imported(udf: &SedonaScalarUDF) -> ScalarKernelRef {
+    fn imported(udf: &SedonaScalarUDF) -> SedonaScalarUDF {
         let raw = ExportedScalarKernelV2::from_udf(udf, Arc::new(ConfigOptions::new()))
             .pop()
             .unwrap();
-        Arc::new(ImportedScalarKernelV2::try_from(raw).unwrap())
+        SedonaScalarUDF::try_from(raw).unwrap()
     }
     #[test]
     fn metadata_registration_and_execution_roundtrip() {
         let original = udf();
         let kernel = imported(&original);
         let mut functions = FunctionSet::new();
-        let registered = functions
-            .add_scalar_udf_impl("identity", vec![kernel])
-            .unwrap();
+        let registered = functions.add_scalar_udf(kernel).unwrap();
         assert_eq!(registered.metadata(), original.metadata());
         assert_eq!(registered.signature().volatility, Volatility::Stable);
         let tester = ScalarUdfTester::new(registered.clone().into(), vec![WKB_GEOMETRY]);
@@ -446,13 +439,9 @@ mod tests {
     fn conflicts_do_not_mutate_registry() {
         let mut functions = FunctionSet::new();
         let original = udf();
-        functions
-            .add_scalar_udf_impl("identity", vec![imported(&original)])
-            .unwrap();
+        functions.add_scalar_udf(imported(&original)).unwrap();
         let conflicting = original.clone().with_metadata("another_key", "true");
-        assert!(functions
-            .add_scalar_udf_impl("identity", vec![imported(&conflicting)])
-            .is_err());
+        assert!(functions.add_scalar_udf(imported(&conflicting)).is_err());
         let different_volatility = SedonaScalarUDF::new(
             "identity",
             original.kernels().to_vec(),
@@ -461,19 +450,11 @@ mod tests {
         .with_metadata("needs_pixels", "true")
         .with_metadata("arbitrary.\"key", "unicode: 🦆\0value");
         assert!(functions
-            .add_scalar_udf_impl("identity", vec![imported(&different_volatility)])
+            .add_scalar_udf(imported(&different_volatility))
             .is_err());
         assert_eq!(functions.scalar_udf("identity").unwrap().kernels().len(), 1);
-        functions
-            .add_scalar_udf_impl("identity", vec![imported(&original)])
-            .unwrap();
+        functions.add_scalar_udf(imported(&original)).unwrap();
         assert_eq!(functions.scalar_udf("identity").unwrap().kernels().len(), 2);
-        assert!(SedonaScalarUDF::try_from_kernels(
-            "identity",
-            vec![imported(&original), imported(&conflicting)],
-            None
-        )
-        .is_err());
     }
     #[test]
     fn property_errors_and_released_import() {
@@ -514,7 +495,7 @@ mod tests {
             );
         }
         assert!(err.to_string().contains("Failed to parse"));
-        assert!(ImportedScalarKernelV2::try_from(SedonaCScalarKernelV2::default()).is_err());
+        assert!(SedonaScalarUDF::try_from(SedonaCScalarKernelV2::default()).is_err());
     }
     #[derive(Debug)]
     struct BatchSize;
@@ -547,7 +528,8 @@ mod tests {
         let raw = ExportedScalarKernelV2::from_udf(&original, Arc::new(defaults))
             .pop()
             .unwrap();
-        let kernel = ImportedScalarKernelV2::try_from(raw).unwrap();
+        let imported = SedonaScalarUDF::try_from(raw).unwrap();
+        let kernel = &imported.kernels()[0];
         let mut caller = ConfigOptions::new();
         caller.execution.batch_size = 23;
         for (config, expected) in [(None, 17), (Some(&caller), 23)] {
