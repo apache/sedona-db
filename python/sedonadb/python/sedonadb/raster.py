@@ -15,10 +15,11 @@
 # specific language governing permissions and limitations
 # under the License.
 
-import struct
 import math
+import struct
+from collections.abc import Iterable
+from typing import TYPE_CHECKING, Any, Optional
 
-from typing import List, Optional, TYPE_CHECKING, Tuple, Any, Iterable
 import geoarrow.types as gat
 import pyarrow as pa
 
@@ -207,12 +208,12 @@ class Raster:
         return self._py_field("spatial_shape")[1]
 
     @property
-    def transform(self) -> List[float]:
+    def transform(self) -> list[float]:
         """The affine transform coefficients for this raster."""
         return self._py_field("transform")
 
     @property
-    def bands(self) -> List["Band"]:
+    def bands(self) -> list["Band"]:
         """The list of bands in this raster."""
         bands_array = self._array.field("bands").flatten()
         return [Band(bands_array, i) for i in range(len(bands_array))]
@@ -270,7 +271,7 @@ class Band:
         return self._py_field("name")
 
     @property
-    def shape(self) -> Tuple[int, ...]:
+    def shape(self) -> tuple[int, ...]:
         """The shape of this band's data after applying any views."""
         views = self._py_field("view")
         if views:
@@ -279,7 +280,7 @@ class Band:
         return self.source_shape
 
     @property
-    def source_shape(self) -> Tuple[int, ...]:
+    def source_shape(self) -> tuple[int, ...]:
         """The shape of this band's source data."""
         return tuple(self._py_field("source_shape"))
 
