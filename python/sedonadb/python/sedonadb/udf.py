@@ -444,14 +444,9 @@ def _python_values_from_arrow(array, type):
 
 
 def _python_values_from_raster(array):
-    import pyarrow as pa
+    from sedonadb.raster import iter_rasters
 
-    from sedonadb.raster import Raster
-
-    storage = array.storage if isinstance(array, pa.ExtensionArray) else array
-    return (
-        None if not array[i].is_valid else Raster(storage, i) for i in range(len(array))
-    )
+    return iter_rasters(array)
 
 
 BINARY: TypeMatcher = TypeMatcher("binary")

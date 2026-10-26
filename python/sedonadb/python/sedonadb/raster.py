@@ -17,7 +17,7 @@
 
 import math
 import struct
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from typing import TYPE_CHECKING, Any, Optional
 
 import geoarrow.types as gat
@@ -188,8 +188,19 @@ class Raster:
         # Use slice directly - pa.array() would copy
         self._array = array.slice(i, 1)
 
+    @classmethod
+    def _from_batch(cls, batch: "_RasterBatch", index: int) -> "Raster":
+        """Build a row wrapper over fields resolved once for an Arrow batch."""
+        raster = cls.__new__(cls)
+        raster._array = batch.storage.slice(index, 1)
+        raster._batch = batch
+        raster._index = index
+        return raster
+
     def _py_field(self, k):
         """Extract a field value as a Python object."""
+        if hasattr(self, "_batch"):
+            return self._batch.fields[k][self._index].as_py()
         return self._array.field(k)[0].as_py()
 
     @property
@@ -215,6 +226,9 @@ class Raster:
     @property
     def bands(self) -> list["Band"]:
         """The list of bands in this raster."""
+        if hasattr(self, "_batch"):
+            start, stop = self._batch.band_range(self._index)
+            return [Band._from_batch(self._batch.bands, i) for i in range(start, stop)]
         bands_array = self._array.field("bands").flatten()
         return [Band(bands_array, i) for i in range(len(bands_array))]
 
@@ -261,8 +275,19 @@ class Band:
         # Use slice directly - pa.array() would copy
         self._array = array.slice(i, 1)
 
+    @classmethod
+    def _from_batch(cls, batch: "_BandBatch", index: int) -> "Band":
+        """Build a band wrapper over fields resolved once for an Arrow batch."""
+        band = cls.__new__(cls)
+        band._array = batch.array.slice(index, 1)
+        band._batch = batch
+        band._index = index
+        return band
+
     def _py_field(self, k):
         """Extract a field value as a Python object."""
+        if hasattr(self, "_batch"):
+            return self._batch.fields[k][self._index].as_py()
         return self._array.field(k)[0].as_py()
 
     @property
@@ -317,13 +342,21 @@ class Band:
         inline data (≤12 bytes).
         """
         # Try zero-copy path for out-of-line data
-        data_array = self._array.field("data")
-        result = _get_binary_view_buffer(data_array, index=0)
+        if hasattr(self, "_batch"):
+            data_array = self._batch.fields["data"]
+            index = self._index
+            buffers = self._batch.data_buffers
+        else:
+            data_array = self._array.field("data")
+            index = 0
+            buffers = None
+
+        result = _get_binary_view_buffer(data_array, index=index, buffers=buffers)
         if result is not None:
             return result
 
         # Fallback: inline data or missing buffer - must copy
-        return memoryview(data_array[0].as_buffer())
+        return memoryview(data_array[index].as_buffer())
 
     @property
     def source_data_size(self) -> int:
@@ -363,7 +396,7 @@ class Band:
         if views:
             raise NotImplementedError("Lazy views are not yet supported")
 
-        return self.source_data.cast(buffer_type_char, self.shape)
+        return source_data.cast(buffer_type_char, self.shape)
 
     def to_numpy(self) -> "np.ndarray":
         """Convert this band's data to a numpy array (zero-copy when possible)."""
@@ -378,6 +411,68 @@ class Band:
         """Return a string representation of this band."""
         name_part = f" {self.name!r}" if self.name else ""
         return f"<Band{name_part} {self.data_type} {'x'.join(map(str, self.shape))}>"
+
+
+class _BandBatch:
+    """Band arrays and pixel buffers shared by all wrappers in one batch."""
+
+    def __init__(self, array: pa.StructArray):
+        self.array = array
+        self.fields = {field.name: array.field(i) for i, field in enumerate(array.type)}
+        self._data_buffers = None
+
+    @property
+    def data_buffers(self):
+        # BinaryViewArray.buffers() builds the list containing every variadic
+        # pixel buffer. Resolve it only if pixels are accessed, and only once.
+        if self._data_buffers is None:
+            self._data_buffers = self.fields["data"].buffers()
+        return self._data_buffers
+
+
+class _RasterBatch:
+    """Raster and flattened band arrays shared by all wrappers in one batch."""
+
+    def __init__(self, storage: pa.StructArray):
+        self.storage = storage
+        self.fields = {
+            field.name: storage.field(i) for i, field in enumerate(storage.type)
+        }
+
+        bands = self.fields["bands"]
+        offsets = bands.offsets.to_pylist()
+        first_offset = offsets[0]
+        self.band_offsets = [offset - first_offset for offset in offsets]
+        self.bands = _BandBatch(bands.flatten())
+
+    def band_range(self, index: int) -> tuple[int, int]:
+        return self.band_offsets[index], self.band_offsets[index + 1]
+
+
+def iter_rasters(array) -> Iterator[Optional[Raster]]:
+    """Iterate over an Arrow raster array without re-resolving fields per row.
+
+    The raster fields, flattened band fields, and BinaryView pixel buffers are
+    shared by every yielded :class:`Raster` and :class:`Band` wrapper in each
+    Arrow chunk. Pixel buffers remain zero-copy and are resolved lazily on the
+    first pixel access. Null raster elements are yielded as ``None``.
+
+    Args:
+        array: A raster ExtensionArray, its StructArray storage, or a
+            ChunkedArray containing either representation.
+    """
+    if isinstance(array, pa.ChunkedArray):
+        for chunk in array.chunks:
+            yield from iter_rasters(chunk)
+        return
+
+    storage = array.storage if isinstance(array, pa.ExtensionArray) else array
+    if not isinstance(storage, pa.StructArray):
+        raise TypeError(f"Expected a raster StructArray, not {type(storage).__name__}")
+
+    batch = _RasterBatch(storage)
+    for i in range(len(storage)):
+        yield Raster._from_batch(batch, i) if storage[i].is_valid else None
 
 
 class RasterScalar(pa.ExtensionScalar):
@@ -397,7 +492,7 @@ class RasterArray(pa.ExtensionArray):
         _check_pandas_version()
 
         # Create Raster objects that reference the underlying storage directly
-        rasters = [Raster(self.storage, i) for i in range(len(self))]
+        rasters = list(iter_rasters(self))
         return pd.array(rasters, dtype=object)
 
 
@@ -477,16 +572,11 @@ class RasterDtype:
         if isinstance(arr, pa.ChunkedArray):
             rasters = []
             for chunk in arr.chunks:
-                storage = (
-                    chunk.storage if isinstance(chunk, pa.ExtensionArray) else chunk
-                )
-                for i in range(len(storage)):
-                    rasters.append(Raster(storage, i))
+                rasters.extend(iter_rasters(chunk))
             return pd.array(rasters, dtype=object)
 
         # Handle single array
-        storage = arr.storage if isinstance(arr, pa.ExtensionArray) else arr
-        rasters = [Raster(storage, i) for i in range(len(storage))]
+        rasters = list(iter_rasters(arr))
         return pd.array(rasters, dtype=object)
 
 
@@ -547,7 +637,7 @@ BAND_DATA_TYPE_STRUCT_CHARS = {
 
 
 def _get_binary_view_buffer(
-    data_array: pa.BinaryViewArray, index: int = 0
+    data_array: pa.BinaryViewArray, index: int = 0, buffers=None
 ) -> Optional[memoryview]:
     """Extract a zero-copy memoryview from a BinaryViewArray element.
 
@@ -560,6 +650,7 @@ def _get_binary_view_buffer(
     Args:
         data_array: A BinaryViewArray (may be sliced).
         index: The element index within the array (after any slicing).
+        buffers: An optional cached result of ``data_array.buffers()``.
 
     Returns:
         A memoryview pointing directly into the variadic buffer for out-of-line
@@ -569,7 +660,8 @@ def _get_binary_view_buffer(
     # Each view is 16 bytes:
     #   - Inline (len ≤ 12): length:i4, data:12bytes
     #   - Out-of-line (len > 12): length:i4, prefix:4bytes, buf_idx:i4, offset:i4
-    buffers = data_array.buffers()
+    if buffers is None:
+        buffers = data_array.buffers()
     if len(buffers) < 2 or buffers[1] is None:
         return None
 
