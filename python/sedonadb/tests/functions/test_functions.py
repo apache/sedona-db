@@ -3187,6 +3187,24 @@ def test_st_linemerge_directed(eng, geom, expected):
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+def test_st_linemerge_directed_per_row(eng):
+    # directed is read for each row, and a missing one gives a missing result
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        """SELECT ST_LineMerge(ST_GeomFromText(wkt), directed) FROM (VALUES
+            (1, 'MULTILINESTRING ((0 0, 1 0), (1 1, 1 0))', false),
+            (2, 'MULTILINESTRING ((0 0, 1 0), (1 1, 1 0))', true),
+            (3, 'MULTILINESTRING ((0 0, 1 0), (1 1, 1 0))', NULL)
+        ) AS t(id, wkt, directed) ORDER BY id""",
+        [
+            ("LINESTRING (0 0, 1 0, 1 1)",),
+            ("MULTILINESTRING ((0 0, 1 0), (1 1, 1 0))",),
+            (None,),
+        ],
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
     ("geom", "expected"),
     [

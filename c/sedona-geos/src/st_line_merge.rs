@@ -18,7 +18,8 @@
 use std::sync::Arc;
 
 use arrow_array::builder::BinaryBuilder;
-use datafusion_common::{error::Result, DataFusionError, ScalarValue};
+use arrow_schema::DataType;
+use datafusion_common::{cast::as_boolean_array, error::Result, DataFusionError, ScalarValue};
 use datafusion_expr::ColumnarValue;
 use geos::Geom;
 use sedona_expr::{
@@ -81,18 +82,21 @@ impl SedonaScalarKernel for STLineMerge {
             WKB_MIN_PROBABLE_BYTES * executor.num_iterations(),
         );
 
-        let directed = match args.get(1) {
-            Some(ColumnarValue::Scalar(ScalarValue::Boolean(Some(opt_bool)))) => *opt_bool,
-            _ => false,
-        };
+        let directed_val = args
+            .get(1)
+            .unwrap_or(&ColumnarValue::Scalar(ScalarValue::Boolean(Some(false))))
+            .cast_to(&DataType::Boolean, None)?
+            .to_array(executor.num_iterations())?;
+        let directed_array = as_boolean_array(&directed_val)?;
+        let mut directed_iter = directed_array.iter();
 
         executor.execute_wkb_void(|maybe_wkb| {
-            match maybe_wkb {
-                Some(wkb) => {
+            match (maybe_wkb, directed_iter.next().unwrap()) {
+                (Some(wkb), Some(directed)) => {
                     invoke_scalar(wkb, &mut builder, directed)?;
                     builder.append_value([]);
                 }
-                None => builder.append_null(),
+                _ => builder.append_null(),
             }
 
             Ok(())
@@ -197,6 +201,53 @@ mod tests {
 
         let result = tester
             .invoke_scalar_scalar(ScalarValue::Null, false)
+            .unwrap();
+        assert!(result.is_null());
+    }
+
+    #[rstest]
+    fn udf_directed_per_row(#[values(WKB_GEOMETRY, WKB_GEOGRAPHY)] sedona_type: SedonaType) {
+        use arrow_array::BooleanArray;
+        use arrow_schema::DataType;
+
+        let udf = SedonaScalarUDF::from_impl("st_linemerge", st_line_merge_impl());
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![sedona_type.clone(), SedonaType::Arrow(DataType::Boolean)],
+        );
+
+        // Lines in opposite directions merge only where directed is false, and a
+        // missing directed gives a missing result, as in PostGIS
+        let opposite_wkt = "MULTILINESTRING ((0 0, 1 0), (1 1, 1 0))";
+        let opposite = Some(opposite_wkt);
+        let directed: ArrayRef = Arc::new(BooleanArray::from(vec![
+            Some(false),
+            Some(true),
+            None,
+            Some(true),
+        ]));
+        let expected: ArrayRef = create_array(
+            &[Some("LINESTRING (0 0, 1 0, 1 1)"), opposite, None, None],
+            &WKB_GEOMETRY,
+        );
+
+        let input = create_array(&[opposite, opposite, opposite, None], &sedona_type);
+        assert_eq!(
+            &tester.invoke_array_array(input, directed.clone()).unwrap(),
+            &expected
+        );
+
+        let expected_scalar: ArrayRef = create_array(
+            &[Some("LINESTRING (0 0, 1 0, 1 1)"), opposite, None, opposite],
+            &WKB_GEOMETRY,
+        );
+        assert_eq!(
+            &tester.invoke_scalar_array(opposite_wkt, directed).unwrap(),
+            &expected_scalar
+        );
+
+        let result = tester
+            .invoke_scalar_scalar(opposite_wkt, ScalarValue::Boolean(None))
             .unwrap();
         assert!(result.is_null());
     }
