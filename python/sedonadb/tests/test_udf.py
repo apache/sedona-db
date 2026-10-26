@@ -244,7 +244,8 @@ def test_udf_bad_return_length(con):
         con.sql("SELECT questionable_udf(123) as col").to_pandas()
 
 
-def test_native_scalar_udf_export_import_roundtrip(con):
+@pytest.mark.parametrize("version", ["", "_v2"])
+def test_native_scalar_udf_export_import_roundtrip(con, version):
     # A SedonaDB built-in scalar function exposes its native overload kernels
     # via __sedonadb_scalar_udf__ (the export side of the plugin protocol).
     # Exporting those capsules and rebuilding a UDF under a new name must
@@ -255,7 +256,9 @@ def test_native_scalar_udf_export_import_roundtrip(con):
     st_asbinary = con.funcs.st_asbinary
     assert hasattr(st_asbinary, "__sedonadb_scalar_udf__")
 
-    capsules = st_asbinary.__sedonadb_scalar_udf__()
+    capsules = getattr(st_asbinary, f"__sedonadb_scalar_udf{version}__")()
+    capsule_name = f'"sedonadb_scalar_kernel{version}"'
+    assert all(capsule_name in repr(capsule) for capsule in capsules)
     assert len(capsules) >= 1
 
     # Rebuild under a fresh name so it doesn't collide with the built-in, then
@@ -370,3 +373,28 @@ def test_raster_udf_over_loaded_raster_as_pixel_argument(con, tmp_path):
     ).to_arrow_table()
     assert got["mean"].to_pylist() == [7.0]
     assert got["v"].to_pylist() == [4.0]
+
+
+@pytest.mark.parametrize("protocols", ["legacy", "v2", "both"])
+def test_native_scalar_udf_register_protocol_selection(con, protocols):
+    native = udf.sedona_native_scalar_udf(
+        con.funcs.st_asbinary.__sedonadb_scalar_udf__(), name="rt_protocol"
+    )
+
+    class LegacyProducer:
+        def __sedonadb_scalar_udf__(self):
+            return native.__sedonadb_scalar_udf__()
+
+    class V2Producer:
+        def __sedonadb_scalar_udf_v2__(self):
+            return native.__sedonadb_scalar_udf_v2__()
+
+    class BothProducer(V2Producer):
+        def __sedonadb_scalar_udf__(self):
+            raise AssertionError("V2 must be preferred when available")
+
+    producer = {"legacy": LegacyProducer, "v2": V2Producer, "both": BothProducer}
+    con.register(producer[protocols]())
+    assert con.sql("SELECT rt_protocol(ST_Point(1, 2)) AS col").to_arrow_table().equals(
+        con.sql("SELECT ST_AsBinary(ST_Point(1, 2)) AS col").to_arrow_table()
+    )

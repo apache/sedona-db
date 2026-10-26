@@ -102,6 +102,17 @@ impl std::hash::Hash for SedonaScalarUDF {
 /// a logical operation (e.g., ST_Intersects()), a kernel wraps the logic around a specific
 /// implementation.
 pub trait SedonaScalarKernel: Debug + Send + Sync {
+    /// Optional function-level declaration supplied by an external kernel.
+    /// None means unspecified (as for legacy kernels); Some(empty) is explicit.
+    fn metadata(&self) -> Option<&HashMap<String, String>> {
+        None
+    }
+
+    /// Optional function-level volatility declaration supplied by an external kernel.
+    fn volatility(&self) -> Option<Volatility> {
+        None
+    }
+
     /// Calculate a return type given input types
     ///
     /// Returns Some(physical_type) if this kernel applies to the input types or
@@ -252,6 +263,49 @@ impl SedonaScalarUDF {
             kernels.into_scalar_kernel_refs(),
             Volatility::Immutable,
         )
+    }
+
+    /// Build a UDF, preserving external kernel declarations and rejecting conflicts.
+    pub fn try_from_kernels(
+        name: &str,
+        kernels: Vec<ScalarKernelRef>,
+        volatility: Option<Volatility>,
+    ) -> Result<Self> {
+        let declared = kernels.iter().find_map(|k| k.volatility());
+        let volatility = volatility.or(declared).unwrap_or(Volatility::Immutable);
+        let metadata = kernels
+            .iter()
+            .find_map(|k| k.metadata())
+            .cloned()
+            .unwrap_or_default();
+        let udf = Self {
+            metadata,
+            ..Self::new(name, vec![], volatility)
+        };
+        udf.validate_kernel_declarations(&kernels)?;
+        Ok(udf.with_kernels(kernels))
+    }
+
+    /// Validate before mutating the registry so failure leaves existing overloads intact.
+    pub fn validate_kernel_declarations(&self, kernels: &[ScalarKernelRef]) -> Result<()> {
+        for kernel in kernels {
+            if kernel.metadata().is_some_and(|m| m != &self.metadata) {
+                return datafusion_common::exec_err!(
+                    "Conflicting metadata declarations for scalar function {}",
+                    self.name()
+                );
+            }
+            if kernel
+                .volatility()
+                .is_some_and(|v| v != self.signature.volatility)
+            {
+                return datafusion_common::exec_err!(
+                    "Conflicting volatility declarations for scalar function {}",
+                    self.name()
+                );
+            }
+        }
+        Ok(())
     }
 
     /// Add a new kernel to a Scalar UDF

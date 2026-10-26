@@ -95,17 +95,20 @@ impl FunctionSet {
 
     /// Add a kernel to a function in this set
     ///
-    /// This adds a scalar UDF with immutable output if a function of that name does not
-    /// exist in this set. A reference to the matching or inserted function is returned.
+    /// New functions inherit kernel metadata and volatility declarations, defaulting
+    /// to immutable output when unspecified. Conflicting declarations are rejected
+    /// before adding overloads. Returns the matching or inserted function.
     pub fn add_scalar_udf_impl(
         &mut self,
         name: &str,
         kernels: impl IntoScalarKernelRefs,
     ) -> Result<&SedonaScalarUDF> {
+        let kernels = kernels.into_scalar_kernel_refs();
         if let Some(function) = self.scalar_udf_mut(name) {
+            function.validate_kernel_declarations(&kernels)?;
             function.add_kernels(kernels);
         } else {
-            let function = SedonaScalarUDF::from_impl(name, kernels);
+            let function = SedonaScalarUDF::try_from_kernels(name, kernels, None)?;
             self.insert_scalar_udf(function);
         }
 

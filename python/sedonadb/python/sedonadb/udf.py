@@ -29,19 +29,20 @@ from sedonadb.utility import sedona  # noqa: F401
 
 def sedona_native_scalar_udf(
     kernels: List[Any],
-    volatility: Literal["immutable", "stable", "volatile"] = "immutable",
+    volatility: Optional[Literal["immutable", "stable", "volatile"]] = None,
     name: Optional[str] = None,
 ):
     """Build a scalar UDF from natively-compiled kernel capsules.
 
     Groups one or more native scalar-kernel capsules -- such as those a
-    function exports via `__sedonadb_scalar_udf__()` -- into a single
+    function exports via `__sedonadb_scalar_udf_v2__()` (or the legacy
+    `__sedonadb_scalar_udf__()`) -- into a single
     overloaded UDF backed by compiled Rust (no Python callback per
     invocation). Each capsule carries its own declared SQL name; the names
     must agree, and `name` overrides that shared name when given.
 
-    Unlike the `__sedonadb_scalar_udf__` registration protocol, which always
-    registers as immutable, `volatility` is caller-supplied here.
+    V2 capsules preserve function metadata and volatility through registration.
+    An explicit volatility must agree with the V2 kernel declarations.
 
     !!! warning
         SedonaDB native scalar UDFs are experimental and this interface may
@@ -50,7 +51,8 @@ def sedona_native_scalar_udf(
     Args:
         kernels: A non-empty list of PyCapsule objects wrapping
             natively-compiled scalar kernels that share one SQL name.
-        volatility: "immutable" (default), "stable", or "volatile".
+        volatility: "immutable", "stable", or "volatile". Defaults to the V2
+            kernel declaration, or "immutable" for legacy kernels.
         name: An optional SQL name overriding the kernels' shared declared
             name.
     """

@@ -39,6 +39,7 @@ use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_extension::{
     extension::SedonaCScalarKernel,
     scalar_kernel::{with_config_options_for_ffi, ExportedScalarKernel},
+    scalar_kernel_v2::ExportedScalarKernelV2,
 };
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
@@ -197,6 +198,26 @@ impl PySedonaScalarUdf {
             })
             .collect()
     }
+
+    /// Export V2 native kernel capsules, preserving metadata and volatility.
+    ///
+    /// Consumers should prefer this protocol when available and fall back to
+    /// `__sedonadb_scalar_udf__` for producers that only support legacy capsules.
+    fn __sedonadb_scalar_udf_v2__<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> Result<Vec<Bound<'py, PyCapsule>>, PySedonaError> {
+        ExportedScalarKernelV2::from_udf(&self.inner, Arc::clone(&self.config_options))
+            .into_iter()
+            .map(|ffi| {
+                Ok(PyCapsule::new_with_value(
+                    py,
+                    ffi,
+                    c"sedonadb_scalar_kernel_v2",
+                )?)
+            })
+            .collect()
+    }
 }
 
 /// Parse a Python-supplied volatility string into a [Volatility].
@@ -262,20 +283,16 @@ pub fn sedona_scalar_udf<'py>(
 /// silently registering under a name that doesn't match every kernel.
 /// `name` defaults to that shared name if not given.
 ///
-/// Unlike `register()`'s `__sedonadb_scalar_udf__` protocol (which always
-/// registers Immutable), `volatility` is caller-supplied here -- a plugin
-/// kernel that needs Volatile or Stable (e.g. one reading external state per
-/// call, like `RS_FromPath`) should build its `PySedonaScalarUdf` with this
-/// function directly and return it via the existing `__sedonadb_internal_udf__`
-/// protocol instead.
+/// V2 capsules supply volatility and metadata. An explicit volatility must agree
+/// with those declarations. Legacy capsules default to immutable.
 #[pyfunction]
-#[pyo3(signature = (kernels, volatility="immutable", name=None))]
+#[pyo3(signature = (kernels, volatility=None, name=None))]
 pub fn sedona_native_scalar_udf(
     kernels: Vec<Bound<PyAny>>,
-    volatility: &str,
+    volatility: Option<&str>,
     name: Option<&str>,
 ) -> Result<PySedonaScalarUdf, PySedonaError> {
-    let volatility = parse_volatility(volatility)?;
+    let volatility = volatility.map(parse_volatility).transpose()?;
 
     let imported = kernels
         .iter()
@@ -297,7 +314,7 @@ pub fn sedona_native_scalar_udf(
 
     let kernel_refs = imported.into_iter().map(|(_, k)| k).collect();
     Ok(PySedonaScalarUdf {
-        inner: SedonaScalarUDF::new(&udf_name, kernel_refs, volatility),
+        inner: SedonaScalarUDF::try_from_kernels(&udf_name, kernel_refs, volatility)?,
         config_options: Arc::new(ConfigOptions::new()),
     })
 }
@@ -788,6 +805,7 @@ mod native_scalar_udf_tests {
     use arrow_schema::DataType;
     use sedona::context::SedonaContext;
     use sedona_expr::scalar_udf::SimpleSedonaScalarKernel;
+    use sedona_extension::{extension::SedonaCScalarKernel, scalar_kernel::ExportedScalarKernel};
 
     fn identity_kernel_capsule<'py>(py: Python<'py>, function_name: &str) -> Bound<'py, PyCapsule> {
         identity_kernel_capsule_for_type(py, function_name, SedonaType::Arrow(DataType::Int64))
@@ -812,12 +830,54 @@ mod native_scalar_udf_tests {
     }
 
     #[test]
+    fn v2_capsules_preserve_metadata_and_volatility_through_registration() {
+        Python::initialize();
+        Python::attach(|py| {
+            let legacy = identity_kernel_capsule(py, "external_raster");
+            let mut original =
+                sedona_native_scalar_udf(vec![legacy.into_any()], Some("stable"), None).unwrap();
+            original.inner = original.inner.with_metadata("needs_pixels", "true");
+            let capsules = original.__sedonadb_scalar_udf_v2__(py).unwrap();
+            let imported = sedona_native_scalar_udf(
+                capsules.into_iter().map(|c| c.into_any()).collect(),
+                None,
+                None,
+            )
+            .unwrap();
+            assert_eq!(imported.inner.metadata(), original.inner.metadata());
+            assert_eq!(imported.inner.signature().volatility, Volatility::Stable);
+            let ctx = SedonaContext::new();
+            ctx.append_sedona_scalar_kernels(
+                imported.inner.name(),
+                imported.inner.kernels().to_vec(),
+            )
+            .unwrap();
+            let registered = ctx.scalar_udf("external_raster").unwrap().unwrap();
+            assert_eq!(
+                registered
+                    .metadata()
+                    .get("needs_pixels")
+                    .map(String::as_str),
+                Some("true")
+            );
+            assert_eq!(registered.signature().volatility, Volatility::Stable);
+            let capsules = original.__sedonadb_scalar_udf_v2__(py).unwrap();
+            assert!(sedona_native_scalar_udf(
+                capsules.into_iter().map(|c| c.into_any()).collect(),
+                Some("immutable"),
+                None
+            )
+            .is_err());
+        });
+    }
+
+    #[test]
     fn sedona_native_scalar_udf_builds_a_working_udf() {
         Python::initialize();
         Python::attach(|py| {
             let capsule = identity_kernel_capsule(py, "probe_e2e");
-            let udf =
-                sedona_native_scalar_udf(vec![capsule.into_any()], "immutable", None).unwrap();
+            let udf = sedona_native_scalar_udf(vec![capsule.into_any()], Some("immutable"), None)
+                .unwrap();
             assert_eq!(udf.name(), "probe_e2e");
         });
     }
@@ -845,7 +905,7 @@ mod native_scalar_udf_tests {
             );
             sedona_native_scalar_udf(
                 vec![int_kernel.into_any(), float_kernel.into_any()],
-                "immutable",
+                Some("immutable"),
                 None,
             )
             .unwrap()
@@ -891,7 +951,7 @@ mod native_scalar_udf_tests {
             let a = identity_kernel_capsule(py, "probe_a");
             let b = identity_kernel_capsule(py, "probe_b");
             let result =
-                sedona_native_scalar_udf(vec![a.into_any(), b.into_any()], "immutable", None);
+                sedona_native_scalar_udf(vec![a.into_any(), b.into_any()], Some("immutable"), None);
             let err = match result {
                 Err(e) => e,
                 Ok(_) => panic!("expected an error"),
@@ -903,7 +963,7 @@ mod native_scalar_udf_tests {
     #[test]
     fn sedona_native_scalar_udf_rejects_empty_kernel_list() {
         // No capsule involved at all -- doesn't need a live interpreter.
-        assert!(sedona_native_scalar_udf(vec![], "immutable", None).is_err());
+        assert!(sedona_native_scalar_udf(vec![], Some("immutable"), None).is_err());
     }
 
     #[test]
@@ -911,9 +971,12 @@ mod native_scalar_udf_tests {
         Python::initialize();
         Python::attach(|py| {
             let capsule = identity_kernel_capsule(py, "probe_e2e");
-            let udf =
-                sedona_native_scalar_udf(vec![capsule.into_any()], "immutable", Some("renamed"))
-                    .unwrap();
+            let udf = sedona_native_scalar_udf(
+                vec![capsule.into_any()],
+                Some("immutable"),
+                Some("renamed"),
+            )
+            .unwrap();
             assert_eq!(udf.name(), "renamed");
         });
     }
@@ -926,7 +989,7 @@ mod native_scalar_udf_tests {
         Python::initialize();
         let udf = Python::attach(|py| {
             let capsule = identity_kernel_capsule(py, "probe_e2e");
-            sedona_native_scalar_udf(vec![capsule.into_any()], "immutable", None).unwrap()
+            sedona_native_scalar_udf(vec![capsule.into_any()], Some("immutable"), None).unwrap()
         });
 
         let ctx = SedonaContext::new();
