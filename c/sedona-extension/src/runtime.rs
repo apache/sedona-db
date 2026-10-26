@@ -137,7 +137,18 @@ mod tests {
     /// enqueued; that is harmless (their runtimes drain and their handles are
     /// removed), and tests therefore assert about their own runtime rather than
     /// an exact global count.
+    ///
+    /// Drains are serialized: taking janitors out of the trash can and joining
+    /// them happens under one lock. Otherwise another test could take this
+    /// test's janitor out of the trash can and still be joining it when this
+    /// test drains, finds the trash can empty, and returns before its own
+    /// runtime has been dropped.
     fn drain_janitors() -> usize {
+        static DRAIN: Mutex<()> = Mutex::new(());
+        let _drain = DRAIN
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
         let janitors: Vec<JoinHandle<()>> = {
             let mut trash = trash()
                 .lock()
