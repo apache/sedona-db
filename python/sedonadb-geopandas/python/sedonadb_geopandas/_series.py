@@ -1598,6 +1598,60 @@ def _number(value, method, name):
     return float(number)
 
 
+def _frame_of(method, *values):
+    """The frame of the Series among `values` (a ValueError if they come
+    from different frames), for a constructor that builds a column there."""
+    series = [value for value in values if isinstance(value, Series)]
+    if not series:
+        raise TypeError(
+            f"{method}() needs a Series of a frame to build the column in: "
+            f"load the data as a frame first (from_geopandas, read_file, ...)"
+        )
+    df = series[0]._df
+    for value in series[1:]:
+        _operand(df, value)
+    return df
+
+
+def _coordinate(df, value, method, name):
+    """A coordinate for a constructor, as a float64 expression: a numeric
+    Series of `df`, or a number."""
+    if isinstance(value, Series):
+        expr = _operand(df, value)
+        if _kind(value._dtype()) != "number":
+            raise TypeError(
+                f"{method}() {name} must be a numeric Series or a number, got a "
+                f"Series of {value._dtype()}"
+            )
+        return expr.cast(pa.float64())
+    return df._ctx.lit(pa.scalar(_number(value, method, name), pa.float64()))
+
+
+def _encoded_input(data, method, index, on_invalid):
+    """The frame and expression of `data`, a Series of WKT or WKB, after
+    checking a constructor's arguments."""
+    if index is not None:
+        raise NotImplementedError(f"{method}() cannot take an index: there is no index")
+    if on_invalid != "raise":
+        raise NotImplementedError(
+            f"{method}() supports on_invalid='raise' only, got {on_invalid!r}"
+        )
+    if not isinstance(data, Series):
+        raise TypeError(
+            f"{method}() data must be a Series of a frame, got "
+            f"{type(data).__name__}: load the data as a frame first "
+            f"(from_geopandas, read_file, ...)"
+        )
+    return data._df, data._expr
+
+
+def _labeled(df, geometry, crs):
+    """A constructed geometry column of `df`, named "geometry", labeled
+    with `crs` if given."""
+    series = GeoSeries(df, geometry, "geometry")
+    return series if crs is None else series.set_crs(crs)
+
+
 def _snapped(value):
     """A sine, cosine, or tangent as Shapely's affine transformations use
     it: 0 where it is within rounding of 0 (so a quarter turn is exact)."""
@@ -2666,9 +2720,80 @@ class GeoSeries(Series):
         extended flavor encodes Z/M dimensions differently. `hex=True` is not
         supported.
         """
+        wkb = self._expr.geo.as_binary()
         if hex:
-            raise NotImplementedError("to_wkb(hex=True) is not supported")
-        return Series(self._df, self._expr.geo.as_binary(), self._name)
+            # Upper case, as Shapely writes it.
+            wkb = wkb.funcs.encode(lit("hex")).funcs.upper()
+        return Series(self._df, wkb, self._name)
+
+    @classmethod
+    def from_xy(cls, x, y, z=None, index=None, crs=None):
+        """Points from x and y (and z) coordinates (`ST_Point`, `ST_PointZ`),
+        as in GeoPandas.
+
+        Each coordinate is a numeric Series, all of one frame, or a number;
+        at least one is a Series, and the points belong to its frame, so they
+        can be assigned there. A missing coordinate gives a missing point,
+        where GeoPandas reads it as NaN and gives a point with a NaN
+        coordinate; a NaN that is there is kept. `index` is not supported, as
+        there is no index; `crs` labels the points.
+        """
+        if index is not None:
+            raise NotImplementedError(
+                "from_xy() cannot take an index: there is no index"
+            )
+        df = _frame_of("from_xy", x, y, z)
+        x, y = _coordinate(df, x, "from_xy", "x"), _coordinate(df, y, "from_xy", "y")
+        if z is None:
+            point = x.funcs.st_point(y)
+        else:
+            point = x.funcs.st_pointz(y, _coordinate(df, z, "from_xy", "z"))
+        return _labeled(df, point, crs)
+
+    @classmethod
+    def from_wkt(cls, data, index=None, crs=None, on_invalid="raise"):
+        """Geometries parsed from WKT text (`ST_GeomFromWKT`), as in GeoPandas.
+
+        `data` is a string Series, and the geometries belong to its frame;
+        missing text gives a missing geometry. Invalid text raises when the
+        result is computed (the frame is lazy), and only
+        `on_invalid="raise"` is supported. The engine's parser refuses a few
+        forms GEOS reads, such as `MULTIPOINT (EMPTY)` or a NaN coordinate.
+        `index` is not supported, as there is no index; `crs` labels the
+        geometries.
+        """
+        df, text = _encoded_input(data, "from_wkt", index, on_invalid)
+        if _kind(data._dtype()) != "string":
+            raise TypeError(
+                f"from_wkt() data must be a string Series, got a Series of "
+                f"{data._dtype()}"
+            )
+        return _labeled(df, text.funcs.st_geomfromwkt(), crs)
+
+    @classmethod
+    def from_wkb(cls, data, index=None, crs=None, on_invalid="raise"):
+        """Geometries parsed from WKB (`ST_GeomFromWKB`), as in GeoPandas.
+
+        `data` is a binary Series, or a string Series of hex (either case),
+        and the geometries belong to its frame; missing WKB gives a missing
+        geometry. Invalid WKB raises when the result is computed, and only
+        `on_invalid="raise"` is supported. `index` is not supported, as there
+        is no index; `crs` labels the geometries.
+        """
+        df, wkb = _encoded_input(data, "from_wkb", index, on_invalid)
+        dtype = data._dtype()
+        if _kind(dtype) == "string":
+            wkb = wkb.funcs.decode(lit("hex"))
+        elif not (
+            pa.types.is_binary(dtype)
+            or pa.types.is_large_binary(dtype)
+            or pa.types.is_binary_view(dtype)
+        ):
+            raise TypeError(
+                f"from_wkb() data must be a binary Series, or a string Series of "
+                f"hex, got a Series of {dtype}"
+            )
+        return _labeled(df, wkb.funcs.st_geomfromwkb(), crs)
 
     def set_crs(self, crs=None, epsg=None, inplace=False, allow_override=False):
         """Label each geometry with a CRS without transforming coordinates.

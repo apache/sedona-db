@@ -272,6 +272,11 @@ class GeoDataFrame:
         return GeoSeries(self._df, self._df[self._geometry_name], self._geometry_name)
 
     @property
+    def active_geometry_name(self):
+        """The name of the active geometry column, or `None` if there is none."""
+        return self._geometry_name
+
+    @property
     def crs(self):
         """The CRS of the active geometry column, or `None` if there is none."""
         if self._geometry_name is None:
@@ -1048,6 +1053,27 @@ class GeoDataFrame:
         return GeoDataFrame(joined.select(*projection), geometry)
 
     # -- geometry and CRS bookkeeping --------------------------------------
+
+    def to_wkt(self):
+        """Every geometry column as WKT text, as in GeoPandas (see
+        `GeoSeries.to_wkt`): a frame with no active geometry column."""
+        return self._encoded(lambda geometry: geometry.to_wkt())
+
+    def to_wkb(self, hex=False):
+        """Every geometry column as ISO WKB, or hex with `hex=True`, as in
+        GeoPandas (see `GeoSeries.to_wkb`): a frame with no active geometry
+        column."""
+        return self._encoded(lambda geometry: geometry.to_wkb(hex=hex))
+
+    def _encoded(self, encode):
+        geometries = _geometry_column_names(self._df)
+        columns = [
+            encode(GeoSeries(self._df, self._df[name], name))._expr.alias(name)
+            if name in geometries
+            else self._df[name]
+            for name in self.columns
+        ]
+        return GeoDataFrame(self._df.select(*columns), geometry=None)
 
     def set_geometry(self, col, inplace=False, crs=None):
         """Make `col` the active geometry column, as in GeoPandas.

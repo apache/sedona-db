@@ -989,8 +989,10 @@ def test_to_wkb_matches_geopandas_iso_flavor():
     gs = gpd.GeoSeries.from_wkt(CORPUS, crs="EPSG:3857")
     g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
     assert g.to_wkb().to_pandas().tolist() == gs.to_wkb(flavor="iso").tolist()
-    with pytest.raises(NotImplementedError, match="hex"):
-        g.to_wkb(hex=True)
+    hexed = g.to_wkb(hex=True).to_pandas().tolist()
+    assert [None if pd.isna(h) else h for h in hexed] == gs.to_wkb(
+        hex=True, flavor="iso"
+    ).tolist()
 
 
 def test_set_crs_follows_geopandas_override_rules():

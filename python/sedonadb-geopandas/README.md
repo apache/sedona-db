@@ -81,6 +81,16 @@ immediately, as in every pandas version. Mixed-unit duration
 operands are rebuilt in the column's own unit when exactly representable,
 rather than widening to the engine's interval type.
 
+`points_from_xy()`, `GeoSeries.from_xy()`, `from_wkt()`, and `from_wkb()` take
+columns of a frame (and numbers, for coordinates) rather than arrays, and build
+a lazy `GeoSeries` named `"geometry"` in that frame: load the data as a frame
+first. A missing coordinate gives a missing point, where GeoPandas reads it as
+NaN and gives a point with a NaN coordinate. Invalid WKT or WKB raises when the
+result is computed (only `on_invalid="raise"` is supported), and the engine's
+WKT parser refuses a few forms GEOS reads, such as `MULTIPOINT (EMPTY)`.
+`GeoDataFrame.to_wkt()` and `to_wkb()` convert every geometry column and leave
+no active geometry, as in GeoPandas.
+
 `GeoSeries` properties and methods follow GeoPandas, with a few differences
 in form: `to_wkt()` writes equivalent but differently spaced WKT
 (`POINT(1 2)`), `to_wkb()` writes ISO WKB (GeoPandas' `flavor="iso"`),
