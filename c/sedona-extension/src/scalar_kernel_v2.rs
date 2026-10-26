@@ -258,6 +258,7 @@ impl ImportedScalarKernelV2 {
         Ok(CScalarKernelImplWrapper { inner })
     }
 }
+
 impl SedonaScalarKernel for ImportedScalarKernelV2 {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
         self.return_type_from_args_and_scalars(args, &vec![None; args.len()])
@@ -308,6 +309,7 @@ impl SedonaScalarKernel for ImportedScalarKernelV2 {
         }
     }
 }
+
 fn config_view(config: &ConfigOptions) -> SedonaCConfigOptionsView {
     SedonaCConfigOptionsView {
         get_property_schema: Some(config_schema),
@@ -317,6 +319,7 @@ fn config_view(config: &ConfigOptions) -> SedonaCConfigOptionsView {
         private_data: (config as *const ConfigOptions).cast(),
     }
 }
+
 unsafe extern "C" fn config_schema(
     _: *const SedonaCConfigOptionsView,
     property: *const c_char,
@@ -329,6 +332,7 @@ unsafe extern "C" fn config_schema(
         unsupported(err, "Unknown configuration property")
     }
 }
+
 unsafe extern "C" fn config_property(
     raw: *const SedonaCConfigOptionsView,
     property: *const c_char,
@@ -363,10 +367,12 @@ unsafe extern "C" fn config_extension(
 ) -> c_int {
     unsupported(err, "Unknown configuration extension")
 }
+
 unsafe fn unsupported(err: *mut SedonaCError, message: &str) -> c_int {
     set_ffi_error!(err, message);
     libc::ENOTSUP
 }
+
 // Overlay options understood by the producer, retaining producer-side typed
 // extensions. Arbitrary Rust extension objects cannot cross this C ABI.
 fn import_config(
@@ -412,12 +418,14 @@ mod tests {
         .with_metadata("needs_pixels", "true")
         .with_metadata("arbitrary.\"key", "unicode: 🦆\0value")
     }
+
     fn imported(udf: &SedonaScalarUDF) -> SedonaScalarUDF {
         let raw = ExportedScalarKernelV2::from_udf(udf, Arc::new(ConfigOptions::new()))
             .pop()
             .unwrap();
         SedonaScalarUDF::try_from(raw).unwrap()
     }
+
     #[test]
     fn metadata_registration_and_execution_roundtrip() {
         let original = udf();
@@ -435,6 +443,7 @@ mod tests {
             assert_eq!(&tester.invoke_array(array.clone()).unwrap(), &array);
         }
     }
+
     #[test]
     fn conflicts_do_not_mutate_registry() {
         let mut functions = FunctionSet::new();
@@ -497,6 +506,7 @@ mod tests {
         assert!(err.to_string().contains("Failed to parse"));
         assert!(SedonaScalarUDF::try_from(SedonaCScalarKernelV2::default()).is_err());
     }
+
     #[derive(Debug)]
     struct BatchSize;
     impl SedonaScalarKernel for BatchSize {
@@ -519,6 +529,7 @@ mod tests {
             )))
         }
     }
+
     #[test]
     fn caller_config_overrides_exporter_and_null_uses_exporter() {
         let original =
