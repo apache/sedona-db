@@ -3114,6 +3114,16 @@ def test_st_iscollection(eng, geom, expected):
         ("LINESTRING (0 0, 1 1)", True, True),
         ("POLYGON EMPTY", True, True),
         ("GEOMETRYCOLLECTION EMPTY", True, True),
+        (
+            "POLYGON ((10000000 10000000, 10000000.1 10000000, 10000000.1 10000000.1, 10000000 10000000.1, 10000000 10000000))",
+            False,
+            True,
+        ),
+        (
+            "POLYGON ((10000000 10000000, 10000000 10000000.1, 10000000.1 10000000.1, 10000000.1 10000000, 10000000 10000000))",
+            True,
+            False,
+        ),
     ],
 )
 def test_st_ispolygoncw_ccw(eng, geom, expected_cw, expected_ccw):

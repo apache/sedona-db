@@ -128,9 +128,10 @@ fn is_ring_ccw(ring: &impl LineStringTrait<T = f64>) -> bool {
     let Some(first) = coords.next() else {
         return false;
     };
-    let mut previous = (first.x(), first.y());
+    let origin = (first.x(), first.y());
+    let mut previous = (0.0, 0.0);
     for coord in coords {
-        let current = (coord.x(), coord.y());
+        let current = (coord.x() - origin.0, coord.y() - origin.1);
         twice_area += previous.0 * current.1 - current.0 * previous.1;
         previous = current;
     }
@@ -156,7 +157,7 @@ mod tests {
         assert_eq!(udf.name(), "st_ispolygonccw");
     }
 
-    const INPUTS: [Option<&str>; 12] = [
+    const INPUTS: [Option<&str>; 14] = [
         None,
         Some("POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))"),
         Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"),
@@ -171,6 +172,12 @@ mod tests {
         Some("GEOMETRYCOLLECTION EMPTY"),
         Some("POLYGON ((0 0, 1 1, 2 2, 0 0))"),
         Some("MULTIPOLYGON EMPTY"),
+        Some(
+            "POLYGON ((10000000 10000000, 10000000.1 10000000, 10000000.1 10000000.1, 10000000 10000000.1, 10000000 10000000))",
+        ),
+        Some(
+            "POLYGON ((10000000 10000000, 10000000 10000000.1, 10000000.1 10000000.1, 10000000.1 10000000, 10000000 10000000))",
+        ),
     ];
 
     #[rstest]
@@ -198,6 +205,8 @@ mod tests {
                 Some(true),
                 Some(true),
                 Some(true),
+                Some(true),
+                Some(false),
                 Some(true)
             ]
         );
@@ -229,7 +238,9 @@ mod tests {
                 Some(true),
                 Some(true),
                 Some(false),
-                Some(true)
+                Some(true),
+                Some(true),
+                Some(false)
             ]
         );
         assert_array_equal(
