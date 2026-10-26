@@ -352,14 +352,39 @@ pub type PointXYExecutor<'a, 'b> =
 pub(crate) fn visible_wkb_bytes(arg_type: &SedonaType, arg: &ColumnarValue) -> Result<usize> {
     match arg {
         ColumnarValue::Array(array) => {
-            let mut total = 0usize;
-            array.iter_as_wkb_bytes(arg_type, array.len(), |maybe_wkb| {
-                if let Some(wkb) = maybe_wkb {
-                    total += wkb.len();
-                }
-                Ok(())
-            })?;
-            Ok(total)
+           SedonaType::Wkb(_, _) => {
+                let binary = as_binary_array(array)?;
+                let offsets = binary.offsets();
+                Ok((offsets[offsets.len() - 1] - offsets[0]) as usize)
+            }
+            SedonaType::WkbLarge(_, _) => {
+                let binary = as_large_binary_array(array)?;
+                let offsets = binary.offsets();
+                Ok((offsets[offsets.len() - 1] - offsets[0]) as usize)
+            }
+            SedonaType::WkbView(_, _) => {
+                let binary = as_binary_view_array(array)?;
+
+                // The low 32 bits of each view contain its byte length.
+                // Null views may retain nonzero lengths, so skip them.
+                Ok(binary
+                    .views()
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| binary.is_valid(*i))
+                    .map(|(_, view)| *view as u32 as usize)
+                    .sum())
+            }
+            _ => {
+                let mut total = 0usize;
+                array.iter_as_wkb_bytes(arg_type, array.len(), |maybe_wkb| {
+                    if let Some(wkb) = maybe_wkb {
+                        total += wkb.len();
+                    }
+                    Ok(())
+                })?;
+                Ok(total)
+            }
         }
         ColumnarValue::Scalar(scalar) => {
             Ok(scalar.scalar_as_wkb_bytes()?.map_or(0, |wkb| wkb.len()))
