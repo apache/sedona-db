@@ -315,7 +315,7 @@ def python_udf(
     Return conversion is selected by the declared Arrow type. Most values use
     `pyarrow.array(values, type=return_type)` directly. Geometry/geography
     results additionally accept GeoArrow scalars and Shapely objects, and raster
-    results preserve the Arrow-backed representation used by [`lit`][sedonadb.expr.lit].
+    results preserve the Arrow-backed representation used by `sd.lit()`.
 
     Geometry/geography results must use a consistent representation: WKB bytes,
     GeoArrow scalars, or Shapely objects, optionally mixed with `None`. Conversion
