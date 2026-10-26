@@ -1549,3 +1549,153 @@ def test_touches_with_a_mixed_dimension_collection():
     )
     assert gs.touches(collection).tolist() == [False]
     assert g.touches(collection).to_pandas().tolist() == [False]
+
+
+# -- aggregates over the whole column ------------------------------------------
+
+# Valid 2D geometries only: GEOS cannot union an invalid polygon (Shapely
+# raises too), and collecting 2D and 3D geometries together raises.
+FLAT_CORPUS = [
+    wkt
+    for wkt in CORPUS
+    if wkt is None or (shapely.from_wkt(wkt).is_valid and "Z" not in wkt)
+]
+
+
+def _nothing(wkts):
+    """A column with no rows, or with only missing geometries."""
+    if wkts is None:
+        _, gdf = _geoseries(["POINT (0 0)"], a=[1])
+        return gpd.GeoSeries([], crs="EPSG:3857"), gdf[gdf["a"] > 1].geometry
+    gs, gdf = _geoseries(wkts)
+    return gs, gdf.geometry
+
+
+def _assert_same_parts(got, expected):
+    """As `_assert_same_geometries`, but in any order: an aggregate's parts
+    come in the engine's order, which GEOS does not promise to keep."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        values = got.to_pandas().tolist()
+
+    def key(geometry):
+        return shapely.to_wkt(shapely.normalize(geometry), rounding_precision=6)
+
+    values, expected = sorted(values, key=key), sorted(expected, key=key)
+    assert len(values) == len(expected), (values, expected)
+    for value, reference in zip(values, expected):
+        assert _same(value, reference), (value, reference)
+
+
+def test_union_all_is_a_lazy_one_row_geoseries():
+    gs, gdf = _geoseries(FLAT_CORPUS)
+    got = gdf.geometry.union_all()
+    assert isinstance(got, sgpd.GeoSeries)
+    assert got.crs == gdf.geometry.crs
+    assert got.to_pandas().name == "geometry"
+    _assert_same_geometries(got, [gs.union_all()])
+
+
+def test_union_all_keeps_points_and_lines():
+    # ST_Union_Agg would drop them (apache/sedona-db#1093).
+    gs, gdf = _geoseries(
+        [
+            "POINT (5 5)",
+            "LINESTRING (0 0, 3 3)",
+            "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
+            None,
+        ]
+    )
+    _assert_same_geometries(gdf.geometry.union_all(), [gs.union_all()])
+
+
+@pytest.mark.parametrize("wkts", [None, [None, None]], ids=["no rows", "missing"])
+def test_union_all_of_nothing_is_an_empty_collection(wkts):
+    gs, g = _nothing(wkts)
+    _assert_same_geometries(g.union_all(), [gs.union_all()])
+
+
+DELAUNAY_CORPUS = [
+    "MULTIPOINT ((0 0), (3 0))",
+    "LINESTRING (0 3, 3 3)",
+    "POLYGON ((1 1, 2 1, 2 2, 1 1))",
+    "POINT (5 5)",
+    "POINT EMPTY",
+    None,
+]
+
+
+@pytest.mark.parametrize("only_edges", [False, True])
+@pytest.mark.parametrize("tolerance", [0.0, 1.5])
+def test_delaunay_triangles_match_geopandas(tolerance, only_edges):
+    gs, gdf = _geoseries(DELAUNAY_CORPUS)
+    got = gdf.geometry.delaunay_triangles(tolerance, only_edges=only_edges)
+    assert isinstance(got, sgpd.GeoSeries)
+    assert got.crs == gdf.geometry.crs
+    _assert_same_parts(got, gs.delaunay_triangles(tolerance, only_edges=only_edges))
+
+
+def test_delaunay_triangles_tolerance_is_one_number():
+    gs, gdf = _geoseries(DELAUNAY_CORPUS, d=[1.0] * len(DELAUNAY_CORPUS))
+    # A NaN tolerance gives nothing, as in GeoPandas.
+    _assert_same_parts(
+        gdf.geometry.delaunay_triangles(math.nan), gs.delaunay_triangles(math.nan)
+    )
+    # One triangulation of all the geometries takes one tolerance.
+    with pytest.raises(TypeError, match="tolerance"):
+        gdf.geometry.delaunay_triangles(gdf["d"])
+
+
+# Lines that close a square, cut by both diagonals (which cross without a
+# shared vertex), with a dangle, and a ring inside a polygon.
+LINEWORK = [
+    "LINESTRING (0 0, 4 0, 4 4)",
+    "LINESTRING (4 4, 0 4, 0 0)",
+    "LINESTRING (0 0, 4 4)",
+    "LINESTRING (0 4, 4 0)",
+    "LINESTRING (4 4, 5 5)",
+    "POLYGON ((10 0, 14 0, 14 4, 10 4, 10 0))",
+    "LINESTRING (11 1, 12 1, 12 2, 11 1)",
+    "LINESTRING EMPTY",
+    None,
+]
+
+
+@pytest.mark.parametrize("node", [True, False])
+@pytest.mark.parametrize("method", ["polygonize", "build_area"])
+def test_polygons_from_linework_match_geopandas(method, node):
+    gs, gdf = _geoseries(LINEWORK)
+    got = getattr(gdf.geometry, method)(node=node)
+    expected = getattr(gs, method)(node=node)
+    assert isinstance(got, sgpd.GeoSeries)
+    assert got.crs == gdf.geometry.crs
+    assert got.to_pandas().name == expected.name == "polygons"
+    _assert_same_parts(got, expected)
+
+
+@pytest.mark.parametrize(
+    "wkts",
+    [None, [None], ["POINT (0 0)", "POINT EMPTY"], ["LINESTRING (0 0, 1 1)"]],
+    ids=["no rows", "missing", "points", "open line"],
+)
+@pytest.mark.parametrize("method", ["delaunay_triangles", "polygonize", "build_area"])
+def test_aggregates_with_nothing_to_build_give_no_rows(method, wkts):
+    gs, g = _nothing(wkts)
+    expected = getattr(gs, method)()
+    assert len(expected) == 0
+    _assert_same_parts(getattr(g, method)(), expected)
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda g: g.union_all(method="coverage"),
+        lambda g: g.union_all(grid_size=1.0),
+        lambda g: g.polygonize(full=True),
+    ],
+    ids=["union_all method", "union_all grid_size", "polygonize full"],
+)
+def test_aggregate_options_without_an_engine_equivalent_raise(call):
+    _, gdf = _geoseries(["POINT (0 0)"])
+    with pytest.raises(NotImplementedError):
+        call(gdf.geometry)

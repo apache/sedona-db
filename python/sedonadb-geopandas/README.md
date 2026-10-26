@@ -119,6 +119,15 @@ parts, as GeoPandas does. Without an index it cannot number the parts
 GeoPandas explodes the active geometry even when `column=` names another
 geometry column, and explodes non-geometry columns as lists.
 
+The aggregates over a whole column stay lazy, and each result belongs to a new
+frame: `union_all()` gives a `GeoSeries` of one row where GeoPandas gives the
+Shapely geometry, and `delaunay_triangles()`, `polygonize()`, and
+`build_area()` give one row per triangle or polygon, as GeoPandas does. The
+geometries are collected first, so 2D and 3D geometries together raise when
+the result is computed, where GeoPandas promotes them to 3D. `union_all()`
+supports neither `grid_size` nor a `method` other than `"unary"`, and
+`polygonize(full=True)` is not supported.
+
 `sjoin()` requires both geometry columns to share a CRS: GeoPandas warns on a
 mismatch and joins anyway, which is almost always a mistake, so this raises and
 points at `to_crs()`. `on_attribute` is not supported yet.

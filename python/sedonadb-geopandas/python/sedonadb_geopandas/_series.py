@@ -2405,6 +2405,111 @@ class GeoSeries(Series):
         )
         return GeoSeries(exploded, exploded[self._name], self._name)
 
+    # -- aggregates ------------------------------------------------------
+
+    def _collected(self, name):
+        """A new one-row frame holding all of this column's geometries
+        collected into one, as `name`, and that geometry: missing if there
+        are none, which the engine's aggregate skips."""
+        collected = self._df.agg(self._expr.geo.collect_agg().alias(name))
+        return collected, collected[name]
+
+    def _built_parts(self, build, name, node):
+        """What `build` makes of all of this column's geometries together,
+        one part per row, as GeoPandas explodes it: a `GeoSeries` named
+        `name` in a new frame. With `node`, the geometries are unioned first,
+        which nodes lines where they cross; otherwise only collected. With
+        no geometries, or nothing built, no rows."""
+        from sedonadb_geopandas._frame import _explode_parts
+
+        collected, geometry = self._collected(name)
+        if node:
+            geometry = geometry.geo.unary_union()
+        built = _explode_parts(collected.select(build(geometry).alias(name)), name)
+        return GeoSeries(built, built[name], name)
+
+    def union_all(self, method="unary", *, grid_size=None):
+        """All the geometries unioned into one, as a `GeoSeries` of one row.
+
+        Lazy, unlike GeoPandas, which returns the Shapely geometry:
+        `to_pandas()` gives it as a series of one. The result belongs to a new
+        frame, so it cannot be combined with columns of this one. Missing
+        geometries are skipped, and the union of none is an empty geometry
+        collection, as in GeoPandas.
+
+        The geometries are collected and then unioned, as in `dissolve()`,
+        since `ST_Union_Agg` drops points and lines (apache/sedona-db#1093).
+        Only `method="unary"` is supported, and not `grid_size`.
+        """
+        if method != "unary":
+            raise NotImplementedError(
+                f"union_all() supports method='unary' only, got {method!r}"
+            )
+        if grid_size is not None:
+            raise NotImplementedError("union_all() does not support grid_size")
+        ctx = self._df._ctx
+        collected, geometry = self._collected(self._name)
+        empty = ctx.lit("GEOMETRYCOLLECTION EMPTY").funcs.st_geomfromwkt()
+        wkb = (
+            geometry.geo.unary_union()
+            .geo.as_binary()
+            .funcs.coalesce(empty.geo.as_binary())
+        )
+        # WKB carries neither the spatial kind nor the CRS: both are restored.
+        unioned = _geometry_from_wkb(wkb, self._is_geography(), self.crs, ctx)
+        unioned = collected.select(unioned.alias(self._name))
+        return GeoSeries(unioned, unioned[self._name], self._name)
+
+    def delaunay_triangles(self, tolerance=0.0, only_edges=False):
+        """The Delaunay triangulation of the vertices of all the geometries
+        together, one triangle per row (one edge, with `only_edges`), as in
+        GeoPandas.
+
+        The result belongs to a new frame, as for `explode()`. `tolerance`
+        snaps vertices closer than it together: one number, as there is one
+        triangulation, and a NaN gives no triangles, as in GeoPandas.
+        """
+        if isinstance(tolerance, Series):
+            raise TypeError(
+                "delaunay_triangles() tolerance must be a number, not a Series: "
+                "all the geometries are triangulated together"
+            )
+        tolerance = self._parameter(tolerance, "delaunay_triangles", "tolerance")
+        flags = lit(1 if only_edges else 0)
+        return self._built_parts(
+            lambda geometry: geometry.geo.delaunay_triangles(tolerance, flags),
+            self._name,
+            node=False,
+        )
+
+    def polygonize(self, node=True, full=False):
+        """The polygons that the lines of all the geometries together enclose,
+        one per row, named "polygons", as in GeoPandas.
+
+        The result belongs to a new frame, as for `explode()`. With `node`,
+        the lines are first unioned, which nodes them where they cross;
+        without it, only lines that meet at their ends form polygons.
+        `full=True` (the cut edges, dangles, and invalid rings as well) is not
+        supported.
+        """
+        if full:
+            raise NotImplementedError("polygonize() does not support full=True")
+        return self._built_parts(
+            lambda geometry: geometry.geo.polygonize(), "polygons", node
+        )
+
+    def build_area(self, node=True):
+        """The area that the lines of all the geometries together enclose, as
+        polygons with holes, one per row, named "polygons", as in GeoPandas.
+
+        The result belongs to a new frame, as for `explode()`. With `node`,
+        the lines are first unioned, which nodes them where they cross;
+        otherwise they are only collected.
+        """
+        return self._built_parts(
+            lambda geometry: geometry.geo.build_area(), "polygons", node
+        )
+
     # -- binary operations -----------------------------------------------
 
     def _other(self, other):
