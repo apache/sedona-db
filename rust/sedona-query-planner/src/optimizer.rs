@@ -19,6 +19,7 @@ use std::sync::Arc;
 use crate::ensure_loaded::EnsureLoadedOptimizerRule;
 use crate::logical_plan_node::SpatialJoinPlanNode;
 use crate::push_down_leaf_projections::PushDownLeafProjections;
+use crate::reconcile_union_crs::ReconcileUnionCrs;
 use crate::spatial_expr_utils::{
     KNNJoinQuerySide, collect_spatial_predicate_names, find_knn_query_side,
 };
@@ -70,7 +71,9 @@ fn reject_ordered_aggregate(expr: Expr) -> Result<Transformed<Expr>> {
 pub fn register_sedona_analyzer_rules(
     session_state_builder: SessionStateBuilder,
 ) -> Result<SessionStateBuilder> {
-    Ok(session_state_builder.with_analyzer_rule(Arc::new(RejectOrderedAggregates)))
+    Ok(session_state_builder
+        .with_analyzer_rule(Arc::new(RejectOrderedAggregates))
+        .with_analyzer_rule(Arc::new(ReconcileUnionCrs)))
 }
 
 /// Replace DataFusion 54.1's leaf projection pushdown rule with the version
