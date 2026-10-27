@@ -420,7 +420,8 @@ def _python_udf_values(value, num_rows):
     """Convert an input once, reusing a scalar's Python object for every row."""
     import pyarrow as pa
 
-    type = pa.field(value.type).type
+    # Keep the Sedona type: PyArrow may strip unrecognized extension metadata.
+    type = value.type
     array = pa.array(value)
     values = _python_values_from_arrow(array, type)
     if value.is_scalar():
