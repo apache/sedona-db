@@ -56,8 +56,8 @@ use crate::probe::partitioned_stream_provider::PartitionedProbeStreamProvider;
 use crate::spatial_predicate::SpatialPredicate;
 use crate::utils::join_utils::{
     adjust_indices_with_visited_info, apply_join_filter_to_indices, build_batch_from_indices,
-    get_final_indices_from_bit_map, need_probe_multi_partition_bitmap,
-    need_produce_result_in_final,
+    build_side_for_predicate, emission_join_type, get_final_indices_from_bit_map,
+    need_probe_multi_partition_bitmap, need_produce_result_in_final,
 };
 use crate::utils::once_fut::{OnceAsync, OnceFut};
 use arrow::array::RecordBatch;
@@ -534,7 +534,11 @@ impl SpatialJoinStream {
 
             // Initialize visited_multi_probe_side if needed
             if matches!(partition_desc.partition, SpatialPartition::Multi) {
-                let need_probe_bitmap = need_probe_multi_partition_bitmap(self.join_type);
+                let build_side = build_side_for_predicate(&self.spatial_predicate);
+                let need_probe_bitmap = need_probe_multi_partition_bitmap(emission_join_type(
+                    self.join_type,
+                    build_side,
+                ));
 
                 if self.visited_multi_probe_side.is_none() && need_probe_bitmap {
                     let num_rows =
@@ -658,8 +662,11 @@ impl SpatialJoinStream {
                 .set(spatial_index.get_actual_execution_mode().to_usize());
         }
 
-        // Initial setup for processing unmatched build batches
-        if need_produce_result_in_final(self.join_type) {
+        // Initial setup for processing unmatched build batches.
+        // Use emission join type so KNN LEFT (build=Right) does not emit unmatched
+        // candidates as if they were unmatched SQL-left rows (see #1515).
+        let build_side = build_side_for_predicate(&self.spatial_predicate);
+        if need_produce_result_in_final(emission_join_type(self.join_type, build_side)) {
             // Only produce left-outer batches if this is the last partition that finished probing.
             // This mechanism is similar to the one in NestedLoopJoinStream.
             if !is_last_stream {
@@ -703,11 +710,13 @@ impl SpatialJoinStream {
     ) -> Poll<Result<StatefulStreamResult<Option<RecordBatch>>>> {
         let (partition_desc, batch_opt, is_complete) = match &mut self.state {
             SpatialJoinStreamState::ProcessUnmatchedBuildBatch(desc, iterator) => {
+                let build_side = build_side_for_predicate(&self.spatial_predicate);
+                let emission_jt = emission_join_type(self.join_type, build_side);
                 let batch_opt = match iterator.next_batch(
                     &self.schema,
-                    self.join_type,
+                    emission_jt,
                     &self.column_indices,
-                    JoinSide::Left,
+                    build_side,
                 ) {
                     Ok(opt) => opt,
                     Err(e) => return Poll::Ready(Err(e)),
@@ -830,10 +839,10 @@ impl SpatialJoinStream {
 
         // For KNN joins, we may have swapped build/probe sides, so build_side might be Right;
         // For regular joins, build_side is always Left.
-        let build_side = match &self.spatial_predicate {
-            SpatialPredicate::KNearestNeighbors(knn) => knn.probe_side.negate(),
-            _ => JoinSide::Left,
-        };
+        // Emission helpers assume build corresponds to "left" in Left/Right join naming,
+        // so remap join_type when build_side is Right (KNN with SQL-left probe).
+        let build_side = build_side_for_predicate(&self.spatial_predicate);
+        let emission_jt = emission_join_type(self.join_type, build_side);
 
         // Move out the knn_results_merger to the iterator, we'll move it back when the iterator is complete
         // by calling `SpatialJoinBatchIterator::take_knn_results_merger`.
@@ -842,7 +851,7 @@ impl SpatialJoinStream {
         let iterator = SpatialJoinBatchIterator::new(SpatialJoinBatchIteratorParams {
             schema: self.schema.clone(),
             filter: self.filter.clone(),
-            join_type: self.join_type,
+            join_type: emission_jt,
             column_indices: self.column_indices.clone(),
             build_side,
             spatial_index: spatial_index.clone(),
@@ -1270,7 +1279,8 @@ impl SpatialJoinBatchIterator {
         let need_merge_knn_results = progress.knn.is_some();
 
         let Some((build_indices, probe_indices, distances)) =
-            progress.indices_for_next_batch(self.build_side, self.join_type, self.max_batch_size)
+            // join_type is already the emission join type (build treated as "left").
+            progress.indices_for_next_batch(JoinSide::Left, self.join_type, self.max_batch_size)
         else {
             // No more results to produce
             return Ok(None);

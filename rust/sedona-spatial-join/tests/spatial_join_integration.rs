@@ -2088,3 +2088,121 @@ async fn plan_for_filter_pushdown_test(sql: &str) -> Result<Arc<dyn ExecutionPla
     let df = ctx.sql(sql).await?;
     df.create_physical_plan().await
 }
+
+/// Regression for apache/sedona-db#1515: LEFT JOIN on ST_KNN must keep unmatched
+/// probe (SQL-left) rows with NULL right columns, and must not emit unmatched
+/// build (SQL-right) candidates into the left schema.
+#[tokio::test]
+async fn test_knn_left_join_unmatched_probe_keeps_left_columns() -> Result<()> {
+    let options = SpatialJoinOptions {
+        spatial_join_reordering: false,
+        ..Default::default()
+    };
+    let ctx = setup_context(Some(options), 30)?;
+
+    // Silent-wrong case from #1515: distance filter drops the only KNN hit for
+    // left id=2, so that probe row must appear with NULL rid — not a leftover
+    // candidate id shifted into the left column.
+    let sql = r#"
+        WITH l AS (
+            SELECT * FROM (VALUES
+                (1, ST_Point(0.0, 0.0)),
+                (2, ST_Point(100.0, 0.0))
+            ) AS t(id, geom)
+        ),
+        r AS (
+            SELECT * FROM (VALUES
+                (10, ST_Point(1.0, 0.0)),
+                (30, ST_Point(5.0, 0.0))
+            ) AS t(rid, geom)
+        )
+        SELECT l.id, r.rid
+        FROM l LEFT JOIN r
+          ON ST_KNN(l.geom, r.geom, 1) AND ST_Distance(l.geom, r.geom) <= 10
+        ORDER BY l.id
+    "#;
+
+    let batches = ctx.sql(sql).await?.collect().await?;
+    let batch = arrow::compute::concat_batches(&batches[0].schema(), &batches)?;
+    assert_eq!(
+        batch.num_rows(),
+        2,
+        "expected one result row per left probe"
+    );
+
+    let ids = batch
+        .column(0)
+        .as_any()
+        .downcast_ref::<arrow_array::Int64Array>()
+        .expect("l.id should be Int64");
+    let rids = batch
+        .column(1)
+        .as_any()
+        .downcast_ref::<arrow_array::Int64Array>()
+        .expect("r.rid should be Int64");
+
+    assert_eq!(ids.value(0), 1);
+    assert_eq!(rids.value(0), 10);
+    assert_eq!(ids.value(1), 2, "unmatched left id must stay on the left");
+    assert!(
+        rids.is_null(1),
+        "unmatched left row must have NULL right columns"
+    );
+
+    Ok(())
+}
+
+/// Regression for apache/sedona-db#1515: when left/right key types differ, wrongly
+/// emitting unmatched build rows into left columns fails with a schema error.
+#[tokio::test]
+async fn test_knn_left_join_unmatched_with_mismatched_key_types() -> Result<()> {
+    let options = SpatialJoinOptions {
+        spatial_join_reordering: false,
+        ..Default::default()
+    };
+    let ctx = setup_context(Some(options), 30)?;
+
+    let sql = r#"
+        WITH l AS (
+            SELECT * FROM (VALUES
+                (1, ST_Point(0.0, 0.0)),
+                (2, ST_Point(100.0, 0.0))
+            ) AS t(id, geom)
+        ),
+        r AS (
+            SELECT * FROM (VALUES
+                ('a', ST_Point(1.0, 0.0)),
+                -- Far candidate that is never the 1-NN of either left row, so it
+                -- remains an unmatched build row (Utf8). Before the fix this was
+                -- emitted into the Int64 left column and failed schema checks.
+                ('c', ST_Point(1000.0, 0.0))
+            ) AS t(rid, geom)
+        )
+        SELECT l.id, r.rid
+        FROM l LEFT JOIN r ON ST_KNN(l.geom, r.geom, 1)
+        ORDER BY l.id
+    "#;
+
+    let batches = ctx.sql(sql).await?.collect().await?;
+    let batch = arrow::compute::concat_batches(&batches[0].schema(), &batches)?;
+    assert_eq!(batch.num_rows(), 2);
+
+    let ids = batch
+        .column(0)
+        .as_any()
+        .downcast_ref::<arrow_array::Int64Array>()
+        .expect("l.id should be Int64");
+    let rids = batch
+        .column(1)
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .expect("r.rid should be Utf8");
+
+    assert_eq!(ids.value(0), 1);
+    assert_eq!(rids.value(0), "a");
+    assert_eq!(ids.value(1), 2);
+    // Both left points are closer to 'a' than to far 'c'.
+    assert_eq!(rids.value(1), "a");
+
+    Ok(())
+}
