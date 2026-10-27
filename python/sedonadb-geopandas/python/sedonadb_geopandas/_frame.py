@@ -17,6 +17,7 @@
 """GeoPandas-style GeoDataFrame backed by a lazy SedonaDB frame."""
 
 import functools
+import inspect
 import numbers
 import operator
 import os
@@ -1558,3 +1559,136 @@ class GeoDataFrame:
             f"<div><b>GeoDataFrame</b> (preview of up to "
             f"{_REPR_HTML_ROWS} rows)</div>{table}"
         )
+
+
+# The geometry methods and properties GeoPandas gives a GeoDataFrame as well
+# as a GeoSeries (those of `GeoPandasBase`), but for `crs`, which the frame
+# has its own of, and `cx`, which selects the frame's rows. On a frame they
+# act on its active geometry column. Each is forwarded once GeoSeries
+# implements it.
+_GEOMETRY_METHODS = (
+    "affine_transform",
+    "area",
+    "boundary",
+    "bounds",
+    "buffer",
+    "build_area",
+    "centroid",
+    "clip_by_rect",
+    "concave_hull",
+    "constrained_delaunay_triangles",
+    "contains",
+    "contains_properly",
+    "convex_hull",
+    "count_coordinates",
+    "count_geometries",
+    "count_interior_rings",
+    "covered_by",
+    "covers",
+    "crosses",
+    "delaunay_triangles",
+    "difference",
+    "disjoint",
+    "distance",
+    "dwithin",
+    "envelope",
+    "exterior",
+    "extract_unique_points",
+    "force_2d",
+    "force_3d",
+    "frechet_distance",
+    "geom_equals",
+    "geom_equals_exact",
+    "geom_equals_identical",
+    "geom_type",
+    "get_coordinates",
+    "get_geometry",
+    "get_precision",
+    "has_m",
+    "has_sindex",
+    "has_z",
+    "hausdorff_distance",
+    "hilbert_distance",
+    "interiors",
+    "interpolate",
+    "intersection",
+    "intersection_all",
+    "intersects",
+    "invalid_coverage_edges",
+    "is_ccw",
+    "is_closed",
+    "is_empty",
+    "is_ring",
+    "is_simple",
+    "is_valid",
+    "is_valid_coverage",
+    "is_valid_reason",
+    "length",
+    "line_merge",
+    "make_valid",
+    "maximum_inscribed_circle",
+    "minimum_bounding_circle",
+    "minimum_bounding_radius",
+    "minimum_clearance",
+    "minimum_clearance_line",
+    "minimum_rotated_rectangle",
+    "normalize",
+    "offset_curve",
+    "orient_polygons",
+    "overlaps",
+    "polygonize",
+    "project",
+    "relate",
+    "relate_pattern",
+    "remove_repeated_points",
+    "representative_point",
+    "reverse",
+    "rotate",
+    "sample_points",
+    "scale",
+    "segmentize",
+    "set_precision",
+    "shared_paths",
+    "shortest_line",
+    "simplify",
+    "simplify_coverage",
+    "sindex",
+    "skew",
+    "snap",
+    "symmetric_difference",
+    "total_bounds",
+    "touches",
+    "transform",
+    "translate",
+    "type",
+    "unary_union",
+    "union",
+    "union_all",
+    "voronoi_polygons",
+    "within",
+)
+
+
+def _forwarded(name):
+    """The GeoSeries property or method `name`, as one of a frame's that acts
+    on its active geometry column."""
+    attribute = inspect.getattr_static(GeoSeries, name)
+    if isinstance(attribute, property):
+
+        def get(self):
+            return getattr(self.geometry, name)
+
+        return property(get, doc=attribute.__doc__)
+
+    @functools.wraps(attribute)
+    def method(self, *args, **kwargs):
+        return getattr(self.geometry, name)(*args, **kwargs)
+
+    method.__qualname__ = f"GeoDataFrame.{name}"
+    return method
+
+
+for _name in _GEOMETRY_METHODS:
+    if hasattr(GeoSeries, _name):
+        setattr(GeoDataFrame, _name, _forwarded(_name))
+del _name

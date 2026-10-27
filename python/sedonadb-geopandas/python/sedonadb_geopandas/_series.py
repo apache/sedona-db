@@ -2410,6 +2410,18 @@ class GeoSeries(Series):
     def _other(self, other):
         """The right-hand side of a binary geometry operation, as an expression.
 
+        A `GeoDataFrame` stands for its active geometry column, as in
+        GeoPandas; see `_geometry_value` for the rest.
+        """
+        from sedonadb_geopandas._frame import GeoDataFrame
+
+        if isinstance(other, GeoDataFrame):
+            other = other.geometry
+        return self._geometry_value(other)
+
+    def _geometry_value(self, other):
+        """A geometry value to combine with this column, as an expression.
+
         A `GeoSeries` must come from this same frame (there is no row
         alignment), as for arithmetic. A geometry scalar, bare Shapely or
         wrapped in `lit()`, takes this column's spatial kind, since the engine
@@ -2797,7 +2809,7 @@ class GeoSeries(Series):
 
         if _absent(other):
             return None
-        expr = self._other(other)
+        expr = self._geometry_value(other)
         projected = None
         if isinstance(expr, (Expr, Literal)):
             projected = self._df.select(expr.alias("x")).schema

@@ -88,9 +88,16 @@ in form: `to_wkt()` writes equivalent but differently spaced WKT
 them undefined, and `x`/`y`/`z` on a non-point raise when the result is
 computed rather than when the property is read.
 
+As in GeoPandas, a `GeoDataFrame` has the geometry properties and methods it
+shares with `GeoSeries` (`gdf.area`, `gdf.buffer(1)`, `gdf.intersects(other)`,
+...), which act on its active geometry column and raise `AttributeError` on a
+frame without one. Those only a `GeoSeries` has (`x`, `y`, `from_xy()`, ...)
+are not on the frame.
+
 Binary geometry operations (`intersects`, `within`, `distance`,
 `intersection`, ...) take either a single Shapely geometry, which takes the
-column's CRS, or a `GeoSeries` from the same frame, matched row by row as with
+column's CRS, or a `GeoSeries` from the same frame (or a `GeoDataFrame`, for
+its active geometry column), matched row by row as with
 GeoPandas' `align=False`; there is no index to align on. `touches` inherits
 an engine issue with geometry collections that mix dimensions
 (apache/sedona-db#1383).
