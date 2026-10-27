@@ -39,6 +39,12 @@ def _geometries(series):
     return series.to_pandas().tolist()
 
 
+def _listed(values):
+    """The values as a list, with None for each missing one: pandas 3's
+    string dtype, as of `to_wkb(hex=True)`, marks a missing value as NaN."""
+    return [None if pd.isna(value) else value for value in values]
+
+
 @pytest.mark.parametrize("constructor", ["points_from_xy", "from_xy"])
 @pytest.mark.parametrize("with_z", [False, True])
 def test_points_from_xy_matches_geopandas(constructor, with_z):
@@ -140,7 +146,7 @@ def test_from_wkt_matches_geopandas():
 @pytest.mark.parametrize("encoding", ["bytes", "hex", "lowercase hex"])
 def test_from_wkb_matches_geopandas(encoding):
     geometries = gpd.GeoSeries.from_wkt(WKT)
-    wkb = geometries.to_wkb(hex=encoding != "bytes", flavor="iso").tolist()
+    wkb = _listed(geometries.to_wkb(hex=encoding != "bytes", flavor="iso"))
     if encoding == "lowercase hex":
         wkb = [None if value is None else value.lower() for value in wkb]
     frame = _frame(wkb=wkb)
@@ -184,7 +190,7 @@ def test_from_wkt_and_wkb_take_encoded_columns(encode, encoding):
         values = pa.array(WKT)
     else:
         wkb = expected.to_wkb(hex=encoding == "hex", flavor="iso")
-        values = pa.array(wkb.tolist())
+        values = pa.array(_listed(wkb))
     if encode == "dictionary":
         encoded = values.dictionary_encode()
     else:
@@ -246,8 +252,7 @@ def test_to_wkb_converts_every_geometry_column(hex):
     got = got.to_geopandas()
     expected = source.to_wkb(hex=hex, flavor="iso")
     for name in ("a", "geometry", "other"):
-        values = [None if v is None or v is pd.NA else v for v in got[name].tolist()]
-        assert values == expected[name].tolist(), name
+        assert _listed(got[name]) == _listed(expected[name]), name
 
 
 def test_active_geometry_name():
