@@ -264,6 +264,34 @@ def test_measures_match_geopandas(name):
         assert _same(value, reference), (name, value, reference)
 
 
+@pytest.mark.parametrize("name", ["area", "length"])
+def test_area_and_length_match_geopandas(name):
+    # A polygon's length is its perimeter, holes included, and a collection's
+    # sums its parts', polygons as well as lines, as in GeoPandas.
+    wkts = MEASURE_CORPUS + [
+        "GEOMETRYCOLLECTION (POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0)), "
+        "LINESTRING (0 0, 3 4))"
+    ]
+    gs = gpd.GeoSeries.from_wkt(wkts, crs="EPSG:3857")
+    g = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry
+    got = getattr(g, name).to_pandas().tolist()
+    for value, reference, wkt in zip(got, getattr(gs, name).tolist(), wkts):
+        assert _same(value, reference), (wkt, value, reference)
+
+
+def test_length_of_geography_polygon_is_its_perimeter():
+    gdf = sgpd.GeoDataFrame(
+        sgpd.default_context().sql(
+            "SELECT * FROM (VALUES "
+            "(ST_GeogFromWKT('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))')), "
+            "(ST_GeogFromWKT('LINESTRING (0 0, 1 0, 1 1, 0 1, 0 0)'))) AS t(g)"
+        ),
+        geometry="g",
+    )
+    polygon, ring = gdf.geometry.length.to_pandas().tolist()
+    assert ring > 0 and polygon == pytest.approx(ring, rel=1e-12)
+
+
 def test_point_coordinates_match_geopandas():
     gs = gpd.GeoSeries.from_wkt(
         ["POINT Z (1 2 3)", "POINT (4 5)", "POINT EMPTY", None], crs="EPSG:3857"

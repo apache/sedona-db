@@ -2723,8 +2723,14 @@ class GeoSeries(Series):
 
     @property
     def length(self):
-        """The length/perimeter of each geometry (`ST_Length`)."""
-        return Series(self._df, self._expr.geo.length(), "length")
+        """The length of each geometry, as in GeoPandas: a polygon's is its
+        perimeter, holes included, and a collection's sums its parts'.
+
+        `ST_Length` plus `ST_Perimeter`: the engine, as PostGIS, measures lines
+        with the one and polygons with the other.
+        """
+        length = self._expr.geo.length() + self._expr.geo.perimeter()
+        return Series(self._df, length, "length")
 
     def fillna(self, value=None):
         """Replace missing geometries with `value`, as in GeoPandas.
