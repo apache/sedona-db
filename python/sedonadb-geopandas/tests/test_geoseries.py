@@ -1161,8 +1161,10 @@ def test_cx_takes_an_x_and_a_y_range():
     _, gdf = _geoseries(CX_CORPUS)
     with pytest.raises(TypeError, match="cx"):
         gdf.geometry.cx[0:2]
-    with pytest.raises(TypeError, match="cx"):
+    with pytest.raises(TypeError, match=r"cx\(\) bounds must be a number"):
         gdf.cx[0:"2", :]
+    with pytest.raises(TypeError, match=r"cx\(\) bounds must be a number"):
+        gdf.cx[:, True:2]
     # As in GeoPandas, a step is ignored with a warning.
     with pytest.warns(UserWarning, match="step"):
         stepped = gdf.geometry.cx[0:2:1, 0:2]

@@ -1944,14 +1944,7 @@ class GeoSeries(Series):
             geometry, crs = geometry.geo.as_binary().funcs.st_geomfromwkb(), None
 
         def bound(value):
-            if value is None:
-                return None
-            number = _numeric_value(value)
-            if not isinstance(number, numbers.Real) or isinstance(number, bool):
-                raise TypeError(
-                    f"cx bounds must be numbers, got {type(value).__name__}"
-                )
-            return ctx.lit(float(number))
+            return None if value is None else ctx.lit(_number(value, "cx", "bounds"))
 
         sides, within = [], []
         for bounds, low, high in (
