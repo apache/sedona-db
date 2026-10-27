@@ -318,9 +318,9 @@ struct SedonaCConfigOptionsView {
   /// out_size_bytes is the size of the caller-provided output buffer. Unknown keys
   /// or unsupported types return ENOTSUP; malformed arguments return EINVAL. On
   /// error, out is untouched.
-  int (*get_option_object)(const struct SedonaCConfigOptionsView* self,
-                           const char* key, int object_type, void* out,
-                           size_t out_size_bytes, struct SedonaCError* err);
+  int (*get_option_object)(const struct SedonaCConfigOptionsView* self, const char* key,
+                           int object_type, void* out, size_t out_size_bytes,
+                           struct SedonaCError* err);
 
   /// \brief Reserved for future use. Must be NULL.
   void* reserved;
