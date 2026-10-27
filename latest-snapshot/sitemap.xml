@@ -617,6 +617,14 @@
          <lastmod>2026-10-27</lastmod>
     </url>
     <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/st_ispolygonccw/</loc>
+         <lastmod>2026-10-27</lastmod>
+    </url>
+    <url>
+         <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/st_ispolygoncw/</loc>
+         <lastmod>2026-10-27</lastmod>
+    </url>
+    <url>
          <loc>https://sedona.apache.org/sedonadb/latest/reference/sql/st_isring/</loc>
          <lastmod>2026-10-27</lastmod>
     </url>
