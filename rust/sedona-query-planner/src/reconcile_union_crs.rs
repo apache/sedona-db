@@ -152,9 +152,7 @@ fn reconcile_geometry_field(union_field: &Field, input_fields: &[Field]) -> Resu
 /// (preferring an authority:code when available). Returns `None` if any pair
 /// disagrees, including mixing a missing CRS with a present one.
 fn reconcile_equivalent_crs(crses: &[&Crs]) -> Option<Crs> {
-    let Some(first) = crses.first() else {
-        return None;
-    };
+    let first = crses.first()?;
     if !crses.iter().all(|crs| *crs == *first) {
         return None;
     }
