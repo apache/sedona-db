@@ -19,8 +19,8 @@ use arrow_schema::DataType;
 use datafusion_common::error::Result;
 use datafusion_expr::{ColumnarValue, Volatility};
 use geo_traits::{
-    CoordTrait, GeometryCollectionTrait, GeometryTrait, LineStringTrait, MultiLineStringTrait,
-    MultiPointTrait, MultiPolygonTrait, PointTrait, PolygonTrait,
+    CoordTrait, Dimensions, GeometryCollectionTrait, GeometryTrait, LineStringTrait,
+    MultiLineStringTrait, MultiPointTrait, MultiPolygonTrait, PointTrait, PolygonTrait,
 };
 use sedona_common::sedona_internal_err;
 use sedona_expr::{
@@ -30,9 +30,9 @@ use sedona_expr::{
 use sedona_geometry::{
     error::SedonaGeometryError,
     wkb_factory::{
-        WKB_MIN_PROBABLE_BYTES, write_wkb_coord_trait, write_wkb_multipoint_header,
-        write_wkb_point_header,
+        WKB_MIN_PROBABLE_BYTES, write_wkb_coord, write_wkb_multipoint_header, write_wkb_point_header,
     },
+    wkb_header::any_part_dimensions,
 };
 use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY},
@@ -85,12 +85,15 @@ impl SedonaScalarKernel for STPoints {
             if let Some(wkb) = maybe_wkb {
                 // We need to know the number of points before actually writing the points.
                 let n_points = count_wkb_points_recursively(wkb);
+                // Union of input header and every part's dimensions so mixed Z/M
+                // collections write a consistent MultiPoint (missing ordinates as NaN).
+                let dims = output_dimensions(wkb)?;
 
-                if write_wkb_multipoint_header(&mut builder, wkb.dim(), n_points).is_err() {
+                if write_wkb_multipoint_header(&mut builder, dims, n_points).is_err() {
                     return sedona_internal_err!("Failed to write WKB point header");
                 };
 
-                if write_wkb_points_recursively(&mut builder, wkb).is_err() {
+                if write_wkb_points_recursively(&mut builder, wkb, dims).is_err() {
                     return sedona_internal_err!("Failed to write WKB point header");
                 };
 
@@ -201,20 +204,62 @@ fn count_wkb_points_recursively<'a>(wkb: &'a wkb::reader::Wkb<'a>) -> usize {
     }
 }
 
+/// Union of the geometry's own dimensions and every nested part's dimensions.
+fn output_dimensions(wkb: &wkb::reader::Wkb<'_>) -> datafusion_common::Result<Dimensions> {
+    let has_z = matches!(wkb.dim(), Dimensions::Xyz | Dimensions::Xyzm)
+        || any_part_dimensions(wkb.buf(), |d| matches!(d, Dimensions::Xyz | Dimensions::Xyzm))
+            .map_err(|e| datafusion_common::DataFusionError::External(Box::new(e)))?;
+    let has_m = matches!(wkb.dim(), Dimensions::Xym | Dimensions::Xyzm)
+        || any_part_dimensions(wkb.buf(), |d| matches!(d, Dimensions::Xym | Dimensions::Xyzm))
+            .map_err(|e| datafusion_common::DataFusionError::External(Box::new(e)))?;
+    Ok(match (has_z, has_m) {
+        (false, false) => Dimensions::Xy,
+        (true, false) => Dimensions::Xyz,
+        (false, true) => Dimensions::Xym,
+        (true, true) => Dimensions::Xyzm,
+    })
+}
+
+/// Extract Z/M for `target`, filling a missing ordinate with NaN (GEOS / Shapely style).
 fn write_wkb_point_from_coord(
     buf: &mut impl Write,
     coord: impl CoordTrait<T = f64>,
+    target: Dimensions,
 ) -> Result<(), SedonaGeometryError> {
-    write_wkb_point_header(buf, coord.dim())?;
-    write_wkb_coord_trait(buf, &coord)
+    write_wkb_point_header(buf, target)?;
+    let src = coord.dim();
+    let x = coord.x();
+    let y = coord.y();
+    let z = match src {
+        Dimensions::Xyz | Dimensions::Xyzm => Some(coord.nth_or_panic(2)),
+        _ => None,
+    };
+    let m = match src {
+        Dimensions::Xym => Some(coord.nth_or_panic(2)),
+        Dimensions::Xyzm => Some(coord.nth_or_panic(3)),
+        _ => None,
+    };
+    match target {
+        Dimensions::Xy => write_wkb_coord(buf, (x, y)),
+        Dimensions::Xyz => write_wkb_coord(buf, (x, y, z.unwrap_or(f64::NAN))),
+        Dimensions::Xym => write_wkb_coord(buf, (x, y, m.unwrap_or(f64::NAN))),
+        Dimensions::Xyzm => write_wkb_coord(
+            buf,
+            (x, y, z.unwrap_or(f64::NAN), m.unwrap_or(f64::NAN)),
+        ),
+        Dimensions::Unknown(_) => Err(SedonaGeometryError::Invalid(
+            "Unsupported number of dimensions".to_string(),
+        )),
+    }
 }
 
 fn write_wkb_points_from_coords(
     buf: &mut impl Write,
     coords: impl Iterator<Item = impl CoordTrait<T = f64>>,
+    target: Dimensions,
 ) -> Result<(), SedonaGeometryError> {
     for coord in coords {
-        write_wkb_point_from_coord(buf, coord)?;
+        write_wkb_point_from_coord(buf, coord, target)?;
     }
     Ok(())
 }
@@ -222,49 +267,50 @@ fn write_wkb_points_from_coords(
 fn write_wkb_points_recursively<'a>(
     buf: &mut impl Write,
     wkb: &'a wkb::reader::Wkb<'a>,
+    target: Dimensions,
 ) -> Result<(), SedonaGeometryError> {
     match wkb.as_type() {
         geo_traits::GeometryType::Point(point) => {
             if let Some(coord) = point.coord() {
-                write_wkb_point_from_coord(buf, coord)?
+                write_wkb_point_from_coord(buf, coord, target)?
             }
         }
         geo_traits::GeometryType::LineString(line_string) => {
-            write_wkb_points_from_coords(buf, line_string.coords())?;
+            write_wkb_points_from_coords(buf, line_string.coords(), target)?;
         }
         geo_traits::GeometryType::Polygon(polygon) => {
             if let Some(ring) = polygon.exterior() {
-                write_wkb_points_from_coords(buf, ring.coords())?
+                write_wkb_points_from_coords(buf, ring.coords(), target)?
             }
             for ring in polygon.interiors() {
-                write_wkb_points_from_coords(buf, ring.coords())?;
+                write_wkb_points_from_coords(buf, ring.coords(), target)?;
             }
         }
         geo_traits::GeometryType::MultiPoint(multi_point) => {
             for point in multi_point.points() {
                 if let Some(coord) = point.coord() {
-                    write_wkb_point_from_coord(buf, coord)?
+                    write_wkb_point_from_coord(buf, coord, target)?
                 }
             }
         }
         geo_traits::GeometryType::MultiLineString(multi_line_string) => {
             for line_string in multi_line_string.line_strings() {
-                write_wkb_points_from_coords(buf, line_string.coords())?;
+                write_wkb_points_from_coords(buf, line_string.coords(), target)?;
             }
         }
         geo_traits::GeometryType::MultiPolygon(multi_polygon) => {
             for polygon in multi_polygon.polygons() {
                 if let Some(ring) = polygon.exterior() {
-                    write_wkb_points_from_coords(buf, ring.coords())?
+                    write_wkb_points_from_coords(buf, ring.coords(), target)?
                 }
                 for ring in polygon.interiors() {
-                    write_wkb_points_from_coords(buf, ring.coords())?;
+                    write_wkb_points_from_coords(buf, ring.coords(), target)?;
                 }
             }
         }
         geo_traits::GeometryType::GeometryCollection(geometry_collection) => {
             for geometry in geometry_collection.geometries() {
-                write_wkb_points_recursively(buf, geometry)?;
+                write_wkb_points_recursively(buf, geometry, target)?;
             }
         }
         _ => {}
@@ -414,5 +460,70 @@ mod tests {
 
         let result = tester.invoke_scalar("LINESTRING (1 2, 3 4, 5 6)").unwrap();
         tester.assert_scalar_result_equals(result, "MULTIPOINT (1 2, 3 4, 5 6)");
+    }
+
+    #[test]
+    fn mixed_dimensions_from_iso_wkb() {
+        use datafusion_common::ScalarValue;
+        use geo_traits::{GeometryTrait, MultiPointTrait, PointTrait};
+        use wkb::reader::read_wkb;
+
+        let tester = ScalarUdfTester::new(st_points_udf().into(), vec![WKB_GEOMETRY]);
+
+        // ISO WKB for GEOMETRYCOLLECTION M (POINT (1 2), POINT M (3 4 5)), as in #1513.
+        // Before the fix this errored with "Invalid buffer length for MultiPoint".
+        let wkb: Vec<u8> = vec![
+            0x01, 0xD7, 0x07, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, // GC M, 2 geoms
+            0x01, 0x01, 0x00, 0x00, 0x00, // Point XY
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF0, 0x3F, // 1.0
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, // 2.0
+            0x01, 0xD1, 0x07, 0x00, 0x00, // Point M
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x40, // 3.0
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x40, // 4.0
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x14, 0x40, // 5.0
+        ];
+        assert_eq!(wkb.len(), 59);
+        let result = tester
+            .invoke_scalar(ScalarValue::Binary(Some(wkb)))
+            .unwrap();
+        let ScalarValue::Binary(Some(out)) = result else {
+            panic!("expected binary geometry, got {result:?}");
+        };
+        let out_wkb = read_wkb(&out).expect("ST_Points output must be readable WKB");
+        assert_eq!(out_wkb.dim(), Dimensions::Xym);
+        let geo_traits::GeometryType::MultiPoint(mp) = out_wkb.as_type() else {
+            panic!("expected MultiPoint");
+        };
+        assert_eq!(mp.num_points(), 2);
+        let p0 = mp.point(0).unwrap().coord().unwrap();
+        assert_eq!((p0.x(), p0.y()), (1.0, 2.0));
+        assert!(p0.nth_or_panic(2).is_nan());
+        let p1 = mp.point(1).unwrap().coord().unwrap();
+        assert_eq!((p1.x(), p1.y(), p1.nth_or_panic(2)), (3.0, 4.0, 5.0));
+    }
+
+    #[test]
+    fn mixed_dimensions_from_wkt_preserves_m() {
+        use datafusion_common::ScalarValue;
+        use geo_traits::{GeometryTrait, MultiPointTrait, PointTrait};
+        use wkb::reader::read_wkb;
+
+        let tester = ScalarUdfTester::new(st_points_udf().into(), vec![WKB_GEOMETRY]);
+        let result = tester
+            .invoke_scalar("GEOMETRYCOLLECTION (POINT (1 2), POINT M (3 4 5))")
+            .unwrap();
+        let ScalarValue::Binary(Some(out)) = result else {
+            panic!("expected binary geometry, got {result:?}");
+        };
+        let out_wkb = read_wkb(&out).expect("ST_Points output must be readable WKB");
+        // Regardless of how WKT encodes the collection header, the MultiPoint must
+        // carry M so the second point's measure is not dropped.
+        assert_eq!(out_wkb.dim(), Dimensions::Xym);
+        let geo_traits::GeometryType::MultiPoint(mp) = out_wkb.as_type() else {
+            panic!("expected MultiPoint");
+        };
+        assert_eq!(mp.num_points(), 2);
+        let p1 = mp.point(1).unwrap().coord().unwrap();
+        assert_eq!((p1.x(), p1.y(), p1.nth_or_panic(2)), (3.0, 4.0, 5.0));
     }
 }
