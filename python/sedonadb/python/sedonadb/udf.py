@@ -439,6 +439,8 @@ def _python_values_from_arrow(array, type):
     if extension_name == "sedona.raster":
         return _python_values_from_raster(array)
     elif extension_name == "geoarrow.wkb":
+        if array.null_count == 0:
+            return iter(array)
         return (scalar if scalar.is_valid else None for scalar in array)
     else:
         return (scalar.as_py() for scalar in array)
