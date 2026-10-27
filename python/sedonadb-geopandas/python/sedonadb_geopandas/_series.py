@@ -1615,13 +1615,15 @@ def _frame_of(method, *values):
 
 def _coordinate(df, value, method, name):
     """A coordinate for a constructor, as a float64 expression: a numeric
-    Series of `df`, or a number."""
+    Series of `df` (or one of only missing values, of Arrow's null type, as an
+    all-None column loads), or a number."""
     if isinstance(value, Series):
         expr = _operand(df, value)
-        if _kind(value._dtype()) != "number":
+        dtype = value._dtype()
+        if _kind(dtype) != "number" and not pa.types.is_null(dtype):
             raise TypeError(
                 f"{method}() {name} must be a numeric Series or a number, got a "
-                f"Series of {value._dtype()}"
+                f"Series of {dtype}"
             )
         return expr.cast(pa.float64())
     return df._ctx.lit(pa.scalar(_number(value, method, name), pa.float64()))
@@ -1629,7 +1631,8 @@ def _coordinate(df, value, method, name):
 
 def _encoded_input(data, method, index, on_invalid):
     """The frame and expression of `data`, a Series of WKT or WKB, after
-    checking a constructor's arguments."""
+    checking a constructor's arguments. Any dictionary or run-end encoding is
+    cast away, as the engine's parsers take only the plain types."""
     if index is not None:
         raise NotImplementedError(f"{method}() cannot take an index: there is no index")
     if on_invalid != "raise":
@@ -1642,7 +1645,7 @@ def _encoded_input(data, method, index, on_invalid):
             f"{type(data).__name__}: load the data as a frame first "
             f"(from_geopandas, read_file, ...)"
         )
-    return data._df, data._expr
+    return data._df, data._decoded()
 
 
 def _labeled(df, geometry, crs):
@@ -2717,8 +2720,8 @@ class GeoSeries(Series):
         """Each geometry as ISO WKB bytes (`ST_AsBinary`).
 
         Equivalent to GeoPandas' `to_wkb(flavor="iso")`; GeoPandas' default
-        extended flavor encodes Z/M dimensions differently. `hex=True` is not
-        supported.
+        extended flavor encodes Z/M dimensions differently. `hex=True` gives
+        upper-case hex text, as Shapely writes it.
         """
         wkb = self._expr.geo.as_binary()
         if hex:
@@ -2763,10 +2766,12 @@ class GeoSeries(Series):
         geometries.
         """
         df, text = _encoded_input(data, "from_wkt", index, on_invalid)
-        if _kind(data._dtype()) != "string":
+        dtype = data._dtype()
+        # A column of only missing values (as an all-None column loads) is
+        # of Arrow's null type, which the parser takes as is.
+        if _kind(dtype) != "string" and not pa.types.is_null(dtype):
             raise TypeError(
-                f"from_wkt() data must be a string Series, got a Series of "
-                f"{data._dtype()}"
+                f"from_wkt() data must be a string Series, got a Series of {dtype}"
             )
         return _labeled(df, text.funcs.st_geomfromwkt(), crs)
 
@@ -2782,7 +2787,10 @@ class GeoSeries(Series):
         """
         df, wkb = _encoded_input(data, "from_wkb", index, on_invalid)
         dtype = data._dtype()
-        if _kind(dtype) == "string":
+        if pa.types.is_null(dtype):
+            # Only missing values, as an all-None column loads.
+            wkb = wkb.cast(pa.binary())
+        elif _kind(dtype) == "string":
             wkb = wkb.funcs.decode(lit("hex"))
         elif not (
             pa.types.is_binary(dtype)

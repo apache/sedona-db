@@ -21,6 +21,7 @@ import math
 
 import geopandas as gpd
 import pandas as pd
+import pyarrow as pa
 import pytest
 import shapely
 
@@ -165,6 +166,49 @@ def test_from_wkt_and_wkb_check_their_input():
         sgpd.GeoSeries.from_wkt(["POINT (1 2)"])
 
 
+def _table_frame(**columns):
+    """A frame of Arrow columns as given, without geometry."""
+    table = pa.table(columns)
+    return sgpd.GeoDataFrame(
+        sgpd.default_context().create_data_frame(table), geometry=None
+    )
+
+
+@pytest.mark.parametrize("encode", ["dictionary", "run_end"])
+@pytest.mark.parametrize("encoding", ["wkt", "bytes", "hex"])
+def test_from_wkt_and_wkb_take_encoded_columns(encode, encoding):
+    # Dictionary and run-end encoding change how values are stored, not what
+    # they are.
+    expected = gpd.GeoSeries.from_wkt(WKT)
+    if encoding == "wkt":
+        values = pa.array(WKT)
+    else:
+        wkb = expected.to_wkb(hex=encoding == "hex", flavor="iso")
+        values = pa.array(wkb.tolist())
+    if encode == "dictionary":
+        encoded = values.dictionary_encode()
+    else:
+        ends = pa.array(range(1, len(values) + 1), pa.int32())
+        encoded = pa.RunEndEncodedArray.from_arrays(ends, values)
+    frame = _table_frame(data=encoded)
+    build = sgpd.GeoSeries.from_wkt if encoding == "wkt" else sgpd.GeoSeries.from_wkb
+    _same(_geometries(build(frame["data"])), list(expected))
+
+
+def test_constructors_take_columns_of_only_missing_values():
+    # A column of only None loads with Arrow's null type.
+    frame = _table_frame(v=pa.nulls(2), x=pa.array([1.0, 2.0]))
+    for got, expected in (
+        (sgpd.GeoSeries.from_wkt(frame["v"]), gpd.GeoSeries.from_wkt([None, None])),
+        (sgpd.GeoSeries.from_wkb(frame["v"]), gpd.GeoSeries.from_wkb([None, None])),
+    ):
+        assert _geometries(got) == expected.tolist() == [None, None]
+    # A missing coordinate gives a missing point (see above).
+    assert _geometries(sgpd.points_from_xy(frame["x"], frame["v"])) == [None, None]
+    with_z = sgpd.points_from_xy(frame["x"], frame["x"], frame["v"])
+    assert _geometries(with_z) == [None, None]
+
+
 def _two_geometry_columns():
     source = gpd.GeoDataFrame(
         {
@@ -212,3 +256,15 @@ def test_active_geometry_name():
     assert gdf.set_geometry("other").active_geometry_name == "other"
     assert gdf.rename_geometry("shape").active_geometry_name == "shape"
     assert _frame(a=[1]).active_geometry_name is None
+
+
+@pytest.mark.parametrize(
+    "convert",
+    [lambda f: f.to_wkt(), lambda f: f.to_wkb(), lambda f: f.to_wkb(hex=True)],
+    ids=["to_wkt", "to_wkb", "to_wkb hex"],
+)
+def test_conversions_of_a_frame_without_columns(convert):
+    source = gpd.GeoDataFrame()
+    got = convert(sgpd.from_geopandas(source))
+    assert got.active_geometry_name is None
+    assert got.to_geopandas().shape == convert(source).shape == (0, 0)

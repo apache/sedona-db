@@ -1067,6 +1067,9 @@ class GeoDataFrame:
 
     def _encoded(self, encode):
         geometries = _geometry_column_names(self._df)
+        if not geometries:
+            # Nothing to encode, and a frame without columns cannot select none.
+            return GeoDataFrame(self._df, geometry=None)
         columns = [
             encode(GeoSeries(self._df, self._df[name], name))._expr.alias(name)
             if name in geometries
