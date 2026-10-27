@@ -21,12 +21,29 @@ description: Merges a collection of potentially connected line segments into the
 kernels:
   - returns: geometry
     args: [geometry]
+  - returns: geometry
+    args:
+    - geometry
+    - name: directed
+      type: boolean
+      description: Whether to keep the direction of the lines. Defaults to false.
   - returns: geography
     args: [geography]
+  - returns: geography
+    args:
+    - geography
+    - name: directed
+      type: boolean
+      description: Whether to keep the direction of the lines. Defaults to false.
 ---
 
-## Examples
+## Description
 
+With `directed` set to true, lines are merged only where one ends where the next
+starts, so lines running in opposite directions stay apart. Otherwise (the
+default), lines may be reversed to merge them.
+
+## Examples
 
 ```sql
 SELECT ST_LineMerge(
@@ -37,5 +54,12 @@ SELECT ST_LineMerge(
 ```sql
 SELECT ST_LineMerge(
     ST_GeogFromWKT('MULTILINESTRING ((0 0, 1 0), (1 0, 1 1))')
+);
+```
+
+```sql
+SELECT ST_LineMerge(
+    ST_GeomFromWKT('MULTILINESTRING ((0 0, 1 0), (1 1, 1 0))'),
+    true
 );
 ```
