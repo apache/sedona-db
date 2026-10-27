@@ -30,7 +30,8 @@ use sedona_expr::{
 use sedona_geometry::{
     error::SedonaGeometryError,
     wkb_factory::{
-        WKB_MIN_PROBABLE_BYTES, write_wkb_coord, write_wkb_multipoint_header, write_wkb_point_header,
+        WKB_MIN_PROBABLE_BYTES, write_wkb_coord, write_wkb_multipoint_header,
+        write_wkb_point_header,
     },
     wkb_header::any_part_dimensions,
 };
@@ -207,11 +208,15 @@ fn count_wkb_points_recursively<'a>(wkb: &'a wkb::reader::Wkb<'a>) -> usize {
 /// Union of the geometry's own dimensions and every nested part's dimensions.
 fn output_dimensions(wkb: &wkb::reader::Wkb<'_>) -> datafusion_common::Result<Dimensions> {
     let has_z = matches!(wkb.dim(), Dimensions::Xyz | Dimensions::Xyzm)
-        || any_part_dimensions(wkb.buf(), |d| matches!(d, Dimensions::Xyz | Dimensions::Xyzm))
-            .map_err(|e| datafusion_common::DataFusionError::External(Box::new(e)))?;
+        || any_part_dimensions(wkb.buf(), |d| {
+            matches!(d, Dimensions::Xyz | Dimensions::Xyzm)
+        })
+        .map_err(|e| datafusion_common::DataFusionError::External(Box::new(e)))?;
     let has_m = matches!(wkb.dim(), Dimensions::Xym | Dimensions::Xyzm)
-        || any_part_dimensions(wkb.buf(), |d| matches!(d, Dimensions::Xym | Dimensions::Xyzm))
-            .map_err(|e| datafusion_common::DataFusionError::External(Box::new(e)))?;
+        || any_part_dimensions(wkb.buf(), |d| {
+            matches!(d, Dimensions::Xym | Dimensions::Xyzm)
+        })
+        .map_err(|e| datafusion_common::DataFusionError::External(Box::new(e)))?;
     Ok(match (has_z, has_m) {
         (false, false) => Dimensions::Xy,
         (true, false) => Dimensions::Xyz,
@@ -243,10 +248,9 @@ fn write_wkb_point_from_coord(
         Dimensions::Xy => write_wkb_coord(buf, (x, y)),
         Dimensions::Xyz => write_wkb_coord(buf, (x, y, z.unwrap_or(f64::NAN))),
         Dimensions::Xym => write_wkb_coord(buf, (x, y, m.unwrap_or(f64::NAN))),
-        Dimensions::Xyzm => write_wkb_coord(
-            buf,
-            (x, y, z.unwrap_or(f64::NAN), m.unwrap_or(f64::NAN)),
-        ),
+        Dimensions::Xyzm => {
+            write_wkb_coord(buf, (x, y, z.unwrap_or(f64::NAN), m.unwrap_or(f64::NAN)))
+        }
         Dimensions::Unknown(_) => Err(SedonaGeometryError::Invalid(
             "Unsupported number of dimensions".to_string(),
         )),
