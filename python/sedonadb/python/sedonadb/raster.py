@@ -456,21 +456,17 @@ class _RasterBatch:
         return self.band_offsets[index], self.band_offsets[index + 1]
 
 
-def iter_rasters(array) -> Iterator[Optional[Raster]]:
+def _iter_rasters(array) -> Iterator[Optional[Raster]]:
     """Iterate over an Arrow raster array without re-resolving fields per row.
 
     The raster fields, flattened band fields, and BinaryView pixel buffers are
     shared by every yielded :class:`Raster` and :class:`Band` wrapper in each
     Arrow chunk. Pixel buffers remain zero-copy and are resolved lazily on the
     first pixel access. Null raster elements are yielded as ``None``.
-
-    Args:
-        array: A raster ExtensionArray, its StructArray storage, or a
-            ChunkedArray containing either representation.
     """
     if isinstance(array, pa.ChunkedArray):
         for chunk in array.chunks:
-            yield from iter_rasters(chunk)
+            yield from _iter_rasters(chunk)
         return
 
     storage = array.storage if isinstance(array, pa.ExtensionArray) else array
@@ -502,7 +498,7 @@ class RasterArray(pa.ExtensionArray):
         _check_pandas_version()
 
         # Create Raster objects that reference the underlying storage directly
-        rasters = list(iter_rasters(self))
+        rasters = list(_iter_rasters(self))
         return pd.array(rasters, dtype=object)
 
 
@@ -582,11 +578,11 @@ class RasterDtype:
         if isinstance(arr, pa.ChunkedArray):
             rasters = []
             for chunk in arr.chunks:
-                rasters.extend(iter_rasters(chunk))
+                rasters.extend(_iter_rasters(chunk))
             return pd.array(rasters, dtype=object)
 
         # Handle single array
-        rasters = list(iter_rasters(arr))
+        rasters = list(_iter_rasters(arr))
         return pd.array(rasters, dtype=object)
 
 

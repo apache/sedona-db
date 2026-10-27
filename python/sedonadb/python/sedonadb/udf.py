@@ -444,9 +444,9 @@ def _python_values_from_arrow(array, type):
 
 
 def _python_values_from_raster(array):
-    from sedonadb.raster import iter_rasters
+    from sedonadb.raster import _iter_rasters
 
-    return iter_rasters(array)
+    return _iter_rasters(array)
 
 
 BINARY: TypeMatcher = TypeMatcher("binary")
