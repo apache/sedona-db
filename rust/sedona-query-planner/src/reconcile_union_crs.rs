@@ -23,9 +23,9 @@
 //! `"OGC:CRS84"` versus its PROJJSON), so the intersection drops
 //! `ARROW:extension:metadata` and the result reads as a geometry without a CRS.
 //!
-//! This analyzer restores a reconciled CRS (preferring an authority:code form
-//! when one is available) when every Union input agrees via [`crs_equals`].
-//! See <https://github.com/apache/sedona-db/issues/1480>.
+//! This analyzer restores a reconciled CRS when every Union input agrees via
+//! [`crs_equals`] (keeping the first representation, consistent with argument
+//! CRS matching in sedona-schema). See <https://github.com/apache/sedona-db/issues/1480>.
 
 use std::sync::Arc;
 
@@ -35,7 +35,7 @@ use datafusion_common::tree_node::{Transformed, TransformedResult, TreeNode};
 use datafusion_common::{DFSchema, Result};
 use datafusion_expr::{LogicalPlan, Union};
 use datafusion_optimizer::AnalyzerRule;
-use sedona_schema::crs::{Crs, deserialize_crs};
+use sedona_schema::crs::{Crs, first_if_all_equal};
 use sedona_schema::datatypes::SedonaType;
 
 /// Analyzer rule that restores equivalent CRS metadata on Union geometry fields.
@@ -148,29 +148,16 @@ fn reconcile_geometry_field(union_field: &Field, input_fields: &[Field]) -> Resu
     ))
 }
 
-/// When every CRS is equivalent under `crs_equals`, return one representation
-/// (preferring an authority:code when available). Returns `None` if any pair
-/// disagrees, including mixing a missing CRS with a present one.
+/// When every CRS is equivalent under `crs_equals`, return the first one.
+/// Returns `None` if any pair disagrees (including mixing a missing CRS with a
+/// present one), or when every input already lacks a CRS (nothing to restore).
 fn reconcile_equivalent_crs(crses: &[&Crs]) -> Option<Crs> {
-    let first = crses.first()?;
-    if !crses.iter().all(|crs| *crs == *first) {
-        return None;
-    }
+    let out = first_if_all_equal(crses.iter().copied())?;
     // Nothing to restore when every input already lacks a CRS.
-    if first.is_none() {
+    if out.is_none() {
         return None;
     }
-
-    for crs in crses {
-        if let Some(c) = crs.as_ref()
-            && let Ok(Some(auth_code)) = c.to_authority_code()
-            && let Ok(deserialized) = deserialize_crs(&auth_code)
-        {
-            return Some(deserialized);
-        }
-    }
-
-    Some((*first).clone())
+    Some(out)
 }
 
 fn with_crs(ty: &SedonaType, crs: Crs) -> Option<SedonaType> {
@@ -274,14 +261,23 @@ mod tests {
     }
 
     #[test]
-    fn prefers_authority_code_form() {
+    fn returns_first_when_equivalent() {
         let crses = [
             deserialize_crs(OGC_CRS84_PROJJSON).unwrap(),
             deserialize_crs("OGC:CRS84").unwrap(),
         ];
         let refs: Vec<&Crs> = crses.iter().collect();
         let out = reconcile_equivalent_crs(&refs).unwrap();
-        assert_eq!(out.as_ref().unwrap().to_crs_string(), "OGC:CRS84");
-        assert_eq!(out.as_ref().unwrap().to_json(), r#""OGC:CRS84""#);
+        // Keep the first representation (PROJJSON here); do not normalize to
+        // authority:code. Values still compare equal under crs_equals.
+        assert_eq!(
+            out.as_ref().unwrap().to_json(),
+            crses[0].as_ref().unwrap().to_json()
+        );
+        assert_ne!(
+            out.as_ref().unwrap().to_json(),
+            crses[1].as_ref().unwrap().to_json()
+        );
+        assert_eq!(out, crses[1]);
     }
 }
