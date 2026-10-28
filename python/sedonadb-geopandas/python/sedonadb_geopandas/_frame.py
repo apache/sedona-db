@@ -1535,7 +1535,8 @@ class GeoDataFrame:
         """Write a Feather file, as `GeoDataFrame.to_feather` does.
 
         **EXPERIMENTAL.** Computes the frame once, into memory, and writes it
-        as an Arrow IPC file (Feather version 2), with geometry columns as WKB
+        in its order as an Arrow IPC file (Feather version 2), with geometry
+        columns as WKB
         and the "geo" metadata GeoPandas writes: each geometry column's CRS,
         geometry types and bounds, found in what is written. A geography
         column is marked with spherical edges and given no bounds, as

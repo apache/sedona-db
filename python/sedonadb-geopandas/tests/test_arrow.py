@@ -457,6 +457,23 @@ def test_to_feather_metadata_describes_what_it_writes(tmp_path):
         assert columns["g"]["geometry_types"] == [written["g"].iloc[0].geom_type]
 
 
+def test_to_feather_writes_the_rows_in_the_frame_order(tmp_path):
+    # A sorted frame of more rows than the engine computes at once is written
+    # in its order, as GeoPandas writes a frame's rows.
+    gdf = sgpd.GeoDataFrame(
+        sgpd.default_context().sql(
+            "SELECT value AS a, ST_SetSRID(ST_Point(value, value), 3857) AS geometry "
+            "FROM range(100000)"
+        )
+    ).sort_values("a", ascending=False)
+    order = list(range(99999, -1, -1))
+    assert gdf.to_arrow()["a"].to_pylist() == order
+    for i in range(10):
+        path = tmp_path / f"ours{i}.feather"
+        gdf.to_feather(path)
+        assert feather.read_table(path)["a"].to_pylist() == order
+
+
 def test_to_feather_of_geography(tmp_path):
     # Marked with spherical edges, as SedonaDB's GeoParquet writer does, and
     # without bounds, which planar ones would not be.

@@ -252,17 +252,17 @@ def to_feather(
     if compression != "uncompressed":
         codec = pa.Codec(compression, compression_level)
 
-    # Computed once, into memory, so that the metadata describes what is
-    # written, even of a query whose result changes each time.
-    frame = GeoDataFrame(frame._df.to_memtable(), frame._geometry_name)
-    geo = json.dumps(_geo_metadata(frame, schema_version)).encode("utf-8")
-    reader = frame._df.to_arrow_reader(simplify=True)
-    schema = reader.schema.with_metadata(
-        {**(reader.schema.metadata or {}), b"geo": geo}
+    # Computed once, into memory, in the frame's order: what is written, which
+    # the metadata describes, even of a query whose result changes each time.
+    table = frame._df.to_arrow_reader(simplify=True).read_all()
+    written = GeoDataFrame(
+        frame._df._ctx.create_data_frame(table), frame._geometry_name
     )
+    geo = json.dumps(_geo_metadata(written, schema_version)).encode("utf-8")
+    schema = table.schema.with_metadata({**(table.schema.metadata or {}), b"geo": geo})
     options = pa.ipc.IpcWriteOptions(compression=codec)
     with pa.ipc.new_file(path, schema, options=options) as writer:
-        for batch in reader:
+        for batch in table.to_batches():
             # SedonaDB's batches are already no larger than pyarrow's default
             # chunk size, so only a given one splits them.
             if chunksize is None:
