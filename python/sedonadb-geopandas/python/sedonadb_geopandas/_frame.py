@@ -1534,12 +1534,12 @@ class GeoDataFrame:
     ):
         """Write a Feather file, as `GeoDataFrame.to_feather` does.
 
-        **EXPERIMENTAL.** Computes the frame and writes it in batches as an
-        Arrow IPC file (Feather version 2), with geometry columns as WKB and
-        the "geo" metadata GeoPandas writes: each geometry column's CRS,
-        geometry types and bounds, which takes two more passes over the data
-        for each. A geography column is marked with spherical edges and given
-        no bounds, as SedonaDB's GeoParquet writer does.
+        **EXPERIMENTAL.** Computes the frame once, into memory, and writes it
+        as an Arrow IPC file (Feather version 2), with geometry columns as WKB
+        and the "geo" metadata GeoPandas writes: each geometry column's CRS,
+        geometry types and bounds, found in what is written. A geography
+        column is marked with spherical edges and given no bounds, as
+        SedonaDB's GeoParquet writer does.
 
         Args:
             path: The file to write.
@@ -1550,7 +1550,8 @@ class GeoDataFrame:
                 GeoPandas writes, or `"1.0.0-beta.1"`, `"1.0.0"` or `"2.0.0"`
                 (the earlier ones lay it out otherwise).
             **kwargs: `compression_level`, and `chunksize` (the most rows in
-                one record batch), as for pyarrow's `write_feather`.
+                one record batch; an integer, none if it is not positive), as
+                for pyarrow's `write_feather`.
         """
         from sedonadb_geopandas._arrow import to_feather
 

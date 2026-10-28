@@ -414,6 +414,49 @@ def test_to_feather_chunksize(tmp_path):
         assert reader.num_record_batches == 4
 
 
+@pytest.mark.parametrize("chunksize", [0, -1])
+def test_to_feather_without_a_positive_chunksize_as_pyarrow(tmp_path, chunksize):
+    # pyarrow's write_feather() then writes the rows as they come.
+    table = pa.table({"a": [1, 2]})
+    feather.write_feather(table, tmp_path / "expected.feather", chunksize=chunksize)
+    assert feather.read_table(tmp_path / "expected.feather").num_rows == 2
+    gdf = sgpd.from_geopandas(_source())
+    gdf.to_feather(tmp_path / "ours.feather", chunksize=chunksize)
+    assert feather.read_table(tmp_path / "ours.feather").num_rows == 4
+
+
+def test_to_feather_refuses_a_chunksize_that_is_no_integer(tmp_path):
+    gdf = sgpd.from_geopandas(_source())
+    for chunksize in ("2", 1.5, True):
+        with pytest.raises(TypeError, match="chunksize"):
+            gdf.to_feather(tmp_path / "ours.feather", chunksize=chunksize)
+    assert not (tmp_path / "ours.feather").exists()
+
+
+def test_to_feather_metadata_describes_what_it_writes(tmp_path):
+    # The frame is computed once, so the bounds and geometry types are those
+    # of what is written, even for a query whose result changes each time.
+    gdf = sgpd.GeoDataFrame(
+        sgpd.default_context().sql(
+            "SELECT ST_SetSRID(ST_GeomFromWKT(CASE WHEN random() < 0.5 "
+            "THEN 'POINT (0 0)' ELSE 'LINESTRING (0 0, 1 1)' END), 3857) AS g, "
+            "ST_SetSRID(ST_Point(random(), random()), 3857) AS p"
+        ),
+        geometry="p",
+    )
+    for i in range(10):
+        path = tmp_path / f"ours{i}.feather"
+        gdf.to_feather(path)
+        columns = json.loads(feather.read_table(path).schema.metadata[b"geo"])[
+            "columns"
+        ]
+        written = gpd.read_feather(path)
+        point = written["p"].iloc[0]
+        minx, miny, maxx, maxy = columns["p"]["bbox"]
+        assert minx <= point.x <= maxx and miny <= point.y <= maxy
+        assert columns["g"]["geometry_types"] == [written["g"].iloc[0].geom_type]
+
+
 def test_to_feather_of_geography(tmp_path):
     # Marked with spherical edges, as SedonaDB's GeoParquet writer does, and
     # without bounds, which planar ones would not be.

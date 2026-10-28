@@ -237,10 +237,10 @@ WKB; the `"geoarrow"` encoding is not supported for output. `from_arrow()`
 reads WKB, WKT and native GeoArrow columns into memory and, as GeoPandas does,
 makes the first geometry column the active one. Spherical edges, in a GeoArrow
 type or in a Feather file's metadata, make a geography column, where GeoPandas
-ignores them. `to_feather()` writes the frame in batches, after two passes over
-the data for each geometry column's types and bounds in the file's metadata;
-`read_feather()` reads the whole file into memory, since SedonaDB has no Arrow
-IPC reader.
+ignores them. `to_feather()` computes the frame once, into memory, and finds
+each geometry column's types and bounds for the file's metadata in what it
+writes; `read_feather()` reads the whole file into memory, since SedonaDB has
+no Arrow IPC reader.
 
 `read_parquet()`, `read_file()` and `to_parquet()` follow GeoPandas, with
 differences that come from SedonaDB's readers and GeoParquet writer:

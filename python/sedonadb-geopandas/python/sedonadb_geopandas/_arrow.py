@@ -19,6 +19,7 @@ as GeoPandas converts and writes them."""
 
 import json
 import math
+import numbers
 import warnings
 
 import pyarrow as pa
@@ -236,6 +237,14 @@ def to_feather(
         raise ValueError(
             f"schema_version must be one of: {', '.join(_SCHEMA_VERSIONS)}"
         )
+    if chunksize is not None:
+        if isinstance(chunksize, bool) or not isinstance(chunksize, numbers.Integral):
+            raise TypeError(
+                f"to_feather() chunksize must be an integer, got {chunksize!r}"
+            )
+        if chunksize <= 0:
+            # As pyarrow's write_feather(): the rows as they come.
+            chunksize = None
     # As pyarrow's write_feather(): LZ4 where pyarrow has it.
     if compression is None:
         compression = "lz4" if pa.Codec.is_available("lz4_frame") else "uncompressed"
@@ -243,6 +252,9 @@ def to_feather(
     if compression != "uncompressed":
         codec = pa.Codec(compression, compression_level)
 
+    # Computed once, into memory, so that the metadata describes what is
+    # written, even of a query whose result changes each time.
+    frame = GeoDataFrame(frame._df.to_memtable(), frame._geometry_name)
     geo = json.dumps(_geo_metadata(frame, schema_version)).encode("utf-8")
     reader = frame._df.to_arrow_reader(simplify=True)
     schema = reader.schema.with_metadata(
