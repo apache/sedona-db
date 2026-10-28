@@ -28,7 +28,10 @@ use datafusion_common::{
     cast::as_binary_array, error::Result, exec_err, DataFusionError, ScalarValue,
 };
 use datafusion_expr::{Accumulator, ColumnarValue};
-use geo_traits::Dimensions;
+use geo_traits::{
+    Dimensions, GeometryCollectionTrait, GeometryTrait, GeometryType, LineStringTrait,
+    MultiLineStringTrait, MultiPointTrait, MultiPolygonTrait, PointTrait, PolygonTrait,
+};
 use geos::Geom;
 use sedona_common::sedona_internal_err;
 use sedona_expr::{
@@ -36,7 +39,6 @@ use sedona_expr::{
     item_crs::ItemCrsSedonaAccumulator,
 };
 use sedona_geometry::{
-    is_empty::is_geometry_empty,
     types::{GeometryTypeAndDimensions, GeometryTypeAndDimensionsSet, GeometryTypeId},
     wkb_factory::{
         write_wkb_empty_point, write_wkb_geometrycollection_header, write_wkb_linestring_header,
@@ -92,6 +94,34 @@ struct UnionAccumulator {
 }
 
 const WKB_HEADER_SIZE: usize = 1 + 4 + 4;
+
+fn is_empty_recursive(geometry: &impl GeometryTrait<T = f64>) -> bool {
+    match geometry.as_type() {
+        GeometryType::Point(point) => point.coord().is_none(),
+        GeometryType::LineString(line_string) => line_string.num_coords() == 0,
+        GeometryType::Polygon(polygon) => is_polygon_empty(polygon),
+        GeometryType::MultiPoint(multi_point) => {
+            multi_point.points().all(|point| point.coord().is_none())
+        }
+        GeometryType::MultiLineString(multi_line_string) => multi_line_string
+            .line_strings()
+            .all(|line_string| line_string.num_coords() == 0),
+        GeometryType::MultiPolygon(multi_polygon) => multi_polygon
+            .polygons()
+            .all(|polygon| is_polygon_empty(&polygon)),
+        GeometryType::GeometryCollection(collection) => collection
+            .geometries()
+            .all(|member| is_empty_recursive(&member)),
+        _ => false,
+    }
+}
+
+fn is_polygon_empty(polygon: &impl PolygonTrait<T = f64>) -> bool {
+    polygon.num_interiors() == 0
+        && polygon
+            .exterior()
+            .is_none_or(|exterior| exterior.num_coords() == 0)
+}
 
 fn empty_collection() -> Vec<u8> {
     let mut item = Vec::new();
@@ -183,7 +213,7 @@ impl Accumulator for UnionAccumulator {
             if let Some(item) = maybe_item {
                 let types_and_dims = GeometryTypeAndDimensions::try_from_geom(&item)
                     .map_err(|e| DataFusionError::External(Box::new(e)))?;
-                if is_geometry_empty(&item).map_err(|e| DataFusionError::External(Box::new(e)))? {
+                if is_empty_recursive(&item) {
                     self.empty_types
                         .insert(&types_and_dims)
                         .map_err(|e| DataFusionError::External(Box::new(e)))?;
@@ -459,6 +489,24 @@ mod tests {
             (
                 vec![vec![Some("POINT ZM EMPTY"), Some("POINT ZM (1 2 3 4)")]],
                 "POINT ZM (1 2 3 4)",
+            ),
+            (
+                vec![
+                    vec![Some("GEOMETRYCOLLECTION Z (POINT Z EMPTY)")],
+                    vec![Some("POINT (1 2)")],
+                ],
+                "POINT (1 2)",
+            ),
+            (
+                vec![vec![
+                    Some("GEOMETRYCOLLECTION (GEOMETRYCOLLECTION (POINT EMPTY))"),
+                    Some("POINT Z (1 2 3)"),
+                ]],
+                "POINT Z (1 2 3)",
+            ),
+            (
+                vec![vec![Some("GEOMETRYCOLLECTION Z (POINT Z EMPTY)")]],
+                "GEOMETRYCOLLECTION EMPTY",
             ),
         ] {
             assert_union_equals(&tester.aggregate_wkt(batches).unwrap(), Some(expected));

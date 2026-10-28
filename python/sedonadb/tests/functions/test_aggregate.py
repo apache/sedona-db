@@ -511,6 +511,15 @@ def test_st_union_agg_mixed_dimensions(eng, geoms):
         (["LINESTRING ZM EMPTY", "POINT ZM EMPTY"], "LINESTRING EMPTY"),
         (["MULTIPOINT EMPTY", "LINESTRING EMPTY"], "MULTIPOINT EMPTY"),
         (["POINT EMPTY", "GEOMETRYCOLLECTION EMPTY"], "GEOMETRYCOLLECTION EMPTY"),
+        (["GEOMETRYCOLLECTION Z (POINT Z EMPTY)"], "GEOMETRYCOLLECTION EMPTY"),
+        (["GEOMETRYCOLLECTION Z (POINT Z EMPTY)", "POINT (1 2)"], "POINT (1 2)"),
+        (
+            [
+                "GEOMETRYCOLLECTION (GEOMETRYCOLLECTION (POINT EMPTY))",
+                "POINT Z (1 2 3)",
+            ],
+            "POINT Z (1 2 3)",
+        ),
     ],
 )
 def test_st_union_agg_empty(eng, geoms, expected):
