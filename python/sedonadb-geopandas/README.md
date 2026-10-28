@@ -121,6 +121,15 @@ computed for a geometry collection whose members differ in Z or M, an engine
 issue in `ST_Points` (apache/sedona-db#1513). `to_crs()` labels the result with the CRS as given, as
 GeoPandas does, rather than with the engine's canonical form of it.
 
+`clip()` (of a frame or a series, and `sedonadb_geopandas.clip()`) keeps the
+rows whose geometry intersects the mask and intersects them with it, as in
+GeoPandas, lazily but for a frame or series mask, whose union is computed
+first. A rectangle `(minx, miny, maxx, maxy)` clips as the same box as a
+polygon: what only touches its edge is kept, where GeoPandas clips by a
+rectangle with GEOS's `clip_by_rect`, which leaves it out. The rows keep their
+order, whatever `sort` is. `keep_geom_type=True` computes the geometry types of
+the frame and of the result.
+
 The numeric parameters of geometry methods (`segmentize()`, `set_precision()`,
 `concave_hull()`, `force_3d()`, `snap()`, `get_geometry()`) take a number or a
 numeric `Series` of the same frame, applied row by row. `segmentize()` only

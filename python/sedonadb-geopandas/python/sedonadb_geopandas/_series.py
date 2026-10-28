@@ -1965,6 +1965,15 @@ class GeoSeries(Series):
             columns.append(point.m().alias("m"))
         return GeoDataFrame(vertices.select(*columns), geometry=None)
 
+    def clip(self, mask, keep_geom_type=False, sort=False):
+        """The geometries that intersect `mask`, clipped to it, as
+        `GeoSeries.clip` (`geopandas.clip`) clips them, rather than pandas'
+        clipping of values to a range. The result belongs to a new frame of
+        this column alone; see `GeoDataFrame.clip`."""
+        from sedonadb_geopandas._clip import clip
+
+        return clip(self, mask, keep_geom_type, sort)
+
     @property
     def cx(self):
         """Coordinate indexer: `cx[xmin:xmax, ymin:ymax]` keeps the geometries

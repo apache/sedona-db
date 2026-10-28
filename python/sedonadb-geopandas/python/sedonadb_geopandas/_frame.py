@@ -886,6 +886,30 @@ class GeoDataFrame:
         new_df = self._df.mutate(transformed._expr.alias(self._geometry_name))
         return GeoDataFrame(new_df, self._geometry_name)
 
+    def clip(self, mask, keep_geom_type=False, sort=False):
+        """The rows whose active geometry intersects `mask`, clipped to it, as
+        `GeoDataFrame.clip` (`geopandas.clip`) clips them.
+
+        **EXPERIMENTAL.** Lazy, but for a frame or series `mask`, whose
+        geometries are unioned and computed first. Each geometry is intersected
+        with the mask, and `keep_geom_type=True` keeps only the kind of geometry
+        the frame has, as in GeoPandas (which computes the geometry types of the
+        frame and of the result).
+
+        Args:
+            mask: A frame or series (the union of its geometries), a Shapely
+                Polygon or MultiPolygon, or a rectangle `(minx, miny, maxx,
+                maxy)`. A rectangle clips as the same box as a polygon: what
+                only touches its edge is kept, where GeoPandas clips by a
+                rectangle with GEOS's faster `clip_by_rect`, which leaves it
+                out.
+            keep_geom_type: Keep only polygons of polygons, or lines of lines.
+            sort: Taken for GeoPandas' signature: the rows keep their order.
+        """
+        from sedonadb_geopandas._clip import clip
+
+        return clip(self, mask, keep_geom_type, sort)
+
     @property
     def cx(self):
         """Coordinate indexer: `cx[xmin:xmax, ymin:ymax]` keeps the rows whose
