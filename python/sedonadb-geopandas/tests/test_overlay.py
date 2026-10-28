@@ -494,6 +494,41 @@ def test_overlay_of_polygons_of_three_dimensions_in_any_order(order):
     assert {m for x, y, z, m in vertices if (x, y) == (4, 1)} == {None}
 
 
+_MEASURED = [
+    "POLYGON M ((3 3 9, 5 3 9, 5 5 9, 3 5 9, 3 3 9))",
+    "POLYGON ZM ((3 0 5 21, 5 0 5 21, 5 1 5 21, 3 1 5 21, 3 0 5 21))",
+]
+
+
+def _measured(order):
+    """A measured and an XYZM polygon, in `order`."""
+    return gpd.GeoDataFrame(
+        {"df2": [i + 1 for i in order]},
+        geometry=gpd.GeoSeries.from_wkt([_MEASURED[i] for i in order]),
+        crs=3857,
+    )
+
+
+@pytest.mark.parametrize("order", [(0, 1), (1, 0)])
+def test_overlay_takes_away_measured_polygons_before_xyzm_ones(order):
+    # The measured polygon is taken away first, in either order, and leaves
+    # its M (9) at (4 3) on the square's edge. So at (4 1), where that edge
+    # and the XYZM polygon's cross, the new vertex takes an M (15) from both,
+    # as GeoPandas gives where it takes away the measured polygon first.
+    df1 = _squares("df1", [1], [(0, 0, 4, 4)])
+    ours = sgpd.overlay(
+        sgpd.from_geopandas(df1),
+        sgpd.from_geopandas(_measured(order)),
+        how="difference",
+    )
+    _assert_same(ours, gpd.overlay(df1, _measured(order), how="difference"))
+    expected = gpd.overlay(df1, _measured([0, 1]), how="difference")
+    coordinates = _coordinates(ours.to_geopandas())
+    assert coordinates == _coordinates(expected)
+    ((_, _, vertices),) = coordinates
+    assert {m for x, y, z, m in vertices if (x, y) == (4, 1)} == {15}
+
+
 @pytest.mark.parametrize("how", HOWS)
 def test_overlay_takes_away_polygons_made_valid_as_geopandas(how):
     # Making the measured bowtie valid drops its M, as in GeoPandas: it is

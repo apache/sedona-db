@@ -181,10 +181,12 @@ def _difference(df1, df2, dimensions2):
     of one dimension only, so where those of `df2` (of `dimensions2`)
     differ, those of each dimension are collected apart and taken away in
     turn, as GeoPandas takes them away one by one: the result has the Z and
-    M of those it intersects. Those without M are taken away first, so that
-    a new vertex takes its M only from the edges that cross there, never
-    from one another geometry left on an edge; GeoPandas takes them away in
-    their rows' order, which decides that M.
+    M of those it intersects. A new vertex cut into an edge can take an M
+    that one taken away earlier left on it, so the order decides its M;
+    GeoPandas takes them away in their rows' order. Here it is XY, XYZ, XYM,
+    then XYZM, whatever the rows' order: a vertex cut by a geometry without M
+    takes no M another left, but one cut by an XYZM geometry can take an M
+    an XYM one left.
     """
     name1, name2 = df1.active_geometry_name, df2.active_geometry_name
     df = df1._df

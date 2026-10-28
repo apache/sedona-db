@@ -137,10 +137,12 @@ whose result changes each time), and the result is lazy over them. Pairs of rows
 are matched by an indexed spatial join, and a difference takes away the union
 of the geometries a row intersects, so its geometries are those of GeoPandas up
 to where their rings start. GeoPandas takes them away one at a time, in their
-rows' order, which decides the M it gives a new vertex where their edges cross;
-here those of each dimension are taken away together, those without M first, so
-that such a vertex takes its M only from the edges that cross there, in any row
-order (as GeoPandas gives where it takes away those without M first). The rows
+rows' order, and a new vertex where their edges cross can take an M that one
+taken away earlier left on an edge, so that order decides its M. Here those of
+each dimension are taken away together, in one order whatever the rows' (2D, Z,
+M, then ZM, as GeoPandas does where its rows come in that order): a vertex cut
+by a geometry without M takes no M another left, but one cut by a ZM geometry
+can take an M that an M geometry left. The rows
 come in no particular order. Both frames are in one CRS, as for
 `sjoin()` (GeoPandas warns and overlays the coordinates as they are), and hold
 geometry, not geography. `keep_geom_type=None` drops what `True` does without
