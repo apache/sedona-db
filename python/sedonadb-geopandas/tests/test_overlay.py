@@ -315,15 +315,143 @@ def test_overlay_with_nothing_in_common():
             assert ours.columns == list(expected.columns)
 
 
-def test_overlay_is_lazy():
-    # Nothing but the geometry types (and the validity of polygons) of the
-    # frames is computed until the result is.
-    df1, df2 = _polygons()
-    gdf = sgpd.from_geopandas(df1)
+def test_overlay_computes_each_frame_once():
+    # Both frames are computed once, into memory, so the parts of a result
+    # agree, even for a query whose result changes each time: one polygon's
+    # pieces carry one id.
+    gdf1 = sgpd.GeoDataFrame(
+        sgpd.default_context().sql(
+            "SELECT uuid() AS feature_id, "
+            "ST_SetSRID(ST_GeomFromWKT('POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))'), 3857) "
+            "AS geometry"
+        ),
+        geometry="geometry",
+    )
+    _, df2 = _polygons()
+    for how in ("identity", "union"):
+        result = sgpd.overlay(gdf1, sgpd.from_geopandas(df2), how=how).to_geopandas()
+        ids = result["feature_id"].dropna().tolist()
+        assert len(ids) == 2 and len(set(ids)) == 1
+    # Which means a frame that cannot be computed fails at once.
+    gdf = sgpd.from_geopandas(_polygons()[0])
     failing = gdf.assign(df1=gdf["shared"].astype("int64"))
-    result = sgpd.overlay(failing, sgpd.from_geopandas(df2), how="union")
     with pytest.raises(Exception):
-        result.to_geopandas()
+        sgpd.overlay(failing, sgpd.from_geopandas(df2), how="union")
+
+
+def _coordinates(frame):
+    """The set of coordinates (with Z) of each row's geometry, rows in the
+    order `_sorted()` gives them: where its rings start aside."""
+    # A missing Z (NaN) as None, which equals another.
+    return [
+        {
+            tuple(None if v != v else v for v in c)
+            for c in shapely.get_coordinates(g, include_z=True).round(9).tolist()
+        }
+        for g in _sorted(frame).geometry
+    ]
+
+
+@pytest.mark.parametrize("how", HOWS)
+@pytest.mark.parametrize(
+    "polygon",
+    [
+        "POLYGON Z ((3 3 5, 5 3 5, 5 5 5, 3 5 5, 3 3 5))",
+        "POLYGON ZM ((3 3 5 1, 5 3 5 1, 5 5 5 1, 3 5 5 1, 3 3 5 1))",
+    ],
+    ids=["Z", "ZM"],
+)
+def test_overlay_of_mixed_dimensions_as_geopandas(how, polygon):
+    # A polygon that intersects a 2D and a 3D one: its difference takes the
+    # elevation of the 3D one, as in GeoPandas.
+    df1 = _squares("df1", [1], [(0, 0, 4, 4)])
+    df2 = gpd.GeoDataFrame(
+        {"df2": [1, 2]},
+        geometry=gpd.GeoSeries.from_wkt(
+            ["POLYGON ((1 1, 2 1, 2 2, 1 2, 1 1))", polygon]
+        ),
+        crs=3857,
+    )
+    for first, second in ((df1, df2), (df2, df1)):
+        expected = gpd.overlay(first, second, how=how)
+        ours = sgpd.overlay(
+            sgpd.from_geopandas(first), sgpd.from_geopandas(second), how=how
+        )
+        _assert_same(ours, expected)
+        assert _coordinates(ours.to_geopandas()) == _coordinates(expected)
+
+
+def test_overlay_keeps_the_m_of_measured_polygons_as_geopandas():
+    # Polygons of one dimension are taken away as they are: their M, the
+    # holes' and the notch's (7 and 9), is in the difference, as in GeoPandas.
+    df1 = gpd.GeoDataFrame(
+        {"df1": [1]},
+        geometry=gpd.GeoSeries.from_wkt(
+            ["POLYGON M ((0 0 1, 4 0 1, 4 4 1, 0 4 1, 0 0 1))"]
+        ),
+        crs=3857,
+    )
+    df2 = gpd.GeoDataFrame(
+        {"df2": [1, 2]},
+        geometry=gpd.GeoSeries.from_wkt(
+            [
+                "POLYGON M ((1 1 7, 2 1 7, 2 2 7, 1 2 7, 1 1 7))",
+                "POLYGON M ((3 3 9, 5 3 9, 5 5 9, 3 5 9, 3 3 9))",
+            ]
+        ),
+        crs=3857,
+    )
+    expected = gpd.overlay(df1, df2, how="difference")
+    ours = sgpd.overlay(
+        sgpd.from_geopandas(df1), sgpd.from_geopandas(df2), how="difference"
+    )
+    _assert_same(ours, expected)
+
+    def measures(frame):
+        coordinates = shapely.get_coordinates(frame.geometry, include_m=True)
+        return {m for m in coordinates[:, -1].tolist() if m == m}
+
+    assert measures(ours.to_geopandas()) == measures(expected) == {1, 5, 7, 9}
+
+
+@pytest.mark.parametrize("how", HOWS)
+def test_overlay_of_2d_and_measured_polygons_as_geopandas(how):
+    df1 = _squares("df1", [1], [(0, 0, 4, 4)])
+    df2 = gpd.GeoDataFrame(
+        {"df2": [1, 2]},
+        geometry=gpd.GeoSeries.from_wkt(
+            [
+                "POLYGON ((1 1, 2 1, 2 2, 1 2, 1 1))",
+                "POLYGON M ((3 3 5, 5 3 5, 5 5 5, 3 5 5, 3 3 5))",
+            ]
+        ),
+        crs=3857,
+    )
+    expected = gpd.overlay(df1, df2, how=how)
+    ours = sgpd.overlay(sgpd.from_geopandas(df1), sgpd.from_geopandas(df2), how=how)
+    _assert_same(ours, expected)
+
+
+def _named(prefix, boxes, ordinary=True):
+    """A frame whose active geometry is "shape", with an ordinary column named
+    "geometry"."""
+    columns = {prefix: list(range(len(boxes)))}
+    if ordinary:
+        columns["geometry"] = [f"{prefix}{i}" for i in range(len(boxes))]
+    columns["shape"] = gpd.GeoSeries([shapely.box(*box) for box in boxes])
+    return gpd.GeoDataFrame(columns, geometry="shape", crs=3857)
+
+
+@pytest.mark.parametrize("how", HOWS)
+@pytest.mark.parametrize("which", ["df1", "df2", "both"])
+def test_overlay_with_a_column_named_geometry_as_geopandas(how, which):
+    # The geometry column GeoPandas names "geometry" takes the place of an
+    # ordinary one of that name, or leaves it out, as GeoPandas does.
+    df1 = _named("a", [(0, 0, 2, 2), (5, 5, 6, 6)], ordinary=which != "df2")
+    df2 = _named("b", [(1, 1, 3, 3)], ordinary=which != "df1")
+    expected = gpd.overlay(df1, df2, how=how)
+    ours = sgpd.overlay(sgpd.from_geopandas(df1), sgpd.from_geopandas(df2), how=how)
+    _assert_same(ours, expected)
 
 
 def test_overlay_validation_as_geopandas():

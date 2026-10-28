@@ -914,8 +914,9 @@ class GeoDataFrame:
         """This frame and `right` overlaid, as `GeoDataFrame.overlay`
         (`geopandas.overlay`) overlays them.
 
-        **EXPERIMENTAL.** Lazy, but for each frame's geometry types (and the
-        validity of a frame of polygons), which are computed first. As in
+        **EXPERIMENTAL.** Each frame is computed once, into memory, so that
+        every part of the result comes from one result of it (even of a query
+        whose result changes each time); the result is lazy over them. As in
         GeoPandas:
 
         - `how="intersection"`: each pair of rows whose geometries intersect,

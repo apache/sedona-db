@@ -131,11 +131,13 @@ order, whatever `sort` is. `keep_geom_type=True` computes the geometry types of
 the frame and of the result.
 
 `overlay()` (of a frame, and `sedonadb_geopandas.overlay()`) gives what
-GeoPandas gives for each `how`, lazily but for each frame's geometry types (and
-the validity of a frame of polygons). Pairs of rows are matched by an indexed
-spatial join, and a difference takes away the union of the geometries a row
-intersects, so its geometries are those of GeoPandas up to where their rings
-start. The rows come in no particular order. Both frames are in one CRS, as for
+GeoPandas gives for each `how`. Each frame is computed once, into memory, so
+that every part of the result comes from one result of it (even of a query
+whose result changes each time), and the result is lazy over them. Pairs of rows
+are matched by an indexed spatial join, and a difference takes away the union
+of the geometries a row intersects, so its geometries are those of GeoPandas up
+to where their rings start (geometries of 2D and 3D taken away together give the
+3D ones' elevation, as in GeoPandas). The rows come in no particular order. Both frames are in one CRS, as for
 `sjoin()` (GeoPandas warns and overlays the coordinates as they are), and hold
 geometry, not geography. `keep_geom_type=None` drops what `True` does without
 counting it for GeoPandas' warning, which would compute the result.
