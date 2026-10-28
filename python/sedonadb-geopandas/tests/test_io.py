@@ -21,6 +21,7 @@ import math
 import re
 
 import geopandas as gpd
+import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -701,3 +702,78 @@ def test_from_file_reads_as_read_file(tmp_path):
     assert_geoseries_equal(
         series.to_geopandas(), gpd.GeoSeries.from_file(path, layer="things")
     )
+
+
+@pytest.mark.parametrize("extension", ["gpkg", "geojson", "fgb"])
+def test_to_file_writes_unsigned_integers_as_geopandas(tmp_path, extension):
+    # GDAL writes an unsigned 64-bit integer as a real, which cannot hold
+    # 2**53 + 1: it is written as a signed one, as GeoPandas writes it.
+    source = gpd.GeoDataFrame(
+        {
+            "u64": np.array([2**53 + 1, 2**63 - 1], dtype="uint64"),
+            "u32": np.array([2**32 - 1, 0], dtype="uint32"),
+            "u8": np.array([255, 0], dtype="uint8"),
+        },
+        geometry=gpd.points_from_xy([0, 1], [0, 1]),
+        crs=4326,
+    )
+    source.to_file(tmp_path / f"expected.{extension}")
+    sgpd.from_geopandas(source).to_file(tmp_path / f"ours.{extension}")
+    _assert_same_layer(
+        tmp_path / f"ours.{extension}", tmp_path / f"expected.{extension}"
+    )
+    values = pyogrio.read_arrow(tmp_path / f"ours.{extension}")[1]
+    assert sorted(values.column("u64").to_pylist()) == [2**53 + 1, 2**63 - 1]
+
+
+def test_to_file_refuses_unsigned_integers_too_large_as_geopandas(tmp_path):
+    source = gpd.GeoDataFrame(
+        {"u64": np.array([1, 2**63], dtype="uint64")},
+        geometry=gpd.points_from_xy([0, 1], [0, 1]),
+        crs=4326,
+    )
+    with pytest.raises(OverflowError):
+        source.to_file(tmp_path / "expected.gpkg")
+    with pytest.raises(OverflowError, match="'u64'"):
+        sgpd.from_geopandas(source).to_file(tmp_path / "ours.gpkg")
+    assert not (tmp_path / "ours.gpkg").exists()
+
+
+@pytest.mark.parametrize("extension", ["gpkg", "geojson", "fgb"])
+def test_to_file_writes_time_zones_as_geopandas(tmp_path, extension):
+    # GDAL keeps UTC and a fixed offset, but would write the time in a named
+    # zone as a time without one: it is written in UTC, as GeoPandas writes
+    # it, the same instant.
+    times = pd.to_datetime(["2020-01-01 12:34:56", "2020-07-01 12:00:00"])
+    source = gpd.GeoDataFrame(
+        {
+            "named": times.tz_localize("America/New_York"),
+            "offset": times.tz_localize("-05:00"),
+            "utc": times.tz_localize("UTC"),
+            "naive": times,
+        },
+        geometry=gpd.points_from_xy([0, 1], [0, 1]),
+        crs=4326,
+    )
+    source.to_file(tmp_path / f"expected.{extension}")
+    sgpd.from_geopandas(source).to_file(tmp_path / f"ours.{extension}")
+    _assert_same_layer(
+        tmp_path / f"ours.{extension}", tmp_path / f"expected.{extension}"
+    )
+    written = pyogrio.read_dataframe(tmp_path / f"ours.{extension}")
+    assert sorted(written["named"]) == sorted(source["named"])
+
+
+def test_to_file_writes_what_it_inferred_the_geometry_type_of(tmp_path):
+    # The frame is computed once, so the layer's geometry type is that of
+    # what is written, even for a query whose result changes each time.
+    query = (
+        "SELECT ST_SetSRID(ST_GeomFromWKT(CASE WHEN random() < 0.5 "
+        "THEN 'POINT (0 0)' ELSE 'LINESTRING (0 0, 1 1)' END), 4326) AS geometry"
+    )
+    for i in range(20):
+        gdf = sgpd.GeoDataFrame(sgpd.default_context().sql(query), geometry="geometry")
+        path = tmp_path / f"ours{i}.gpkg"
+        gdf.to_file(path)
+        written = pyogrio.read_dataframe(path).geom_type.tolist()
+        assert pyogrio.read_info(path)["geometry_type"] == written[0]

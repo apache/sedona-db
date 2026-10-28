@@ -20,6 +20,7 @@ GDAL/OGR files from one."""
 import glob
 import json
 import os
+import re
 import struct
 import warnings
 from pathlib import Path
@@ -59,6 +60,9 @@ _EXTENSION_TO_DRIVER = {
     ".dgn": "DGN",
     ".fgb": "FlatGeobuf",
 }
+
+# A time zone that is a fixed offset from UTC, as Arrow spells one.
+_FIXED_OFFSET = re.compile(r"[+-]\d\d:\d\d")
 
 # The single types, as `ST_GeometryType` names them, and the hex of the
 # little-endian ISO WKB header of a one-part Multi* for each, by `ST_ZmFlag`
@@ -340,6 +344,20 @@ def _promoted(df, expr):
     return wkb.funcs.nullif(lit("")).funcs.decode(lit("hex")).funcs.st_geomfromwkb()
 
 
+def _check_unsigned(df, names):
+    """Refuse unsigned 64-bit integers no signed one holds, as GeoPandas
+    refuses them, before anything is written. Computes their maximum."""
+    if not names:
+        return
+    largest = df.agg(*[df[name].funcs.max().alias(name) for name in names])
+    for name, value in largest.to_arrow_table().to_pylist()[0].items():
+        if value is not None and value > 2**63 - 1:
+            raise OverflowError(
+                f"to_file() cannot write {name!r}: it holds {value}, larger than "
+                f"the largest integer GDAL writes ({2**63 - 1})"
+            )
+
+
 def _ogr_crs(crs):
     """`crs` as pyogrio's `write_dataframe` gives it to GDAL: its EPSG code,
     else its WKT1."""
@@ -421,7 +439,19 @@ def to_file(
     nan_as_null = kwargs.pop("nan_as_null", True)
     kwargs.pop("use_arrow", None)
     append = bool(kwargs.pop("append", False)) or mode == "a"
-    if geometry is not None and (geometry_type is None or promote_to_multi is None):
+
+    inferring = geometry is not None and (
+        geometry_type is None or promote_to_multi is None
+    )
+    unsigned = [f.name for f in pa.schema(df.schema) if pa.types.is_uint64(f.type)]
+    if inferring or unsigned:
+        # Computed once, into memory, so that what is inferred and checked is
+        # what is written, even of a query whose result changes each time.
+        df = df.to_memtable()
+        if geometry is not None:
+            geometry = GeoSeries(df, df[name], name)
+    _check_unsigned(df, unsigned)
+    if inferring:
         inferred, promote_to_multi = _layer_geometry_type(
             geometry, driver, promote_to_multi
         )
@@ -439,6 +469,17 @@ def to_file(
         elif pa.types.is_null(field.type):
             # GDAL takes no column of the null type; pyogrio writes strings.
             expr = expr.cast(pa.string())
+        elif pa.types.is_uint64(field.type):
+            # GDAL writes these as reals, which cannot hold every one: they
+            # are written as signed ones, as GeoPandas writes them, and all
+            # fit (see _check_unsigned()).
+            expr = expr.cast(pa.int64())
+        elif pa.types.is_timestamp(field.type) and field.type.tz is not None:
+            # GDAL keeps a fixed offset (and UTC), but writes a time in a named
+            # zone as one in no zone: that is written in UTC, as GeoPandas
+            # writes it, the same instant.
+            if not _FIXED_OFFSET.fullmatch(field.type.tz):
+                expr = expr.cast(pa.timestamp(field.type.unit, "UTC"))
         columns.append(expr.alias(field.name))
     # As SedonaDB's to_pyogrio() writes, but without a geometry type for a
     # frame without geometry, which to_pyogrio() would give a geometry column.

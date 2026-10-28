@@ -259,9 +259,14 @@ differences that come from SedonaDB's readers and GeoParquet writer:
 the file's extension, the layer's geometry type from the data (with single
 geometries promoted to multi for GeoPackage and FlatGeobuf, as pyogrio does),
 NaN is written as null, and pyogrio's options (`layer`, `promote_to_multi`,
-creation options, ...) are taken. The frame is written in batches through
-pyogrio's Arrow writer, after one more pass over the data to find the
-geometry types (none if both `geometry_type` and `promote_to_multi` are given).
+creation options, ...) are taken; unsigned 64-bit integers are written as
+signed ones (one too large raises), and a time in a named time zone in UTC,
+as GeoPandas writes them. The frame is written through pyogrio's Arrow writer.
+Finding the layer's geometry types, or checking unsigned 64-bit integers,
+computes the frame once into memory first, so that what is written is what was
+found even for a query whose result changes each time (`random()`); with both
+`geometry_type` and `promote_to_multi` given, it is computed as it is written,
+in batches.
 A file takes one geometry column, as in GeoPandas, and not a geography column,
 since GDAL/OGR formats have no spherical edges. A CRS without an EPSG code is
 written as WKT made from the frame's PROJJSON, which can name fewer authority

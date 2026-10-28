@@ -1586,14 +1586,17 @@ class GeoDataFrame:
     def to_file(self, filename, driver=None, schema=None, index=None, **kwargs):
         """Write a GDAL/OGR file, as `GeoDataFrame.to_file` does with pyogrio.
 
-        **EXPERIMENTAL.** Computes the frame and writes it in batches with
-        pyogrio's Arrow writer. As in GeoPandas, the driver is found from
-        the file's extension (a path without a known one is written as a
-        shapefile folder), the layer's geometry type from the data (with
-        single geometries promoted to multi where the driver cannot mix them,
-        for GeoPackage and FlatGeobuf), and NaN is written as null. Finding
-        the geometry type computes the frame once more, unless both
-        `geometry_type` and `promote_to_multi` are given.
+        **EXPERIMENTAL.** Writes the frame with pyogrio's Arrow writer. As in
+        GeoPandas, the driver is found from the file's extension (a path
+        without a known one is written as a shapefile folder), the layer's
+        geometry type from the data (with single geometries promoted to multi
+        where the driver cannot mix them, for GeoPackage and FlatGeobuf), NaN
+        is written as null, unsigned 64-bit integers as signed ones (one too
+        large raises), and a time in a named time zone in UTC. Finding the
+        geometry type, or checking unsigned 64-bit integers, computes the
+        frame once into memory, so that what is written is what was found;
+        otherwise (both `geometry_type` and `promote_to_multi` given) it is
+        computed as it is written, in batches.
 
         Args:
             filename: The path, or a `BytesIO` with an explicit `driver`.
