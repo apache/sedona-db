@@ -1486,6 +1486,76 @@ class GeoDataFrame:
     # Alias: results carry geometry, so this returns a GeoDataFrame too.
     to_pandas = to_geopandas
 
+    def to_arrow(
+        self, *, index=None, geometry_encoding="WKB", interleaved=True, include_z=None
+    ):
+        """Compute the frame as a pyarrow Table, as `GeoDataFrame.to_arrow` does.
+
+        **EXPERIMENTAL.** Geometry columns are GeoArrow WKB, with their CRS
+        (and spherical edges, for geography), as GeoPandas encodes them by
+        default. GeoPandas gives an object with `__arrow_c_stream__`; a Table
+        is one.
+
+        Args:
+            index: There is no index to write; only None or False is accepted.
+            geometry_encoding: Only `"WKB"` is supported.
+            interleaved, include_z: For the `"geoarrow"` encoding only, so
+                they do nothing, as in GeoPandas with WKB.
+        """
+        from sedonadb_geopandas._arrow import to_arrow
+
+        return to_arrow(self, index, geometry_encoding)
+
+    @classmethod
+    def from_arrow(cls, table, geometry=None, to_pandas_kwargs=None, *, context=None):
+        """A frame of Arrow data, as `GeoDataFrame.from_arrow` reads it.
+
+        **EXPERIMENTAL.** `table` is anything with `__arrow_c_stream__` or
+        `__arrow_c_array__` (a pyarrow Table, a RecordBatchReader, ...), and
+        its geometry columns are those with a GeoArrow extension type: WKB,
+        WKT, or a native encoding, which are converted to WKB. Spherical
+        edges make a column geography, where GeoPandas ignores them. As in
+        GeoPandas, the first geometry column is the active one unless
+        `geometry` names another. The data is held in memory.
+
+        Args:
+            table: The Arrow data.
+            geometry: The active geometry column.
+            to_pandas_kwargs: Not supported: nothing is converted to pandas.
+            context: An optional SedonaDB context. Defaults to a shared,
+                lazily-created one.
+        """
+        from sedonadb_geopandas._arrow import from_arrow
+
+        return from_arrow(table, geometry, to_pandas_kwargs, context)
+
+    def to_feather(
+        self, path, index=None, compression=None, schema_version=None, **kwargs
+    ):
+        """Write a Feather file, as `GeoDataFrame.to_feather` does.
+
+        **EXPERIMENTAL.** Computes the frame and writes it in batches as an
+        Arrow IPC file (Feather version 2), with geometry columns as WKB and
+        the "geo" metadata GeoPandas writes: each geometry column's CRS,
+        geometry types and bounds, which takes two more passes over the data
+        for each. A geography column is marked with spherical edges and given
+        no bounds, as SedonaDB's GeoParquet writer does.
+
+        Args:
+            path: The file to write.
+            index: There is no index to write; only None or False is accepted.
+            compression: `"lz4"`, `"zstd"` or `"uncompressed"`; LZ4 by
+                default, as with pyarrow's `write_feather`.
+            schema_version: The metadata version: `"1.1.0"` by default, as
+                GeoPandas writes, or `"1.0.0-beta.1"`, `"1.0.0"` or `"2.0.0"`
+                (the earlier ones lay it out otherwise).
+            **kwargs: `compression_level`, and `chunksize` (the most rows in
+                one record batch), as for pyarrow's `write_feather`.
+        """
+        from sedonadb_geopandas._arrow import to_feather
+
+        to_feather(self, path, index, compression, schema_version, **kwargs)
+
     def to_parquet(
         self,
         path,
