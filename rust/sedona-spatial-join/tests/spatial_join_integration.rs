@@ -2206,3 +2206,237 @@ async fn test_knn_left_join_unmatched_with_mismatched_key_types() -> Result<()> 
 
     Ok(())
 }
+
+/// Partitioned+spill regression for #1519: query-side ON filter under Fixed(4).
+///
+/// Maintainer @zhangfengcdt observed a panic with `ST_KNN(...) AND l.id % 2 = 0`
+/// when `num_spatial_partitions = Fixed(4)`. Unmatched probe emission must not
+/// feed null-padded rows into KNNResultsMerger::ingest; emit them after merge.
+#[tokio::test]
+async fn test_knn_left_join_partitioned_query_filter_keeps_unmatched() -> Result<()> {
+    let debug = SpatialJoinDebugOptions {
+        num_spatial_partitions: NumSpatialPartitionsConfig::Fixed(4),
+        force_spill: true,
+        memory_for_intermittent_usage: None,
+        ..Default::default()
+    };
+    let options = SpatialJoinOptions {
+        spatial_join_reordering: false,
+        debug,
+        ..Default::default()
+    };
+    let ctx = setup_context(Some(options), 30)?;
+
+    // Place the unmatched (odd) row in the middle of the probe batch.
+    let left_vals = (0..20)
+        .map(|i| format!("({i}, ST_Point({i}.0, 0.0))"))
+        .collect::<Vec<_>>()
+        .join(",\n                ");
+    let right_vals = (0..20)
+        .map(|i| format!("({i}, ST_Point({i}.0, 0.1))"))
+        .collect::<Vec<_>>()
+        .join(",\n                ");
+
+    let sql = format!(
+        r#"
+        WITH l AS (
+            SELECT * FROM (VALUES
+                {left_vals}
+            ) AS t(id, geom)
+        ),
+        r AS (
+            SELECT * FROM (VALUES
+                {right_vals}
+            ) AS t(rid, geom)
+        )
+        SELECT l.id, r.rid
+        FROM l LEFT JOIN r
+          ON ST_KNN(l.geom, r.geom, 1) AND l.id % 2 = 0
+        ORDER BY l.id
+        "#
+    );
+    let batches = ctx.sql(&sql).await?.collect().await?;
+    let batch = arrow::compute::concat_batches(&batches[0].schema(), &batches)?;
+    assert_eq!(
+        batch.num_rows(),
+        20,
+        "expected one result row per left probe under Fixed(4)+spill"
+    );
+
+    let ids = batch
+        .column(0)
+        .as_any()
+        .downcast_ref::<arrow_array::Int64Array>()
+        .expect("l.id should be Int64");
+    let rids = batch
+        .column(1)
+        .as_any()
+        .downcast_ref::<arrow_array::Int64Array>()
+        .expect("r.rid should be Int64");
+
+    for i in 0..20 {
+        assert_eq!(ids.value(i), i as i64);
+        if i % 2 == 0 {
+            assert!(
+                !rids.is_null(i),
+                "even left id={i} should match its 1-NN"
+            );
+            assert_eq!(rids.value(i), i as i64);
+        } else {
+            assert!(
+                rids.is_null(i),
+                "odd left id={i} must stay unmatched with NULL rid"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Partitioned+spill regression for #1519: object-side ON filter under Fixed(4).
+///
+/// Maintainer observed dropped left rows with `ST_KNN(...) AND r.rid % 3 = 0`.
+/// After merge, probes whose filtered neighbors were all eliminated must still
+/// appear as unmatched LEFT rows.
+#[tokio::test]
+async fn test_knn_left_join_partitioned_object_filter_keeps_unmatched() -> Result<()> {
+    let debug = SpatialJoinDebugOptions {
+        num_spatial_partitions: NumSpatialPartitionsConfig::Fixed(4),
+        force_spill: true,
+        memory_for_intermittent_usage: None,
+        ..Default::default()
+    };
+    let options = SpatialJoinOptions {
+        spatial_join_reordering: false,
+        debug,
+        ..Default::default()
+    };
+    let ctx = setup_context(Some(options), 30)?;
+
+    let left_vals = (0..20)
+        .map(|i| format!("({i}, ST_Point({i}.0, 0.0))"))
+        .collect::<Vec<_>>()
+        .join(",\n                ");
+    let right_vals = (0..20)
+        .map(|i| format!("({i}, ST_Point({i}.0, 0.1))"))
+        .collect::<Vec<_>>()
+        .join(",\n                ");
+
+    let sql = format!(
+        r#"
+        WITH l AS (
+            SELECT * FROM (VALUES
+                {left_vals}
+            ) AS t(id, geom)
+        ),
+        r AS (
+            SELECT * FROM (VALUES
+                {right_vals}
+            ) AS t(rid, geom)
+        )
+        SELECT l.id, r.rid
+        FROM l LEFT JOIN r
+          ON ST_KNN(l.geom, r.geom, 1) AND r.rid % 3 = 0
+        ORDER BY l.id
+        "#
+    );
+    let batches = ctx.sql(&sql).await?.collect().await?;
+    let batch = arrow::compute::concat_batches(&batches[0].schema(), &batches)?;
+    assert_eq!(
+        batch.num_rows(),
+        20,
+        "expected one result row per left probe under Fixed(4)+spill"
+    );
+
+    let ids = batch
+        .column(0)
+        .as_any()
+        .downcast_ref::<arrow_array::Int64Array>()
+        .expect("l.id should be Int64");
+    let rids = batch
+        .column(1)
+        .as_any()
+        .downcast_ref::<arrow_array::Int64Array>()
+        .expect("r.rid should be Int64");
+
+    for i in 0..20 {
+        assert_eq!(ids.value(i), i as i64);
+        if i % 3 == 0 {
+            assert!(
+                !rids.is_null(i),
+                "left id={i} whose 1-NN rid%3==0 should match"
+            );
+            assert_eq!(rids.value(i), i as i64);
+        } else {
+            assert!(
+                rids.is_null(i),
+                "left id={i} must stay unmatched when its 1-NN fails the object filter"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Same distance-filter unmatched case as the single-partition #1515 regression,
+/// but with Fixed(4)+spill so the unmatched row sits mid-batch through the merger.
+#[tokio::test]
+async fn test_knn_left_join_partitioned_distance_filter_unmatched_mid_batch() -> Result<()> {
+    let debug = SpatialJoinDebugOptions {
+        num_spatial_partitions: NumSpatialPartitionsConfig::Fixed(4),
+        force_spill: true,
+        memory_for_intermittent_usage: None,
+        ..Default::default()
+    };
+    let options = SpatialJoinOptions {
+        spatial_join_reordering: false,
+        debug,
+        ..Default::default()
+    };
+    let ctx = setup_context(Some(options), 30)?;
+
+    // Unmatched probe id=2 is deliberately in the middle of the probe batch.
+    let sql = r#"
+        WITH l AS (
+            SELECT * FROM (VALUES
+                (1, ST_Point(0.0, 0.0)),
+                (2, ST_Point(100.0, 0.0)),
+                (3, ST_Point(2.0, 0.0))
+            ) AS t(id, geom)
+        ),
+        r AS (
+            SELECT * FROM (VALUES
+                (10, ST_Point(1.0, 0.0)),
+                (30, ST_Point(5.0, 0.0))
+            ) AS t(rid, geom)
+        )
+        SELECT l.id, r.rid
+        FROM l LEFT JOIN r
+          ON ST_KNN(l.geom, r.geom, 1) AND ST_Distance(l.geom, r.geom) <= 10
+        ORDER BY l.id
+    "#;
+    let batches = ctx.sql(sql).await?.collect().await?;
+    let batch = arrow::compute::concat_batches(&batches[0].schema(), &batches)?;
+    assert_eq!(batch.num_rows(), 3);
+
+    let ids = batch
+        .column(0)
+        .as_any()
+        .downcast_ref::<arrow_array::Int64Array>()
+        .expect("l.id should be Int64");
+    let rids = batch
+        .column(1)
+        .as_any()
+        .downcast_ref::<arrow_array::Int64Array>()
+        .expect("r.rid should be Int64");
+
+    assert_eq!(ids.value(0), 1);
+    assert_eq!(rids.value(0), 10);
+    assert_eq!(ids.value(1), 2, "unmatched mid-batch left id must stay");
+    assert!(rids.is_null(1), "unmatched mid-batch row must have NULL rid");
+    assert_eq!(ids.value(2), 3);
+    assert_eq!(rids.value(2), 10);
+
+    Ok(())
+}
+

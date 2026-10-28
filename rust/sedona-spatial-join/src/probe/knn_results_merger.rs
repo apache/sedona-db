@@ -581,6 +581,10 @@ struct MergerState {
     batch_builder: KNNResultBatchBuilder,
     /// Unprocessed tail KNN results from the last ingested batch
     unprocessed_tail: Option<UnprocessedKNNResultBatch>,
+    /// Probe indices that survived final merge with zero filtered rows.
+    /// Populated only when producing final result batches (not while spilling).
+    /// The stream layer emits LEFT/RIGHT outer unmatched rows for these indices.
+    pending_unmatched_probe_indices: Vec<usize>,
 }
 
 impl KNNResultsMerger {
@@ -619,6 +623,7 @@ impl KNNResultsMerger {
                 spilled_batches: Vec::new(),
                 batch_builder,
                 unprocessed_tail: None,
+                pending_unmatched_probe_indices: Vec::new(),
             },
         })
     }
@@ -751,6 +756,14 @@ impl KNNResultsMerger {
         }
     }
 
+    /// Drain probe indices that finished final merge with no filtered neighbors.
+    ///
+    /// Used by the join stream to emit outer-join unmatched probe rows after
+    /// partitioned KNN merging (see apache/sedona-db#1515 / #1519).
+    pub fn take_pending_unmatched_probe_indices(&mut self) -> Vec<usize> {
+        std::mem::take(&mut self.state.pending_unmatched_probe_indices)
+    }
+
     fn merge_and_append_result(&mut self, result: &KNNProbeResult<'_>) -> Result<()> {
         if let Some((spilled_batch_idx, row_idx)) =
             self.load_spilled_batches_up_to(result.probe_row_index)?
@@ -847,7 +860,8 @@ impl KNNResultsMerger {
         let ingested_array = knn_result_array.map(|a| &a.array);
         let batch_opt = match &mut self.state.current_writer {
             Some(writer) => {
-                // Write to spill file
+                // Write to spill file (empty-filtered probes stay as empty lists;
+                // unmatched emission waits until final merge).
                 if let Some(spilled_batch) = self
                     .state
                     .batch_builder
@@ -858,10 +872,16 @@ impl KNNResultsMerger {
                 None
             }
             None => {
-                // Produce output batch
-                self.state
+                // Produce output batch; also collect probes with no filtered rows
+                // so the stream can emit outer-join unmatched rows.
+                let (batch, empty_probes) = self
+                    .state
                     .batch_builder
-                    .build_result_batch(ingested_array, &spilled_batches)?
+                    .build_result_batch(ingested_array, &spilled_batches)?;
+                self.state
+                    .pending_unmatched_probe_indices
+                    .extend(empty_probes);
+                batch
             }
         };
 
@@ -886,6 +906,8 @@ struct KNNResultBatchBuilder {
     dist_array_builder: PrimitiveBuilder<Float64Type>,
     row_array_offsets_builder: OffsetBufferBuilder<i32>,
     rows_selector: Vec<RowSelector>,
+    /// Probe indices appended with zero filtered rows in this builder flush.
+    empty_probe_indices: Vec<usize>,
     /// Scratch space for merging top-k distances
     top_k_distances: Vec<f64>,
     /// Scratch space for sorting row selectors by distance when merging KNN results
@@ -932,6 +954,7 @@ impl KNNResultBatchBuilder {
             dist_array_builder,
             row_array_offsets_builder,
             rows_selector: Vec::with_capacity(capacity),
+            empty_probe_indices: Vec::new(),
             top_k_distances: Vec::new(),
             row_selector_with_distance: Vec::new(),
         }
@@ -946,6 +969,10 @@ impl KNNResultBatchBuilder {
             self.rows_selector
                 .push(row_selector_template.with_row_idx(row_idx));
             self.dist_array_builder.append_value(*dist);
+        }
+
+        if results.row_range.is_empty() {
+            self.empty_probe_indices.push(results.probe_row_index);
         }
 
         self.row_array_offsets_builder
@@ -985,6 +1012,11 @@ impl KNNResultBatchBuilder {
             k,
             include_tie_breaker,
         );
+
+        if num_kept_rows == 0 {
+            self.empty_probe_indices
+                .push(spilled_results.probe_row_index);
+        }
 
         self.row_array_offsets_builder.push_length(num_kept_rows);
         self.unfiltered_dist_array_builder
@@ -1046,6 +1078,10 @@ impl KNNResultBatchBuilder {
         ingested_results: Option<&StructArray>,
         spilled_results: &[&StructArray],
     ) -> Result<Option<RecordBatch>> {
+        // Intermediate spill: empty-filtered probes are stored as empty lists.
+        // Do not surface them as unmatched yet.
+        self.empty_probe_indices.clear();
+
         if self.index_array_builder.is_empty() {
             return Ok(None);
         }
@@ -1112,9 +1148,11 @@ impl KNNResultBatchBuilder {
         &mut self,
         ingested_results: Option<&StructArray>,
         spilled_results: &[&StructArray],
-    ) -> Result<Option<RecordBatch>> {
+    ) -> Result<(Option<RecordBatch>, Vec<usize>)> {
+        let empty_probe_indices = std::mem::take(&mut self.empty_probe_indices);
+
         if self.index_array_builder.is_empty() {
-            return Ok(None);
+            return Ok((None, empty_probe_indices));
         }
 
         // Reset builders for building columns required by spilled batches. Building these columns seems to be wasted work
@@ -1127,7 +1165,7 @@ impl KNNResultBatchBuilder {
 
         // Build rows StructArray based on rows_selector
         if self.rows_selector.is_empty() {
-            return Ok(None);
+            return Ok((None, empty_probe_indices));
         }
         let rows_array = interleave_spill_and_ingested_rows(
             ingested_results,
@@ -1138,7 +1176,10 @@ impl KNNResultBatchBuilder {
 
         let struct_array = rows_array.as_struct();
 
-        Ok(Some(RecordBatch::from(struct_array.clone())))
+        Ok((
+            Some(RecordBatch::from(struct_array.clone())),
+            empty_probe_indices,
+        ))
     }
 }
 
