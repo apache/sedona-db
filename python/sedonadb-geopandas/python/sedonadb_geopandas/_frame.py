@@ -1583,6 +1583,44 @@ class GeoDataFrame:
             compression=_PARQUET_COMPRESSION[codec],
         )
 
+    def to_file(self, filename, driver=None, schema=None, index=None, **kwargs):
+        """Write a GDAL/OGR file, as `GeoDataFrame.to_file` does with pyogrio.
+
+        **EXPERIMENTAL.** Computes the frame and writes it in batches with
+        pyogrio's Arrow writer. As in GeoPandas, the driver is found from
+        the file's extension (a path without a known one is written as a
+        shapefile folder), the layer's geometry type from the data (with
+        single geometries promoted to multi where the driver cannot mix them,
+        for GeoPackage and FlatGeobuf), and NaN is written as null. Finding
+        the geometry type computes the frame once more, unless both
+        `geometry_type` and `promote_to_multi` are given.
+
+        Args:
+            filename: The path, or a `BytesIO` with an explicit `driver`.
+            driver: A GDAL/OGR driver name, such as `"GPKG"` or `"GeoJSON"`.
+            schema: Not supported, as with GeoPandas' pyogrio engine.
+            index: There is no index to write; only None or False is accepted.
+            **kwargs: `mode` (`"w"`, or `"a"` to append), `metadata` (for
+                GeoPackage), `engine` (only `"pyogrio"`), and the options of
+                `pyogrio.write_dataframe` (`layer`, `geometry_type`,
+                `promote_to_multi`, `nan_as_null`, `append`, layer and dataset
+                creation options, ...).
+
+        A file takes one geometry column, as in GeoPandas, and geometry rather
+        than geography: GDAL/OGR formats have no spherical edges.
+        """
+        from sedonadb_geopandas._io import to_file
+
+        to_file(self, filename, driver, schema, index, **kwargs)
+
+    @classmethod
+    def from_file(cls, filename, **kwargs):
+        """Read a GDAL/OGR file, as `GeoDataFrame.from_file` does; see
+        `read_file`."""
+        from sedonadb_geopandas._io import read_file
+
+        return read_file(filename, **kwargs)
+
     def __len__(self):
         return self._df.count()
 

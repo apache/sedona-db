@@ -254,5 +254,18 @@ differences that come from SedonaDB's readers and GeoParquet writer:
   passed as `storage_options` using SedonaDB's keys (for example
   `{"aws.skip_signature": True, "aws.region": "us-west-2"}`), not fsspec's.
 
+`to_file()` (of a `GeoDataFrame` or a `GeoSeries`), `from_file()` and
+`list_layers()` follow GeoPandas with its pyogrio engine: the driver comes from
+the file's extension, the layer's geometry type from the data (with single
+geometries promoted to multi for GeoPackage and FlatGeobuf, as pyogrio does),
+NaN is written as null, and pyogrio's options (`layer`, `promote_to_multi`,
+creation options, ...) are taken. The frame is written in batches through
+pyogrio's Arrow writer, after one more pass over the data to find the
+geometry types (none if both `geometry_type` and `promote_to_multi` are given).
+A file takes one geometry column, as in GeoPandas, and not a geography column,
+since GDAL/OGR formats have no spherical edges. A CRS without an EPSG code is
+written as WKT made from the frame's PROJJSON, which can name fewer authority
+codes than the WKT GeoPandas writes for the same CRS.
+
 See the SedonaDB "Migrating from GeoPandas" guide for the relational model that
 underlies each method.
