@@ -16,8 +16,6 @@
 # under the License.
 """`overlay()`, as GeoPandas overlays two frames."""
 
-from sedonadb.expr import lit
-
 from sedonadb_geopandas._clip import _POLYGON_TYPES, _kinds
 from sedonadb_geopandas._frame import GeoDataFrame, _explode_parts, _unused_name
 from sedonadb_geopandas._relational import concat
@@ -175,36 +173,36 @@ def _difference(df1, df2, dimensions2):
     and grouped back by that tag, carrying their columns; the geometries
     they intersect are unioned, then taken away. A row that intersects none
     keeps its geometry (a missing one too). The engine collects geometries
-    of one dimension only, so those of `df2`, of `dimensions2`, are brought
-    to one where they differ: to 3D, with no elevation (a NaN Z) for those
-    without Z, so that GEOS gives the result the Z of those with it, as when
-    GeoPandas takes them away one by one; else to 2D (GEOS takes no M in an
-    overlay).
+    of one dimension only, so where those of `df2` (of `dimensions2`)
+    differ, those of each dimension are collected apart and taken away in
+    turn, as GeoPandas takes them away one by one: the result has the Z and
+    M of those it intersects.
     """
     name1, name2 = df1.active_geometry_name, df2.active_geometry_name
     df = df1._df
     row = _unused_name(df, "__row")
-    others = _unused_name(df, "__others", [row])
-    matches = _unused_name(df, "__matches", [row, others])
     tagged = df.select(*[df[c] for c in df1.columns], df._ctx.funcs.uuid().alias(row))
     left = tagged.alias("overlay_1")
     right = df2._df.alias("overlay_2")
     joined = left.join(right, on=left[name1].geo.intersects(right[name2]), how="left")
-    subtracted = right[name2]
+    subtracted = GeoSeries(joined, right[name2], name2)
+    parts = [subtracted]
     if len(dimensions2) > 1:
-        if dimensions2 & {2, 3}:
-            subtracted = subtracted.funcs.st_force3d(lit(float("nan")))
-        else:
-            subtracted = subtracted.funcs.st_force2d()
+        flag = Series(joined, right[name2].funcs.st_zmflag(), name2)
+        parts = [subtracted.where(flag == d) for d in sorted(dimensions2)]
+    others = []
+    for part in parts:
+        others.append(_unused_name(df, "__others", [row, *others]))
     grouped = joined.group_by(left[row]).agg(
         *[left[c].funcs.first_value().alias(c) for c in df1.columns],
-        subtracted.geo.collect_agg().alias(others),
-        right[name2].funcs.count().alias(matches),
+        *[p._expr.geo.collect_agg().alias(o) for p, o in zip(parts, others)],
     )
     geometry = GeoSeries(grouped, grouped[name1], name1)
-    union = GeoSeries(grouped, grouped[others].geo.unary_union(), others)
-    unmatched = Series(grouped, grouped[matches], matches) == 0
-    geometry = _made_valid(geometry.where(unmatched, geometry.difference(union)))
+    for name in others:
+        union = GeoSeries(grouped, grouped[name].geo.unary_union(), name)
+        # None of a dimension (or none at all) intersects: nothing to take.
+        geometry = geometry.where(union.isna(), geometry.difference(union))
+    geometry = _made_valid(geometry)
     columns = [
         geometry._expr.alias(c) if c == name1 else grouped[c] for c in df1.columns
     ]

@@ -340,14 +340,20 @@ def test_overlay_computes_each_frame_once():
 
 
 def _coordinates(frame):
-    """The set of coordinates (with Z) of each row's geometry, rows in the
-    order `_sorted()` gives them: where its rings start aside."""
-    # A missing Z (NaN) as None, which equals another.
-    return [
-        {
+    """Whether each row's geometry has Z and M, and the set of its coordinates
+    (with Z and M), rows in the order `_sorted()` gives them: where its rings
+    start aside."""
+
+    def coordinates(g):
+        coordinates = shapely.get_coordinates(g, include_z=True, include_m=True)
+        # A missing Z or M (NaN) as None, which equals another.
+        return {
             tuple(None if v != v else v for v in c)
-            for c in shapely.get_coordinates(g, include_z=True).round(9).tolist()
+            for c in coordinates.round(9).tolist()
         }
+
+    return [
+        (shapely.has_z(g), shapely.has_m(g), coordinates(g))
         for g in _sorted(frame).geometry
     ]
 
@@ -430,6 +436,71 @@ def test_overlay_of_2d_and_measured_polygons_as_geopandas(how):
     expected = gpd.overlay(df1, df2, how=how)
     ours = sgpd.overlay(sgpd.from_geopandas(df1), sgpd.from_geopandas(df2), how=how)
     _assert_same(ours, expected)
+    # The difference keeps the M of the measured polygon, as in GeoPandas.
+    assert _coordinates(ours.to_geopandas()) == _coordinates(expected)
+
+
+@pytest.mark.parametrize("how", HOWS)
+def test_overlay_of_polygons_of_three_dimensions_as_geopandas(how):
+    # Those of each dimension are taken away in turn: the difference has the
+    # M of the measured one and the elevation of the 3D one, as in GeoPandas.
+    df1 = _squares("df1", [1], [(0, 0, 4, 4)])
+    df2 = gpd.GeoDataFrame(
+        {"df2": [1, 2, 3]},
+        geometry=gpd.GeoSeries.from_wkt(
+            [
+                "POLYGON ((1 1, 2 1, 2 2, 1 2, 1 1))",
+                "POLYGON M ((3 3 9, 5 3 9, 5 5 9, 3 5 9, 3 3 9))",
+                "POLYGON Z ((3 0 5, 5 0 5, 5 1 5, 3 1 5, 3 0 5))",
+            ]
+        ),
+        crs=3857,
+    )
+    for first, second in ((df1, df2), (df2, df1)):
+        expected = gpd.overlay(first, second, how=how)
+        ours = sgpd.overlay(
+            sgpd.from_geopandas(first), sgpd.from_geopandas(second), how=how
+        )
+        _assert_same(ours, expected)
+        assert _coordinates(ours.to_geopandas()) == _coordinates(expected)
+
+
+@pytest.mark.parametrize("how", HOWS)
+@pytest.mark.parametrize(
+    "intersecting, distant",
+    [
+        (
+            "POLYGON M ((1 1 7, 2 1 7, 2 2 7, 1 2 7, 1 1 7))",
+            "POLYGON ((20 20, 21 20, 21 21, 20 21, 20 20))",
+        ),
+        (
+            "POLYGON M ((1 1 7, 2 1 7, 2 2 7, 1 2 7, 1 1 7))",
+            "POLYGON ZM ((20 20 5 9, 21 20 5 9, 21 21 5 9, 20 21 5 9, 20 20 5 9))",
+        ),
+        (
+            "POLYGON ((1 1, 2 1, 2 2, 1 2, 1 1))",
+            "POLYGON Z ((20 20 5, 21 20 5, 21 21 5, 20 21 5, 20 20 5))",
+        ),
+    ],
+)
+def test_overlay_of_a_polygon_of_another_dimension_elsewhere_as_geopandas(
+    how, intersecting, distant
+):
+    # A polygon of another dimension that the square does not intersect
+    # changes nothing of its difference: its M kept, and no Z added.
+    df1 = _squares("df1", [1], [(0, 0, 4, 4)])
+    df2 = gpd.GeoDataFrame(
+        {"df2": [1, 2]},
+        geometry=gpd.GeoSeries.from_wkt([intersecting, distant]),
+        crs=3857,
+    )
+    for first, second in ((df1, df2), (df2, df1)):
+        expected = gpd.overlay(first, second, how=how)
+        ours = sgpd.overlay(
+            sgpd.from_geopandas(first), sgpd.from_geopandas(second), how=how
+        )
+        _assert_same(ours, expected)
+        assert _coordinates(ours.to_geopandas()) == _coordinates(expected)
 
 
 def _named(prefix, boxes, ordinary=True):
