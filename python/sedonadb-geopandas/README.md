@@ -136,8 +136,12 @@ that every part of the result comes from one result of it (even of a query
 whose result changes each time), and the result is lazy over them. Pairs of rows
 are matched by an indexed spatial join, and a difference takes away the union
 of the geometries a row intersects, so its geometries are those of GeoPandas up
-to where their rings start (geometries of 2D and 3D taken away together give the
-3D ones' elevation, as in GeoPandas). The rows come in no particular order. Both frames are in one CRS, as for
+to where their rings start. GeoPandas takes them away one at a time, in their
+rows' order, which decides the M it gives a new vertex where their edges cross;
+here those of each dimension are taken away together, those without M first, so
+that such a vertex takes its M only from the edges that cross there, in any row
+order (as GeoPandas gives where it takes away those without M first). The rows
+come in no particular order. Both frames are in one CRS, as for
 `sjoin()` (GeoPandas warns and overlays the coordinates as they are), and hold
 geometry, not geography. `keep_geom_type=None` drops what `True` does without
 counting it for GeoPandas' warning, which would compute the result.

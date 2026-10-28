@@ -61,16 +61,20 @@ def _made_valid(geometry):
     return geometry.where(~polygonal, geometry.make_valid())
 
 
-def _valid(frame, types, make_valid):
+def _valid(frame, types, dimensions, make_valid):
     """`frame` with its invalid polygons made valid, as GeoPandas makes them
     before an overlay: only in a frame of nothing but polygons (no missing
-    geometry either), keeping their polygonal parts. Counts the invalid ones."""
+    geometry either), keeping their polygonal parts. Counts the invalid ones.
+
+    Also gives the frame's dimensions, of `dimensions` before: found again
+    when polygons are made valid, which drops their M.
+    """
     if not types or not types <= set(_POLYGON_TYPES):
-        return frame
+        return frame, dimensions
     geometry = frame.geometry
     invalid = int((~geometry.is_valid).sum())
     if not invalid:
-        return frame
+        return frame, dimensions
     if not make_valid:
         raise ValueError(
             f"You have passed make_valid=False along with {invalid} invalid input "
@@ -78,9 +82,10 @@ def _valid(frame, types, make_valid):
             f"valid before using overlay."
         )
     fixed = geometry.where(geometry.is_valid, geometry.make_valid())
-    return _extracted(
+    frame = _extracted(
         frame.assign(**{frame.active_geometry_name: fixed}), _POLYGON_TYPES
     )
+    return frame, _shapes(frame)[1]
 
 
 def _extracted(frame, kind):
@@ -176,7 +181,10 @@ def _difference(df1, df2, dimensions2):
     of one dimension only, so where those of `df2` (of `dimensions2`)
     differ, those of each dimension are collected apart and taken away in
     turn, as GeoPandas takes them away one by one: the result has the Z and
-    M of those it intersects.
+    M of those it intersects. Those without M are taken away first, so that
+    a new vertex takes its M only from the edges that cross there, never
+    from one another geometry left on an edge; GeoPandas takes them away in
+    their rows' order, which decides that M.
     """
     name1, name2 = df1.active_geometry_name, df2.active_geometry_name
     df = df1._df
@@ -189,7 +197,9 @@ def _difference(df1, df2, dimensions2):
     parts = [subtracted]
     if len(dimensions2) > 1:
         flag = Series(joined, right[name2].funcs.st_zmflag(), name2)
-        parts = [subtracted.where(flag == d) for d in sorted(dimensions2)]
+        # XY and XYZ (0 and 2), then XYM and XYZM (1 and 3).
+        order = sorted(dimensions2, key=lambda d: (d % 2, d))
+        parts = [subtracted.where(flag == d) for d in order]
     others = []
     for part in parts:
         others.append(_unused_name(df, "__others", [row, *others]))
@@ -271,8 +281,8 @@ def overlay(df1, df2, how="intersection", keep_geom_type=None, make_valid=True):
     for i, types in enumerate((types1, types2)):
         if len(_kinds(types)) > 1:
             raise NotImplementedError(f"df{i + 1} contains mixed geometry types.")
-    df1 = _valid(df1, types1, make_valid)
-    df2 = _valid(df2, types2, make_valid)
+    df1, dimensions1 = _valid(df1, types1, dimensions1, make_valid)
+    df2, dimensions2 = _valid(df2, types2, dimensions2, make_valid)
     if how == "intersection":
         result = _intersection(df1, df2)
     elif how == "difference":
