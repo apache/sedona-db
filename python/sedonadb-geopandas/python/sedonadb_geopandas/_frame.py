@@ -910,6 +910,40 @@ class GeoDataFrame:
 
         return clip(self, mask, keep_geom_type, sort)
 
+    def overlay(self, right, how="intersection", keep_geom_type=None, make_valid=True):
+        """This frame and `right` overlaid, as `GeoDataFrame.overlay`
+        (`geopandas.overlay`) overlays them.
+
+        **EXPERIMENTAL.** Lazy, but for each frame's geometry types (and the
+        validity of a frame of polygons), which are computed first. As in
+        GeoPandas:
+
+        - `how="intersection"`: each pair of rows whose geometries intersect,
+          with both rows' columns (those both frames have suffixed `_1` and
+          `_2`) and the intersection of their geometries;
+        - `"difference"`: each row of this frame, its geometry less those of
+          `right` it intersects, but for those left empty;
+        - `"symmetric_difference"`: the differences each way;
+        - `"identity"`: the intersections and the differences of this frame;
+        - `"union"`: the intersections and the differences each way.
+
+        Polygons the overlay makes are made valid, as are invalid polygons of
+        a frame of polygons first (or they raise, with `make_valid=False`).
+        `keep_geom_type` (`True` by default, as `None` is in GeoPandas) keeps
+        only the kind of geometry this frame has, a collection as the union
+        of its parts of that kind. Each frame has one kind of geometry, and
+        both are in one CRS (as for `sjoin()`, where GeoPandas only warns).
+        The geometry column is "geometry", but for a difference, which keeps
+        this frame's.
+
+        The rows come in no particular order, where GeoPandas orders them by
+        the frames' indexes, and with `keep_geom_type=None`, what is dropped
+        is not counted for GeoPandas' warning, which would compute the result.
+        """
+        from sedonadb_geopandas._overlay import overlay
+
+        return overlay(self, right, how, keep_geom_type, make_valid)
+
     @property
     def cx(self):
         """Coordinate indexer: `cx[xmin:xmax, ymin:ymax]` keeps the rows whose

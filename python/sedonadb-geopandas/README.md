@@ -130,6 +130,16 @@ rectangle with GEOS's `clip_by_rect`, which leaves it out. The rows keep their
 order, whatever `sort` is. `keep_geom_type=True` computes the geometry types of
 the frame and of the result.
 
+`overlay()` (of a frame, and `sedonadb_geopandas.overlay()`) gives what
+GeoPandas gives for each `how`, lazily but for each frame's geometry types (and
+the validity of a frame of polygons). Pairs of rows are matched by an indexed
+spatial join, and a difference takes away the union of the geometries a row
+intersects, so its geometries are those of GeoPandas up to where their rings
+start. The rows come in no particular order. Both frames are in one CRS, as for
+`sjoin()` (GeoPandas warns and overlays the coordinates as they are), and hold
+geometry, not geography. `keep_geom_type=None` drops what `True` does without
+counting it for GeoPandas' warning, which would compute the result.
+
 The numeric parameters of geometry methods (`segmentize()`, `set_precision()`,
 `concave_hull()`, `force_3d()`, `snap()`, `get_geometry()`) take a number or a
 numeric `Series` of the same frame, applied row by row. `segmentize()` only
