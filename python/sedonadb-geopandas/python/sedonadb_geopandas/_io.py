@@ -33,8 +33,9 @@ from sedonadb_geopandas._frame import (
     GeoDataFrame,
     _geometry_column_names,
     _is_floating,
+    _unused_name,
 )
-from sedonadb_geopandas._series import GeoSeries
+from sedonadb_geopandas._series import GeoSeries, _logical_type
 
 # The driver GeoPandas writes a file with, by its extension; a path with any
 # other extension, or none, is written as a shapefile folder.
@@ -443,13 +444,21 @@ def to_file(
     inferring = geometry is not None and (
         geometry_type is None or promote_to_multi is None
     )
-    unsigned = [f.name for f in pa.schema(df.schema) if pa.types.is_uint64(f.type)]
-    if inferring or unsigned:
-        # Computed once, into memory, so that what is inferred and checked is
-        # what is written, even of a query whose result changes each time.
-        df = df.to_memtable()
-        if geometry is not None:
-            geometry = GeoSeries(df, df[name], name)
+    schema = pa.schema(df.schema)
+    # A categorical column is dictionary-encoded: its values' type counts.
+    unsigned = [f.name for f in schema if pa.types.is_uint64(_logical_type(f.type))]
+    # Computed once, into memory, in the frame's order, so that what is
+    # inferred and checked is what is written, even of a query whose result
+    # changes each time. Each row's position keeps that order through what
+    # is computed for writing, which the engine computes in parallel.
+    import numpy as np
+
+    table = df.to_arrow_table()
+    position = _unused_name(df, "__position")
+    table = table.append_column(position, pa.array(np.arange(table.num_rows)))
+    df = df._ctx.create_data_frame(table)
+    if geometry is not None:
+        geometry = GeoSeries(df, df[name], name)
     _check_unsigned(df, unsigned)
     if inferring:
         inferred, promote_to_multi = _layer_geometry_type(
@@ -459,7 +468,7 @@ def to_file(
             geometry_type = inferred
 
     columns = []
-    for field in pa.schema(df.schema):
+    for field in schema:
         expr = df[field.name]
         if field.name == name and promote_to_multi:
             expr = _promoted(df, expr)
@@ -469,7 +478,7 @@ def to_file(
         elif pa.types.is_null(field.type):
             # GDAL takes no column of the null type; pyogrio writes strings.
             expr = expr.cast(pa.string())
-        elif pa.types.is_uint64(field.type):
+        elif field.name in unsigned:
             # GDAL writes these as reals, which cannot hold every one: they
             # are written as signed ones, as GeoPandas writes them, and all
             # fit (see _check_unsigned()).
@@ -481,12 +490,16 @@ def to_file(
             if not _FIXED_OFFSET.fullmatch(field.type.tz):
                 expr = expr.cast(pa.timestamp(field.type.unit, "UTC"))
         columns.append(expr.alias(field.name))
+    computed = df.select(*columns, df[position])
+    computed = computed.sort(computed[position].asc())
     # As SedonaDB's to_pyogrio() writes, but without a geometry type for a
     # frame without geometry, which to_pyogrio() would give a geometry column.
     import pyogrio.raw
 
     pyogrio.raw.write_arrow(
-        df.select(*columns).to_arrow_reader(simplify=True),
+        computed.select(*[computed[f.name] for f in schema]).to_arrow_reader(
+            simplify=True
+        ),
         filename,
         driver=driver,
         geometry_name=name,

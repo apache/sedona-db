@@ -1592,11 +1592,10 @@ class GeoDataFrame:
         geometry type from the data (with single geometries promoted to multi
         where the driver cannot mix them, for GeoPackage and FlatGeobuf), NaN
         is written as null, unsigned 64-bit integers as signed ones (one too
-        large raises), and a time in a named time zone in UTC. Finding the
-        geometry type, or checking unsigned 64-bit integers, computes the
-        frame once into memory, so that what is written is what was found;
-        otherwise (both `geometry_type` and `promote_to_multi` given) it is
-        computed as it is written, in batches.
+        large raises), and a time in a named time zone in UTC. The frame is
+        computed once into memory first, so that what is written is what
+        the geometry type was found of, and its rows are written in the order
+        it gives them.
 
         Args:
             filename: The path, or a `BytesIO` with an explicit `driver`.

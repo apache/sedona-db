@@ -726,9 +726,32 @@ def test_to_file_writes_unsigned_integers_as_geopandas(tmp_path, extension):
     assert sorted(values.column("u64").to_pylist()) == [2**53 + 1, 2**63 - 1]
 
 
-def test_to_file_refuses_unsigned_integers_too_large_as_geopandas(tmp_path):
+@pytest.mark.parametrize("extension", ["gpkg", "geojson", "fgb"])
+def test_to_file_writes_categorical_unsigned_integers_as_geopandas(tmp_path, extension):
+    # A categorical column is dictionary-encoded; its unsigned 64-bit values
+    # are written as signed ones too.
+    values = np.array([2**53 + 1, 2**63 - 1], dtype="uint64")
     source = gpd.GeoDataFrame(
-        {"u64": np.array([1, 2**63], dtype="uint64")},
+        {"u64": pd.Categorical(values)},
+        geometry=gpd.points_from_xy([0, 1], [0, 1]),
+        crs=4326,
+    )
+    source.to_file(tmp_path / f"expected.{extension}")
+    sgpd.from_geopandas(source).to_file(tmp_path / f"ours.{extension}")
+    _assert_same_layer(
+        tmp_path / f"ours.{extension}", tmp_path / f"expected.{extension}"
+    )
+    written = pyogrio.read_arrow(tmp_path / f"ours.{extension}")[1]
+    assert sorted(written.column("u64").to_pylist()) == [2**53 + 1, 2**63 - 1]
+
+
+@pytest.mark.parametrize("categorical", [False, True])
+def test_to_file_refuses_unsigned_integers_too_large_as_geopandas(
+    tmp_path, categorical
+):
+    values = np.array([1, 2**63], dtype="uint64")
+    source = gpd.GeoDataFrame(
+        {"u64": pd.Categorical(values) if categorical else values},
         geometry=gpd.points_from_xy([0, 1], [0, 1]),
         crs=4326,
     )
@@ -762,6 +785,33 @@ def test_to_file_writes_time_zones_as_geopandas(tmp_path, extension):
     )
     written = pyogrio.read_dataframe(tmp_path / f"ours.{extension}")
     assert sorted(written["named"]) == sorted(source["named"])
+
+
+@pytest.mark.parametrize(
+    "geometry, kwargs",
+    [
+        (True, {}),
+        (True, {"promote_to_multi": True}),
+        (True, {"geometry_type": "Point", "promote_to_multi": False}),
+        (False, {}),
+    ],
+)
+def test_to_file_writes_the_rows_in_the_frame_order(tmp_path, geometry, kwargs):
+    # A sorted frame of more rows than the engine computes at once, with a
+    # float column (its NaN written as null), is written in its order, as
+    # GeoPandas writes a frame's rows, whatever is computed for writing.
+    query = (
+        "SELECT value AS a, CAST(value AS DOUBLE) AS f, "
+        "ST_SetSRID(ST_Point(value, value), 3857) AS geometry FROM range(100000)"
+    )
+    gdf = sgpd.GeoDataFrame(sgpd.default_context().sql(query))
+    gdf = gdf.sort_values("a", ascending=False)
+    if not geometry:
+        gdf = gdf[["a", "f"]]
+    order = list(range(99999, -1, -1))
+    assert gdf._df.to_arrow_table()["a"].to_pylist() == order
+    gdf.to_file(tmp_path / "ours.gpkg", **kwargs)
+    assert pyogrio.read_arrow(tmp_path / "ours.gpkg")[1]["a"].to_pylist() == order
 
 
 def test_to_file_writes_what_it_inferred_the_geometry_type_of(tmp_path):
