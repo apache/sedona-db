@@ -141,9 +141,12 @@ def clip(data, mask, keep_geom_type=False, sort=False):
     shape = _shape(mask, data.crs)
     geometry = data.geometry
     kept = data[geometry.intersects(shape)]
-    # GeoPandas keeps a point as it is rather than intersect it, which is
-    # the same point.
-    clipped = kept.geometry.intersection(shape)
+    # As GeoPandas, a point is kept as it is, and anything else intersected:
+    # intersecting a point would give it the mask's Z (with a 3D mask), and
+    # on the sphere move it and drop its Z and M.
+    geometry = kept.geometry
+    point = geometry.geom_type == "Point"
+    clipped = geometry.where(point, geometry.intersection(shape))
     clipped = kept.assign(**{kept.active_geometry_name: clipped})
     if keep_geom_type:
         clipped = _keeping_geometry_type(data, clipped)

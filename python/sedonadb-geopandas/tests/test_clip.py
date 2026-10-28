@@ -89,19 +89,37 @@ def test_clip_matches_geopandas(mask):
         assert_geodataframe_equal(clipped.to_geopandas(), expected)
 
 
-def test_clip_keeps_points_with_their_dimensions():
+@pytest.mark.parametrize(
+    "mask",
+    [
+        shapely.box(0.5, 0.5, 3, 3),
+        # Intersecting a point with a 3D mask would give it the mask's Z.
+        shapely.from_wkt("POLYGON Z ((0.5 0.5 5, 3 0.5 5, 3 3 5, 0.5 3 5, 0.5 0.5 5))"),
+    ],
+    ids=["2D mask", "3D mask"],
+)
+def test_clip_keeps_points_as_they_are(mask):
+    # As GeoPandas: a point is kept as it is, not intersected with the mask;
+    # a multipoint is intersected.
     source = gpd.GeoDataFrame(
         geometry=gpd.GeoSeries.from_wkt(
-            ["POINT Z (1 1 5)", "POINT M (2 2 6)", "POINT ZM (1 2 3 4)", "POINT (9 9)"]
+            [
+                "POINT (1 1)",
+                "POINT Z (1 1 5)",
+                "POINT M (2 2 6)",
+                "POINT ZM (1 2 3 4)",
+                "MULTIPOINT ((1 1), (9 9))",
+                "POINT (9 9)",
+            ]
         ),
         crs=3857,
     )
-    mask = shapely.box(0.5, 0.5, 3, 3)
     clipped = sgpd.from_geopandas(source).clip(mask).to_geopandas()
     expected = _expected(source, mask)
     assert_geodataframe_equal(clipped, expected)
     assert clipped.geometry.to_wkt().tolist() == expected.geometry.to_wkt().tolist()
-    assert clipped.geometry.to_wkt().tolist() == source.geometry.to_wkt().tolist()[:3]
+    points = source.geometry.to_wkt().tolist()[:4]
+    assert clipped.geometry.to_wkt().tolist()[:4] == points
 
 
 @pytest.mark.parametrize("mask", ["polygon", "rectangle", "frame"])
@@ -301,3 +319,14 @@ def test_clip_of_geography():
     clipped = gdf.clip(shapely.box(-1, -1, 5, 1))
     assert clipped.geometry._is_geography()
     assert clipped["id"].to_pandas().tolist() == [1]
+    # Points are kept as they are, with their Z and M, where intersecting
+    # them on the sphere would move them and drop both.
+    points = sgpd.GeoDataFrame(
+        sgpd.default_context().sql(
+            "SELECT 1 AS id, ST_GeogFromWKT('POINT Z (1 1 9)') AS g "
+            "UNION ALL SELECT 2, ST_GeogFromWKT('POINT M (2 2 4)')"
+        ),
+        geometry="g",
+    )
+    kept = points.clip(shapely.box(0, 0, 3, 3)).to_wkt().to_geopandas()
+    assert sorted(kept["g"]) == ["POINT M(2 2 4)", "POINT Z(1 1 9)"]

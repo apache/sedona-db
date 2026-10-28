@@ -122,9 +122,9 @@ issue in `ST_Points` (apache/sedona-db#1513). `to_crs()` labels the result with 
 GeoPandas does, rather than with the engine's canonical form of it.
 
 `clip()` (of a frame or a series, and `sedonadb_geopandas.clip()`) keeps the
-rows whose geometry intersects the mask and intersects them with it, as in
-GeoPandas, lazily but for a frame or series mask, whose union is computed
-first. A rectangle `(minx, miny, maxx, maxy)` clips as the same box as a
+rows whose geometry intersects the mask and intersects them with it but for
+points, kept as they are, as in GeoPandas, lazily but for a frame or series
+mask, whose union is computed first. A rectangle `(minx, miny, maxx, maxy)` clips as the same box as a
 polygon: what only touches its edge is kept, where GeoPandas clips by a
 rectangle with GEOS's `clip_by_rect`, which leaves it out. The rows keep their
 order, whatever `sort` is. `keep_geom_type=True` computes the geometry types of

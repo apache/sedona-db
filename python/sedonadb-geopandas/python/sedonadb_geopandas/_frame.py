@@ -891,10 +891,10 @@ class GeoDataFrame:
         `GeoDataFrame.clip` (`geopandas.clip`) clips them.
 
         **EXPERIMENTAL.** Lazy, but for a frame or series `mask`, whose
-        geometries are unioned and computed first. Each geometry is intersected
-        with the mask, and `keep_geom_type=True` keeps only the kind of geometry
-        the frame has, as in GeoPandas (which computes the geometry types of the
-        frame and of the result).
+        geometries are unioned and computed first. As in GeoPandas, a point is
+        kept as it is and any other geometry intersected with the mask, and
+        `keep_geom_type=True` keeps only the kind of geometry the frame has
+        (which computes the geometry types of the frame and of the result).
 
         Args:
             mask: A frame or series (the union of its geometries), a Shapely
