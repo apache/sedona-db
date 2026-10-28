@@ -62,8 +62,9 @@ deliberately *not* identical to GeoPandas:
   values.
 - **Columns cannot be mixed across frames**: without row alignment, combining
   columns from two different frames raises rather than guessing. Join first.
-- **Plotting and arbitrary `apply`**: use the `to_geopandas()` escape hatch and
-  operate on the materialized result.
+- **Arbitrary `apply`**: use the `to_geopandas()` escape hatch and operate on
+  the materialized result. (`plot()` and `explore()` compute the frame and draw
+  it with GeoPandas themselves.)
 - **Assignment takes a column or a scalar, not a bare expression**: a SedonaDB
   expression records no origin, so one built from another frame would resolve
   against the destination and silently write the wrong values. Assign a `Series`

@@ -194,6 +194,27 @@ def test_plot_matches_geopandas(plt):
         assert _drawn(draw(gdf)) == _drawn(draw(source))
 
 
+def test_plot_of_a_frame_without_geometry_as_geopandas(plt):
+    # A map needs the active geometry; pandas' kinds draw the columns.
+    source = _source().drop(columns="geometry")
+    expected = gpd.GeoDataFrame(source)
+    gdf = sgpd.from_geopandas(_source()).to_wkt().drop(columns="geometry")
+    for draw in (
+        lambda f: f.plot(),
+        lambda f: f.plot(kind="geo"),
+        lambda f: f.plot(column="v"),
+    ):
+        with pytest.raises(AttributeError):
+            draw(expected)
+        with pytest.raises(AttributeError, match="no active geometry"):
+            draw(gdf)
+    for draw in (
+        lambda f: f.plot.hist(column="v"),
+        lambda f: f.plot(kind="scatter", x="n", y="v"),
+    ):
+        assert _drawn(draw(gdf)) == _drawn(draw(expected))
+
+
 def test_plot_computes_the_frame_only_when_called(plt):
     # A frame whose computation fails: reading the accessor does not compute.
     gdf = sgpd.from_geopandas(_source())

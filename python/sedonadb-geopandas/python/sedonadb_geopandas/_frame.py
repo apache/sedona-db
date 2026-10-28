@@ -238,7 +238,14 @@ class _Plot:
         self._frame = frame
 
     def __call__(self, *args, **kwargs):
-        return self._frame.to_geopandas().plot(*args, **kwargs)
+        # A map (kind "geo", the default) needs the active geometry, as in
+        # GeoPandas: without one, the computed frame is a plain DataFrame,
+        # whose plot would draw lines. pandas' kinds do not need it.
+        if kwargs.get("kind", "geo") == "geo":
+            computed = self._frame._computed_with_geometry()
+        else:
+            computed = self._frame.to_geopandas()
+        return computed.plot(*args, **kwargs)
 
     def __getattr__(self, name):
         # Not for private names, which tools probe without meaning to draw.
