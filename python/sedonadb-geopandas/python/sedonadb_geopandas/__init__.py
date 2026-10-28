@@ -28,6 +28,7 @@ from sedonadb_geopandas._frame import GeoDataFrame
 from sedonadb_geopandas._io import read_file, read_parquet
 from sedonadb_geopandas._relational import concat, merge
 from sedonadb_geopandas._series import GeoSeries, Series
+from sedonadb_geopandas._versions import show_versions
 
 __all__ = [
     "GeoDataFrame",
@@ -39,6 +40,7 @@ __all__ = [
     "points_from_xy",
     "read_file",
     "read_parquet",
+    "show_versions",
     "sjoin",
 ]
 

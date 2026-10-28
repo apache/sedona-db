@@ -74,6 +74,8 @@ test = [
     "pandas",
     "geopandas",
     "geoarrow-pyarrow",
+    # plot() is compared with GeoPandas' plots.
+    "matplotlib",
 ]
 
 [tool.hatch.version]
