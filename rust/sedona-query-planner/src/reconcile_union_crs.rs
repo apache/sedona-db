@@ -152,12 +152,8 @@ fn reconcile_geometry_field(union_field: &Field, input_fields: &[Field]) -> Resu
 /// Returns `None` if any pair disagrees (including mixing a missing CRS with a
 /// present one), or when every input already lacks a CRS (nothing to restore).
 fn reconcile_equivalent_crs(crses: &[&Crs]) -> Option<Crs> {
-    let out = first_if_all_equal(crses.iter().copied())?;
     // Nothing to restore when every input already lacks a CRS.
-    if out.is_none() {
-        return None;
-    }
-    Some(out)
+    first_if_all_equal(crses.iter().copied()).filter(Option::is_some)
 }
 
 fn with_crs(ty: &SedonaType, crs: Crs) -> Option<SedonaType> {
