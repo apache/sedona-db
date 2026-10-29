@@ -33,7 +33,6 @@ use sedona_geometry::{
         WKB_MIN_PROBABLE_BYTES, write_wkb_coord, write_wkb_multipoint_header,
         write_wkb_point_header,
     },
-    wkb_header::any_part_dimensions,
 };
 use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY},
@@ -84,11 +83,10 @@ impl SedonaScalarKernel for STPoints {
 
         executor.execute_wkb_void(|maybe_wkb| {
             if let Some(wkb) = maybe_wkb {
-                // We need to know the number of points before actually writing the points.
-                let n_points = count_wkb_points_recursively(wkb);
-                // Union of input header and every part's dimensions so mixed Z/M
-                // collections write a consistent MultiPoint (missing ordinates as NaN).
-                let dims = output_dimensions(wkb)?;
+                // Count points and gather output dimensions in one walk. Simple
+                // Point/LineString/Polygon use the header only; Multi*/collections
+                // accumulate Z/M while counting so ordinary XY input is not ~2x slower.
+                let (n_points, dims) = count_points_and_output_dims(wkb);
 
                 if write_wkb_multipoint_header(&mut builder, dims, n_points).is_err() {
                     return sedona_internal_err!("Failed to write WKB point header");
@@ -158,71 +156,98 @@ impl SedonaScalarKernel for STNPoints {
 }
 
 fn count_wkb_points_recursively<'a>(wkb: &'a wkb::reader::Wkb<'a>) -> usize {
+    count_points_and_output_dims(wkb).0
+}
+
+fn dims_flags(dim: Dimensions) -> (bool, bool) {
+    (
+        matches!(dim, Dimensions::Xyz | Dimensions::Xyzm),
+        matches!(dim, Dimensions::Xym | Dimensions::Xyzm),
+    )
+}
+
+fn dims_from_flags(has_z: bool, has_m: bool) -> Dimensions {
+    match (has_z, has_m) {
+        (false, false) => Dimensions::Xy,
+        (true, false) => Dimensions::Xyz,
+        (false, true) => Dimensions::Xym,
+        (true, true) => Dimensions::Xyzm,
+    }
+}
+
+/// Count points and compute the MultiPoint output dimension in one pass.
+///
+/// Point/LineString/Polygon use the geometry header only (no part walk).
+/// Multi*/GeometryCollection accumulate each part's dimensions while counting,
+/// avoiding the two extra `any_part_dimensions` walks that doubled XY cost.
+fn count_points_and_output_dims(wkb: &wkb::reader::Wkb<'_>) -> (usize, Dimensions) {
     match wkb.as_type() {
         geo_traits::GeometryType::Point(point) => {
-            if point.is_empty() {
-                0
-            } else {
-                1
-            }
+            let n = if point.is_empty() { 0 } else { 1 };
+            (n, wkb.dim())
         }
-        geo_traits::GeometryType::LineString(line_string) => line_string.num_coords(),
+        geo_traits::GeometryType::LineString(line_string) => (line_string.num_coords(), wkb.dim()),
         geo_traits::GeometryType::Polygon(polygon) => {
             let mut n = match polygon.exterior() {
                 Some(ring) => ring.num_coords(),
                 None => 0,
             };
             n += polygon.interiors().map(|r| r.num_coords()).sum::<usize>();
-
-            n
+            (n, wkb.dim())
         }
         geo_traits::GeometryType::MultiPoint(multi_point) => {
-            multi_point.points().filter(|p| !p.is_empty()).count()
+            let (mut has_z, mut has_m) = dims_flags(wkb.dim());
+            let mut n = 0;
+            for point in multi_point.points() {
+                let (pz, pm) = dims_flags(point.dim());
+                has_z |= pz;
+                has_m |= pm;
+                if !point.is_empty() {
+                    n += 1;
+                }
+            }
+            (n, dims_from_flags(has_z, has_m))
         }
-        geo_traits::GeometryType::MultiLineString(multi_line_string) => multi_line_string
-            .line_strings()
-            .map(|l| l.num_coords())
-            .sum(),
+        geo_traits::GeometryType::MultiLineString(multi_line_string) => {
+            let (mut has_z, mut has_m) = dims_flags(wkb.dim());
+            let mut n = 0;
+            for line_string in multi_line_string.line_strings() {
+                let (lz, lm) = dims_flags(line_string.dim());
+                has_z |= lz;
+                has_m |= lm;
+                n += line_string.num_coords();
+            }
+            (n, dims_from_flags(has_z, has_m))
+        }
         geo_traits::GeometryType::MultiPolygon(multi_polygon) => {
+            let (mut has_z, mut has_m) = dims_flags(wkb.dim());
             let mut n = 0;
             for polygon in multi_polygon.polygons() {
+                let (pz, pm) = dims_flags(polygon.dim());
+                has_z |= pz;
+                has_m |= pm;
                 n += match polygon.exterior() {
                     Some(ring) => ring.num_coords(),
                     None => 0,
                 };
                 n += polygon.interiors().map(|r| r.num_coords()).sum::<usize>();
             }
-            n
+            (n, dims_from_flags(has_z, has_m))
         }
         geo_traits::GeometryType::GeometryCollection(geometry_collection) => {
+            let (mut has_z, mut has_m) = dims_flags(wkb.dim());
             let mut n = 0;
             for geometry in geometry_collection.geometries() {
-                n += count_wkb_points_recursively(geometry);
+                let (cn, cdims) = count_points_and_output_dims(geometry);
+                n += cn;
+                let (cz, cm) = dims_flags(cdims);
+                has_z |= cz;
+                has_m |= cm;
             }
-            n
+            (n, dims_from_flags(has_z, has_m))
         }
-        _ => 0,
+        _ => (0, wkb.dim()),
     }
-}
-
-/// Union of the geometry's own dimensions and every nested part's dimensions.
-fn output_dimensions(wkb: &wkb::reader::Wkb<'_>) -> datafusion_common::Result<Dimensions> {
-    let has_z = matches!(wkb.dim(), Dimensions::Xyz | Dimensions::Xyzm)
-        || any_part_dimensions(wkb.buf(), |d| {
-            matches!(d, Dimensions::Xyz | Dimensions::Xyzm)
-        })
-        .map_err(|e| datafusion_common::DataFusionError::External(Box::new(e)))?;
-    let has_m = matches!(wkb.dim(), Dimensions::Xym | Dimensions::Xyzm)
-        || any_part_dimensions(wkb.buf(), |d| {
-            matches!(d, Dimensions::Xym | Dimensions::Xyzm)
-        })
-        .map_err(|e| datafusion_common::DataFusionError::External(Box::new(e)))?;
-    Ok(match (has_z, has_m) {
-        (false, false) => Dimensions::Xy,
-        (true, false) => Dimensions::Xyz,
-        (false, true) => Dimensions::Xym,
-        (true, true) => Dimensions::Xyzm,
-    })
 }
 
 /// Extract Z/M for `target`, filling a missing ordinate with NaN (GEOS / Shapely style).
