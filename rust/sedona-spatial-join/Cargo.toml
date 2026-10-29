@@ -39,7 +39,7 @@ arrow = { workspace = true }
 arrow-data = { workspace = true }
 arrow-schema = { workspace = true }
 arrow-array = { workspace = true }
-datafusion = { workspace = true, features = ["sql"] }
+datafusion = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
 datafusion-physical-expr = { workspace = true }
@@ -74,7 +74,7 @@ log = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
-datafusion = { workspace = true }
+datafusion = { workspace = true, features = ["sql"] }
 rstest = { workspace = true }
 sedona-testing = { workspace = true }
 wkt = { workspace = true }

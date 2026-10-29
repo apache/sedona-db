@@ -16,7 +16,7 @@
 // under the License.
 use std::iter::zip;
 
-use arrow_array::ArrayRef;
+use arrow_array::{Array, ArrayRef};
 use arrow_schema::DataType;
 use datafusion_common::cast::{
     as_binary_array, as_binary_view_array, as_large_binary_array, as_struct_array,
@@ -349,6 +349,49 @@ impl GeometryFactory for PointXYGeometryFactory {
 pub type PointXYExecutor<'a, 'b> =
     GenericExecutor<'a, 'b, PointXYGeometryFactory, PointXYGeometryFactory>;
 
+pub(crate) fn visible_wkb_bytes(arg_type: &SedonaType, arg: &ColumnarValue) -> Result<usize> {
+    match arg {
+        ColumnarValue::Array(array) => match arg_type {
+            SedonaType::Wkb(_, _) => {
+                let binary = as_binary_array(array)?;
+                let offsets = binary.offsets();
+                Ok((offsets[offsets.len() - 1] - offsets[0]) as usize)
+            }
+            SedonaType::WkbLarge(_, _) => {
+                let binary = as_large_binary_array(array)?;
+                let offsets = binary.offsets();
+                Ok((offsets[offsets.len() - 1] - offsets[0]) as usize)
+            }
+            SedonaType::WkbView(_, _) => {
+                let binary = as_binary_view_array(array)?;
+
+                // The low 32 bits of each view contain its byte length.
+                // Null views may retain nonzero lengths, so skip them.
+                Ok(binary
+                    .views()
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| binary.is_valid(*i))
+                    .map(|(_, view)| *view as u32 as usize)
+                    .sum())
+            }
+            _ => {
+                let mut total = 0usize;
+                array.iter_as_wkb_bytes(arg_type, array.len(), |maybe_wkb| {
+                    if let Some(wkb) = maybe_wkb {
+                        total += wkb.len();
+                    }
+                    Ok(())
+                })?;
+                Ok(total)
+            }
+        },
+        ColumnarValue::Scalar(scalar) => {
+            Ok(scalar.scalar_as_wkb_bytes()?.map_or(0, |wkb| wkb.len()))
+        }
+    }
+}
+
 /// Trait for iterating over a container type as geometry scalars
 ///
 /// Currently the only scalar type supported is [Wkb]; however, for future
@@ -621,7 +664,9 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use arrow_array::{builder::BinaryBuilder, create_array};
+    use arrow_array::{
+        BinaryArray, BinaryViewArray, LargeBinaryArray, builder::BinaryBuilder, create_array,
+    };
     use arrow_schema::DataType;
     use datafusion_common::{cast::as_binary_view_array, scalar::ScalarValue};
     use datafusion_expr::ColumnarValue;
@@ -716,6 +761,78 @@ mod tests {
             })
             .unwrap();
         assert_eq!(wkt_out, " 0: POINT(1 2) 1: None 2: POINT(1 2)");
+    }
+
+    #[rstest]
+    #[test]
+    fn visible_wkb_bytes_counts_visible_values() {
+        let values = vec![
+            Some(&b"abc"[..]),
+            None,
+            Some(&b"0123456789abcdefg"[..]),
+            Some(&b""[..]),
+        ];
+        let binary = BinaryArray::from_iter(values.clone());
+        let large = LargeBinaryArray::from_iter(values.clone());
+        let view = BinaryViewArray::from_iter(values);
+        let array = |a: ArrayRef| ColumnarValue::Array(a);
+
+        assert_eq!(
+            visible_wkb_bytes(&WKB_GEOMETRY, &array(Arc::new(binary.clone()))).unwrap(),
+            20
+        );
+        assert_eq!(
+            visible_wkb_bytes(&WKB_LARGE_GEOMETRY, &array(Arc::new(large.clone()))).unwrap(),
+            20
+        );
+        assert_eq!(
+            visible_wkb_bytes(&WKB_VIEW_GEOMETRY, &array(Arc::new(view.clone()))).unwrap(),
+            20
+        );
+
+        // Slices keep only the visible rows: [None, 17 bytes]
+        assert_eq!(
+            visible_wkb_bytes(&WKB_GEOMETRY, &array(Arc::new(binary.slice(1, 2)))).unwrap(),
+            17
+        );
+        assert_eq!(
+            visible_wkb_bytes(&WKB_LARGE_GEOMETRY, &array(Arc::new(large.slice(1, 2)))).unwrap(),
+            17
+        );
+        assert_eq!(
+            visible_wkb_bytes(&WKB_VIEW_GEOMETRY, &array(Arc::new(view.slice(1, 2)))).unwrap(),
+            17
+        );
+
+        let scalar = |v: ScalarValue| ColumnarValue::Scalar(v);
+        assert_eq!(
+            visible_wkb_bytes(
+                &WKB_GEOMETRY,
+                &scalar(ScalarValue::Binary(Some(vec![1, 2, 3])))
+            )
+            .unwrap(),
+            3
+        );
+        assert_eq!(
+            visible_wkb_bytes(
+                &WKB_LARGE_GEOMETRY,
+                &scalar(ScalarValue::LargeBinary(Some(vec![1, 2, 3, 4])))
+            )
+            .unwrap(),
+            4
+        );
+        assert_eq!(
+            visible_wkb_bytes(
+                &WKB_VIEW_GEOMETRY,
+                &scalar(ScalarValue::BinaryView(Some(vec![1; 17])))
+            )
+            .unwrap(),
+            17
+        );
+        assert_eq!(
+            visible_wkb_bytes(&WKB_GEOMETRY, &scalar(ScalarValue::Binary(None))).unwrap(),
+            0
+        );
     }
 
     #[rstest]

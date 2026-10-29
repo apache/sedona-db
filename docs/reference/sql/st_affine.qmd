@@ -65,8 +65,23 @@ kernels:
       type: double
 ---
 
+## Description
+
+Applies the affine transformation with the given coefficients to every
+coordinate, as in PostGIS:
+
+- 2D: `x' = a*x + b*y + xOff`, `y' = d*x + e*y + yOff`
+- 3D: `x' = a*x + b*y + c*z + xOff`, `y' = d*x + e*y + f*z + yOff`,
+  `z' = g*x + h*y + i*z + zOff`
+
+Z and M values a 2D transformation does not use are kept.
+
 ## Examples
 
 ```sql
 SELECT ST_AsText(ST_Affine(ST_GeomFromText('POINT (1 2)'), 1, 0, 0, 1, 10, 20));
+```
+
+```sql
+SELECT ST_AsText(ST_Affine(ST_GeomFromText('POINT (1 2)'), 2, 3, 5, 7, 1, 1));
 ```

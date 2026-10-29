@@ -47,6 +47,7 @@ mod st_interiorringn;
 mod st_isclosed;
 mod st_iscollection;
 mod st_isempty;
+mod st_ispolygoncw;
 mod st_knn;
 mod st_linesubstring;
 mod st_longest_line;

@@ -16,19 +16,25 @@
 # under the License.
 
 import inspect
+import itertools
 import re
-from typing import Any, List, Literal, Optional, Union
+from collections.abc import Mapping
+from typing import Any, Literal, Optional, Union
 
 from sedonadb._lib import (
+    _type_matcher_type_if_null,
     sedona_aggregate_udf,
-    sedona_native_scalar_udf as _sedona_native_scalar_udf,
     sedona_scalar_udf,
 )
+from sedonadb._lib import (
+    sedona_native_scalar_udf as _sedona_native_scalar_udf,
+)
+from sedonadb.expr.literal import _resolve_arrow_array
 from sedonadb.utility import sedona  # noqa: F401
 
 
 def sedona_native_scalar_udf(
-    kernels: List[Any],
+    kernels: list[Any],
     volatility: Optional[Literal["immutable", "stable", "volatile"]] = None,
     name: Optional[str] = None,
 ):
@@ -63,19 +69,26 @@ class TypeMatcher(str):
     """Helper class to mark type matchers that can be used as the `input_types` for
     user-defined functions
 
+    Most matchers can also resolve to an Arrow type that represents an arbitrary
+    type that the matcher will match (usually the most common one). This means
+    you can use the constants provided by this module as return types as well
+    (e.g., `udf.RASTER`).
+
     Note that the internal storage of the type matcher (currently a string) is
     arbitrary and may change in a future release. Use the constants provided by
     the `udf` module.
     """
 
-    pass
+    def __arrow_c_schema__(self) -> Any:
+        return _type_matcher_type_if_null(self).__arrow_c_schema__()
 
 
 def arrow_udf(
     return_type: Any,
-    input_types: List[Union[TypeMatcher, Any]] = None,
+    input_types: Optional[list[Union[TypeMatcher, Any]]] = None,
     volatility: Literal["immutable", "stable", "volatile"] = "immutable",
     name: Optional[str] = None,
+    metadata: Optional[Mapping[str, str]] = None,
 ):
     """Generic Arrow-based user-defined scalar function decorator
 
@@ -83,7 +96,9 @@ def arrow_udf(
     Arrow array wrappers implementing the
     [Arrow PyCapsule Interface](https://arrow.apache.org/docs/format/CDataInterface/PyCapsuleInterface.html).
     The annotated function must return a value of a consistent length of the
-    appropriate type.
+    appropriate type. Outputs are resolved to the declared return type: ordinary
+    Arrow arrays may be cast, and Python lists may contain ordinary values,
+    Shapely geometries, or Raster objects (including None for nulls).
 
     !!! warning
         SedonaDB will call the provided function from multiple threads. Attempts
@@ -119,6 +134,10 @@ def arrow_udf(
             or otherwise non-deterministic output.
         name: An optional name for the UDF. If not given, it will be derived from
             the name of the provided function.
+        metadata: Optional key/value information used by optimizer rules. Raster UDFs
+            may set `"needs_pixels": "true"` when they read pixel bytes and
+            `"returns_bytes": "true"` when they produce a fully materialized
+            in-database raster from loaded input.
 
     Examples:
 
@@ -248,49 +267,213 @@ def arrow_udf(
     """
 
     def decorator(func):
+        from sedonadb.expr.literal import _resolve_arrow_array
+
         kwarg_names = _callable_kwarg_only_names(func)
         if "return_type" in kwarg_names and "num_rows" in kwarg_names:
 
             def func_wrapper(args, return_type, num_rows):
-                return func(*args, return_type=return_type, num_rows=num_rows)
+                result = func(*args, return_type=return_type, num_rows=num_rows)
+                return _resolve_arrow_array(result, return_type)
         elif "return_type" in kwarg_names:
 
             def func_wrapper(args, return_type, num_rows):
-                return func(*args, return_type=return_type)
+                result = func(*args, return_type=return_type)
+                return _resolve_arrow_array(result, return_type)
         elif "num_rows" in kwarg_names:
 
             def func_wrapper(args, return_type, num_rows):
-                return func(*args, num_rows=num_rows)
+                result = func(*args, num_rows=num_rows)
+                return _resolve_arrow_array(result, return_type)
         else:
 
             def func_wrapper(args, return_type, num_rows):
-                return func(*args)
+                return _resolve_arrow_array(func(*args), return_type)
 
         name_arg = func.__name__ if name is None and hasattr(func, "__name__") else name
         return ScalarUdfImpl(
-            func_wrapper, return_type, input_types, volatility, name_arg
+            func_wrapper, return_type, input_types, volatility, name_arg, metadata
         )
 
     return decorator
 
 
-BINARY: TypeMatcher = "binary"
+def python_udf(
+    return_type: Any,
+    input_types: Optional[list[Union[TypeMatcher, Any]]] = None,
+    volatility: Literal["immutable", "stable", "volatile"] = "immutable",
+    name: Optional[str] = None,
+    metadata: Optional[Mapping[str, str]] = None,
+):
+    """Python object-based user-defined scalar function decorator.
+
+    The decorated function is called once per row with ordinary Python objects.
+    Input values are converted lazily using PyArrow's scalar conversion.
+    Geometry/geography values are passed as GeoArrow scalars (or `None`).
+    Raster values are passed as [`Raster`][sedonadb.raster.Raster]
+    objects that reference the input Arrow buffers instead of materializing the
+    raster's inline pixel bytes as a Python `bytes` object.
+
+    Return conversion is selected by the declared Arrow type. Most values use
+    `pyarrow.array(values, type=return_type)` directly. Geometry/geography
+    results additionally accept GeoArrow scalars and Shapely objects, and raster
+    results preserve the Arrow-backed representation used by `sd.lit()`.
+
+    Geometry/geography results must use a consistent representation: WKB bytes,
+    GeoArrow scalars, or Shapely objects, optionally mixed with `None`. Conversion
+    is selected from the first non-null result in each batch; mixing these
+    representations within a batch is unsupported. This avoids per-row type
+    dispatch and preserves vectorized conversion, which is substantially faster
+    for small geometries such as Shapely points.
+
+    Args:
+        return_type: The return data type, or a callable return type resolver.
+        input_types: The accepted input data types or type matchers. `None`
+            accepts any number of arguments of any type.
+        volatility: `"immutable"` (default), `"stable"`, or `"volatile"`.
+        name: An optional SQL name. By default the decorated function's name is
+            used.
+        metadata: Optional key/value information used by optimizer rules.
+
+    Examples:
+
+        >>> import pyarrow as pa
+        >>> from sedonadb import udf
+        >>> @udf.python_udf(pa.int64(), [udf.STRING])
+        ... def char_count(value):
+        ...     return None if value is None else len(value)
+        ...
+        >>> sd = sedona.db.connect()
+        >>> sd.register(char_count)
+        >>> sd.sql("SELECT char_count('abcde') AS col").show()
+        ┌───────┐
+        │  col  │
+        │ int64 │
+        ╞═══════╡
+        │     5 │
+        └───────┘
+
+        Geometry results can be returned as Shapely objects by declaring a
+        geometry return type.
+
+        >>> import shapely
+        >>> @udf.python_udf(udf.GEOMETRY, [udf.NUMERIC, udf.NUMERIC])
+        ... def make_point(x, y):
+        ...     if x is None or y is None:
+        ...         return None
+        ...     return shapely.Point(x, y)
+        ...
+        >>> sd.register(make_point)
+        >>> sd.sql("SELECT make_point(1.0, 2.0) AS col").show()
+        ┌────────────┐
+        │     col    │
+        │  geometry  │
+        ╞════════════╡
+        │ POINT(1 2) │
+        └────────────┘
+
+        Raster arguments arrive as [`Raster`][sedonadb.raster.Raster] objects.
+        Set `needs_pixels` when reading pixels so that externally stored
+        raster data is loaded before the UDF runs. This example averages all
+        pixels and bands without excluding nodata values; the sample raster
+        contains a single band filled with zeros.
+
+        >>> @udf.python_udf(
+        ...     pa.float64(), [udf.RASTER], metadata={"needs_pixels": "true"}
+        ... )
+        ... def pixel_mean(value):
+        ...     if value is None:
+        ...         return None
+        ...     return float(value.to_numpy().mean())
+        ...
+        >>> sd.register(pixel_mean)
+        >>> sd.sql(
+        ...     "SELECT pixel_mean("
+        ...     "RS_MakeEmptyRaster(1, 'B', 3, 2, 0.0, 0.0, 1.0)"
+        ...     ") AS col"
+        ... ).show()
+        ┌─────────┐
+        │   col   │
+        │ float64 │
+        ╞═════════╡
+        │     0.0 │
+        └─────────┘
+    """
+
+    def decorator(func):
+        def invoke_batch(args, resolved_return_type, num_rows):
+            columns = [_python_udf_values(arg, num_rows) for arg in args]
+            if columns:
+                results = [func(*row) for row in zip(*columns)]
+            else:
+                results = [func() for _ in range(num_rows)]
+
+            return _resolve_arrow_array(results, resolved_return_type)
+
+        name_arg = func.__name__ if name is None and hasattr(func, "__name__") else name
+        return ScalarUdfImpl(
+            invoke_batch, return_type, input_types, volatility, name_arg, metadata
+        )
+
+    return decorator
+
+
+def _python_udf_values(value, num_rows):
+    """Convert an input once, reusing a scalar's Python object for every row."""
+    import pyarrow as pa
+
+    # Keep the Sedona type: PyArrow may strip unrecognized extension metadata.
+    type = value.type
+    array = pa.array(value)
+    values = _python_values_from_arrow(array, type)
+    if value.is_scalar():
+        return itertools.repeat(next(values), num_rows)
+    else:
+        return values
+
+
+def _python_values_from_arrow(array, type):
+    """Convert an Arrow array according to its logical type."""
+    extension_name = getattr(type, "extension_name", None)
+
+    # Special case raster because its default to_pylist() will copy
+    # raster buffers under current pyarrow
+    if extension_name == "sedona.raster":
+        return _python_values_from_raster(array)
+    elif extension_name == "geoarrow.wkb":
+        if array.null_count == 0:
+            return iter(array)
+        return (scalar if scalar.is_valid else None for scalar in array)
+    else:
+        return (scalar.as_py() for scalar in array)
+
+
+def _python_values_from_raster(array):
+    from sedonadb.raster import _iter_rasters
+
+    return _iter_rasters(array)
+
+
+BINARY: TypeMatcher = TypeMatcher("binary")
 """Match any binary argument (i.e., binary, binary view, large binary,
 fixed-size binary)"""
 
-BOOLEAN: TypeMatcher = "boolean"
+BOOLEAN: TypeMatcher = TypeMatcher("boolean")
 """Match a boolean argument"""
 
-GEOGRAPHY: TypeMatcher = "geography"
+GEOGRAPHY: TypeMatcher = TypeMatcher("geography")
 """Match a geography argument"""
 
-GEOMETRY: TypeMatcher = "geometry"
+GEOMETRY: TypeMatcher = TypeMatcher("geometry")
 """Match a geometry argument"""
 
-NUMERIC: TypeMatcher = "numeric"
+RASTER: TypeMatcher = TypeMatcher("raster")
+"""Match a raster argument"""
+
+NUMERIC: TypeMatcher = TypeMatcher("numeric")
 """Match any numeric argument"""
 
-STRING: TypeMatcher = "string"
+STRING: TypeMatcher = TypeMatcher("string")
 """Match any string argument (i.e., string, string view, large string)"""
 
 
@@ -301,6 +484,11 @@ class ScalarUdfImpl:
     function constructors. This wrapper allows the UDF to be registered with
     a SedonaDB context or any context that accepts DataFusion Python
     Scalar UDFs. This object is not intended to be used to call a UDF.
+
+    The optional `metadata` mapping supplies key/value information to optimizer
+    rules. Raster UDFs may set `"needs_pixels": "true"` when they read pixel
+    bytes and `"returns_bytes": "true"` when they produce a fully materialized
+    in-database raster from loaded input.
     """
 
     def __init__(
@@ -310,6 +498,7 @@ class ScalarUdfImpl:
         input_types=None,
         volatility: Literal["immutable", "stable", "volatile"] = "immutable",
         name: Optional[str] = None,
+        metadata: Optional[Mapping[str, str]] = None,
     ):
         # If the input_types are None, the return_type must be callable when passed
         # to the internals. In the Python API we allow a data type as the return type
@@ -332,6 +521,7 @@ class ScalarUdfImpl:
             self._name = name
 
         self._volatility = volatility
+        self._metadata = metadata
 
     def __sedonadb_internal_udf__(self):
         return sedona_scalar_udf(
@@ -340,6 +530,7 @@ class ScalarUdfImpl:
             self._input_types,
             self._volatility,
             self._name,
+            self._metadata,
         )
 
 
@@ -362,8 +553,8 @@ def _camel_to_snake(name: str) -> str:
 
 def arrow_aggregate_udf(
     return_type: Any,
-    input_types: List[Union[TypeMatcher, Any]],
-    state_types: List[Any],
+    input_types: list[Union[TypeMatcher, Any]],
+    state_types: list[Any],
     *,
     volatility: Literal["immutable", "stable", "volatile"] = "immutable",
     name: Optional[str] = None,

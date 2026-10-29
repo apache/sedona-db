@@ -74,7 +74,8 @@ if(GPUSPATIAL_BUILD_TESTS)
                  array_stream.cc
                  relate_point_test.cu
                  relate_linestring_test.cu
-                 relate_polygon_test.cu)
+                 relate_polygon_test.cu
+                 segment_relate_ops_test.cu)
   target_link_libraries(relate_test
                         PRIVATE cuda
                                 GTest::gtest_main

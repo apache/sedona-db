@@ -36,6 +36,7 @@ __all__ = [
     "concat",
     "from_geopandas",
     "merge",
+    "points_from_xy",
     "read_file",
     "read_parquet",
     "sjoin",
@@ -64,6 +65,15 @@ def from_geopandas(data, *, context=None, geometry=None):
     if geometry is None:
         return GeoDataFrame(df)
     return GeoDataFrame(df, geometry=geometry)
+
+
+def points_from_xy(x, y, z=None, crs=None):
+    """Points from x and y (and z) coordinates, as `geopandas.points_from_xy`.
+
+    A lazy `GeoSeries` in the frame of the coordinate columns, where
+    GeoPandas gives a geometry array; see `GeoSeries.from_xy`.
+    """
+    return GeoSeries.from_xy(x, y, z, crs=crs)
 
 
 def sjoin(

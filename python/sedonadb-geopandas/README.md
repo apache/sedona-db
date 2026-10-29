@@ -81,6 +81,16 @@ immediately, as in every pandas version. Mixed-unit duration
 operands are rebuilt in the column's own unit when exactly representable,
 rather than widening to the engine's interval type.
 
+`points_from_xy()`, `GeoSeries.from_xy()`, `from_wkt()`, and `from_wkb()` take
+columns of a frame (and numbers, for coordinates) rather than arrays, and build
+a lazy `GeoSeries` named `"geometry"` in that frame: load the data as a frame
+first. A missing coordinate gives a missing point, where GeoPandas reads it as
+NaN and gives a point with a NaN coordinate. Invalid WKT or WKB raises when the
+result is computed (only `on_invalid="raise"` is supported), and the engine's
+WKT parser refuses a few forms GEOS reads, such as `MULTIPOINT (EMPTY)`.
+`GeoDataFrame.to_wkt()` and `to_wkb()` convert every geometry column and leave
+no active geometry, as in GeoPandas.
+
 `GeoSeries` properties and methods follow GeoPandas, with a few differences
 in form: `to_wkt()` writes equivalent but differently spaced WKT
 (`POINT(1 2)`), `to_wkb()` writes ISO WKB (GeoPandas' `flavor="iso"`),
@@ -88,18 +98,61 @@ in form: `to_wkt()` writes equivalent but differently spaced WKT
 them undefined, and `x`/`y`/`z` on a non-point raise when the result is
 computed rather than when the property is read.
 
+As in GeoPandas, a `GeoDataFrame` has the geometry properties and methods it
+shares with `GeoSeries` (`gdf.area`, `gdf.buffer(1)`, `gdf.intersects(other)`,
+...), which act on its active geometry column and raise `AttributeError` on a
+frame without one. Those only a `GeoSeries` has (`x`, `y`, `from_xy()`, ...)
+are not on the frame.
+
 Binary geometry operations (`intersects`, `within`, `distance`,
 `intersection`, ...) take either a single Shapely geometry, which takes the
-column's CRS, or a `GeoSeries` from the same frame, matched row by row as with
+column's CRS, or a `GeoSeries` from the same frame (or a `GeoDataFrame`, for
+its active geometry column), matched row by row as with
 GeoPandas' `align=False`; there is no index to align on. `touches` inherits
 an engine issue with geometry collections that mix dimensions
 (apache/sedona-db#1383).
+
+`cx[xmin:xmax, ymin:ymax]` keeps the geometries that intersect the box, as in
+GeoPandas (a box in coordinates, for geography too), but an open side has no
+bound: GeoPandas closes it at the bounds of all the geometries, so a range that
+starts past them reaches back to the geometries at their edge. `get_coordinates()` gives a frame of x and y with no
+index (`index_parts=True` is not supported), and raises when the result is
+computed for a geometry collection whose members differ in Z or M, an engine
+issue in `ST_Points` (apache/sedona-db#1513). `to_crs()` labels the result with the CRS as given, as
+GeoPandas does, rather than with the engine's canonical form of it.
+
+The numeric parameters of geometry methods (`segmentize()`, `set_precision()`,
+`concave_hull()`, `force_3d()`, `snap()`, `get_geometry()`) take a number or a
+numeric `Series` of the same frame, applied row by row. `segmentize()` only
+adds vertices, where GEOS also repairs an invalid polygon and turns a one-part
+multi-line into a line; `force_3d()` keeps Z values and drops M, where Shapely
+leaves a geometry with M but no Z as it is and replaces the Z values of one
+with both; and `snap()` leaves an empty geometry as it is, where GEOS can turn
+it into a 3D empty, or one of another type (`POLYGON EMPTY` becomes
+`LINEARRING Z EMPTY`). `set_precision()` modes other than `"valid_output"` are
+not supported.
+
+The affine transformations (`affine_transform()`, `translate()`, `rotate()`,
+`scale()`, `skew()`) give Shapely's coordinates to the last bit, but keep M
+values, which Shapely drops (and overwrites, with Z, as NaN in a geometry
+with both). `interpolate()` and `project()` raise for a multi-line when the
+result is computed, as the engine works along single lines only, and
+`interpolate()` gives a 2D point on a 3D line.
 
 `explode()` takes parts one level deep and drops rows whose geometry has no
 parts, as GeoPandas does. Without an index it cannot number the parts
 (`index_parts=True`), and it explodes the active geometry column only:
 GeoPandas explodes the active geometry even when `column=` names another
 geometry column, and explodes non-geometry columns as lists.
+
+The aggregates over a whole column stay lazy, and each result belongs to a new
+frame: `union_all()` gives a `GeoSeries` of one row where GeoPandas gives the
+Shapely geometry, and `delaunay_triangles()`, `polygonize()`, and
+`build_area()` give one row per triangle or polygon, as GeoPandas does. The
+geometries are collected first, so 2D and 3D geometries together raise when
+the result is computed, where GeoPandas promotes them to 3D. `union_all()`
+supports neither `grid_size` nor a `method` other than `"unary"`, and
+`polygonize(full=True)` is not supported.
 
 `sjoin()` requires both geometry columns to share a CRS: GeoPandas warns on a
 mismatch and joins anyway, which is almost always a mistake, so this raises and

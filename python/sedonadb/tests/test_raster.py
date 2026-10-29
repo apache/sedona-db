@@ -25,6 +25,7 @@ from sedonadb.raster import (
     RasterScalar,
     RasterType,
     _get_binary_view_buffer,
+    _iter_rasters,
 )
 
 
@@ -75,6 +76,105 @@ def test_raster_from_chunked_array(con):
     # Test index out of bounds
     with pytest.raises(IndexError):
         Raster(chunked, 100)
+
+
+def test_iter_rasters_shares_flattened_band_fields_and_buffers(con):
+    chunk = con.sql("SELECT RS_Example() as raster").to_arrow_table()["raster"].chunk(0)
+    array = pa.concat_arrays([chunk, chunk])
+
+    first, second = _iter_rasters(array)
+    assert first._batch is second._batch
+
+    first_band = first.bands[0]
+    second_band = second.bands[0]
+    assert first_band._batch is second_band._batch
+    assert first_band._batch._data_buffers is None
+
+    first_pixels = first_band.to_numpy()
+    buffers = first_band._batch.data_buffers
+    second_pixels = second_band.to_numpy()
+    assert second_band._batch.data_buffers is buffers
+    assert first_pixels[0, 0] == second_pixels[0, 0] == 127
+
+
+def test_iter_rasters_handles_chunks_and_nulls(con):
+    table = con.sql(
+        "SELECT RS_Example() AS raster UNION ALL SELECT NULL AS raster"
+    ).to_arrow_table()
+
+    rasters = list(_iter_rasters(table["raster"]))
+    assert len(rasters) == 2
+    assert sum(isinstance(raster, Raster) for raster in rasters) == 1
+    assert sum(raster is None for raster in rasters) == 1
+
+
+def test_iter_rasters_handles_sliced_array_offsets():
+    first = pa.array(Raster.from_numpy(np.full((4, 4), 11, dtype=np.uint16)))
+    second = pa.array(Raster.from_numpy(np.full((4, 4), 22, dtype=np.uint16)))
+    array = pa.concat_arrays([first, second]).slice(1, 1)
+
+    (raster,) = _iter_rasters(array)
+    assert raster.bands[0].to_numpy().tolist() == [[22] * 4] * 4
+
+
+@pytest.mark.parametrize("parent_null", [False, True])
+@pytest.mark.parametrize("start", [0, 1, 2])
+def test_iter_rasters_null_bands_with_nonempty_offsets(parent_null, start):
+    storage = pa.concat_arrays(
+        [
+            Raster.from_numpy(np.full((4, 4), value, dtype=np.uint16))._array
+            for value in [11, 22, 33, 44]
+        ]
+    )
+    bands = storage.field("bands")
+    # Arrow permits a null list to have a nonempty range of hidden values.
+    bands = pa.ListArray.from_arrays(
+        bands.offsets,
+        bands.values,
+        type=bands.type,
+        mask=pa.array([False, True, False, False]),
+    )
+    storage = pa.StructArray.from_arrays(
+        [
+            bands if field.name == "bands" else storage.field(i)
+            for i, field in enumerate(storage.type)
+        ],
+        fields=list(storage.type),
+        mask=pa.array([False, parent_null, False, False]),
+    ).slice(start)
+    storage.validate(full=True)
+
+    rasters = list(_iter_rasters(RasterType(storage.type).wrap_array(storage)))
+    assert len(rasters) == len(storage)
+    for i, raster in enumerate(rasters):
+        if parent_null and i + start == 1:
+            assert raster is None
+            continue
+        expected = Raster(storage, i).bands
+        assert len(raster.bands) == len(expected)
+        for actual_band, expected_band in zip(raster.bands, expected):
+            actual_pixels = actual_band.to_numpy()
+            expected_pixels = expected_band.to_numpy()
+            np.testing.assert_array_equal(actual_pixels, expected_pixels)
+            assert np.shares_memory(actual_pixels, expected_pixels)
+
+
+@pytest.mark.parametrize("start, length", [(0, 10), (3, 6), (3, 1), (4, 0)])
+def test_iter_rasters_sliced_validity(start, length):
+    raster = Raster.from_numpy(np.ones((4, 4), dtype=np.uint16))
+    storage = pa.concat_arrays([raster._array] * 10)
+    nulls = [True, False, False, True, False, False, False, True, False, True]
+    storage = pa.StructArray.from_arrays(
+        [storage.field(i) for i in range(storage.type.num_fields)],
+        fields=list(storage.type),
+        mask=pa.array(nulls),
+    ).slice(start, length)
+
+    rasters = list(_iter_rasters(storage))
+    assert [raster is None for raster in rasters] == nulls[start : start + length]
+    for raster in rasters:
+        if raster is not None:
+            np.testing.assert_array_equal(raster.bands[0].to_numpy(), np.ones((4, 4)))
 
 
 def test_raster_accessors(con):

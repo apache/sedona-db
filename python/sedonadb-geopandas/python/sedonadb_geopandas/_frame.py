@@ -17,6 +17,7 @@
 """GeoPandas-style GeoDataFrame backed by a lazy SedonaDB frame."""
 
 import functools
+import inspect
 import numbers
 import operator
 import os
@@ -28,6 +29,7 @@ from shapely.geometry.base import BaseGeometry
 from sedonadb_geopandas._series import (
     GeoSeries,
     Series,
+    _CoordinateIndexer,
     _geometry_from_wkb,
     _same_crs,
     is_scalar,
@@ -270,6 +272,11 @@ class GeoDataFrame:
         if self._geometry_name is None:
             raise AttributeError("This GeoDataFrame has no active geometry column")
         return GeoSeries(self._df, self._df[self._geometry_name], self._geometry_name)
+
+    @property
+    def active_geometry_name(self):
+        """The name of the active geometry column, or `None` if there is none."""
+        return self._geometry_name
 
     @property
     def crs(self):
@@ -870,13 +877,25 @@ class GeoDataFrame:
         self._ancestors = result._ancestors
         return None
 
-    def to_crs(self, crs):
-        """Reproject the geometry column to `crs` (`ST_Transform`)."""
+    def to_crs(self, crs=None, epsg=None):
+        """Reproject the geometry column to `crs` (`ST_Transform`), as
+        `GeoSeries.to_crs` does."""
         if self._geometry_name is None:
             raise ValueError("to_crs() requires an active geometry column")
-        transformed = self._df[self._geometry_name].geo.transform(lit(crs))
-        new_df = self._df.mutate(transformed.alias(self._geometry_name))
+        transformed = self.geometry.to_crs(crs, epsg)
+        new_df = self._df.mutate(transformed._expr.alias(self._geometry_name))
         return GeoDataFrame(new_df, self._geometry_name)
+
+    @property
+    def cx(self):
+        """Coordinate indexer: `cx[xmin:xmax, ymin:ymax]` keeps the rows whose
+        active geometry intersects that box; see `GeoSeries.cx`."""
+        geometry = self.geometry
+        return _CoordinateIndexer(
+            lambda key: GeoDataFrame(
+                self._df.filter(geometry._in_box(key)), self._geometry_name
+            )
+        )
 
     def sjoin(
         self,
@@ -1048,6 +1067,30 @@ class GeoDataFrame:
         return GeoDataFrame(joined.select(*projection), geometry)
 
     # -- geometry and CRS bookkeeping --------------------------------------
+
+    def to_wkt(self):
+        """Every geometry column as WKT text, as in GeoPandas (see
+        `GeoSeries.to_wkt`): a frame with no active geometry column."""
+        return self._encoded(lambda geometry: geometry.to_wkt())
+
+    def to_wkb(self, hex=False):
+        """Every geometry column as ISO WKB, or hex with `hex=True`, as in
+        GeoPandas (see `GeoSeries.to_wkb`): a frame with no active geometry
+        column."""
+        return self._encoded(lambda geometry: geometry.to_wkb(hex=hex))
+
+    def _encoded(self, encode):
+        geometries = _geometry_column_names(self._df)
+        if not geometries:
+            # Nothing to encode, and a frame without columns cannot select none.
+            return GeoDataFrame(self._df, geometry=None)
+        columns = [
+            encode(GeoSeries(self._df, self._df[name], name))._expr.alias(name)
+            if name in geometries
+            else self._df[name]
+            for name in self.columns
+        ]
+        return GeoDataFrame(self._df.select(*columns), geometry=None)
 
     def set_geometry(self, col, inplace=False, crs=None):
         """Make `col` the active geometry column, as in GeoPandas.
@@ -1558,3 +1601,136 @@ class GeoDataFrame:
             f"<div><b>GeoDataFrame</b> (preview of up to "
             f"{_REPR_HTML_ROWS} rows)</div>{table}"
         )
+
+
+# The geometry methods and properties GeoPandas gives a GeoDataFrame as well
+# as a GeoSeries (those of `GeoPandasBase`), but for `crs`, which the frame
+# has its own of, and `cx`, which selects the frame's rows. On a frame they
+# act on its active geometry column. Each is forwarded once GeoSeries
+# implements it.
+_GEOMETRY_METHODS = (
+    "affine_transform",
+    "area",
+    "boundary",
+    "bounds",
+    "buffer",
+    "build_area",
+    "centroid",
+    "clip_by_rect",
+    "concave_hull",
+    "constrained_delaunay_triangles",
+    "contains",
+    "contains_properly",
+    "convex_hull",
+    "count_coordinates",
+    "count_geometries",
+    "count_interior_rings",
+    "covered_by",
+    "covers",
+    "crosses",
+    "delaunay_triangles",
+    "difference",
+    "disjoint",
+    "distance",
+    "dwithin",
+    "envelope",
+    "exterior",
+    "extract_unique_points",
+    "force_2d",
+    "force_3d",
+    "frechet_distance",
+    "geom_equals",
+    "geom_equals_exact",
+    "geom_equals_identical",
+    "geom_type",
+    "get_coordinates",
+    "get_geometry",
+    "get_precision",
+    "has_m",
+    "has_sindex",
+    "has_z",
+    "hausdorff_distance",
+    "hilbert_distance",
+    "interiors",
+    "interpolate",
+    "intersection",
+    "intersection_all",
+    "intersects",
+    "invalid_coverage_edges",
+    "is_ccw",
+    "is_closed",
+    "is_empty",
+    "is_ring",
+    "is_simple",
+    "is_valid",
+    "is_valid_coverage",
+    "is_valid_reason",
+    "length",
+    "line_merge",
+    "make_valid",
+    "maximum_inscribed_circle",
+    "minimum_bounding_circle",
+    "minimum_bounding_radius",
+    "minimum_clearance",
+    "minimum_clearance_line",
+    "minimum_rotated_rectangle",
+    "normalize",
+    "offset_curve",
+    "orient_polygons",
+    "overlaps",
+    "polygonize",
+    "project",
+    "relate",
+    "relate_pattern",
+    "remove_repeated_points",
+    "representative_point",
+    "reverse",
+    "rotate",
+    "sample_points",
+    "scale",
+    "segmentize",
+    "set_precision",
+    "shared_paths",
+    "shortest_line",
+    "simplify",
+    "simplify_coverage",
+    "sindex",
+    "skew",
+    "snap",
+    "symmetric_difference",
+    "total_bounds",
+    "touches",
+    "transform",
+    "translate",
+    "type",
+    "unary_union",
+    "union",
+    "union_all",
+    "voronoi_polygons",
+    "within",
+)
+
+
+def _forwarded(name):
+    """The GeoSeries property or method `name`, as one of a frame's that acts
+    on its active geometry column."""
+    attribute = inspect.getattr_static(GeoSeries, name)
+    if isinstance(attribute, property):
+
+        def get(self):
+            return getattr(self.geometry, name)
+
+        return property(get, doc=attribute.__doc__)
+
+    @functools.wraps(attribute)
+    def method(self, *args, **kwargs):
+        return getattr(self.geometry, name)(*args, **kwargs)
+
+    method.__qualname__ = f"GeoDataFrame.{name}"
+    return method
+
+
+for _name in _GEOMETRY_METHODS:
+    if hasattr(GeoSeries, _name):
+        setattr(GeoDataFrame, _name, _forwarded(_name))
+del _name

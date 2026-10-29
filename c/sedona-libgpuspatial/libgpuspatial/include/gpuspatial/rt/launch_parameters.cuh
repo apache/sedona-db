@@ -102,6 +102,51 @@ struct LaunchParamsPointMultiPolygonQuery {
   ArrayView<thrust::pair<index_t, index_t>> aabb_vertex_offsets;
 };
 
+/**
+ * Launch parameters for Polygon/MultiPolygon probing a Polygon BVH.
+ */
+template <typename POINT_T, typename INDEX_T>
+struct LaunchParamsPolygonPolygonQuery {
+  using point_t = POINT_T;
+  using index_t = INDEX_T;
+  // Either probe_polygons or probe_multi_polygons will be used
+  PolygonArrayView<point_t, index_t> probe_polygons;
+  MultiPolygonArrayView<point_t, index_t> probe_multi_polygons;
+  PolygonArrayView<point_t, index_t> bvh_polygons;
+  ArrayView<index_t> uniq_bvh_ids;  // sorted
+  index_t* query_probe_ids;
+  index_t* query_bvh_ids;
+  size_t query_size;
+  ArrayView<int> IMs;  // intersection matrices
+  bool transpose;
+  OptixTraversableHandle handle;
+  ArrayView<index_t> aabb_poly_ids, aabb_ring_ids;
+  ArrayView<thrust::pair<index_t, index_t>> aabb_vertex_offsets;
+};
+
+/**
+ * Launch parameters for Polygon/MultiPolygon probing a MultiPolygon BVH.
+ */
+template <typename POINT_T, typename INDEX_T>
+struct LaunchParamsMultiPolygonPolygonQuery {
+  using point_t = POINT_T;
+  using index_t = INDEX_T;
+  // Either probe_polygons or probe_multi_polygons will be used
+  PolygonArrayView<point_t, index_t> probe_polygons;
+  MultiPolygonArrayView<point_t, index_t> probe_multi_polygons;
+  MultiPolygonArrayView<point_t, index_t> bvh_multi_polygons;
+  ArrayView<index_t> uniq_bvh_ids;  // sorted
+  index_t* query_probe_ids;
+  index_t* query_bvh_ids;
+  size_t query_size;
+  ArrayView<index_t> uniq_part_begins;
+  ArrayView<int> IMs;  // intersection matrices
+  bool transpose;
+  OptixTraversableHandle handle;
+  ArrayView<index_t> aabb_multi_poly_ids, aabb_part_ids, aabb_ring_ids;
+  ArrayView<thrust::pair<index_t, index_t>> aabb_vertex_offsets;
+};
+
 }  // namespace detail
 
 }  // namespace gpuspatial

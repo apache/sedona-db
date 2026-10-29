@@ -19,6 +19,7 @@
 import math
 import numbers
 import operator
+import warnings
 
 import pyarrow as pa
 from sedonadb.expr import Expr, lit
@@ -1588,11 +1589,94 @@ def _normalize_crs(crs):
         raise ValueError(f"Invalid CRS {crs!r}: {err}") from err
 
 
+def _number(value, method, name):
+    """`value` as a float, for a parameter GeoPandas takes as one number."""
+    number = _numeric_value(value)
+    if not isinstance(number, numbers.Real) or isinstance(number, bool):
+        raise TypeError(
+            f"{method}() {name} must be a number, got {type(value).__name__}"
+        )
+    return float(number)
+
+
+def _frame_of(method, *values):
+    """The frame of the Series among `values` (a ValueError if they come
+    from different frames), for a constructor that builds a column there."""
+    series = [value for value in values if isinstance(value, Series)]
+    if not series:
+        raise TypeError(
+            f"{method}() needs a Series of a frame to build the column in: "
+            f"load the data as a frame first (from_geopandas, read_file, ...)"
+        )
+    df = series[0]._df
+    for value in series[1:]:
+        _operand(df, value)
+    return df
+
+
+def _coordinate(df, value, method, name):
+    """A coordinate for a constructor, as a float64 expression: a numeric
+    Series of `df` (or one of only missing values, of Arrow's null type, as an
+    all-None column loads), or a number."""
+    if isinstance(value, Series):
+        expr = _operand(df, value)
+        dtype = value._dtype()
+        if _kind(dtype) != "number" and not pa.types.is_null(dtype):
+            raise TypeError(
+                f"{method}() {name} must be a numeric Series or a number, got a "
+                f"Series of {dtype}"
+            )
+        return expr.cast(pa.float64())
+    return df._ctx.lit(pa.scalar(_number(value, method, name), pa.float64()))
+
+
+def _encoded_input(data, method, index, on_invalid):
+    """The frame and expression of `data`, a Series of WKT or WKB, after
+    checking a constructor's arguments. Any dictionary or run-end encoding is
+    cast away, as the engine's parsers take only the plain types."""
+    if index is not None:
+        raise NotImplementedError(f"{method}() cannot take an index: there is no index")
+    if on_invalid != "raise":
+        raise NotImplementedError(
+            f"{method}() supports on_invalid='raise' only, got {on_invalid!r}"
+        )
+    if not isinstance(data, Series):
+        raise TypeError(
+            f"{method}() data must be a Series of a frame, got "
+            f"{type(data).__name__}: load the data as a frame first "
+            f"(from_geopandas, read_file, ...)"
+        )
+    return data._df, data._decoded()
+
+
+def _labeled(df, geometry, crs):
+    """A constructed geometry column of `df`, named "geometry", labeled
+    with `crs` if given."""
+    series = GeoSeries(df, geometry, "geometry")
+    return series if crs is None else series.set_crs(crs)
+
+
+def _snapped(value):
+    """A sine, cosine, or tangent as Shapely's affine transformations use
+    it: 0 where it is within rounding of 0 (so a quarter turn is exact)."""
+    return 0.0 if abs(value) < 2.5e-16 else value
+
+
 def _empty(geometry):
     """Whether a geometry expression is empty as GeoPandas (GEOS) defines
     it: it has no coordinates. The engine's `ST_IsEmpty` calls a collection
     of empty parts (`MULTIPOINT (EMPTY)`) non-empty."""
     return geometry.geo.n_points() == lit(0)
+
+
+class _CoordinateIndexer:
+    """The `cx` indexer: `cx[xmin:xmax, ymin:ymax]` gives `select(key)`."""
+
+    def __init__(self, select):
+        self._select = select
+
+    def __getitem__(self, key):
+        return self._select(key)
 
 
 def _check_align(align):
@@ -1634,6 +1718,55 @@ class GeoSeries(Series):
         from sedonadb.expr import lit
 
         return Series(self._df, expr.funcs.coalesce(lit(False)), name)
+
+    def _parameter(self, value, method, name, valid=None, nan=True):
+        """A numeric parameter of a geometry method, as a float64 expression.
+
+        One number, or a numeric `Series` of this frame applied row by row, as
+        GeoPandas takes an array. A NaN gives a missing result, as Shapely
+        mostly does; with `nan=False` it is refused instead, when the method
+        is called or, for a row, when the result is computed. `valid`, a test
+        on one number and what it requires, refuses a number outside the
+        parameter's range when the method is called; a row outside it fails
+        in the engine when the result is computed.
+        """
+        value = self._parameter_value(value, method, name, valid, nan)
+        if isinstance(value, Expr):
+            return value
+        return lit(pa.scalar(value, pa.float64()))
+
+    def _parameter_value(self, value, method, name, valid=None, nan=True):
+        """As `_parameter`, but one number stays a float (None for a NaN),
+        for arithmetic that a literal does not take."""
+        message = f"{method}() {name} must not be NaN"
+        if isinstance(value, Series):
+            expr = _operand(self._df, value)
+            if _kind(value._dtype()) != "number":
+                raise TypeError(
+                    f"{method}() {name} must be a number or a numeric Series of "
+                    f"this frame, got a Series of {value._dtype()}"
+                )
+            expr = expr.cast(pa.float64())
+            if nan:
+                return expr.funcs.nanvl(lit(pa.scalar(None, pa.float64())))
+            return expr + _fail_where(expr.funcs.isnan(), message)
+        # Validated like any other operand (arrays are rejected), then
+        # resolved to a plain number, so NumPy, Arrow, and lit() scalars are
+        # accepted like floats.
+        _operand(self._df, value)
+        number = _numeric_value(value)
+        if not isinstance(number, numbers.Real) or isinstance(number, bool):
+            raise TypeError(
+                f"{method}() {name} must be a number or a numeric Series of this "
+                f"frame, got {type(value).__name__}"
+            )
+        if math.isnan(number):
+            if not nan:
+                raise ValueError(message)
+            return None
+        if valid is not None and not valid[0](number):
+            raise ValueError(f"{method}() {name} must be {valid[1]}, got {value!r}")
+        return float(number)
 
     # -- properties --------------------------------------------------------
 
@@ -1757,6 +1890,11 @@ class GeoSeries(Series):
         return Series(self._df, self._expr.geo.z(), "z")
 
     @property
+    def m(self):
+        """The M coordinate of each point (`ST_M`); see `x`."""
+        return Series(self._df, self._expr.geo.m(), "m")
+
+    @property
     def bounds(self):
         """The bounds of each geometry, as a frame of minx, miny, maxx, maxy.
 
@@ -1793,6 +1931,99 @@ class GeoSeries(Series):
         return np.array(
             [row[c].iloc[0] for c in ("minx", "miny", "maxx", "maxy")], dtype=float
         )
+
+    def get_coordinates(
+        self, include_z=False, ignore_index=False, index_parts=False, *, include_m=False
+    ):
+        """The coordinates of every vertex, as a frame of x and y (and z or m,
+        with `include_z` or `include_m`), as in GeoPandas.
+
+        One row per vertex, in order, a ring's closing vertex included; a
+        missing Z or M is NaN, and empty or missing geometries have none.
+        Lazy, as for `bounds`, but the result has a different number of rows,
+        so it belongs to a new frame (as for `explode()`). `ignore_index` is
+        accepted for compatibility; `index_parts=True` is not supported,
+        since there is no index.
+        """
+        from sedonadb_geopandas._frame import GeoDataFrame, _explode_parts
+
+        if index_parts:
+            raise NotImplementedError(
+                "get_coordinates() cannot number parts with index_parts=True: "
+                "there is no index"
+            )
+        # ST_Points gives every vertex as a multipoint, exploded to one point
+        # per row.
+        vertices = _explode_parts(
+            self._df.select(self._expr.geo.points().alias("vertex")), "vertex"
+        )
+        point = vertices["vertex"].geo
+        columns = [point.x().alias("x"), point.y().alias("y")]
+        if include_z:
+            columns.append(point.z().alias("z"))
+        if include_m:
+            columns.append(point.m().alias("m"))
+        return GeoDataFrame(vertices.select(*columns), geometry=None)
+
+    @property
+    def cx(self):
+        """Coordinate indexer: `cx[xmin:xmax, ymin:ymax]` keeps the geometries
+        that intersect that box, as in GeoPandas (see `_in_box`).
+
+        Keeping some rows makes a new frame, as for `dropna()`.
+        """
+        return _CoordinateIndexer(
+            lambda key: GeoSeries(
+                self._df.filter(self._in_box(key)), self._expr, self._name
+            )
+        )
+
+    def _in_box(self, key):
+        """Whether each geometry intersects the box `key` selects in `cx`.
+
+        The box is one in coordinates, as in GeoPandas, so a geography is
+        tested as planar geometry: a spherical box's edges would bow away
+        from its corners. A number is a range of that one value, and a step
+        is ignored with a warning, as in GeoPandas.
+
+        An open side is unbounded: it is closed at each geometry's own bound,
+        and a geometry wholly past the other side is left out explicitly, as
+        the box would otherwise turn around to reach it. GeoPandas closes an
+        open side at the bounds of all the geometries, which would need them
+        computed (and which reaches back to the geometries at the edge for a
+        range starting past it).
+        """
+        if not isinstance(key, tuple) or len(key) != 2:
+            raise TypeError("cx takes an x and a y range: cx[xmin:xmax, ymin:ymax]")
+        ctx = self._df._ctx
+        geometry, crs = self._expr, self.crs
+        if self._is_geography():
+            geometry, crs = geometry.geo.as_binary().funcs.st_geomfromwkb(), None
+
+        def bound(value):
+            return None if value is None else ctx.lit(_number(value, "cx", "bounds"))
+
+        sides, within = [], []
+        for bounds, low, high in (
+            (key[0], geometry.geo.x_min(), geometry.geo.x_max()),
+            (key[1], geometry.geo.y_min(), geometry.geo.y_max()),
+        ):
+            if not isinstance(bounds, slice):
+                bounds = slice(bounds, bounds)
+            if bounds.step is not None:
+                warnings.warn("Ignoring step - full interval is used.", stacklevel=4)
+            start, stop = bound(bounds.start), bound(bounds.stop)
+            sides += [low if start is None else start, high if stop is None else stop]
+            if stop is None and start is not None:
+                within.append(high >= start)
+            if start is None and stop is not None:
+                within.append(low <= stop)
+        xmin, xmax, ymin, ymax = sides
+        box = _with_crs(xmin.funcs.st_makeenvelope(ymin, xmax, ymax), False, crs, ctx)
+        result = geometry.geo.intersects(box)
+        for condition in within:
+            result = result & condition
+        return result
 
     # -- measures ---------------------------------------------------------
 
@@ -1892,37 +2123,57 @@ class GeoSeries(Series):
         """The bounding rectangle of each geometry (`ST_Envelope`).
 
         The envelope of an empty geometry is `POINT EMPTY`, as in GeoPandas,
-        whatever the empty geometry's type (the engine keeps the type). For a
-        geography column the engine's envelope is a planar longitude/latitude
-        box (geometry, not geography), and it stays one here.
+        whatever the empty geometry's type (the engine keeps the type), and a
+        box with no width or no height is a polygon with no area, as GeoPandas
+        (GEOS) gives it, where the engine gives a line. For a geography column
+        the engine's envelope is a planar longitude/latitude box (geometry, not
+        geography), and it stays one here.
         """
         import shapely
 
-        envelope = self._expr.geo.envelope()
+        envelope = self._flat_boxes(self._expr.geo.envelope())
+        return self._geo(self._empty_as(envelope, shapely.Point()))
+
+    def _empty_as(self, result, empty):
+        """`result`, but `empty` (a Shapely geometry) where this geometry is
+        empty, as GeoPandas defines it (see `_empty`)."""
+        replacement = self._df._ctx.lit(empty.wkb)
+        return self._replace_where(_empty(self._expr), replacement, result)
+
+    def _replace_where(self, condition, replacement, result):
+        """`result`, but `replacement` (WKB) where `condition` is true.
+
+        The choice is made on WKB, and the result rebuilt with `result`'s own
+        spatial kind and CRS: the engine's result type, which need not be this
+        column's (a geography's envelope is planar geometry).
+        """
         ctx = self._df._ctx
-        # Per row: POINT EMPTY's WKB where the input is empty, the envelope's
-        # otherwise. nvl2 picks its second argument where the first is
+        # Per row: the replacement where the condition holds, the result's
+        # WKB otherwise. nvl2 picks its second argument where the first is
         # non-null, and all three must share a type, hence the binary flag.
-        empty = self._expr.geo.is_empty().funcs.nullif(ctx.lit(False))
-        flag = empty.cast(pa.string()).cast(pa.binary())
-        wkb = flag.funcs.nvl2(ctx.lit(shapely.Point().wkb), envelope.geo.as_binary())
-        # WKB carries neither spatial kind nor CRS, so the result is rebuilt
-        # with the envelope's own: the engine's envelope type, which for a
-        # geography input is planar geometry, not the column's type.
-        result_type = self._df.select(envelope.alias("x")).schema.field("x").type
+        holds = condition.funcs.nullif(ctx.lit(False))
+        flag = holds.cast(pa.string()).cast(pa.binary())
+        wkb = flag.funcs.nvl2(replacement, result.geo.as_binary())
+        result_type = self._df.select(result.alias("x")).schema.field("x").type
         spherical = "SPHERICAL" in str(getattr(result_type, "edge_type", "")).upper()
-        if spherical:
-            expr = wkb.funcs.st_geogfromwkb()
-        else:
-            expr = wkb.funcs.st_geomfromwkb()
-        crs = result_type.crs
-        if crs is not None:
-            expr = expr.funcs.st_setcrs(ctx.lit(crs.to_json()))
-        elif spherical:
-            # The geography constructor synthesizes CRS84; SRID 0 clears it
-            # without touching the value.
-            expr = expr.funcs.st_setsrid(ctx.lit(0))
-        return self._geo(expr)
+        return _geometry_from_wkb(wkb, spherical, result_type.crs, ctx)
+
+    def _flat_boxes(self, envelope):
+        """`envelope`, with each box that has no width or no height as a
+        polygon with no area rather than a line.
+
+        The engine gives a line there, as PostGIS does; GEOS, and so
+        GeoPandas, gives a polygon with the box's corners (and a point only
+        when the box has neither width nor height, as the engine does too).
+        """
+        geo = envelope.geo
+        flat = (geo.geometry_type() == lit("ST_LineString")).funcs.coalesce(lit(False))
+        corners = geo.x_min().funcs.st_makeenvelope(
+            geo.y_min(), geo.x_max(), geo.y_max()
+        )
+        # ST_MakeEnvelope goes round the box clockwise, GEOS counterclockwise.
+        box = corners.geo.reverse().geo.as_binary()
+        return self._replace_where(flat, box, envelope)
 
     @property
     def convex_hull(self):
@@ -1981,6 +2232,324 @@ class GeoSeries(Series):
         """A point guaranteed to lie on each geometry (`ST_PointOnSurface`)."""
         return self._geo(self._expr.geo.point_on_surface())
 
+    def concave_hull(self, ratio=0.0, allow_holes=False):
+        """The concave hull of each geometry (`ST_ConcaveHull`).
+
+        `ratio` runs from 0 (the tightest hull) to 1 (the convex hull), and
+        `allow_holes` lets the hull have holes, as in GeoPandas.
+        """
+        ratio = self._parameter(
+            ratio, "concave_hull", "ratio", (lambda x: 0 <= x <= 1, "between 0 and 1")
+        )
+        return self._geo(self._expr.funcs.st_concavehull(ratio, bool(allow_holes)))
+
+    def segmentize(self, max_segment_length):
+        """Add vertices so that no segment is longer than `max_segment_length`
+        (`ST_Segmentize`); an infinite length adds none, as in GeoPandas.
+
+        Two differences from GeoPandas, where GEOS does more than densify: an
+        invalid polygon is densified as it is rather than repaired, and a
+        multi-line with one part stays multi-part rather than becoming a
+        single line. On a geography column the length is in meters, along
+        great circles.
+        """
+        if not isinstance(max_segment_length, Series):
+            value = _numeric_value(max_segment_length)
+            if isinstance(value, numbers.Real) and value == math.inf:
+                return self._geo(self._expr)
+        length = self._parameter(
+            max_segment_length,
+            "segmentize",
+            "max_segment_length",
+            (lambda x: x > 0, "positive"),
+        )
+        if not isinstance(max_segment_length, Series):
+            return self._geo(self._expr.geo.segmentize(length))
+        # Row by row, the engine refuses an infinite length, so those rows
+        # get a missing length instead, and keep their geometry.
+        infinite = (length == lit(math.inf)).funcs.coalesce(lit(False))
+        finite = _choose(~infinite, length, lit(pa.scalar(None, pa.float64())))
+        segmented = self._expr.geo.segmentize(finite)
+        original = self._expr.geo.as_binary()
+        return self._geo(self._replace_where(infinite, original, segmented))
+
+    def reverse(self):
+        """Each geometry with its vertices in reverse order (`ST_Reverse`)."""
+        return self._geo(self._expr.geo.reverse())
+
+    def set_precision(self, grid_size, mode="valid_output"):
+        """Snap each geometry's coordinates to a grid of `grid_size`
+        (`ST_ReducePrecision`); 0 leaves the coordinates as they are.
+
+        Only GeoPandas' default `mode="valid_output"` is supported. As in
+        GeoPandas, an invalid geometry may raise (when the result is
+        computed), or come back invalid, or collapse to an empty one.
+        """
+        if mode not in ("valid_output", 0):
+            raise NotImplementedError(
+                f"set_precision() supports mode='valid_output' only, got {mode!r}"
+            )
+        grid_size = self._parameter(grid_size, "set_precision", "grid_size")
+        return self._geo(self._expr.geo.reduce_precision(grid_size))
+
+    def line_merge(self, directed=False):
+        """Each geometry's lines, merged into as few lines as possible
+        (`ST_LineMerge`).
+
+        A polygon's rings merge as lines, and other parts (the points of a
+        collection) are left out. A geometry with no lines or rings merges to
+        an empty geometry collection, as in GeoPandas, empty input included
+        (the engine keeps an empty input's type). With `directed=True`, lines
+        merge only where one ends where the next starts.
+        """
+        import shapely
+
+        merged = self._expr.funcs.st_linemerge(bool(directed))
+        return self._geo(self._empty_as(merged, shapely.GeometryCollection()))
+
+    def force_2d(self):
+        """Each geometry without Z or M values (`ST_Force2D`)."""
+        return self._geo(self._expr.geo.force2d())
+
+    def force_3d(self, z=0):
+        """Each geometry with Z values (`ST_Force3D`): `z` where it has none.
+
+        `z` is a number or a numeric `Series` of this frame; NaN is refused,
+        as in GeoPandas. A geometry that has Z keeps its values, and M values
+        are dropped. GeoPandas leaves a geometry with M but no Z as it is, and
+        replaces the Z values of one with both.
+        """
+        z = self._parameter(z, "force_3d", "z", nan=False)
+        return self._geo(self._expr.geo.force3d(z))
+
+    def get_geometry(self, index):
+        """The part at `index` of each geometry (`ST_GeometryN`), counting
+        from 0, or back from the end when negative, as in GeoPandas.
+
+        A single-part geometry is its own part 0; missing where there is no
+        such part. `index` is an integer or an integer `Series` of this frame.
+        """
+        # From the end, the position counts back from the number of parts as
+        # GeoPandas counts them (a single-part geometry has one, even empty).
+        count = self.count_geometries()._expr.cast(pa.int64())
+        one = lit(1)
+        if isinstance(index, Series):
+            position = _operand(self._df, index)
+            if not pa.types.is_integer(index._dtype()):
+                raise TypeError(
+                    f"get_geometry() index must be an integer or an integer "
+                    f"Series of this frame, got a Series of {index._dtype()}"
+                )
+            position = position.cast(pa.int64())
+            forward = (position >= lit(0)).funcs.coalesce(lit(True))
+            n = _choose(forward, position + one, count + position + one)
+        else:
+            _operand(self._df, index)
+            value = _numeric_value(index)
+            if not isinstance(value, numbers.Integral) or isinstance(value, bool):
+                raise TypeError(
+                    f"get_geometry() index must be an integer or an integer "
+                    f"Series of this frame, got {type(index).__name__}"
+                )
+            n = lit(int(value) + 1) if value >= 0 else count + lit(int(value) + 1)
+        return self._geo(self._expr.geo.geometry_n(n))
+
+    # -- affine transformations -------------------------------------------
+    #
+    # As in GeoPandas, each follows Shapely's `shapely.affinity` step for
+    # step (the same matrix, the same rounding of a near-zero sine or cosine,
+    # the same arithmetic for the offsets), so the coordinates are the same
+    # to the last bit. Unlike Shapely, M values are kept: Shapely drops them,
+    # and writes NaN over the Z and M values of a geometry with both.
+
+    def affine_transform(self, matrix):
+        """Each geometry under the affine transformation `matrix` (`ST_Affine`).
+
+        `[a, b, d, e, xoff, yoff]` for 2D, or `[a, b, c, d, e, f, g, h, i,
+        xoff, yoff, zoff]` for 3D, as in GeoPandas.
+        """
+        values = [_number(v, "affine_transform", "matrix") for v in matrix]
+        if len(values) not in (6, 12):
+            raise ValueError(
+                f"affine_transform() matrix must have 6 or 12 elements, got {len(values)}"
+            )
+        return self._geo(self._expr.geo.affine(*values))
+
+    def translate(self, xoff=0.0, yoff=0.0, zoff=0.0):
+        """Each geometry shifted by the given offsets (`ST_Translate`)."""
+        offsets = [
+            _number(v, "translate", n)
+            for v, n in ((xoff, "xoff"), (yoff, "yoff"), (zoff, "zoff"))
+        ]
+        return self._geo(self._expr.geo.translate(*offsets))
+
+    def rotate(self, angle, origin="center", use_radians=False):
+        """Each geometry rotated counterclockwise by `angle` about `origin`
+        (`ST_Affine`).
+
+        `origin` is `"center"` (each geometry's bounding box center, the
+        default), `"centroid"` (each geometry's centroid), or a point, as a
+        Shapely `Point` or an `(x, y)` tuple, as in GeoPandas. `angle` is in
+        degrees, or radians with `use_radians=True`.
+        """
+        angle = _number(angle, "rotate", "angle")
+        if not use_radians:
+            angle = angle * math.pi / 180.0
+        cosp, sinp = _snapped(math.cos(angle)), _snapped(math.sin(angle))
+        x0, y0, _ = self._origin(origin, "rotate")
+        xoff = x0 - x0 * cosp + y0 * sinp
+        yoff = y0 - x0 * sinp - y0 * cosp
+        return self._geo(self._expr.geo.affine(cosp, -sinp, sinp, cosp, xoff, yoff))
+
+    def scale(self, xfact=1.0, yfact=1.0, zfact=1.0, origin="center"):
+        """Each geometry scaled by the given factors about `origin`
+        (`ST_Affine`); `origin` as for `rotate`, with Z 0 unless a 3D point
+        gives it."""
+        xfact, yfact, zfact = (
+            _number(v, "scale", n)
+            for v, n in ((xfact, "xfact"), (yfact, "yfact"), (zfact, "zfact"))
+        )
+        x0, y0, z0 = self._origin(origin, "scale")
+        return self._geo(
+            self._expr.geo.affine(
+                xfact,
+                0.0,
+                0.0,
+                0.0,
+                yfact,
+                0.0,
+                0.0,
+                0.0,
+                zfact,
+                x0 - x0 * xfact,
+                y0 - y0 * yfact,
+                z0 - z0 * zfact,
+            )
+        )
+
+    def skew(self, xs=0.0, ys=0.0, origin="center", use_radians=False):
+        """Each geometry sheared by the angles `xs` (along x) and `ys` (along
+        y) about `origin` (`ST_Affine`); angles and `origin` as for `rotate`."""
+        xs, ys = _number(xs, "skew", "xs"), _number(ys, "skew", "ys")
+        if not use_radians:
+            xs, ys = xs * math.pi / 180.0, ys * math.pi / 180.0
+        tanx, tany = _snapped(math.tan(xs)), _snapped(math.tan(ys))
+        x0, y0, _ = self._origin(origin, "skew")
+        return self._geo(
+            self._expr.geo.affine(1.0, tanx, tany, 1.0, y0 * -tanx, x0 * -tany)
+        )
+
+    def _origin(self, origin, method):
+        """The origin of an affine transformation, as Shapely interprets it:
+        each geometry's bounding box center or centroid (expressions, with Z
+        0), or one point given as a Shapely `Point` or a 2- or 3-tuple
+        (numbers, with Z 0 unless given)."""
+        geo = self._expr.geo
+        if isinstance(origin, str):
+            if origin == "center":
+                x0 = (geo.x_max() + geo.x_min()) / 2.0
+                y0 = (geo.y_max() + geo.y_min()) / 2.0
+            elif origin == "centroid":
+                # The engine fails on the centroid of a collection of empty
+                # parts (MULTIPOINT (EMPTY)), so empties are left out.
+                centroid = self._present().geo.centroid().geo
+                x0, y0 = centroid.x(), centroid.y()
+            else:
+                raise ValueError(f"{method}() origin {origin!r} is not recognized")
+            # An empty geometry has neither bounds nor a centroid, and any
+            # origin leaves it as it is (a missing one stays missing anyway).
+            zero = lit(0.0)
+            return x0.funcs.coalesce(zero), y0.funcs.coalesce(zero), 0.0
+        if getattr(origin, "geom_type", None) == "Point":
+            origin = origin.coords[0]
+        try:
+            point = [_number(v, method, "origin") for v in origin]
+        except TypeError:
+            raise TypeError(
+                f"{method}() origin must be 'center', 'centroid', a Point, or an "
+                f"(x, y) or (x, y, z) tuple, got {origin!r}"
+            ) from None
+        if len(point) not in (2, 3):
+            raise ValueError(
+                f"{method}() origin must have 2 or 3 coordinates, got {len(point)}"
+            )
+        return point[0], point[1], point[2] if len(point) == 3 else 0.0
+
+    # -- positions along lines --------------------------------------------
+
+    def interpolate(self, distance, normalized=False):
+        """The point `distance` along each line (`ST_LineInterpolatePoint`),
+        or that fraction of its length with `normalized=True`.
+
+        As in GeoPandas, a negative distance counts back from the end, a
+        distance past either end stops there, and an empty line gives an
+        empty point; `distance` is a number or a numeric `Series` of this
+        frame. Two engine limits: a multi-line raises when the result is
+        computed, as the engine interpolates along single lines only, and the
+        point on a 3D line is 2D (without the Z value GeoPandas interpolates).
+        """
+        import shapely
+
+        geo = self._expr.geo
+        along = self._parameter_value(distance, "interpolate", "distance")
+        # Where a negative distance counts back from: the end of the line.
+        end = 1.0 if normalized else geo.length()
+        if along is None:
+            fraction = lit(pa.scalar(None, pa.float64()))
+        else:
+            if isinstance(along, Expr):
+                backward = (along < lit(0.0)).funcs.coalesce(lit(False))
+                along = _choose(backward, along + end, along)
+            elif along < 0:
+                along = along + end
+            if normalized:
+                fraction = along
+            else:
+                # Of a line of no length, its only point (the engine gives an
+                # empty point for the infinite or NaN fraction a division by
+                # its length would give); past either end of any other line,
+                # the engine stops at that end.
+                has_length = (end > lit(0.0)).funcs.coalesce(lit(False))
+                fraction = _choose(has_length, along / end, lit(0.0))
+        # The engine refuses an empty line, so it is given a missing line
+        # instead, and the result for it is an empty point.
+        point = self._present().geo.line_interpolate_point(fraction)
+        if along is None:
+            # A NaN distance has no point, as in GeoPandas, whatever the line.
+            return self._geo(point)
+        result = self._empty_as(point, shapely.Point())
+        if isinstance(along, Expr):
+            # Nor has a row's NaN distance (missing by now), which an empty
+            # line or a line of no length would otherwise give one.
+            missing = lit(pa.scalar(None, pa.binary()))
+            result = self._replace_where(along.is_null(), missing, result)
+        return self._geo(result)
+
+    def _present(self):
+        """This geometry where it is not empty (see `_empty`), and missing
+        where it is: for engine functions that fail on an empty geometry,
+        where GeoPandas leaves it out or defines the result another way."""
+        missing = lit(pa.scalar(None, pa.binary()))
+        return self._replace_where(_empty(self._expr), missing, self._expr)
+
+    def project(self, other, normalized=False, align=None):
+        """The distance along each line to the point on it nearest `other`
+        (`ST_LineLocatePoint`), or that fraction of its length with
+        `normalized=True`.
+
+        `other` is a point, scalar or a `GeoSeries` of this frame. On a line
+        of no length, the point is at 0 either way, as current GEOS gives it
+        (older GEOS, and so GeoPandas with it, divided the distance by the
+        length, giving NaN normalized); an empty line or point gives NaN.
+        A multi-line raises when the result is computed: the engine locates
+        points along single lines only.
+        """
+        _check_align(align)
+        fraction = self._expr.geo.line_locate_point(self._other(other))
+        if normalized:
+            return Series(self._df, fraction, "project")
+        return Series(self._df, fraction * self._expr.geo.length(), "project")
+
     def explode(self, ignore_index=False, index_parts=False):
         """One element per part of each multi-part geometry, as in GeoPandas.
 
@@ -2002,10 +2571,132 @@ class GeoSeries(Series):
         )
         return GeoSeries(exploded, exploded[self._name], self._name)
 
+    # -- aggregates ------------------------------------------------------
+
+    def _collected(self, name):
+        """A new one-row frame holding all of this column's geometries
+        collected into one, as `name`, and that geometry: missing if there
+        are none, which the engine's aggregate skips."""
+        collected = self._df.agg(self._expr.geo.collect_agg().alias(name))
+        return collected, collected[name]
+
+    def _built_parts(self, build, name, node):
+        """What `build` makes of all of this column's geometries together,
+        one part per row, as GeoPandas explodes it: a `GeoSeries` named
+        `name` in a new frame. With `node`, the geometries are unioned first,
+        which nodes lines where they cross; otherwise only collected. With
+        no geometries, or nothing built, no rows."""
+        from sedonadb_geopandas._frame import _explode_parts
+
+        collected, geometry = self._collected(name)
+        if node:
+            geometry = geometry.geo.unary_union()
+        built = collected.select(build(geometry).alias(name))
+        # An empty result is nothing built, though not always an empty
+        # collection (ST_BuildArea of empty geometries is an empty polygon),
+        # which exploding would keep as a row.
+        built = built.filter(~_empty(built[name]))
+        built = _explode_parts(built, name)
+        return GeoSeries(built, built[name], name)
+
+    def union_all(self, method="unary", *, grid_size=None):
+        """All the geometries unioned into one, as a `GeoSeries` of one row.
+
+        Lazy, unlike GeoPandas, which returns the Shapely geometry:
+        `to_pandas()` gives it as a series of one. The result belongs to a new
+        frame, so it cannot be combined with columns of this one. Missing
+        geometries are skipped, and the union of none is an empty geometry
+        collection, as in GeoPandas.
+
+        The geometries are collected and then unioned, as in `dissolve()`,
+        since `ST_Union_Agg` drops points and lines (apache/sedona-db#1093).
+        Only `method="unary"` is supported, and not `grid_size`.
+        """
+        if method != "unary":
+            raise NotImplementedError(
+                f"union_all() supports method='unary' only, got {method!r}"
+            )
+        if grid_size is not None:
+            raise NotImplementedError("union_all() does not support grid_size")
+        ctx = self._df._ctx
+        collected, geometry = self._collected(self._name)
+        empty = ctx.lit("GEOMETRYCOLLECTION EMPTY").funcs.st_geomfromwkt()
+        wkb = (
+            geometry.geo.unary_union()
+            .geo.as_binary()
+            .funcs.coalesce(empty.geo.as_binary())
+        )
+        # WKB carries neither the spatial kind nor the CRS: both are restored.
+        unioned = _geometry_from_wkb(wkb, self._is_geography(), self.crs, ctx)
+        unioned = collected.select(unioned.alias(self._name))
+        return GeoSeries(unioned, unioned[self._name], self._name)
+
+    def delaunay_triangles(self, tolerance=0.0, only_edges=False):
+        """The Delaunay triangulation of the vertices of all the geometries
+        together, one triangle per row (one edge, with `only_edges`), as in
+        GeoPandas.
+
+        The result belongs to a new frame, as for `explode()`. `tolerance`
+        snaps vertices closer than it together: one number, as there is one
+        triangulation, and a NaN gives no triangles, as in GeoPandas.
+        """
+        if isinstance(tolerance, Series):
+            raise TypeError(
+                "delaunay_triangles() tolerance must be a number, not a Series: "
+                "all the geometries are triangulated together"
+            )
+        tolerance = self._parameter(tolerance, "delaunay_triangles", "tolerance")
+        flags = lit(1 if only_edges else 0)
+        return self._built_parts(
+            lambda geometry: geometry.geo.delaunay_triangles(tolerance, flags),
+            self._name,
+            node=False,
+        )
+
+    def polygonize(self, node=True, full=False):
+        """The polygons that the lines of all the geometries together enclose,
+        one per row, named "polygons", as in GeoPandas.
+
+        The result belongs to a new frame, as for `explode()`. With `node`,
+        the lines are first unioned, which nodes them where they cross;
+        without it, only lines that meet at their ends form polygons.
+        `full=True` (the cut edges, dangles, and invalid rings as well) is not
+        supported.
+        """
+        if full:
+            raise NotImplementedError("polygonize() does not support full=True")
+        return self._built_parts(
+            lambda geometry: geometry.geo.polygonize(), "polygons", node
+        )
+
+    def build_area(self, node=True):
+        """The area that the lines of all the geometries together enclose, as
+        polygons with holes, one per row, named "polygons", as in GeoPandas.
+
+        The result belongs to a new frame, as for `explode()`. With `node`,
+        the lines are first unioned, which nodes them where they cross;
+        otherwise they are only collected.
+        """
+        return self._built_parts(
+            lambda geometry: geometry.geo.build_area(), "polygons", node
+        )
+
     # -- binary operations -----------------------------------------------
 
     def _other(self, other):
         """The right-hand side of a binary geometry operation, as an expression.
+
+        A `GeoDataFrame` stands for its active geometry column, as in
+        GeoPandas; see `_geometry_value` for the rest.
+        """
+        from sedonadb_geopandas._frame import GeoDataFrame
+
+        if isinstance(other, GeoDataFrame):
+            other = other.geometry
+        return self._geometry_value(other)
+
+    def _geometry_value(self, other):
+        """A geometry value to combine with this column, as an expression.
 
         A `GeoSeries` must come from this same frame (there is no row
         alignment), as for arithmetic. A geometry scalar, bare Shapely or
@@ -2099,6 +2790,14 @@ class GeoSeries(Series):
     def disjoint(self, other, align=None):
         """Whether each geometry is disjoint from `other` (`ST_Disjoint`)."""
         return self._predicate("disjoint", other, align)
+
+    def contains_properly(self, other, align=None):
+        """Whether each geometry contains `other` with none of it on its
+        boundary: `ST_Relate` with the pattern `T**FF*FF*`, as GEOS defines
+        it. False where either side is missing."""
+        _check_align(align)
+        expr = self._expr.geo.relate(self._other(other), lit("T**FF*FF*"))
+        return Series(self._df, expr.funcs.coalesce(lit(False)), "contains_properly")
 
     def geom_equals(self, other, align=None):
         """Whether each geometry equals `other` topologically (`ST_Equals`)."""
@@ -2234,6 +2933,25 @@ class GeoSeries(Series):
         _check_align(align)
         return self._geo(self._expr.geo.sym_difference(self._other(other)))
 
+    def shortest_line(self, other, align=None):
+        """The shortest line from each geometry to `other`
+        (`ST_ShortestLine`); missing where either is empty or missing, as in
+        GeoPandas."""
+        _check_align(align)
+        return self._geo(self._expr.geo.shortest_line(self._other(other)))
+
+    def snap(self, other, tolerance, align=None):
+        """Each geometry with its vertices snapped to `other`'s within
+        `tolerance` (`ST_Snap`).
+
+        `tolerance` is a number or a numeric `Series` of this frame. An empty
+        geometry stays as it is, where GeoPandas (GEOS) can give a 3D empty,
+        or one of another type (`POLYGON EMPTY` becomes `LINEARRING Z EMPTY`).
+        """
+        _check_align(align)
+        tolerance = self._parameter(tolerance, "snap", "tolerance")
+        return self._geo(self._expr.geo.snap(self._other(other), tolerance))
+
     # -- serialization and CRS --------------------------------------------
 
     def to_wkt(self):
@@ -2248,12 +2966,88 @@ class GeoSeries(Series):
         """Each geometry as ISO WKB bytes (`ST_AsBinary`).
 
         Equivalent to GeoPandas' `to_wkb(flavor="iso")`; GeoPandas' default
-        extended flavor encodes Z/M dimensions differently. `hex=True` is not
-        supported.
+        extended flavor encodes Z/M dimensions differently. `hex=True` gives
+        upper-case hex text, as Shapely writes it.
         """
+        wkb = self._expr.geo.as_binary()
         if hex:
-            raise NotImplementedError("to_wkb(hex=True) is not supported")
-        return Series(self._df, self._expr.geo.as_binary(), self._name)
+            # Upper case, as Shapely writes it.
+            wkb = wkb.funcs.encode(lit("hex")).funcs.upper()
+        return Series(self._df, wkb, self._name)
+
+    @classmethod
+    def from_xy(cls, x, y, z=None, index=None, crs=None):
+        """Points from x and y (and z) coordinates (`ST_Point`, `ST_PointZ`),
+        as in GeoPandas.
+
+        Each coordinate is a numeric Series, all of one frame, or a number;
+        at least one is a Series, and the points belong to its frame, so they
+        can be assigned there. A missing coordinate gives a missing point,
+        where GeoPandas reads it as NaN and gives a point with a NaN
+        coordinate; a NaN that is there is kept. `index` is not supported, as
+        there is no index; `crs` labels the points.
+        """
+        if index is not None:
+            raise NotImplementedError(
+                "from_xy() cannot take an index: there is no index"
+            )
+        df = _frame_of("from_xy", x, y, z)
+        x, y = _coordinate(df, x, "from_xy", "x"), _coordinate(df, y, "from_xy", "y")
+        if z is None:
+            point = x.funcs.st_point(y)
+        else:
+            point = x.funcs.st_pointz(y, _coordinate(df, z, "from_xy", "z"))
+        return _labeled(df, point, crs)
+
+    @classmethod
+    def from_wkt(cls, data, index=None, crs=None, on_invalid="raise"):
+        """Geometries parsed from WKT text (`ST_GeomFromWKT`), as in GeoPandas.
+
+        `data` is a string Series, and the geometries belong to its frame;
+        missing text gives a missing geometry. Invalid text raises when the
+        result is computed (the frame is lazy), and only
+        `on_invalid="raise"` is supported. The engine's parser refuses a few
+        forms GEOS reads, such as `MULTIPOINT (EMPTY)` or a NaN coordinate.
+        `index` is not supported, as there is no index; `crs` labels the
+        geometries.
+        """
+        df, text = _encoded_input(data, "from_wkt", index, on_invalid)
+        dtype = data._dtype()
+        # A column of only missing values (as an all-None column loads) is
+        # of Arrow's null type, which the parser takes as is.
+        if _kind(dtype) != "string" and not pa.types.is_null(dtype):
+            raise TypeError(
+                f"from_wkt() data must be a string Series, got a Series of {dtype}"
+            )
+        return _labeled(df, text.funcs.st_geomfromwkt(), crs)
+
+    @classmethod
+    def from_wkb(cls, data, index=None, crs=None, on_invalid="raise"):
+        """Geometries parsed from WKB (`ST_GeomFromWKB`), as in GeoPandas.
+
+        `data` is a binary Series, or a string Series of hex (either case),
+        and the geometries belong to its frame; missing WKB gives a missing
+        geometry. Invalid WKB raises when the result is computed, and only
+        `on_invalid="raise"` is supported. `index` is not supported, as there
+        is no index; `crs` labels the geometries.
+        """
+        df, wkb = _encoded_input(data, "from_wkb", index, on_invalid)
+        dtype = data._dtype()
+        if pa.types.is_null(dtype):
+            # Only missing values, as an all-None column loads.
+            wkb = wkb.cast(pa.binary())
+        elif _kind(dtype) == "string":
+            wkb = wkb.funcs.decode(lit("hex"))
+        elif not (
+            pa.types.is_binary(dtype)
+            or pa.types.is_large_binary(dtype)
+            or pa.types.is_binary_view(dtype)
+        ):
+            raise TypeError(
+                f"from_wkb() data must be a binary Series, or a string Series of "
+                f"hex, got a Series of {dtype}"
+            )
+        return _labeled(df, wkb.funcs.st_geomfromwkb(), crs)
 
     def set_crs(self, crs=None, epsg=None, inplace=False, allow_override=False):
         """Label each geometry with a CRS without transforming coordinates.
@@ -2290,6 +3084,27 @@ class GeoSeries(Series):
             return self
         return self._geo(expr)
 
+    def to_crs(self, crs=None, epsg=None):
+        """Each geometry transformed to `crs` (`ST_Transform`).
+
+        GeoPandas' signature and rules: `crs` takes precedence over `epsg`,
+        one of them is required, and geometries without a CRS can't be
+        transformed. The result is labeled with the CRS as given, as in
+        GeoPandas, rather than the engine's canonical form of it (OGC:CRS84
+        for EPSG:4326).
+        """
+        if crs is None and epsg is None:
+            raise ValueError("Must pass either crs or epsg.")
+        if self.crs is None:
+            raise ValueError(
+                "Cannot transform naive geometries. Please set a crs on the "
+                "object first."
+            )
+        if crs is None:
+            crs = f"EPSG:{int(epsg)}"
+        target = self._df._ctx.lit(_normalize_crs(crs))
+        return self._geo(self._expr.geo.transform(target))
+
     @property
     def crs(self):
         """The CRS of this column, from the frame's schema."""
@@ -2308,8 +3123,14 @@ class GeoSeries(Series):
 
     @property
     def length(self):
-        """The length/perimeter of each geometry (`ST_Length`)."""
-        return Series(self._df, self._expr.geo.length(), "length")
+        """The length of each geometry, as in GeoPandas: a polygon's is its
+        perimeter, holes included, and a collection's sums its parts'.
+
+        `ST_Length` plus `ST_Perimeter`: the engine, as PostGIS, measures lines
+        with the one and polygons with the other.
+        """
+        length = self._expr.geo.length() + self._expr.geo.perimeter()
+        return Series(self._df, length, "length")
 
     def fillna(self, value=None):
         """Replace missing geometries with `value`, as in GeoPandas.
@@ -2382,7 +3203,7 @@ class GeoSeries(Series):
 
         if _absent(other):
             return None
-        expr = self._other(other)
+        expr = self._geometry_value(other)
         projected = None
         if isinstance(expr, (Expr, Literal)):
             projected = self._df.select(expr.alias("x")).schema
