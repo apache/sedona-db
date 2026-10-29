@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! Extensible scalar kernel properties and borrowed execution configuration.
+//! Extensible scalar kernel properties.
 use crate::{
     extension::{
         SedonaCConfigOptionsView, SedonaCError, SedonaCScalarKernelImpl, SedonaCScalarKernelV2,
@@ -29,20 +29,15 @@ use crate::{
 };
 use arrow_array::{
     ffi::{FFI_ArrowArray, FFI_ArrowSchema},
-    make_array, new_empty_array, Array, StringArray,
+    new_empty_array,
 };
-use arrow_schema::{DataType, Field};
-use datafusion_common::{
-    config::{ConfigField, ConfigOptions, Visit},
-    exec_err, DataFusionError, Result, ScalarValue,
-};
+use datafusion_common::{config::ConfigOptions, exec_err, DataFusionError, Result, ScalarValue};
 use datafusion_expr::{ColumnarValue, ScalarUDFImpl, Volatility};
 use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarKernel, SedonaScalarUDF};
 use sedona_schema::datatypes::SedonaType;
 use std::{
     collections::HashMap,
-    ffi::{c_char, c_int, c_void, CStr},
-    fmt::Display,
+    ffi::{c_char, c_int},
     ptr::{null, null_mut},
     sync::Arc,
 };
@@ -140,25 +135,15 @@ unsafe extern "C" fn property(
 }
 unsafe extern "C" fn new_impl(
     raw: *const SedonaCScalarKernelV2,
-    config: *const SedonaCConfigOptionsView,
+    _config: *const SedonaCConfigOptionsView,
     out: *mut SedonaCScalarKernelImpl,
-    err: *mut SedonaCError,
+    _err: *mut SedonaCError,
 ) -> c_int {
     let this = &*((*raw).private_data as *const ExportedScalarKernelV2);
-    let config = if let Some(view) = config.as_ref() {
-        match import_config(view, &this.config) {
-            Ok(config) => Arc::new(config),
-            Err(e) => {
-                set_ffi_error!(err, "{}", e);
-                return libc::EINVAL;
-            }
-        }
-    } else {
-        this.config.clone()
-    };
+    // Caller configuration is reserved for future use; retain producer-side options.
     std::ptr::write(
         out,
-        ExportedScalarKernelImpl::new(this.kernel.clone(), config).into(),
+        ExportedScalarKernelImpl::new(this.kernel.clone(), this.config.clone()).into(),
     );
     0
 }
@@ -236,16 +221,13 @@ fn get_property<T: serde::de::DeserializeOwned>(
     )
 }
 impl ImportedScalarKernelV2 {
-    fn implementation(
-        &self,
-        config: Option<&SedonaCConfigOptionsView>,
-    ) -> Result<CScalarKernelImplWrapper> {
+    fn implementation(&self) -> Result<CScalarKernelImplWrapper> {
         let mut inner = SedonaCScalarKernelImpl::default();
         let mut err = SedonaCError::default();
         let status = unsafe {
             self.inner.new_impl.unwrap()(
                 &self.inner,
-                config.map_or(null(), |c| c),
+                null(), // Reserved for future configuration support.
                 &mut inner,
                 &mut err,
             )
@@ -273,7 +255,7 @@ impl SedonaScalarKernel for ImportedScalarKernelV2 {
         args: &[SedonaType],
         scalars: &[Option<&ScalarValue>],
     ) -> Result<Option<SedonaType>> {
-        self.implementation(None)?.init(args, scalars)
+        self.implementation()?.init(args, scalars)
     }
     fn invoke_batch(&self, _: &[SedonaType], _: &[ColumnarValue]) -> Result<ColumnarValue> {
         exec_err!("V2 kernel requires invoke_batch_from_args")
@@ -284,16 +266,14 @@ impl SedonaScalarKernel for ImportedScalarKernelV2 {
         args: &[ColumnarValue],
         return_type: &SedonaType,
         rows: usize,
-        config: Option<&ConfigOptions>,
+        _config: Option<&ConfigOptions>,
     ) -> Result<ColumnarValue> {
         if rows == 0 && args.iter().any(|a| matches!(a, ColumnarValue::Array(_))) {
             return Ok(ColumnarValue::Array(new_empty_array(
                 return_type.storage_type(),
             )));
         }
-        let view = config.map(config_view);
-        // The view and its borrowed ConfigOptions outlive the implementation.
-        let mut implementation = self.implementation(view.as_ref())?;
+        let mut implementation = self.implementation()?;
         let scalars = args
             .iter()
             .map(|a| match a {
@@ -315,167 +295,9 @@ impl SedonaScalarKernel for ImportedScalarKernelV2 {
     }
 }
 
-fn config_view(config: &ConfigOptions) -> SedonaCConfigOptionsView {
-    SedonaCConfigOptionsView {
-        get_option: Some(config_option),
-        get_option_object: Some(config_option_object),
-        reserved: null_mut(),
-        private_data: (config as *const ConfigOptions).cast(),
-    }
-}
-
-unsafe extern "C" fn config_option(
-    raw: *const SedonaCConfigOptionsView,
-    key: *const c_char,
-    out_schema: *mut FFI_ArrowSchema,
-    out: *mut FFI_ArrowArray,
-    err: *mut SedonaCError,
-) -> c_int {
-    if key.is_null() || out_schema.is_null() || out.is_null() {
-        set_ffi_error!(err, "Configuration option arguments must not be NULL");
-        return libc::EINVAL;
-    }
-    let key = match CStr::from_ptr(key).to_str() {
-        Ok(key) => key,
-        Err(e) => {
-            set_ffi_error!(err, "Configuration option key is not UTF-8: {}", e);
-            return libc::EINVAL;
-        }
-    };
-    let config = &*((*raw).private_data as *const ConfigOptions);
-    let value = config_option_value(config, key);
-    let field = Field::new("value", DataType::Utf8, true);
-    let schema = match FFI_ArrowSchema::try_from(&field) {
-        Ok(schema) => schema,
-        Err(e) => {
-            set_ffi_error!(err, "Failed to export configuration option schema: {}", e);
-            return libc::EINVAL;
-        }
-    };
-    let array = StringArray::from(vec![value.as_deref()]);
-    std::ptr::write(out_schema, schema);
-    std::ptr::write(out, FFI_ArrowArray::new(&array.to_data()));
-    0
-}
-
-/// Look up one option without formatting every value in `ConfigOptions`.
-///
-/// DataFusion's visitor cannot stop early, but it passes values as `Display`, so
-/// non-matching built-in values never allocate. ExtensionOptions currently only
-/// exposes `entries()`, which limits extension lookup to the selected namespace.
-fn config_option_value(config: &ConfigOptions, key: &str) -> Option<String> {
-    if key.starts_with("datafusion.") {
-        struct FindValue<'a> {
-            key: &'a str,
-            value: Option<String>,
-        }
-
-        impl Visit for FindValue<'_> {
-            fn some<V: Display>(&mut self, key: &str, value: V, _: &'static str) {
-                if key == self.key {
-                    self.value = Some(value.to_string());
-                }
-            }
-
-            fn none(&mut self, _: &str, _: &'static str) {}
-        }
-
-        let mut visitor = FindValue { key, value: None };
-        config.visit(&mut visitor, "datafusion", "");
-        visitor.value
-    } else {
-        let prefix = key.split_once('.').map_or(key, |(prefix, _)| prefix);
-        config
-            .extensions
-            .iter()
-            .find(|(candidate, _)| *candidate == prefix)
-            .and_then(|(_, extension)| {
-                extension
-                    .entries()
-                    .into_iter()
-                    .find(|entry| entry.key == key)
-                    .and_then(|entry| entry.value)
-            })
-    }
-}
-
-unsafe extern "C" fn config_option_object(
-    _: *const SedonaCConfigOptionsView,
-    key: *const c_char,
-    _: c_int,
-    _: *mut c_void,
-    _: usize,
-    err: *mut SedonaCError,
-) -> c_int {
-    if key.is_null() {
-        set_ffi_error!(err, "Configuration option object key must not be NULL");
-        return libc::EINVAL;
-    }
-    if let Err(e) = CStr::from_ptr(key).to_str() {
-        set_ffi_error!(err, "Configuration option object key is not UTF-8: {}", e);
-        return libc::EINVAL;
-    }
-    unsupported(err, "Unknown configuration option object")
-}
-
 unsafe fn unsupported(err: *mut SedonaCError, message: &str) -> c_int {
     set_ffi_error!(err, message);
     libc::ENOTSUP
-}
-
-// Overlay options understood by the producer, retaining producer-side typed
-// extensions. Arbitrary Rust extension objects cannot cross this C ABI.
-fn import_config(
-    view: &SedonaCConfigOptionsView,
-    defaults: &ConfigOptions,
-) -> Result<ConfigOptions> {
-    let Some(get_option) = view.get_option else {
-        return exec_err!("Invalid configuration view");
-    };
-    let mut config = defaults.clone();
-    for entry in defaults.entries() {
-        let key = std::ffi::CString::new(entry.key.as_str())
-            .map_err(|e| DataFusionError::Execution(format!("Invalid configuration key: {e}")))?;
-        let mut schema = FFI_ArrowSchema::empty();
-        let mut array = FFI_ArrowArray::empty();
-        let mut err = SedonaCError::default();
-        let status = unsafe { get_option(view, key.as_ptr(), &mut schema, &mut array, &mut err) };
-        if status != 0 {
-            return exec_err!(
-                "SedonaCConfigOptionsView::get_option failed for '{}': {}",
-                entry.key,
-                err
-            );
-        }
-        let field = Field::try_from(&schema)?;
-        if field.data_type() != &DataType::Utf8 {
-            return exec_err!(
-                "Configuration option '{}' returned {:?}, expected Utf8",
-                entry.key,
-                field.data_type()
-            );
-        }
-        let data = unsafe { arrow_array::ffi::from_ffi_and_data_type(array, DataType::Utf8)? };
-        let values = make_array(data);
-        if values.len() != 1 {
-            return exec_err!(
-                "Configuration option '{}' returned {} values, expected one",
-                entry.key,
-                values.len()
-            );
-        }
-        let values = values
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .ok_or_else(|| {
-                DataFusionError::Execution("Expected Utf8 configuration option".into())
-            })?;
-        let value = (!values.is_null(0)).then(|| values.value(0).to_string());
-        if let Some(value) = value {
-            config.set(&entry.key, &value)?;
-        }
-    }
-    Ok(config)
 }
 
 #[cfg(test)]
@@ -611,7 +433,7 @@ mod tests {
     }
 
     #[test]
-    fn caller_config_overrides_exporter_and_null_uses_exporter() {
+    fn execution_uses_exporter_config() {
         let original =
             SedonaScalarUDF::new("batch_size", vec![Arc::new(BatchSize)], Volatility::Stable);
         let mut defaults = ConfigOptions::new();
@@ -623,48 +445,13 @@ mod tests {
         let kernel = &imported.kernels()[0];
         let mut caller = ConfigOptions::new();
         caller.execution.batch_size = 23;
-        for (config, expected) in [(None, 17), (Some(&caller), 23)] {
+        for config in [None, Some(&caller)] {
             let value = kernel
                 .invoke_batch_from_args(&[], &[], &SedonaType::Arrow(DataType::UInt64), 1, config)
                 .unwrap();
             assert!(
-                matches!(value, ColumnarValue::Scalar(ScalarValue::UInt64(Some(v))) if v == expected)
+                matches!(value, ColumnarValue::Scalar(ScalarValue::UInt64(Some(v))) if v == 17)
             );
         }
-        let view = config_view(&caller);
-        for (key, expected) in [
-            ("datafusion.execution.batch_size", Some("23")),
-            ("missing.option", None),
-        ] {
-            let key = std::ffi::CString::new(key).unwrap();
-            let mut schema = FFI_ArrowSchema::empty();
-            let mut array = FFI_ArrowArray::empty();
-            let mut err = SedonaCError::default();
-            let status = unsafe {
-                view.get_option.unwrap()(&view, key.as_ptr(), &mut schema, &mut array, &mut err)
-            };
-            assert_eq!(status, 0, "{err}");
-            let field = Field::try_from(&schema).unwrap();
-            assert_eq!(field.data_type(), &DataType::Utf8);
-            assert!(field.is_nullable());
-            let data = unsafe { arrow_array::ffi::from_ffi(array, &schema).unwrap() };
-            let values = make_array(data);
-            let values = values.as_any().downcast_ref::<StringArray>().unwrap();
-            assert_eq!((!values.is_null(0)).then(|| values.value(0)), expected);
-        }
-        let mut sentinel = 123u64;
-        let mut err = SedonaCError::default();
-        let status = unsafe {
-            view.get_option_object.unwrap()(
-                &view,
-                c"sedona.crs_engine".as_ptr(),
-                999,
-                (&mut sentinel as *mut u64).cast(),
-                8,
-                &mut err,
-            )
-        };
-        assert_eq!(status, libc::ENOTSUP);
-        assert_eq!(sentinel, 123);
     }
 }
