@@ -134,6 +134,10 @@ struct UnprocessedKNNResultBatch {
     distances: Vec<f64>,
     unfiltered_probe_indices: Vec<usize>,
     unfiltered_distances: Vec<f64>,
+    /// Probe indices that produced zero raw KNN candidates (e.g. all-NULL build
+    /// geometries or k=0). Kept separate from unfiltered_* because those arrays
+    /// are parallel to candidate distances and cannot represent empty probes.
+    empty_raw_probe_indices: Vec<usize>,
 }
 
 impl UnprocessedKNNResultBatch {
@@ -143,6 +147,7 @@ impl UnprocessedKNNResultBatch {
         distances: Vec<f64>,
         unfiltered_probe_indices: Vec<usize>,
         unfiltered_distances: Vec<f64>,
+        empty_raw_probe_indices: Vec<usize>,
     ) -> Self {
         Self {
             row_array,
@@ -150,6 +155,7 @@ impl UnprocessedKNNResultBatch {
             distances,
             unfiltered_probe_indices,
             unfiltered_distances,
+            empty_raw_probe_indices,
         }
     }
 
@@ -165,6 +171,12 @@ impl UnprocessedKNNResultBatch {
         let distances = tail.distances.to_vec();
         let unfiltered_probe_indices = vec![index; num_unfiltered_rows];
         let unfiltered_distances = tail.unfiltered_distances.to_vec();
+        // Zero-raw probes leave no unfiltered distances; preserve them explicitly.
+        let empty_raw_probe_indices = if num_rows == 0 && num_unfiltered_rows == 0 {
+            vec![index]
+        } else {
+            Vec::new()
+        };
 
         Self {
             row_array: sliced_row_array,
@@ -172,6 +184,7 @@ impl UnprocessedKNNResultBatch {
             distances,
             unfiltered_probe_indices,
             unfiltered_distances,
+            empty_raw_probe_indices,
         }
     }
 
@@ -187,6 +200,8 @@ impl UnprocessedKNNResultBatch {
         unfiltered_probe_indices.extend(other.unfiltered_probe_indices);
         let mut unfiltered_distances = self.unfiltered_distances;
         unfiltered_distances.extend(other.unfiltered_distances);
+        let mut empty_raw_probe_indices = self.empty_raw_probe_indices;
+        empty_raw_probe_indices.extend(other.empty_raw_probe_indices);
 
         Ok(Self {
             row_array: concat_array.as_struct().clone(),
@@ -194,6 +209,7 @@ impl UnprocessedKNNResultBatch {
             distances,
             unfiltered_probe_indices,
             unfiltered_distances,
+            empty_raw_probe_indices,
         })
     }
 }
@@ -219,6 +235,9 @@ struct KNNResultArray {
     /// Offsets to split the unfiltered distances into groups per probe row. It is always of length
     /// `unfiltered_indices.len() + 1`.
     unfiltered_offsets: Vec<usize>,
+    /// Probe indices with zero raw candidates; strictly increasing and disjoint from
+    /// `unfiltered_indices`.
+    empty_raw_indices: Vec<usize>,
 }
 
 impl KNNResultArray {
@@ -229,7 +248,7 @@ impl KNNResultArray {
             distances,
             unfiltered_probe_indices,
             unfiltered_distances,
-            ..
+            empty_raw_probe_indices,
         } = unprocessed_batch;
 
         assert_eq!(row_array.len(), probe_indices.len());
@@ -240,6 +259,24 @@ impl KNNResultArray {
         let (offsets, indices) = compute_range_encoding(probe_indices);
         let (unfiltered_offsets, unfiltered_indices) =
             compute_range_encoding(unfiltered_probe_indices);
+
+        let mut empty_raw_indices = empty_raw_probe_indices;
+        empty_raw_indices.sort_unstable();
+        empty_raw_indices.dedup();
+        debug_assert!({
+            let mut j = 0;
+            let mut ok = true;
+            for &e in &empty_raw_indices {
+                while j < unfiltered_indices.len() && unfiltered_indices[j] < e {
+                    j += 1;
+                }
+                if j < unfiltered_indices.len() && unfiltered_indices[j] == e {
+                    ok = false;
+                    break;
+                }
+            }
+            ok
+        });
 
         // The iterator implementation relies on `indices` being an in-order subsequence
         // of `unfiltered_indices`.
@@ -265,6 +302,7 @@ impl KNNResultArray {
             unfiltered_indices,
             unfiltered_distances,
             unfiltered_offsets,
+            empty_raw_indices,
         }
     }
 }
@@ -348,6 +386,7 @@ struct KNNProbeResultIterator<'a> {
     array: &'a KNNResultArray,
     unfiltered_pos: usize,
     pos: usize,
+    empty_raw_pos: usize,
 }
 
 impl KNNProbeResultIterator<'_> {
@@ -356,6 +395,7 @@ impl KNNProbeResultIterator<'_> {
             array,
             unfiltered_pos: 0,
             pos: 0,
+            empty_raw_pos: 0,
         }
     }
 }
@@ -363,12 +403,31 @@ impl KNNProbeResultIterator<'_> {
 impl<'a> Iterator for KNNProbeResultIterator<'a> {
     type Item = KNNProbeResult<'a>;
 
-    /// This iterator yields KNNProbeResult for each probe row in the [KNNResultArray].
-    /// Given that the [KNNResultArray::indices] is strictly increasing,
-    /// The [KNNProbeResult] it yields has strictly increasing [KNNProbeResult::probe_row_index].
+    /// Yields KNNProbeResult for each probe row in index order, interleaving
+    /// zero-raw probes with probes that have (possibly filtered) candidates.
     fn next(&mut self) -> Option<Self::Item> {
-        if self.unfiltered_pos >= self.array.unfiltered_indices.len() {
-            return None;
+        let next_unfiltered = self
+            .array
+            .unfiltered_indices
+            .get(self.unfiltered_pos)
+            .copied();
+        let next_empty = self
+            .array
+            .empty_raw_indices
+            .get(self.empty_raw_pos)
+            .copied();
+
+        let emit_empty = match (next_unfiltered, next_empty) {
+            (None, None) => return None,
+            (None, Some(_)) => true,
+            (Some(_), None) => false,
+            (Some(u), Some(e)) => e < u,
+        };
+
+        if emit_empty {
+            let e = self.array.empty_raw_indices[self.empty_raw_pos];
+            self.empty_raw_pos += 1;
+            return Some(KNNProbeResult::new(e, 0..0, &[], &[]));
         }
 
         let unfiltered_start = self.array.unfiltered_offsets[self.unfiltered_pos];
@@ -665,6 +724,7 @@ impl KNNResultsMerger {
         distances: Vec<f64>,
         unfiltered_probe_indices: Vec<usize>,
         unfiltered_distances: Vec<f64>,
+        empty_raw_probe_indices: Vec<usize>,
     ) -> Result<Option<RecordBatch>> {
         let row_array = StructArray::from(batch);
         let ingested_batch = UnprocessedKNNResultBatch::new(
@@ -673,6 +733,7 @@ impl KNNResultsMerger {
             distances,
             unfiltered_probe_indices,
             unfiltered_distances,
+            empty_raw_probe_indices,
         );
         let unprocessed_batch = if let Some(tail) = self.state.unprocessed_tail.take() {
             tail.merge(ingested_batch)?
@@ -1351,6 +1412,7 @@ mod test {
                 1000, 1000, 1000, 1001, 1001, 1001, 1002, 1002, 1002, 1004, 1004, 1004,
             ],
             vec![1.0, 2.0, 3.0, 3.0, 4.0, 5.0, 7.0, 8.0, 9.0, 6.0, 7.0, 8.0],
+            vec![],
         ));
 
         let mut iter = KNNProbeResultIterator::new(&array);
@@ -1390,9 +1452,39 @@ mod test {
             vec![],
             vec![],
             vec![],
+            vec![],
         ));
 
         let mut iter = KNNProbeResultIterator::new(&array);
+        assert!(iter.next().is_none());
+    }
+
+    #[test]
+    fn test_knn_results_array_iterator_empty_raw_interleaved() {
+        // Probes 1 and 3 have zero raw candidates; 0 and 2 have filtered rows.
+        let array = KNNResultArray::new(UnprocessedKNNResultBatch::new(
+            StructArray::new_empty_fields(3, None),
+            vec![0, 0, 2],
+            vec![1.0, 2.0, 3.0],
+            vec![0, 0, 2],
+            vec![1.0, 2.0, 3.0],
+            vec![1, 3],
+        ));
+
+        let mut iter = KNNProbeResultIterator::new(&array);
+        let r0 = iter.next().unwrap();
+        assert_eq!(r0.probe_row_index, 0);
+        assert_eq!(r0.row_range, 0..2);
+        let r1 = iter.next().unwrap();
+        assert_eq!(r1.probe_row_index, 1);
+        assert!(r1.row_range.is_empty());
+        assert!(r1.unfiltered_distances.is_empty());
+        let r2 = iter.next().unwrap();
+        assert_eq!(r2.probe_row_index, 2);
+        assert_eq!(r2.row_range, 2..3);
+        let r3 = iter.next().unwrap();
+        assert_eq!(r3.probe_row_index, 3);
+        assert!(r3.row_range.is_empty());
         assert!(iter.next().is_none());
     }
 
@@ -1404,6 +1496,7 @@ mod test {
             vec![],
             vec![0, 0, 0, 3, 3],
             vec![1.0, 2.0, 3.0, 4.0, 5.0],
+            vec![],
         ));
 
         let mut iter = KNNProbeResultIterator::new(&array);
@@ -1431,6 +1524,7 @@ mod test {
             vec![1.0, 2.0, 3.0, 4.0, 5.0],
             vec![0, 0, 0, 3, 3],
             vec![1.0, 2.0, 3.0, 4.0, 5.0],
+            vec![],
         ));
 
         let mut iter = KNNProbeResultIterator::new(&array);
@@ -1457,6 +1551,7 @@ mod test {
             vec![0.0, 1.0, 3.0, 4.0, 6.0],
             vec![0, 1, 2, 3, 4, 5, 6],
             vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            vec![],
         ));
 
         let mut iter = KNNProbeResultIterator::new(&array);
@@ -1982,6 +2077,7 @@ mod test {
                 filtered_distances,
                 unfiltered_indices,
                 unfiltered_distances,
+                vec![],
             )?;
             if let Some(res_batch) = res {
                 merged_record_batches.push(res_batch);

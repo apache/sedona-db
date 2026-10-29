@@ -2277,10 +2277,7 @@ async fn test_knn_left_join_partitioned_query_filter_keeps_unmatched() -> Result
     for i in 0..20 {
         assert_eq!(ids.value(i), i as i64);
         if i % 2 == 0 {
-            assert!(
-                !rids.is_null(i),
-                "even left id={i} should match its 1-NN"
-            );
+            assert!(!rids.is_null(i), "even left id={i} should match its 1-NN");
             assert_eq!(rids.value(i), i as i64);
         } else {
             assert!(
@@ -2433,10 +2430,137 @@ async fn test_knn_left_join_partitioned_distance_filter_unmatched_mid_batch() ->
     assert_eq!(ids.value(0), 1);
     assert_eq!(rids.value(0), 10);
     assert_eq!(ids.value(1), 2, "unmatched mid-batch left id must stay");
-    assert!(rids.is_null(1), "unmatched mid-batch row must have NULL rid");
+    assert!(
+        rids.is_null(1),
+        "unmatched mid-batch row must have NULL rid"
+    );
     assert_eq!(ids.value(2), 3);
     assert_eq!(rids.value(2), 10);
 
     Ok(())
 }
 
+/// Partitioned+spill regression for #1519: all-NULL candidate geometries.
+///
+/// Maintainer @jiayuasu observed that under Fixed(4)+force_spill, probes with
+/// zero raw KNN candidates never reach KNNResultsMerger, so the unmatched-index
+/// path cannot emit outer rows. Base returns three NULL-padded rows; head
+/// returned none.
+#[tokio::test]
+async fn test_knn_left_join_partitioned_all_null_candidates_keeps_unmatched() -> Result<()> {
+    let debug = SpatialJoinDebugOptions {
+        num_spatial_partitions: NumSpatialPartitionsConfig::Fixed(4),
+        force_spill: true,
+        memory_for_intermittent_usage: None,
+        ..Default::default()
+    };
+    let options = SpatialJoinOptions {
+        spatial_join_reordering: false,
+        debug,
+        ..Default::default()
+    };
+    let ctx = setup_context(Some(options), 3)?;
+
+    let sql = r#"
+        WITH l AS (
+          SELECT id, ST_Point(x, 0.0) AS geom
+          FROM (VALUES (1, 0.0), (2, 10.0), (3, 20.0)) AS t(id, x)
+        ), r AS (
+          SELECT rid, ST_GeomFromText(wkt) AS geom
+          FROM (VALUES
+            (100, CAST(NULL AS VARCHAR)),
+            (101, CAST(NULL AS VARCHAR)),
+            (102, CAST(NULL AS VARCHAR))
+          ) AS t(rid, wkt)
+        )
+        SELECT l.id, r.rid
+        FROM r RIGHT JOIN l ON ST_KNN(l.geom, r.geom, 1)
+        ORDER BY l.id
+    "#;
+    let batches = ctx.sql(sql).await?.collect().await?;
+    let batch = arrow::compute::concat_batches(&batches[0].schema(), &batches)?;
+    assert_eq!(
+        batch.num_rows(),
+        3,
+        "all-NULL candidates under Fixed(4)+spill must keep left rows"
+    );
+
+    let ids = batch
+        .column(0)
+        .as_any()
+        .downcast_ref::<arrow_array::Int64Array>()
+        .expect("l.id should be Int64");
+    let rids = batch
+        .column(1)
+        .as_any()
+        .downcast_ref::<arrow_array::Int64Array>()
+        .expect("r.rid should be Int64");
+
+    assert_eq!(ids.value(0), 1);
+    assert!(rids.is_null(0));
+    assert_eq!(ids.value(1), 2);
+    assert!(rids.is_null(1));
+    assert_eq!(ids.value(2), 3);
+    assert!(rids.is_null(2));
+
+    Ok(())
+}
+
+/// Same all-NULL candidates case with k=0 (always zero raw neighbors).
+#[tokio::test]
+async fn test_knn_left_join_partitioned_k0_all_null_candidates_keeps_unmatched() -> Result<()> {
+    let debug = SpatialJoinDebugOptions {
+        num_spatial_partitions: NumSpatialPartitionsConfig::Fixed(4),
+        force_spill: true,
+        memory_for_intermittent_usage: None,
+        ..Default::default()
+    };
+    let options = SpatialJoinOptions {
+        spatial_join_reordering: false,
+        debug,
+        ..Default::default()
+    };
+    let ctx = setup_context(Some(options), 3)?;
+
+    let sql = r#"
+        WITH l AS (
+          SELECT id, ST_Point(x, 0.0) AS geom
+          FROM (VALUES (1, 0.0), (2, 10.0), (3, 20.0)) AS t(id, x)
+        ), r AS (
+          SELECT rid, ST_GeomFromText(wkt) AS geom
+          FROM (VALUES
+            (100, CAST(NULL AS VARCHAR)),
+            (101, CAST(NULL AS VARCHAR)),
+            (102, CAST(NULL AS VARCHAR))
+          ) AS t(rid, wkt)
+        )
+        SELECT l.id, r.rid
+        FROM r RIGHT JOIN l ON ST_KNN(l.geom, r.geom, 0)
+        ORDER BY l.id
+    "#;
+    let batches = ctx.sql(sql).await?.collect().await?;
+    let batch = arrow::compute::concat_batches(&batches[0].schema(), &batches)?;
+    assert_eq!(
+        batch.num_rows(),
+        3,
+        "k=0 under Fixed(4)+spill must keep left rows"
+    );
+
+    let ids = batch
+        .column(0)
+        .as_any()
+        .downcast_ref::<arrow_array::Int64Array>()
+        .expect("l.id should be Int64");
+    let rids = batch
+        .column(1)
+        .as_any()
+        .downcast_ref::<arrow_array::Int64Array>()
+        .expect("r.rid should be Int64");
+
+    for i in 0..3 {
+        assert_eq!(ids.value(i), (i as i64) + 1);
+        assert!(rids.is_null(i));
+    }
+
+    Ok(())
+}
