@@ -308,19 +308,28 @@ mod tests {
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    use arrow::util::pretty::pretty_format_batches;
     use arrow_array::{ArrayRef, Int32Array, Int64Array};
     use arrow_schema::{DataType, Field, Schema, SchemaRef};
+    use datafusion::datasource::MemTable;
     use datafusion::datasource::memory::MemorySourceConfig;
     use datafusion::datasource::source::DataSourceExec;
+    use datafusion::execution::SessionStateBuilder;
     use datafusion::functions_aggregate::count::count_udaf;
+    use datafusion::logical_expr::ScalarUDF;
     use datafusion::physical_optimizer::PhysicalOptimizerRule;
+    use datafusion::physical_optimizer::sanity_checker::SanityCheckPlan;
+    use datafusion::prelude::{SessionConfig, SessionContext};
     use datafusion_common::config::ConfigOptions;
     use datafusion_physical_expr::aggregate::AggregateExprBuilder;
     use datafusion_physical_expr::expressions::{col, is_not_null, lit};
     use datafusion_physical_expr::{LexOrdering, PhysicalSortExpr};
     use datafusion_physical_plan::aggregates::{AggregateExec, AggregateMode, PhysicalGroupBy};
+    use datafusion_physical_plan::coalesce_partitions::CoalescePartitionsExec;
     use datafusion_physical_plan::common::collect;
+    use datafusion_physical_plan::displayable;
     use datafusion_physical_plan::filter::{FilterExec, FilterExecBuilder};
+    use datafusion_physical_plan::limit::GlobalLimitExec;
     use datafusion_physical_plan::projection::{ProjectionExec, ProjectionExpr};
     use datafusion_physical_plan::sorts::sort::SortExec;
     use datafusion_physical_plan::union::UnionExec;
@@ -330,7 +339,7 @@ mod tests {
     use sedona_schema::raster::BandDataType;
 
     use crate::raster_materialization::tests::{
-        counted_raster_call, ensure_loaded_call, task_context,
+        MockEnsureLoaded, counted_raster_call, ensure_loaded_call, task_context,
     };
     use crate::raster_materialization::{
         PASSTHROUGH_BATCH_SIZE, RasterBatchSplitExec, RasterMaterializationRule,
@@ -1267,5 +1276,314 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(batches.iter().map(RecordBatch::num_rows).sum::<usize>(), 3);
+    }
+
+    #[tokio::test]
+    async fn a_single_partition_consumer_above_a_spread_still_gets_one_partition() {
+        // `GlobalLimitExec` and a non-preserving `SortExec` require a single
+        // input partition. Over one input partition the spread is merged back
+        // below them; over two, the planner's merge is kept above the node.
+        // `SanityCheckPlan` runs right after the rule, without re-running
+        // distribution or sorting enforcement that could repair the plan.
+        let uris: Vec<String> = (0..16).map(|i| format!("s3://b/r{}.tif", i % 4)).collect();
+        let uris: Vec<&str> = uris.iter().map(String::as_str).collect();
+        let (schema, batch) = outdb_raster_batch(&uris);
+        let one_partition =
+            MemorySourceConfig::try_new_exec(&[vec![batch.clone()]], Arc::clone(&schema), None)
+                .unwrap();
+        let two_partitions = MemorySourceConfig::try_new_exec(
+            &[vec![batch.slice(0, 8)], vec![batch.slice(8, 8)]],
+            Arc::clone(&schema),
+            None,
+        )
+        .unwrap();
+        let loading = |input: Arc<dyn ExecutionPlan>| {
+            loading_projection(
+                ensure_loaded_call(
+                    &Arc::new(Mutex::new(Vec::new())),
+                    col("rast", &schema).unwrap(),
+                    &schema,
+                ),
+                input,
+            )
+        };
+        let by_id =
+            LexOrdering::new([PhysicalSortExpr::new_default(col("id", &schema).unwrap())]).unwrap();
+        let cases: Vec<(&str, Arc<dyn ExecutionPlan>, bool)> = vec![
+            (
+                "limit with offset over one partition",
+                Arc::new(GlobalLimitExec::new(
+                    loading(one_partition.clone()),
+                    2,
+                    Some(5),
+                )),
+                false,
+            ),
+            (
+                "limit with offset over a merge of two partitions",
+                Arc::new(GlobalLimitExec::new(
+                    Arc::new(CoalescePartitionsExec::new(loading(two_partitions.clone()))),
+                    2,
+                    Some(5),
+                )),
+                false,
+            ),
+            (
+                "ordered limit with offset over one partition",
+                Arc::new(GlobalLimitExec::new(
+                    Arc::new(SortExec::new(by_id.clone(), loading(one_partition))),
+                    2,
+                    Some(5),
+                )),
+                true,
+            ),
+            (
+                "ordered limit with offset over a merge of two partitions",
+                Arc::new(GlobalLimitExec::new(
+                    Arc::new(SortExec::new(
+                        by_id,
+                        Arc::new(CoalescePartitionsExec::new(loading(two_partitions))),
+                    )),
+                    2,
+                    Some(5),
+                )),
+                true,
+            ),
+        ];
+        for (name, plan, ordered) in cases {
+            let mut config = ConfigOptions::default();
+            config.execution.target_partitions = 4;
+            let rewritten = RasterMaterializationRule
+                .optimize(Arc::clone(&plan), &config)
+                .unwrap();
+            let rewritten = SanityCheckPlan::new()
+                .optimize(rewritten, &config)
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
+            let shown = displayable(rewritten.as_ref()).indent(true).to_string();
+            assert!(shown.contains("raster_source(rast@1)"), "{name}: {shown}");
+            assert_eq!(
+                rewritten.output_partitioning().partition_count(),
+                1,
+                "{name}"
+            );
+
+            let ctx = task_context(DEFAULT_RASTER_MAX_BATCH_BYTES);
+            let ids = |batches: Vec<RecordBatch>| -> Vec<i32> {
+                batches
+                    .iter()
+                    .flat_map(|b| {
+                        b.column(0)
+                            .as_any()
+                            .downcast_ref::<Int32Array>()
+                            .unwrap()
+                            .values()
+                            .to_vec()
+                    })
+                    .collect()
+            };
+            let got = ids(collect(rewritten.execute(0, Arc::clone(&ctx)).unwrap())
+                .await
+                .unwrap());
+            let before = ids(collect(plan.execute(0, ctx).unwrap()).await.unwrap());
+            assert_eq!(got.len(), 5, "{name}");
+            assert_eq!(before.len(), 5, "{name}");
+            if ordered {
+                assert_eq!(got, (2..7).collect::<Vec<_>>(), "{name}");
+                assert_eq!(before, got, "{name}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn sql_plans_keep_parent_requirements_and_results() {
+        // Queries in the shapes of DataFusion's own distribution, sorting,
+        // limit and sanity-checker tests, planned by a session that runs the
+        // rule after DataFusion's physical optimizer and `SanityCheckPlan`
+        // after the rule, as `SedonaContext` does. A rewrite that broke a
+        // parent's ordering or distribution requirement fails planning.
+        // Results are compared with the same session without the rule.
+        let mut b = RasterBuilder::new(32);
+        for i in 0..32 {
+            b.start_raster_nd(&[0.0, 1.0, 0.0, 0.0, 0.0, -1.0], &["y", "x"], &[2, 2], None)
+                .unwrap();
+            let uri = format!("s3://b/r{}.tif", i % 8);
+            b.start_band(StartBandArgs {
+                outdb_uri: Some(&uri),
+                outdb_format: Some("mock"),
+                ..StartBandArgs::new(&["y", "x"], &[2, 2], BandDataType::UInt8)
+            })
+            .unwrap();
+            b.band_data_writer().append_value([0u8; 0]);
+            b.finish_band().unwrap();
+            b.finish_raster().unwrap();
+        }
+        let rasters: ArrayRef = Arc::new(b.finish().unwrap());
+        let raster_field = SedonaType::Raster.to_storage_field("rast", true).unwrap();
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            Field::new("grp", DataType::Int32, false),
+            Field::new("rast", rasters.data_type().clone(), true)
+                .with_metadata(raster_field.metadata().clone()),
+        ]));
+        let batch = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![
+                Arc::new(Int32Array::from_iter_values(0..32)),
+                Arc::new(Int32Array::from_iter_values((0..32).map(|i| i / 8))),
+                rasters,
+            ],
+        )
+        .unwrap();
+        let halves = vec![vec![batch.slice(0, 16)], vec![batch.slice(16, 16)]];
+
+        let mut contexts = Vec::new();
+        for with_rule in [true, false] {
+            // Partitioned joins even for these small inputs, and
+            // order-preserving repartitions over the sorted table.
+            let config = SessionConfig::new()
+                .with_target_partitions(4)
+                .set_usize(
+                    "datafusion.optimizer.hash_join_single_partition_threshold",
+                    0,
+                )
+                .set_usize(
+                    "datafusion.optimizer.hash_join_single_partition_threshold_rows",
+                    0,
+                )
+                .set_bool("datafusion.optimizer.prefer_existing_sort", true);
+            let mut state = SessionStateBuilder::new()
+                .with_config(config)
+                .with_default_features();
+            if with_rule {
+                state = state
+                    .with_physical_optimizer_rule(Arc::new(RasterMaterializationRule))
+                    .with_physical_optimizer_rule(Arc::new(SanityCheckPlan::new()));
+            }
+            let ctx = SessionContext::new_with_state(state.build());
+            ctx.register_udf(ScalarUDF::new_from_impl(MockEnsureLoaded::new(Arc::new(
+                Mutex::new(Vec::new()),
+            ))));
+            ctx.register_table(
+                "t",
+                Arc::new(MemTable::try_new(Arc::clone(&schema), halves.clone()).unwrap()),
+            )
+            .unwrap();
+            ctx.register_table(
+                "t1",
+                Arc::new(
+                    MemTable::try_new(Arc::clone(&schema), vec![vec![batch.clone()]]).unwrap(),
+                ),
+            )
+            .unwrap();
+            ctx.register_table(
+                "ts",
+                Arc::new(
+                    MemTable::try_new(Arc::clone(&schema), halves.clone())
+                        .unwrap()
+                        .with_sort_order(vec![vec![
+                            datafusion::prelude::col("grp").sort(true, false),
+                            datafusion::prelude::col("id").sort(true, false),
+                        ]]),
+                ),
+            )
+            .unwrap();
+            contexts.push(ctx);
+        }
+
+        // (name, query, whether the rule spreads somewhere in it, whether the
+        // rows are fully determined; a LIMIT without ORDER BY fixes only the
+        // count).
+        let cases = [
+            (
+                "ordered limit with offset over a spread",
+                "SELECT id, rs_ensureloaded(rast) AS l FROM t ORDER BY id LIMIT 5 OFFSET 2",
+                true,
+                true,
+            ),
+            (
+                "hash join on a key aliased by the loading projection",
+                "SELECT a.k, b.grp, a.l FROM \
+                 (SELECT t.id AS k, rs_ensureloaded(t.rast) AS l FROM t JOIN t1 ON t.id = t1.id) a \
+                 JOIN t b ON a.k = b.id",
+                false,
+                true,
+            ),
+            (
+                "window over sorted input",
+                "SELECT id, row_number() OVER (PARTITION BY grp ORDER BY id) AS rn, l \
+                 FROM (SELECT id, grp, rs_ensureloaded(rast) AS l FROM ts)",
+                false,
+                true,
+            ),
+            (
+                "window over a loading filter on sorted input",
+                "SELECT id, count(*) OVER (ORDER BY grp, id) AS running FROM ts \
+                 WHERE rs_ensureloaded(rast) IS NOT NULL",
+                false,
+                true,
+            ),
+            (
+                "aggregate over input sorted on the group key",
+                "SELECT grp, count(rs_ensureloaded(rast)) FROM ts GROUP BY grp",
+                false,
+                true,
+            ),
+            (
+                "aggregate over input sorted on part of the group key",
+                "SELECT grp, id % 3 AS m, count(rs_ensureloaded(rast)) FROM ts GROUP BY grp, id % 3",
+                false,
+                true,
+            ),
+            (
+                "limit pushed into a loading filter and its merge",
+                "SELECT id FROM t WHERE rs_ensureloaded(rast) IS NOT NULL LIMIT 3",
+                false,
+                false,
+            ),
+            (
+                "hash-partitioned union branches under an interleave",
+                "SELECT k, sum(c) FROM ( \
+                 SELECT id AS k, count(rs_ensureloaded(rast)) AS c FROM t GROUP BY id \
+                 UNION ALL SELECT id, count(rs_ensureloaded(rast)) FROM t1 GROUP BY id) \
+                 GROUP BY k",
+                true,
+                true,
+            ),
+        ];
+        for (name, sql, spreads, exact) in cases {
+            let mut results = Vec::new();
+            for ctx in &contexts {
+                let df = ctx.sql(sql).await.unwrap();
+                let plan = df
+                    .clone()
+                    .create_physical_plan()
+                    .await
+                    .unwrap_or_else(|e| panic!("{name}: {e}"));
+                results.push((
+                    displayable(plan.as_ref()).indent(true).to_string(),
+                    df.collect().await.unwrap(),
+                ));
+            }
+            let (shown, got) = &results[0];
+            let (_, expected) = &results[1];
+            assert!(shown.contains("RasterBatchSplitExec"), "{name}: {shown}");
+            assert_eq!(shown.contains("raster_source("), spreads, "{name}: {shown}");
+            let rows =
+                |batches: &[RecordBatch]| batches.iter().map(|b| b.num_rows()).sum::<usize>();
+            assert_eq!(rows(got), rows(expected), "{name}");
+            if exact {
+                let sorted_lines = |batches: &[RecordBatch]| {
+                    let mut lines: Vec<String> = pretty_format_batches(batches)
+                        .unwrap()
+                        .to_string()
+                        .lines()
+                        .map(str::to_string)
+                        .collect();
+                    lines.sort();
+                    lines
+                };
+                assert_eq!(sorted_lines(got), sorted_lines(expected), "{name}");
+            }
+        }
     }
 }

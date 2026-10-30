@@ -923,13 +923,13 @@ pub(crate) mod tests {
     /// Stand-in for `RS_EnsureLoaded`: same name, identity on its argument,
     /// records the row count of every invocation.
     #[derive(Debug)]
-    struct MockEnsureLoaded {
+    pub(crate) struct MockEnsureLoaded {
         signature: Signature,
         calls: Arc<Mutex<Vec<usize>>>,
     }
 
     impl MockEnsureLoaded {
-        fn new(calls: Arc<Mutex<Vec<usize>>>) -> Self {
+        pub(crate) fn new(calls: Arc<Mutex<Vec<usize>>>) -> Self {
             Self {
                 signature: Signature::any(1, Volatility::Stable),
                 calls,
