@@ -35,6 +35,7 @@ __all__ = [
     "GeoDataFrame",
     "GeoSeries",
     "Series",
+    "clip",
     "concat",
     "from_geopandas",
     "list_layers",
@@ -107,3 +108,14 @@ def sjoin(
         distance=distance,
         on_attribute=on_attribute,
     )
+
+
+def clip(gdf, mask, keep_geom_type=False, sort=False):
+    """Clip a frame or series to a mask, as `geopandas.clip` does.
+
+    **EXPERIMENTAL.** Equivalent to `gdf.clip(mask, ...)`; see
+    `GeoDataFrame.clip`.
+    """
+    if not isinstance(gdf, (GeoDataFrame, GeoSeries)):
+        raise TypeError(f"'gdf' should be GeoDataFrame or GeoSeries, got {type(gdf)}")
+    return gdf.clip(mask, keep_geom_type=keep_geom_type, sort=sort)
