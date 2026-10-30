@@ -9006,7 +9006,8 @@ inline data (≤12 bytes).</p>
         <p>Create an in-database raster from a NumPy array, holding pixels inline.</p>
 <p>The mirror of <code>lazy</code>: identical dimension/CRS conventions, but the
 pixel data is carried in the raster rather than referenced by URI.</p>
-<p>This operation is zero-copy for contiguous arrays.</p>
+<p>Contiguous arrays with more than 12 bytes share their pixel buffer.
+Smaller arrays are copied into Arrow's inline binary view storage.</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>
