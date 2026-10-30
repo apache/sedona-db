@@ -131,6 +131,39 @@ def test_st_astext(eng, geom):
     eng.assert_query_result(f"SELECT ST_AsText({geom_or_null(geom)})", expected)
 
 
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected"),
+    [
+        ("MULTIPOINT (EMPTY)", "MULTIPOINT(EMPTY)"),
+        ("MULTIPOINT ((1 2), EMPTY)", "MULTIPOINT((1 2),EMPTY)"),
+        ("MULTIPOINT Z (EMPTY)", "MULTIPOINT Z(EMPTY)"),
+        ("MULTILINESTRING (EMPTY)", "MULTILINESTRING(EMPTY)"),
+        ("MULTILINESTRING ((1 2, 3 4), EMPTY)", "MULTILINESTRING((1 2,3 4),EMPTY)"),
+        ("MULTIPOLYGON (EMPTY)", "MULTIPOLYGON(EMPTY)"),
+        (
+            "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 0)), EMPTY)",
+            "MULTIPOLYGON(((0 0,1 0,1 1,0 0)),EMPTY)",
+        ),
+        (
+            "GEOMETRYCOLLECTION (MULTIPOINT (EMPTY, (1 2)))",
+            "GEOMETRYCOLLECTION(MULTIPOINT(EMPTY,(1 2)))",
+        ),
+    ],
+)
+def test_st_astext_empty_members(eng, geom, expected):
+    # An empty member of a multi-geometry is written EMPTY. The geometries are read from WKB, as
+    # the WKT parser takes no empty point in a MULTIPOINT.
+    eng = eng.create_or_skip()
+    if isinstance(eng, PostGIS):
+        expected = expected.replace("Z(", "Z (")
+
+    wkb = shapely.to_wkb(shapely.from_wkt(geom), hex=True, flavor="iso")
+    eng.assert_query_result(
+        f"SELECT ST_AsText(ST_GeomFromWKB(decode('{wkb}', 'hex')))", expected
+    )
+
+
 @pytest.mark.parametrize("eng", [SedonaDB])
 def test_st_aswkt_alias(eng):
     eng = eng.create_or_skip()
