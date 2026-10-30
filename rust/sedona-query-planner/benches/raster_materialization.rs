@@ -15,7 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! Overhead of `RasterBatchSplitExec` in the non-materialized case.
+//! Overhead of `RasterBatchSplitExec` in the non-materialized case, and of
+//! the raster-source spread under it.
 //!
 //! The UDF is an identity that stands in for `rs_ensureloaded` over
 //! rasters that are already in memory, so the only work measured is the
@@ -30,7 +31,7 @@ use std::sync::Arc;
 
 use arrow_array::{ArrayRef, RecordBatch};
 use arrow_schema::{DataType, Field, Schema, SchemaRef};
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use datafusion::datasource::memory::MemorySourceConfig;
 use datafusion::execution::SessionStateBuilder;
 use datafusion::physical_optimizer::PhysicalOptimizerRule;
@@ -126,6 +127,39 @@ fn raster_batch() -> (SchemaRef, RecordBatch) {
     (schema, batch)
 }
 
+/// One batch of `ROWS` OutDb 16 × 16 UInt8 rasters over 256 files: the
+/// metadata-only rows the spread hashes before anything is loaded.
+fn outdb_raster_batch() -> (SchemaRef, RecordBatch) {
+    let mut b = RasterBuilder::new(ROWS);
+    for row in 0..ROWS {
+        b.start_raster_nd(
+            &[0.0, 1.0, 0.0, 0.0, 0.0, -1.0],
+            &["y", "x"],
+            &[SIDE, SIDE],
+            None,
+        )
+        .unwrap();
+        let uri = format!("s3://bucket/r{}.tif", row % 256);
+        b.start_band(StartBandArgs {
+            outdb_uri: Some(&uri),
+            outdb_format: Some("geotiff"),
+            ..StartBandArgs::new(&["y", "x"], &[SIDE, SIDE], BandDataType::UInt8)
+        })
+        .unwrap();
+        b.band_data_writer().append_value([0u8; 0]);
+        b.finish_band().unwrap();
+        b.finish_raster().unwrap();
+    }
+    let rasters: ArrayRef = Arc::new(b.finish().unwrap());
+    let raster_field = SedonaType::Raster.to_storage_field("rast", true).unwrap();
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("rast", rasters.data_type().clone(), true)
+            .with_metadata(raster_field.metadata().clone()),
+    ]));
+    let batch = RecordBatch::try_new(Arc::clone(&schema), vec![rasters]).unwrap();
+    (schema, batch)
+}
+
 /// `ProjectionExec(rs_ensureloaded(rast) AS loaded)` over the batch.
 fn projection_plan(schema: &SchemaRef, batch: &RecordBatch) -> Arc<dyn ExecutionPlan> {
     let input =
@@ -201,5 +235,40 @@ fn bench(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench);
+/// The rule with four target partitions over a single-partition input: the
+/// split over the raster-source spread, merged back to one partition. In-db
+/// rasters pass through the spread whole; OutDb ones are split by file.
+fn bench_spread(c: &mut Criterion) {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    let mut config = ConfigOptions::default();
+    config.execution.target_partitions = 4;
+    let ctx = task_context(0);
+
+    let mut group = c.benchmark_group("raster_source_spread");
+    group.throughput(Throughput::Elements(ROWS as u64));
+    for (name, (schema, batch)) in [("indb", raster_batch()), ("outdb", outdb_raster_batch())] {
+        // A plan with a repartition can be executed once, so each iteration
+        // plans anew (outside the timing), and executes inside the runtime,
+        // where the spread starts its input tasks.
+        group.bench_function(name, |b| {
+            b.iter_batched(
+                || {
+                    RasterMaterializationRule
+                        .optimize(projection_plan(&schema, &batch), &config)
+                        .unwrap()
+                },
+                |spread| {
+                    rt.block_on(async { collect(spread.execute(0, Arc::clone(&ctx))?).await })
+                        .unwrap()
+                },
+                BatchSize::SmallInput,
+            )
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(benches, bench, bench_spread);
 criterion_main!(benches);
