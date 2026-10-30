@@ -142,6 +142,24 @@ rectangle with GEOS's `clip_by_rect`, which leaves it out. The rows keep their
 order, whatever `sort` is. `keep_geom_type=True` computes the geometry types of
 the frame and of the result.
 
+`overlay()` (of a frame, and `sedonadb_geopandas.overlay()`) gives what
+GeoPandas gives for each `how`. Each frame is computed once, into memory, so
+that every part of the result comes from one result of it (even of a query
+whose result changes each time), and the result is lazy over them. Pairs of rows
+are matched by an indexed spatial join, and a difference takes away the union
+of the geometries a row intersects, so its geometries are those of GeoPandas up
+to where their rings start. GeoPandas takes them away one at a time, in their
+rows' order, and a new vertex where their edges cross can take an M that one
+taken away earlier left on an edge, so that order decides its M. Here those of
+each dimension are taken away together, in one order whatever the rows' (2D, Z,
+M, then ZM, as GeoPandas does where its rows come in that order): a vertex cut
+by a geometry without M takes no M another left, but one cut by a ZM geometry
+can take an M that an M geometry left. The rows
+come in no particular order. Both frames are in one CRS, as for
+`sjoin()` (GeoPandas warns and overlays the coordinates as they are), and hold
+geometry, not geography. `keep_geom_type=None` drops what `True` does without
+counting it for GeoPandas' warning, which would compute the result.
+
 The numeric parameters of geometry methods (`segmentize()`, `set_precision()`,
 `concave_hull()`, `force_3d()`, `snap()`, `get_geometry()`) take a number or a
 numeric `Series` of the same frame, applied row by row. `segmentize()` only

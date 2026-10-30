@@ -40,6 +40,7 @@ __all__ = [
     "from_geopandas",
     "list_layers",
     "merge",
+    "overlay",
     "points_from_xy",
     "read_feather",
     "read_file",
@@ -119,3 +120,14 @@ def clip(gdf, mask, keep_geom_type=False, sort=False):
     if not isinstance(gdf, (GeoDataFrame, GeoSeries)):
         raise TypeError(f"'gdf' should be GeoDataFrame or GeoSeries, got {type(gdf)}")
     return gdf.clip(mask, keep_geom_type=keep_geom_type, sort=sort)
+
+
+def overlay(df1, df2, how="intersection", keep_geom_type=None, make_valid=True):
+    """Overlay two frames, as `geopandas.overlay` does.
+
+    **EXPERIMENTAL.** Equivalent to `df1.overlay(df2, ...)`; see
+    `GeoDataFrame.overlay`.
+    """
+    from sedonadb_geopandas._overlay import overlay
+
+    return overlay(df1, df2, how, keep_geom_type, make_valid)
