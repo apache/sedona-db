@@ -35,6 +35,7 @@ use arrow_schema::{DataType, Schema};
 use async_trait::async_trait;
 use datafusion::datasource::file_format::{format_as_file_type, FileFormatFactory};
 use datafusion::datasource::{provider_as_source, MemTable, TableProvider};
+use datafusion::physical_optimizer::sanity_checker::SanityCheckPlan;
 use datafusion::{
     common::plan_err,
     error::{DataFusionError, Result},
@@ -298,6 +299,11 @@ impl SedonaContext {
         // raster source (see `sedona_query_planner::raster_materialization`).
         state_builder =
             state_builder.with_physical_optimizer_rule(Arc::new(RasterMaterializationRule));
+        // It runs after DataFusion's own `SanityCheckPlan`, so check again:
+        // a rewrite that broke a parent's ordering or distribution
+        // requirement fails at planning rather than returning wrong rows.
+        state_builder =
+            state_builder.with_physical_optimizer_rule(Arc::new(SanityCheckPlan::new()));
         state_builder = state_builder.with_query_planner(Arc::new(planner));
 
         let mut state = state_builder.build();
