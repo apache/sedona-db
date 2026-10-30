@@ -143,7 +143,7 @@ impl SedonaScalarKernel for STNPoints {
 
         executor.execute_wkb_void(|maybe_wkb| {
             if let Some(wkb) = maybe_wkb {
-                builder.append_value(count_wkb_points_recursively(wkb) as u64);
+                builder.append_value(count_points_and_output_dims(wkb).0 as u64);
             } else {
                 builder.append_null();
             }
@@ -153,10 +153,6 @@ impl SedonaScalarKernel for STNPoints {
 
         executor.finish(Arc::new(builder.finish()))
     }
-}
-
-fn count_wkb_points_recursively<'a>(wkb: &'a wkb::reader::Wkb<'a>) -> usize {
-    count_points_and_output_dims(wkb).0
 }
 
 fn dims_flags(dim: Dimensions) -> (bool, bool) {
