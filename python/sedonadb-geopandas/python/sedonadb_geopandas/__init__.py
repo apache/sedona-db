@@ -23,6 +23,7 @@ intentional differences (laziness, no row index, immutability). The API may
 change without notice.
 """
 
+from sedonadb_geopandas._arrow import read_feather
 from sedonadb_geopandas._context import default_context
 from sedonadb_geopandas._frame import GeoDataFrame
 from sedonadb_geopandas._io import list_layers, read_file, read_parquet
@@ -38,6 +39,7 @@ __all__ = [
     "list_layers",
     "merge",
     "points_from_xy",
+    "read_feather",
     "read_file",
     "read_parquet",
     "sjoin",

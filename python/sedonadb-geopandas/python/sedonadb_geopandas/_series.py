@@ -3242,3 +3242,29 @@ class GeoSeries(Series):
     def to_geopandas(self):
         """Execute and return this column as a `geopandas.GeoSeries`."""
         return self.to_pandas()
+
+    def to_arrow(self, geometry_encoding="WKB", interleaved=True, include_z=None):
+        """Compute this column as a pyarrow Array, as `GeoSeries.to_arrow` does.
+
+        **EXPERIMENTAL.** GeoArrow WKB, with the CRS (and spherical edges, for
+        geography). GeoPandas gives an object with `__arrow_c_array__`; an
+        Array is one. Only `geometry_encoding="WKB"` is supported, so
+        `interleaved` and `include_z` do nothing, as in GeoPandas with WKB.
+        """
+        from sedonadb_geopandas._arrow import series_to_arrow
+
+        return series_to_arrow(self, geometry_encoding)
+
+    @classmethod
+    def from_arrow(cls, arr, **kwargs):
+        """A series of a GeoArrow array, as `GeoSeries.from_arrow` reads it.
+
+        **EXPERIMENTAL.** `arr` is anything with `__arrow_c_array__` and a
+        GeoArrow extension type (WKB, WKT, or a native encoding), held in
+        memory in a frame of its own. Of GeoPandas' keyword arguments, `crs`
+        (which must agree with the array's own, if it has one) and `name` are
+        taken, and `context`, an optional SedonaDB context.
+        """
+        from sedonadb_geopandas._arrow import series_from_arrow
+
+        return series_from_arrow(arr, **kwargs)
