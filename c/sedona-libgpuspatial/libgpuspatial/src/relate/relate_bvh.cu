@@ -41,7 +41,7 @@ namespace detail {
 template <typename POINT_T, typename INDEX_T>
 uint32_t ComputeNumAabbs(const rmm::cuda_stream_view& stream,
                          const PolygonArrayView<POINT_T, INDEX_T>& polygons,
-                         ArrayView<uint32_t> polygon_ids, int segs_per_aabb) {
+                         ArrayView<INDEX_T> polygon_ids, int segs_per_aabb) {
   auto n_polygons = polygon_ids.size();
 
   rmm::device_uvector<uint32_t> n_aabbs(n_polygons, stream);
@@ -76,7 +76,7 @@ uint32_t ComputeNumAabbs(const rmm::cuda_stream_view& stream,
 template <typename POINT_T, typename INDEX_T>
 uint32_t ComputeNumAabbs(const rmm::cuda_stream_view& stream,
                          const MultiPolygonArrayView<POINT_T, INDEX_T>& multi_polygons,
-                         ArrayView<uint32_t> multi_polygon_ids, int segs_per_aabb) {
+                         ArrayView<INDEX_T> multi_polygon_ids, int segs_per_aabb) {
   auto n_multi_polygons = multi_polygon_ids.size();
   rmm::device_uvector<uint32_t> n_aabbs(n_multi_polygons, stream);
   auto* p_n_aabbs = n_aabbs.data();
@@ -128,7 +128,7 @@ uint32_t ComputeNumAabbs(const rmm::cuda_stream_view& stream,
 template <typename POINT_T, typename INDEX_T>
 size_t RelateEngine<POINT_T, INDEX_T>::EstimateBVHSize(
     const rmm::cuda_stream_view& stream, const PolygonArrayView<POINT_T, INDEX_T>& polys,
-    ArrayView<uint32_t> poly_ids, int segs_per_aabb) {
+    ArrayView<INDEX_T> poly_ids, int segs_per_aabb) {
   auto num_aabbs = detail::ComputeNumAabbs(stream, polys, poly_ids, segs_per_aabb);
   if (num_aabbs == 0) {
     return 0;
@@ -146,9 +146,12 @@ template <typename POINT_T, typename INDEX_T>
 size_t RelateEngine<POINT_T, INDEX_T>::EstimateBVHSize(
     const rmm::cuda_stream_view& stream,
     const MultiPolygonArrayView<POINT_T, INDEX_T>& multi_polys,
-    ArrayView<uint32_t> multi_poly_ids, int segs_per_aabb) {
+    ArrayView<INDEX_T> multi_poly_ids, int segs_per_aabb) {
   auto num_aabbs =
       detail::ComputeNumAabbs(stream, multi_polys, multi_poly_ids, segs_per_aabb);
+  if (num_aabbs == 0) {
+    return 0;
+  }
 
   // temporary but still needed to consider this part of memory
   auto aabb_size = num_aabbs * sizeof(OptixAabb);
@@ -161,13 +164,16 @@ size_t RelateEngine<POINT_T, INDEX_T>::EstimateBVHSize(
 template <typename POINT_T, typename INDEX_T>
 OptixTraversableHandle RelateEngine<POINT_T, INDEX_T>::BuildBVH(
     const rmm::cuda_stream_view& stream,
-    const PolygonArrayView<POINT_T, INDEX_T>& polygons, ArrayView<uint32_t> polygon_ids,
+    const PolygonArrayView<POINT_T, INDEX_T>& polygons, ArrayView<INDEX_T> polygon_ids,
     int segs_per_aabb, rmm::device_buffer& buffer,
     rmm::device_uvector<INDEX_T>& aabb_poly_ids,
     rmm::device_uvector<INDEX_T>& aabb_ring_ids,
     rmm::device_uvector<thrust::pair<INDEX_T, INDEX_T>>& aabb_vertex_offsets) {
   auto n_polygons = polygon_ids.size();
   auto num_aabbs = detail::ComputeNumAabbs(stream, polygons, polygon_ids, segs_per_aabb);
+  if (num_aabbs == 0) {
+    return 0;
+  }
   aabb_poly_ids = std::move(rmm::device_uvector<INDEX_T>(num_aabbs, stream));
   aabb_ring_ids = std::move(rmm::device_uvector<INDEX_T>(num_aabbs, stream));
   aabb_vertex_offsets =
@@ -246,12 +252,10 @@ OptixTraversableHandle RelateEngine<POINT_T, INDEX_T>::BuildBVH(
                         aabb.maxY = fmaxf(aabb.maxY, y);
                       }
 
-                      if (std::is_same_v<scalar_t, double>) {
-                        aabb.minX = next_float_from_double(aabb.minX, -1, 2);
-                        aabb.maxX = next_float_from_double(aabb.maxX, 1, 2);
-                        aabb.minY = next_float_from_double(aabb.minY, -1, 2);
-                        aabb.maxY = next_float_from_double(aabb.maxY, 1, 2);
-                      }
+                      aabb.minX = next_float_from_double(aabb.minX, -1, 2);
+                      aabb.maxX = next_float_from_double(aabb.maxX, 1, 2);
+                      aabb.minY = next_float_from_double(aabb.minY, -1, 2);
+                      aabb.maxY = next_float_from_double(aabb.maxY, 1, 2);
                       // Using minZ/maxZ to store polygon id for better filtering
                       // Refer to polygon_point_query.cu
                       aabb.minZ = aabb.maxZ = poly_id;
@@ -267,7 +271,7 @@ template <typename POINT_T, typename INDEX_T>
 OptixTraversableHandle RelateEngine<POINT_T, INDEX_T>::BuildBVH(
     const rmm::cuda_stream_view& stream,
     const MultiPolygonArrayView<POINT_T, INDEX_T>& multi_polys,
-    ArrayView<uint32_t> multi_poly_ids, int segs_per_aabb, rmm::device_buffer& buffer,
+    ArrayView<INDEX_T> multi_poly_ids, int segs_per_aabb, rmm::device_buffer& buffer,
     rmm::device_uvector<INDEX_T>& aabb_multi_poly_ids,
     rmm::device_uvector<INDEX_T>& aabb_part_ids,
     rmm::device_uvector<INDEX_T>& aabb_ring_ids,
@@ -282,8 +286,8 @@ OptixTraversableHandle RelateEngine<POINT_T, INDEX_T>::BuildBVH(
   }
 
   aabb_multi_poly_ids = std::move(rmm::device_uvector<INDEX_T>(num_aabbs, stream));
-  aabb_part_ids = std::move(rmm::device_uvector<uint32_t>(num_aabbs, stream));
-  aabb_ring_ids = std::move(rmm::device_uvector<uint32_t>(num_aabbs, stream));
+  aabb_part_ids = std::move(rmm::device_uvector<INDEX_T>(num_aabbs, stream));
+  aabb_ring_ids = std::move(rmm::device_uvector<INDEX_T>(num_aabbs, stream));
   aabb_vertex_offsets =
       std::move(rmm::device_uvector<thrust::pair<INDEX_T, INDEX_T>>(num_aabbs, stream));
   rmm::device_uvector<INDEX_T> aabb_seq_ids(num_aabbs, stream);
@@ -387,12 +391,10 @@ OptixTraversableHandle RelateEngine<POINT_T, INDEX_T>::BuildBVH(
                         aabb.maxY = fmaxf(aabb.maxY, y);
                       }
 
-                      if (std::is_same_v<scalar_t, double>) {
-                        aabb.minX = next_float_from_double(aabb.minX, -1, 2);
-                        aabb.maxX = next_float_from_double(aabb.maxX, 1, 2);
-                        aabb.minY = next_float_from_double(aabb.minY, -1, 2);
-                        aabb.maxY = next_float_from_double(aabb.maxY, 1, 2);
-                      }
+                      aabb.minX = next_float_from_double(aabb.minX, -1, 2);
+                      aabb.maxX = next_float_from_double(aabb.maxX, 1, 2);
+                      aabb.minY = next_float_from_double(aabb.minY, -1, 2);
+                      aabb.maxY = next_float_from_double(aabb.maxY, 1, 2);
 
                       aabb.minZ = aabb.maxZ = p_part_begins[seq_id] + part_id;
                       return aabb;

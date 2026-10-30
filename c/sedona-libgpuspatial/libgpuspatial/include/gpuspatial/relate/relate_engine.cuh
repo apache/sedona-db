@@ -35,6 +35,7 @@ class RelateEngine {
     bool bvh_compact = true;
     float memory_quota = 0.8;
     int segs_per_aabb = 32;
+    uint32_t threads_per_pair = 32;
   };
 
   RelateEngine() = default;
@@ -109,6 +110,30 @@ class RelateEngine {
                 Predicate predicate, rmm::device_uvector<INDEX_T>& ids1,
                 rmm::device_uvector<INDEX_T>& ids2);
 
+  void Evaluate(const rmm::cuda_stream_view& stream,
+                const PolygonArrayView<POINT_T, INDEX_T>& geom_array1,
+                const PolygonArrayView<POINT_T, INDEX_T>& geom_array2,
+                Predicate predicate, rmm::device_uvector<INDEX_T>& ids1,
+                rmm::device_uvector<INDEX_T>& ids2);
+
+  void Evaluate(const rmm::cuda_stream_view& stream,
+                const PolygonArrayView<POINT_T, INDEX_T>& geom_array1,
+                const MultiPolygonArrayView<POINT_T, INDEX_T>& geom_array2,
+                Predicate predicate, rmm::device_uvector<INDEX_T>& ids1,
+                rmm::device_uvector<INDEX_T>& ids2);
+
+  void Evaluate(const rmm::cuda_stream_view& stream,
+                const MultiPolygonArrayView<POINT_T, INDEX_T>& geom_array1,
+                const PolygonArrayView<POINT_T, INDEX_T>& geom_array2,
+                Predicate predicate, rmm::device_uvector<INDEX_T>& ids1,
+                rmm::device_uvector<INDEX_T>& ids2);
+
+  void Evaluate(const rmm::cuda_stream_view& stream,
+                const MultiPolygonArrayView<POINT_T, INDEX_T>& geom_array1,
+                const MultiPolygonArrayView<POINT_T, INDEX_T>& geom_array2,
+                Predicate predicate, rmm::device_uvector<INDEX_T>& ids1,
+                rmm::device_uvector<INDEX_T>& ids2);
+
   template <typename GEOM2_ARRAY_VIEW_T>
   void Evaluate(const rmm::cuda_stream_view& stream,
                 const GeometryCollectionArrayView<POINT_T, INDEX_T>& geom_array1,
@@ -149,13 +174,29 @@ class RelateEngine {
                     Predicate predicate, rmm::device_uvector<INDEX_T>& ids1,
                     rmm::device_uvector<INDEX_T>& ids2, bool inverse);
 
+  void EvaluateImpl(const rmm::cuda_stream_view& stream,
+                    const PolygonArrayView<POINT_T, INDEX_T>& probe_poly_array,
+                    const MultiPolygonArrayView<POINT_T, INDEX_T>& probe_multi_poly_array,
+                    const PolygonArrayView<POINT_T, INDEX_T>& bvh_poly_array,
+                    rmm::device_uvector<INDEX_T>& probe_ids,
+                    rmm::device_uvector<INDEX_T>& bvh_ids, rmm::device_uvector<int>& IMs,
+                    bool transpose);
+
+  void EvaluateImpl(const rmm::cuda_stream_view& stream,
+                    const PolygonArrayView<POINT_T, INDEX_T>& probe_poly_array,
+                    const MultiPolygonArrayView<POINT_T, INDEX_T>& probe_multi_poly_array,
+                    const MultiPolygonArrayView<POINT_T, INDEX_T>& bvh_multi_poly_array,
+                    rmm::device_uvector<INDEX_T>& probe_ids,
+                    rmm::device_uvector<INDEX_T>& bvh_ids, rmm::device_uvector<int>& IMs,
+                    bool transpose);
+
   size_t EstimateBVHSize(const rmm::cuda_stream_view& stream,
                          const PolygonArrayView<POINT_T, INDEX_T>& polys,
-                         ArrayView<uint32_t> poly_ids, int segs_per_aabb);
+                         ArrayView<INDEX_T> poly_ids, int segs_per_aabb);
 
   size_t EstimateBVHSize(const rmm::cuda_stream_view& stream,
                          const MultiPolygonArrayView<POINT_T, INDEX_T>& multi_polys,
-                         ArrayView<uint32_t> multi_poly_ids, int segs_per_aabb);
+                         ArrayView<INDEX_T> multi_poly_ids, int segs_per_aabb);
 
   /**
    * Build BVH for a subset of polygons
@@ -166,7 +207,7 @@ class RelateEngine {
    */
   OptixTraversableHandle BuildBVH(
       const rmm::cuda_stream_view& stream,
-      const PolygonArrayView<POINT_T, INDEX_T>& polygons, ArrayView<uint32_t> polygon_ids,
+      const PolygonArrayView<POINT_T, INDEX_T>& polygons, ArrayView<INDEX_T> polygon_ids,
       int segs_per_aabb, rmm::device_buffer& buffer,
       rmm::device_uvector<INDEX_T>& aabb_poly_ids,
       rmm::device_uvector<INDEX_T>& aabb_ring_ids,
@@ -175,7 +216,7 @@ class RelateEngine {
   OptixTraversableHandle BuildBVH(
       const rmm::cuda_stream_view& stream,
       const MultiPolygonArrayView<POINT_T, INDEX_T>& multi_polys,
-      ArrayView<uint32_t> multi_poly_ids, int segs_per_aabb, rmm::device_buffer& buffer,
+      ArrayView<INDEX_T> multi_poly_ids, int segs_per_aabb, rmm::device_buffer& buffer,
       rmm::device_uvector<INDEX_T>& aabb_multi_poly_ids,
       rmm::device_uvector<INDEX_T>& aabb_part_ids,
       rmm::device_uvector<INDEX_T>& aabb_ring_ids,

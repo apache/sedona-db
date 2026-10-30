@@ -189,6 +189,7 @@ uint32_t RTSpatialRefiner::Refine(const ArrowArrayView* probe_array, Predicate p
   re_config.memory_quota = config_.relate_engine_memory_quota / config_.concurrency;
   re_config.bvh_fast_build = config_.prefer_fast_build;
   re_config.bvh_compact = config_.compact;
+  re_config.threads_per_pair = config_.threads_per_pair;
 
   relate_engine.set_config(re_config);
 
@@ -300,6 +301,7 @@ uint32_t RTSpatialRefiner::RefinePipelined(const ArrowArrayView* probe_array,
       config_.relate_engine_memory_quota / config_.concurrency / NUM_SLOTS;
   re_config.bvh_fast_build = config_.prefer_fast_build;
   re_config.bvh_compact = config_.compact;
+  re_config.threads_per_pair = config_.threads_per_pair;
   relate_engine.set_config(re_config);
 
   // --- BACKGROUND TASK (CPU Phase) ---

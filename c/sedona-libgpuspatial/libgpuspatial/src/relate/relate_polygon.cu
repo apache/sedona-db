@@ -41,12 +41,8 @@ void RelateEngine<POINT_T, INDEX_T>::Evaluate(const rmm::cuda_stream_view& strea
 
 INSTANTIATE_POLYGON_EVALUATE(PolygonArrayView, LineStringArrayView)
 INSTANTIATE_POLYGON_EVALUATE(PolygonArrayView, MultiLineStringArrayView)
-INSTANTIATE_POLYGON_EVALUATE(PolygonArrayView, PolygonArrayView)
-INSTANTIATE_POLYGON_EVALUATE(PolygonArrayView, MultiPolygonArrayView)
 
 INSTANTIATE_POLYGON_EVALUATE(MultiPolygonArrayView, LineStringArrayView)
 INSTANTIATE_POLYGON_EVALUATE(MultiPolygonArrayView, MultiLineStringArrayView)
-INSTANTIATE_POLYGON_EVALUATE(MultiPolygonArrayView, PolygonArrayView)
-INSTANTIATE_POLYGON_EVALUATE(MultiPolygonArrayView, MultiPolygonArrayView)
 
 }  // namespace gpuspatial
