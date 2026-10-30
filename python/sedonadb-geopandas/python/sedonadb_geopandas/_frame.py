@@ -221,6 +221,39 @@ def _unused_name(df, name, reserved=()):
     return name
 
 
+def _from_geopandas(data, context):
+    """A `geopandas.GeoDataFrame` loaded with its active geometry column kept,
+    where `from_geopandas()` would take SedonaDB's choice."""
+    from sedonadb_geopandas._context import default_context
+
+    df = (context or default_context()).create_data_frame(data)
+    return GeoDataFrame(df, geometry=data.active_geometry_name)
+
+
+class _Plot:
+    """`GeoDataFrame.plot`: GeoPandas' plot accessor of the frame, computed
+    when it is called, or one of its kinds looked up."""
+
+    def __init__(self, frame):
+        self._frame = frame
+
+    def __call__(self, *args, **kwargs):
+        # A map (kind "geo", the default) needs the active geometry, as in
+        # GeoPandas: without one, the computed frame is a plain DataFrame,
+        # whose plot would draw lines. pandas' kinds do not need it.
+        if kwargs.get("kind", "geo") == "geo":
+            computed = self._frame._computed_with_geometry()
+        else:
+            computed = self._frame.to_geopandas()
+        return computed.plot(*args, **kwargs)
+
+    def __getattr__(self, name):
+        # Not for private names, which tools probe without meaning to draw.
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return getattr(self._frame.to_geopandas().plot, name)
+
+
 class GeoDataFrame:
     """A lazy SedonaDB frame in the shape of a `geopandas.GeoDataFrame`.
 
@@ -1451,6 +1484,84 @@ class GeoDataFrame:
                 "explode() cannot number parts with index_parts=True: there is no index"
             )
         return GeoDataFrame(_explode_parts(self._df, column), self._geometry_name)
+
+    # -- GeoJSON, Python objects and plotting, through GeoPandas ------------
+
+    def _computed_with_geometry(self):
+        """The frame computed, for a GeoPandas method that needs its active
+        geometry (where a frame without one would be a plain DataFrame)."""
+        if self._geometry_name is None:
+            raise AttributeError("This GeoDataFrame has no active geometry column")
+        return self.to_geopandas()
+
+    def to_json(
+        self, na="null", show_bbox=False, drop_id=False, to_wgs84=False, **kwargs
+    ):
+        """The frame as GeoJSON text, as `GeoDataFrame.to_json` writes it.
+
+        **EXPERIMENTAL.** Computes the frame, which GeoPandas then writes, so
+        the text is GeoPandas'. There is no index, so each feature's id is its
+        position, as for a frame with a default index.
+        """
+        return self._computed_with_geometry().to_json(
+            na=na, show_bbox=show_bbox, drop_id=drop_id, to_wgs84=to_wgs84, **kwargs
+        )
+
+    def to_geo_dict(self, na="null", show_bbox=False, drop_id=False):
+        """The frame as a GeoJSON FeatureCollection dict, as
+        `GeoDataFrame.to_geo_dict` gives it; see `to_json`."""
+        return self._computed_with_geometry().to_geo_dict(
+            na=na, show_bbox=show_bbox, drop_id=drop_id
+        )
+
+    def iterfeatures(self, na="null", show_bbox=False, drop_id=False):
+        """The frame's rows as GeoJSON Feature dicts, as
+        `GeoDataFrame.iterfeatures` gives them; see `to_json`. The frame is
+        computed when this is called."""
+        return self._computed_with_geometry().iterfeatures(
+            na=na, show_bbox=show_bbox, drop_id=drop_id
+        )
+
+    @classmethod
+    def from_features(cls, features, crs=None, columns=None, *, context=None):
+        """A frame of GeoJSON features, as `GeoDataFrame.from_features` reads
+        them: a list of Feature dicts, a FeatureCollection, or anything with
+        `__geo_interface__`. Read by GeoPandas, and held in memory."""
+        import geopandas
+
+        data = geopandas.GeoDataFrame.from_features(features, crs=crs, columns=columns)
+        return _from_geopandas(data, context)
+
+    @classmethod
+    def from_dict(cls, data, geometry=None, crs=None, *, context=None, **kwargs):
+        """A frame of a dict, as `GeoDataFrame.from_dict` makes it, with
+        pandas' `DataFrame.from_dict` options. Made by GeoPandas, and held in
+        memory; an index it gets (with `orient="index"`) becomes a column, as
+        in `from_geopandas`."""
+        import geopandas
+
+        frame = geopandas.GeoDataFrame.from_dict(
+            data, geometry=geometry, crs=crs, **kwargs
+        )
+        return _from_geopandas(frame, context)
+
+    @property
+    def plot(self):
+        """GeoPandas' plot accessor of the frame: `gdf.plot(...)`, and
+        pandas' kinds (`gdf.plot.hist(...)`, ...). Reading it computes
+        nothing; drawing computes the frame, which GeoPandas plots."""
+        return _Plot(self)
+
+    def explore(self, *args, **kwargs):
+        """An interactive map of the frame, as `GeoDataFrame.explore` draws
+        it: computed, then drawn by GeoPandas (which needs folium, matplotlib
+        and mapclassify)."""
+        return self._computed_with_geometry().explore(*args, **kwargs)
+
+    def estimate_utm_crs(self, datum_name="WGS 84"):
+        """The UTM CRS of the active geometry column; see
+        `GeoSeries.estimate_utm_crs`."""
+        return self.geometry.estimate_utm_crs(datum_name=datum_name)
 
     def to_geopandas(self):
         """Execute and return a `geopandas.GeoDataFrame` (or plain DataFrame).

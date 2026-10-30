@@ -62,8 +62,9 @@ deliberately *not* identical to GeoPandas:
   values.
 - **Columns cannot be mixed across frames**: without row alignment, combining
   columns from two different frames raises rather than guessing. Join first.
-- **Plotting and arbitrary `apply`**: use the `to_geopandas()` escape hatch and
-  operate on the materialized result.
+- **Arbitrary `apply`**: use the `to_geopandas()` escape hatch and operate on
+  the materialized result. (`plot()` and `explore()` compute the frame and draw
+  it with GeoPandas themselves.)
 - **Assignment takes a column or a scalar, not a bare expression**: a SedonaDB
   expression records no origin, so one built from another frame would resolve
   against the destination and silently write the wrong values. Assign a `Series`
@@ -90,6 +91,17 @@ result is computed (only `on_invalid="raise"` is supported), and the engine's
 WKT parser refuses a few forms GEOS reads, such as `MULTIPOINT (EMPTY)`.
 `GeoDataFrame.to_wkt()` and `to_wkb()` convert every geometry column and leave
 no active geometry, as in GeoPandas.
+
+What GeoPandas gives as Python objects, text, or drawings is the computed
+frame's, by GeoPandas: `to_json()`, `to_geo_dict()` and `iterfeatures()` (each
+feature's id is its position, as for a default index), `plot()` (reading
+`gdf.plot` computes nothing; drawing does) and `explore()`. Likewise,
+`GeoDataFrame.from_features()` and `from_dict()` are read by GeoPandas into
+memory, keeping its active geometry column. `estimate_utm_crs()` computes only
+the bounds, and transforms them to longitude and latitude from any CRS, where
+GeoPandas takes a geographic CRS's coordinates as degrees east of Greenwich
+(wrong for one in grads, such as NTF (Paris)). The deprecated `unary_union` is
+`union_all()`, lazy, with GeoPandas' warning.
 
 `GeoSeries` properties and methods follow GeoPandas, with a few differences
 in form: `to_wkt()` writes equivalent but differently spaced WKT
