@@ -973,7 +973,9 @@ struct KNNProbeProgress {
     /// Should have the same length as `build_batch_positions`.
     distances: Vec<f64>,
     /// Local probe indices that produced zero raw KNN candidates in this batch
-    /// (null probe WKB, k=0, or all-NULL build geometries). Fed to the merger so
+    /// (null probe WKB, k=0, or all-NULL build geometries). Only recorded while
+    /// the merger is producing final batches; feeding them into intermediate
+    /// spills breaks cross-partition top-k merging. Fed to the merger so
     /// outer-join unmatched emission can cover them without putting null-padded
     /// rows into merger ingest input.
     empty_raw_probe_indices: Vec<u32>,
@@ -1231,8 +1233,10 @@ impl SpatialJoinBatchIterator {
 
             let Some(wkb) = wkb_opt else {
                 if let Some(knn) = progress.knn.as_mut() {
-                    knn.empty_raw_probe_indices
-                        .push(progress.current_probe_idx as u32);
+                    if knn.knn_results_merger.is_producing_final() {
+                        knn.empty_raw_probe_indices
+                            .push(progress.current_probe_idx as u32);
+                    }
                 }
                 // Move to next probe index
                 progress.current_probe_idx += 1;
@@ -1256,9 +1260,14 @@ impl SpatialJoinBatchIterator {
                 )?;
 
                 if join_result_metrics.count == 0 {
+                    // Only on the final merge pass: intermediate zero-hit probes
+                    // must stay absent from spill so later partitions can supply
+                    // neighbors without duplicate/out-of-order spill indices.
                     if let Some(knn) = progress.knn.as_mut() {
-                        knn.empty_raw_probe_indices
-                            .push(progress.current_probe_idx as u32);
+                        if knn.knn_results_merger.is_producing_final() {
+                            knn.empty_raw_probe_indices
+                                .push(progress.current_probe_idx as u32);
+                        }
                     }
                 } else {
                     progress.probe_indices.extend(std::iter::repeat_n(

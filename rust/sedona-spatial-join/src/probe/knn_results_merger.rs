@@ -825,6 +825,14 @@ impl KNNResultsMerger {
         std::mem::take(&mut self.state.pending_unmatched_probe_indices)
     }
 
+    /// True once intermediate partition spills are done and the merger emits
+    /// final result batches (after `rotate(true)` for the last build partition).
+    /// Empty-raw probe tracking must only run in this mode; recording zero-hit
+    /// probes into intermediate spills breaks cross-partition top-k merging.
+    pub fn is_producing_final(&self) -> bool {
+        self.state.current_writer.is_none()
+    }
+
     fn merge_and_append_result(&mut self, result: &KNNProbeResult<'_>) -> Result<()> {
         if let Some((spilled_batch_idx, row_idx)) =
             self.load_spilled_batches_up_to(result.probe_row_index)?
