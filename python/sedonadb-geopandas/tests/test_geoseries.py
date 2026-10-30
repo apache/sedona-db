@@ -353,11 +353,8 @@ def test_get_coordinates_matches_geopandas(include_z, include_m):
     _assert_same_coordinates(wkts, include_z, include_m)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="engine ST_Points writes each point in its member's dimension, under "
-    "the collection's, giving unreadable WKB (apache/sedona-db#1513)",
-)
+# #1513 is fixed: ST_Points writes MultiPoint in the union of part dimensions,
+# so mixed-Z/M collections round-trip through get_coordinates.
 @pytest.mark.parametrize("wkt", MIXED_DIMENSIONS)
 def test_get_coordinates_of_collections_mixing_dimensions(wkt):
     _assert_same_coordinates([wkt], include_z=True, include_m=True)
