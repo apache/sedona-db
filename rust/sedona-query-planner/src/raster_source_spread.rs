@@ -150,12 +150,14 @@ fn spread_source(input: &Arc<dyn ExecutionPlan>) -> Arc<dyn ExecutionPlan> {
 /// Per-row partitioning key: which file a raster reads its pixels from.
 ///
 /// Evaluates its child (a raster) and returns, per row, a `UInt64` hash of
-/// the first band's `outdb_uri` reduced to its source with
+/// the `outdb_uri` of the first band that still has to be loaded (empty
+/// `data` over a non-empty visible region), reduced to its source with
 /// [`outdb_source`] (a trailing `#band=N` stripped), so every band and every
 /// row reading the same file shares a key and therefore a partition. Rows
-/// with no out-DB URI (in-db rasters, null rasters, rasters without bands)
-/// have no file to keep together; they get values from a running counter
-/// instead, so they spread like a round-robin rather than all hashing to one
+/// with nothing to load (InDb rasters, including loaded ones that keep their
+/// `outdb_uri` as provenance; null rasters; rasters without bands) have no
+/// file to keep together; they get values from a running counter instead,
+/// so they spread like a round-robin rather than all hashing to one
 /// partition.
 ///
 /// That counter makes the expression non-deterministic: the same row can
@@ -192,7 +194,7 @@ impl RasterSourceKeyExpr {
         // as well as a key.
         let mut last: Option<(&str, u64)> = None;
         for i in 0..rasters.len() {
-            let key = match rasters.band_outdb_uri(i, 0).map(outdb_source) {
+            let key = match rasters.first_outdb_band_uri(i).map(outdb_source) {
                 Some(source) => match last {
                     Some((prev, hash)) if prev == source => Some(hash),
                     _ => {
@@ -385,20 +387,21 @@ mod tests {
 
     #[test]
     fn raster_source_key_groups_rows_by_file_and_spreads_rows_without_one() {
-        // Rows 0-3 and 6-9 are OutDb, rows 4-5 InDb; then a null raster and
-        // a raster without bands.
+        // Rows 0-3 and 6-9 are OutDb, rows 4-5 InDb (row 5 loaded from
+        // a.tif, which it keeps as provenance); then a null raster and a
+        // raster without bands.
         let mut b = RasterBuilder::new(12);
-        for uri in [
-            Some("s3://b/a.tif#band=1"),
-            Some("s3://b/a.tif#band=2"),
-            Some("s3://b/b.tif"),
-            Some("s3://b/a.tif"),
-            None,
-            None,
-            Some("s3://b/x.zarr#var=a"),
-            Some("s3://b/x.zarr#var=b"),
-            Some("s3://b/p.tif#anchor#band=1"),
-            Some("s3://b/p.tif#anchor"),
+        for (uri, loaded) in [
+            (Some("s3://b/a.tif#band=1"), false),
+            (Some("s3://b/a.tif#band=2"), false),
+            (Some("s3://b/b.tif"), false),
+            (Some("s3://b/a.tif"), false),
+            (None, true),
+            (Some("s3://b/a.tif"), true),
+            (Some("s3://b/x.zarr#var=a"), false),
+            (Some("s3://b/x.zarr#var=b"), false),
+            (Some("s3://b/p.tif#anchor#band=1"), false),
+            (Some("s3://b/p.tif#anchor"), false),
         ] {
             b.start_raster_nd(&[0.0, 1.0, 0.0, 0.0, 0.0, -1.0], &["y", "x"], &[2, 2], None)
                 .unwrap();
@@ -408,10 +411,10 @@ mod tests {
                 ..StartBandArgs::new(&["y", "x"], &[2, 2], BandDataType::UInt8)
             })
             .unwrap();
-            if uri.is_some() {
-                b.band_data_writer().append_value([0u8; 0]);
-            } else {
+            if loaded {
                 b.band_data_writer().append_value([0u8; 4]);
+            } else {
+                b.band_data_writer().append_value([0u8; 0]);
             }
             b.finish_band().unwrap();
             b.finish_raster().unwrap();
@@ -441,8 +444,8 @@ mod tests {
         // different sources, and an earlier `#anchor` stays.
         assert_ne!(keys[6], keys[7]);
         assert_eq!(keys[8], keys[9]);
-        // Rows without a file draw consecutive counter values, one batch at
-        // a time.
+        // Rows with nothing to load draw consecutive counter values, one
+        // batch at a time, even when they carry a URI.
         let mut fallback = vec![keys[4], keys[5], keys[10], keys[11]];
         fallback.sort();
         assert_eq!(fallback, (fallback[0]..fallback[0] + 4).collect::<Vec<_>>());
