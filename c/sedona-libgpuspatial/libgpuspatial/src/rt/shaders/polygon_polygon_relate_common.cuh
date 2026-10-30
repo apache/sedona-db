@@ -19,12 +19,14 @@
 #include "gpuspatial/geom/ray_crossing_counter.hpp"
 #include "gpuspatial/relate/intersection_matrix.hpp"
 #include "gpuspatial/relate/segment_relate_ops.cuh"
+#include "gpuspatial/rt/launch_parameters.cuh"
 #include "gpuspatial/utils/cuda_utils.hpp"
 #include "gpuspatial/utils/floating_point.hpp"
 #include "gpuspatial/utils/helpers.cuh"
 #include "shader_config.hpp"
 
 #include <optix_device.h>
+#include <type_traits>
 #include <utility>
 
 #ifndef DEV_INLINE
@@ -34,15 +36,40 @@
 namespace gpuspatial {
 namespace detail {
 
+enum { SURFACE_RAY_TYPE = 0, RAY_TYPE_COUNT };
+
+template <typename PARAMS_T>
+DEV_INLINE bool IsProbeEmpty(const PARAMS_T& params, uint32_t probe_idx) {
+  return !params.probe_polygons.empty() ? params.probe_polygons[probe_idx].empty()
+                                        : params.probe_multi_polygons[probe_idx].empty();
+}
+
+template <typename POINT_T, typename INDEX_T>
+DEV_INLINE bool IsBVHEmpty(
+    const LaunchParamsPolygonPolygonQuery<POINT_T, INDEX_T>& params, uint32_t bvh_idx) {
+  return params.bvh_polygons[bvh_idx].empty();
+}
+
+template <typename POINT_T, typename INDEX_T>
+DEV_INLINE bool IsBVHEmpty(
+    const LaunchParamsMultiPolygonPolygonQuery<POINT_T, INDEX_T>& params, uint32_t bvh_idx) {
+  return params.bvh_multi_polygons[bvh_idx].empty();
+}
+
 /**
  * Fast-path check for empty geometries in DE-9IM relate queries.
+ * Inspects params to determine whether probe or BVH geometry is empty.
  * Sets the appropriate disjoint/empty intersection matrix and returns true if either
  * geometry is empty.
  */
 template <typename PARAMS_T>
 DEV_INLINE bool HandleEmptyGeometries(const PARAMS_T& params, uint32_t pair_idx,
-                                      uint32_t thread_idx, bool probe_empty,
-                                      bool bvh_empty) {
+                                      uint32_t thread_idx) {
+  auto probe_idx = params.query_probe_ids[pair_idx];
+  auto bvh_idx = params.query_bvh_ids[pair_idx];
+  bool probe_empty = IsProbeEmpty(params, probe_idx);
+  bool bvh_empty = IsBVHEmpty(params, bvh_idx);
+
   if (probe_empty || bvh_empty) {
     if (thread_idx == 0) {
       int im = IntersectionMatrix::EXTER_EXTER_2D;
@@ -61,6 +88,33 @@ DEV_INLINE bool HandleEmptyGeometries(const PARAMS_T& params, uint32_t pair_idx,
 }
 
 /**
+ * Checks bounding box disjointness between probe and BVH geometries.
+ * If disjoint, populates the standard 5-bit disjoint DE-9IM matrix.
+ * Otherwise, initializes EXTER_EXTER_2D.
+ */
+template <typename PARAMS_T, typename MBR_T>
+DEV_INLINE bool HandleDisjointMBRs(const PARAMS_T& params, uint32_t pair_idx,
+                                   uint32_t thread_idx, const MBR_T& probe_mbr,
+                                   const MBR_T& bvh_mbr) {
+  if (!probe_mbr.intersects(bvh_mbr)) {
+    if (thread_idx == 0) {
+      int im = IntersectionMatrix::INTER_EXTER_2D | IntersectionMatrix::BOUND_EXTER_1D |
+               IntersectionMatrix::EXTER_INTER_2D | IntersectionMatrix::EXTER_BOUND_1D |
+               IntersectionMatrix::EXTER_EXTER_2D;
+      atomicOr(const_cast<int*>(&params.IMs[pair_idx]),
+               params.transpose ? IntersectionMatrix::Transpose(im) : im);
+    }
+    return true;
+  }
+  if (thread_idx == 0) {
+    int base_im = IntersectionMatrix::EXTER_EXTER_2D;
+    atomicOr(const_cast<int*>(&params.IMs[pair_idx]),
+             params.transpose ? IntersectionMatrix::Transpose(base_im) : base_im);
+  }
+  return false;
+}
+
+/**
  * Checks whether the current accumulated DE-9IM matrix has reached a state where
  * all key boundary-interior / boundary-exterior interactions are established,
  * permitting an early exit from segment evaluation.
@@ -74,6 +128,33 @@ DEV_INLINE bool ShouldEarlyExitRelate(int cur_im, bool transpose) {
            (cur_im & IntersectionMatrix::BOUND_EXTER_2D) &&
            (cur_im & IntersectionMatrix::BOUND_BOUND_1D);
   }
+}
+
+/**
+ * Evaluates Point-In-Polygon edge crossings within an OptiX leaf AABB.
+ */
+template <typename POINT_T, typename RING_T, typename OFFSETS_T>
+DEV_INLINE void ProcessPIPCrossingLeaf(const RING_T& ring,
+                                      const OFFSETS_T& vertex_offsets) {
+  using scalar_t = typename POINT_T::scalar_t;
+  uint32_t p3 = optixGetPayload_3();
+  uint32_t crossing_count = detail::UnpackPIPCrossingCount(p3);
+  uint32_t point_on_seg = detail::UnpackPIPPointOnSegment(p3);
+  double px = detail::UnpackDouble(optixGetPayload_4(), optixGetPayload_5());
+  double py = detail::UnpackDouble(optixGetPayload_6(), optixGetPayload_7());
+  POINT_T q(static_cast<scalar_t>(px), static_cast<scalar_t>(py));
+
+  RayCrossingCounter locator(crossing_count, point_on_seg);
+
+  for (auto v_off = vertex_offsets.first; v_off < vertex_offsets.second; ++v_off) {
+    const auto& v1 = ring.get_point(v_off);
+    const auto& v2 = ring.get_point(v_off + 1);
+    locator.countSegment(q, v1, v2);
+  }
+
+  uint32_t new_p3 = detail::PackPIPCrossingPayload(locator.get_crossing_count(),
+                                                   locator.get_point_on_segment());
+  optixSetPayload_3(new_p3);
 }
 
 /**
@@ -107,6 +188,107 @@ DEV_INLINE void ProcessSegmentIntersectionLeaf(
   optixSetPayload_5(next_lo);
   optixSetPayload_6(col_hi);
   optixSetPayload_7(col_lo);
+}
+
+template <typename PARAMS_T>
+struct RelateIntersectionShaderImpl;
+
+template <typename POINT_T, typename INDEX_T>
+struct RelateIntersectionShaderImpl<LaunchParamsPolygonPolygonQuery<POINT_T, INDEX_T>> {
+  DEV_INLINE static void execute(
+      const LaunchParamsPolygonPolygonQuery<POINT_T, INDEX_T>& params) {
+    using point_t = ShaderPointType;
+    auto aabb_id = optixGetPrimitiveIndex();
+    uint32_t p0 = optixGetPayload_0();
+    uint32_t p1 = optixGetPayload_1();
+
+    bool is_seg_mode = (p0 & detail::RAY_MODE_SEG) != 0;
+    auto hit_poly_idx = params.aabb_poly_ids[aabb_id];
+    auto hit_ring_idx = params.aabb_ring_ids[aabb_id];
+    const auto& vertex_offsets = params.aabb_vertex_offsets[aabb_id];
+
+    if (!is_seg_mode) {
+      uint32_t target_ring_idx = p0 & ~detail::RAY_MODE_SEG;
+      uint32_t target_poly_idx = p1;
+      if (hit_poly_idx != target_poly_idx || hit_ring_idx != target_ring_idx) {
+        return;
+      }
+      auto ring = params.bvh_polygons[target_poly_idx].get_ring(target_ring_idx);
+      ProcessPIPCrossingLeaf<point_t>(ring, vertex_offsets);
+    } else {
+      uint32_t abs_v_idx = p0 & ~detail::RAY_MODE_SEG;
+      uint32_t target_poly_idx = p1 & detail::BVH_GEOM_ID_MASK;
+      if (hit_poly_idx != target_poly_idx) {
+        return;
+      }
+      const auto& probe_verts = !params.probe_polygons.empty()
+                                    ? params.probe_polygons.get_vertices()
+                                    : params.probe_multi_polygons.get_vertices();
+      auto ring = params.bvh_polygons[target_poly_idx].get_ring(hit_ring_idx);
+      ProcessSegmentIntersectionLeaf(probe_verts[abs_v_idx],
+                                     probe_verts[abs_v_idx + 1], ring,
+                                     vertex_offsets, target_poly_idx);
+    }
+  }
+};
+
+template <typename POINT_T, typename INDEX_T>
+struct RelateIntersectionShaderImpl<LaunchParamsMultiPolygonPolygonQuery<POINT_T, INDEX_T>> {
+  DEV_INLINE static void execute(
+      const LaunchParamsMultiPolygonPolygonQuery<POINT_T, INDEX_T>& params) {
+    using point_t = ShaderPointType;
+    auto aabb_id = optixGetPrimitiveIndex();
+    uint32_t p0 = optixGetPayload_0();
+    uint32_t p1 = optixGetPayload_1();
+
+    bool is_seg_mode = (p0 & detail::RAY_MODE_SEG) != 0;
+    auto hit_multi_poly_idx = params.aabb_multi_poly_ids[aabb_id];
+    auto hit_part_idx = params.aabb_part_ids[aabb_id];
+    auto hit_ring_idx = params.aabb_ring_ids[aabb_id];
+    const auto& vertex_offsets = params.aabb_vertex_offsets[aabb_id];
+
+    if (!is_seg_mode) {
+      uint32_t target_ring_idx = p0 & ~detail::RAY_MODE_SEG;
+      uint32_t target_multi_poly_idx = p1;
+      uint32_t target_part_idx = optixGetPayload_2();
+      if (hit_multi_poly_idx != target_multi_poly_idx || hit_part_idx != target_part_idx ||
+          hit_ring_idx != target_ring_idx) {
+        return;
+      }
+      auto ring = params.bvh_multi_polygons[target_multi_poly_idx]
+                      .get_polygon(target_part_idx)
+                      .get_ring(target_ring_idx);
+      ProcessPIPCrossingLeaf<point_t>(ring, vertex_offsets);
+    } else {
+      uint32_t abs_v_idx = p0 & ~detail::RAY_MODE_SEG;
+      uint32_t reordered_mp_idx = p1 & detail::BVH_GEOM_ID_MASK;
+      uint32_t target_multi_poly_idx = params.uniq_bvh_ids[reordered_mp_idx];
+      uint32_t ray_z = static_cast<uint32_t>(optixGetWorldRayOrigin().z);
+      uint32_t target_part_idx = ray_z - params.uniq_part_begins[reordered_mp_idx];
+
+      if (hit_multi_poly_idx != target_multi_poly_idx || hit_part_idx != target_part_idx) {
+        return;
+      }
+
+      const auto& probe_verts = !params.probe_polygons.empty()
+                                    ? params.probe_polygons.get_vertices()
+                                    : params.probe_multi_polygons.get_vertices();
+      auto ring = params.bvh_multi_polygons[target_multi_poly_idx]
+                      .get_polygon(target_part_idx)
+                      .get_ring(hit_ring_idx);
+      ProcessSegmentIntersectionLeaf(probe_verts[abs_v_idx],
+                                     probe_verts[abs_v_idx + 1], ring,
+                                     vertex_offsets, reordered_mp_idx);
+    }
+  }
+};
+
+/**
+ * OptiX __intersection__ entrypoint dispatched via RelateIntersectionShaderImpl specialization.
+ */
+template <typename PARAMS_T>
+DEV_INLINE void RelateIntersectionShader(const PARAMS_T& params) {
+  RelateIntersectionShaderImpl<PARAMS_T>::execute(params);
 }
 
 /**
@@ -197,6 +379,40 @@ DEV_INLINE int SweepSegment(const POINT_T& v1, const POINT_T& v2,
 }
 
 /**
+ * Tests segment envelope against BVH MBR, runs SweepSegment, and accumulates results.
+ */
+template <typename POINT_T, typename PARAMS_T, typename TRACE_SEG_FN, typename LOCATE_PT_FN>
+DEV_INLINE void EvaluateSegmentAndAccumulate(
+    const POINT_T& v1, const POINT_T& v2, uint32_t abs_v_idx,
+    float bvh_min_x, float bvh_max_x, float bvh_min_y, float bvh_max_y,
+    const PARAMS_T& params, uint32_t pair_idx, int& local_im,
+    TRACE_SEG_FN&& trace_seg_fn, LOCATE_PT_FN&& locate_point_fn) {
+  if (v1 == v2) return;
+
+  float seg_min_x = fminf(static_cast<float>(v1.x()), static_cast<float>(v2.x()));
+  float seg_max_x = fmaxf(static_cast<float>(v1.x()), static_cast<float>(v2.x()));
+  float seg_min_y = fminf(static_cast<float>(v1.y()), static_cast<float>(v2.y()));
+  float seg_max_y = fmaxf(static_cast<float>(v1.y()), static_cast<float>(v2.y()));
+  if (seg_max_x < bvh_min_x || seg_min_x > bvh_max_x || seg_max_y < bvh_min_y ||
+      seg_min_y > bvh_max_y) {
+    local_im |= IntersectionMatrix::BOUND_EXTER_1D |
+                IntersectionMatrix::INTER_EXTER_2D | IntersectionMatrix::EXTER_EXTER_2D;
+    return;
+  }
+
+  int seg_im = SweepSegment(v1, v2, abs_v_idx, trace_seg_fn, locate_point_fn);
+
+  if (seg_im != 0) {
+    local_im |= seg_im;
+    if (seg_im &
+        (IntersectionMatrix::BOUND_INTER_1D | IntersectionMatrix::BOUND_BOUND_1D)) {
+      atomicOr(const_cast<int*>(&params.IMs[pair_idx]),
+               params.transpose ? IntersectionMatrix::Transpose(seg_im) : seg_im);
+    }
+  }
+}
+
+/**
  * Distributes segments of a probe polygon or multipolygon across cooperative threads
  * using round-robin striding, evaluating each segment via eval_seg_fn.
  */
@@ -250,7 +466,7 @@ DEV_INLINE void FinalizePolygonRelate(const PARAMS_T& params, uint32_t pair_idx,
                                       uint32_t probe_idx, uint32_t num_threads,
                                       LOCATE_PT_FN&& locate_point_fn) {
   using point_t = ShaderPointType;
-  uint32_t finished = atomicAdd(&params.finished_count[pair_idx], 1);
+  uint32_t finished = atomicAdd(const_cast<uint32_t*>(&params.finished_count[pair_idx]), 1);
   if (finished == num_threads - 1) {
     int cur = params.IMs[pair_idx];
     bool has_b_in_i, has_b_in_e;
