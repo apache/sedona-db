@@ -23,11 +23,13 @@ intentional differences (laziness, no row index, immutability). The API may
 change without notice.
 """
 
+from sedonadb_geopandas._arrow import read_feather
 from sedonadb_geopandas._context import default_context
 from sedonadb_geopandas._frame import GeoDataFrame
-from sedonadb_geopandas._io import read_file, read_parquet
+from sedonadb_geopandas._io import list_layers, read_file, read_parquet
 from sedonadb_geopandas._relational import concat, merge
 from sedonadb_geopandas._series import GeoSeries, Series
+from sedonadb_geopandas._versions import show_versions
 
 __all__ = [
     "GeoDataFrame",
@@ -36,11 +38,14 @@ __all__ = [
     "clip",
     "concat",
     "from_geopandas",
+    "list_layers",
     "merge",
     "overlay",
     "points_from_xy",
+    "read_feather",
     "read_file",
     "read_parquet",
+    "show_versions",
     "sjoin",
 ]
 

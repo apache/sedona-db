@@ -649,6 +649,15 @@ impl SedonaContext {
         Ok(())
     }
 
+    /// Append overloads after validating metadata and volatility against the existing UDF.
+    pub fn append_sedona_scalar_udf(&self, udf: SedonaScalarUDF) -> Result<()> {
+        let mut functions = self.functions_mut()?;
+        let udf = functions.add_scalar_udf(udf)?.clone();
+        drop(functions);
+        self.ctx.register_udf(udf.into());
+        Ok(())
+    }
+
     pub fn register_sedona_aggregate_udf(&self, udf: SedonaAggregateUDF) -> Result<()> {
         let name = udf.name().to_string();
         let mut functions = self.functions_mut()?;

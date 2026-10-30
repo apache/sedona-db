@@ -221,6 +221,39 @@ def _unused_name(df, name, reserved=()):
     return name
 
 
+def _from_geopandas(data, context):
+    """A `geopandas.GeoDataFrame` loaded with its active geometry column kept,
+    where `from_geopandas()` would take SedonaDB's choice."""
+    from sedonadb_geopandas._context import default_context
+
+    df = (context or default_context()).create_data_frame(data)
+    return GeoDataFrame(df, geometry=data.active_geometry_name)
+
+
+class _Plot:
+    """`GeoDataFrame.plot`: GeoPandas' plot accessor of the frame, computed
+    when it is called, or one of its kinds looked up."""
+
+    def __init__(self, frame):
+        self._frame = frame
+
+    def __call__(self, *args, **kwargs):
+        # A map (kind "geo", the default) needs the active geometry, as in
+        # GeoPandas: without one, the computed frame is a plain DataFrame,
+        # whose plot would draw lines. pandas' kinds do not need it.
+        if kwargs.get("kind", "geo") == "geo":
+            computed = self._frame._computed_with_geometry()
+        else:
+            computed = self._frame.to_geopandas()
+        return computed.plot(*args, **kwargs)
+
+    def __getattr__(self, name):
+        # Not for private names, which tools probe without meaning to draw.
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return getattr(self._frame.to_geopandas().plot, name)
+
+
 class GeoDataFrame:
     """A lazy SedonaDB frame in the shape of a `geopandas.GeoDataFrame`.
 
@@ -1511,6 +1544,84 @@ class GeoDataFrame:
             )
         return GeoDataFrame(_explode_parts(self._df, column), self._geometry_name)
 
+    # -- GeoJSON, Python objects and plotting, through GeoPandas ------------
+
+    def _computed_with_geometry(self):
+        """The frame computed, for a GeoPandas method that needs its active
+        geometry (where a frame without one would be a plain DataFrame)."""
+        if self._geometry_name is None:
+            raise AttributeError("This GeoDataFrame has no active geometry column")
+        return self.to_geopandas()
+
+    def to_json(
+        self, na="null", show_bbox=False, drop_id=False, to_wgs84=False, **kwargs
+    ):
+        """The frame as GeoJSON text, as `GeoDataFrame.to_json` writes it.
+
+        **EXPERIMENTAL.** Computes the frame, which GeoPandas then writes, so
+        the text is GeoPandas'. There is no index, so each feature's id is its
+        position, as for a frame with a default index.
+        """
+        return self._computed_with_geometry().to_json(
+            na=na, show_bbox=show_bbox, drop_id=drop_id, to_wgs84=to_wgs84, **kwargs
+        )
+
+    def to_geo_dict(self, na="null", show_bbox=False, drop_id=False):
+        """The frame as a GeoJSON FeatureCollection dict, as
+        `GeoDataFrame.to_geo_dict` gives it; see `to_json`."""
+        return self._computed_with_geometry().to_geo_dict(
+            na=na, show_bbox=show_bbox, drop_id=drop_id
+        )
+
+    def iterfeatures(self, na="null", show_bbox=False, drop_id=False):
+        """The frame's rows as GeoJSON Feature dicts, as
+        `GeoDataFrame.iterfeatures` gives them; see `to_json`. The frame is
+        computed when this is called."""
+        return self._computed_with_geometry().iterfeatures(
+            na=na, show_bbox=show_bbox, drop_id=drop_id
+        )
+
+    @classmethod
+    def from_features(cls, features, crs=None, columns=None, *, context=None):
+        """A frame of GeoJSON features, as `GeoDataFrame.from_features` reads
+        them: a list of Feature dicts, a FeatureCollection, or anything with
+        `__geo_interface__`. Read by GeoPandas, and held in memory."""
+        import geopandas
+
+        data = geopandas.GeoDataFrame.from_features(features, crs=crs, columns=columns)
+        return _from_geopandas(data, context)
+
+    @classmethod
+    def from_dict(cls, data, geometry=None, crs=None, *, context=None, **kwargs):
+        """A frame of a dict, as `GeoDataFrame.from_dict` makes it, with
+        pandas' `DataFrame.from_dict` options. Made by GeoPandas, and held in
+        memory; an index it gets (with `orient="index"`) becomes a column, as
+        in `from_geopandas`."""
+        import geopandas
+
+        frame = geopandas.GeoDataFrame.from_dict(
+            data, geometry=geometry, crs=crs, **kwargs
+        )
+        return _from_geopandas(frame, context)
+
+    @property
+    def plot(self):
+        """GeoPandas' plot accessor of the frame: `gdf.plot(...)`, and
+        pandas' kinds (`gdf.plot.hist(...)`, ...). Reading it computes
+        nothing; drawing computes the frame, which GeoPandas plots."""
+        return _Plot(self)
+
+    def explore(self, *args, **kwargs):
+        """An interactive map of the frame, as `GeoDataFrame.explore` draws
+        it: computed, then drawn by GeoPandas (which needs folium, matplotlib
+        and mapclassify)."""
+        return self._computed_with_geometry().explore(*args, **kwargs)
+
+    def estimate_utm_crs(self, datum_name="WGS 84"):
+        """The UTM CRS of the active geometry column; see
+        `GeoSeries.estimate_utm_crs`."""
+        return self.geometry.estimate_utm_crs(datum_name=datum_name)
+
     def to_geopandas(self):
         """Execute and return a `geopandas.GeoDataFrame` (or plain DataFrame).
 
@@ -1544,6 +1655,78 @@ class GeoDataFrame:
 
     # Alias: results carry geometry, so this returns a GeoDataFrame too.
     to_pandas = to_geopandas
+
+    def to_arrow(
+        self, *, index=None, geometry_encoding="WKB", interleaved=True, include_z=None
+    ):
+        """Compute the frame as a pyarrow Table, as `GeoDataFrame.to_arrow` does.
+
+        **EXPERIMENTAL.** Geometry columns are GeoArrow WKB, with their CRS
+        (and spherical edges, for geography), as GeoPandas encodes them by
+        default. GeoPandas gives an object with `__arrow_c_stream__`; a Table
+        is one.
+
+        Args:
+            index: There is no index to write; only None or False is accepted.
+            geometry_encoding: Only `"WKB"` is supported.
+            interleaved, include_z: For the `"geoarrow"` encoding only, so
+                they do nothing, as in GeoPandas with WKB.
+        """
+        from sedonadb_geopandas._arrow import to_arrow
+
+        return to_arrow(self, index, geometry_encoding)
+
+    @classmethod
+    def from_arrow(cls, table, geometry=None, to_pandas_kwargs=None, *, context=None):
+        """A frame of Arrow data, as `GeoDataFrame.from_arrow` reads it.
+
+        **EXPERIMENTAL.** `table` is anything with `__arrow_c_stream__` or
+        `__arrow_c_array__` (a pyarrow Table, a RecordBatchReader, ...), and
+        its geometry columns are those with a GeoArrow extension type: WKB,
+        WKT, or a native encoding, which are converted to WKB. Spherical
+        edges make a column geography, where GeoPandas ignores them. As in
+        GeoPandas, the first geometry column is the active one unless
+        `geometry` names another. The data is held in memory.
+
+        Args:
+            table: The Arrow data.
+            geometry: The active geometry column.
+            to_pandas_kwargs: Not supported: nothing is converted to pandas.
+            context: An optional SedonaDB context. Defaults to a shared,
+                lazily-created one.
+        """
+        from sedonadb_geopandas._arrow import from_arrow
+
+        return from_arrow(table, geometry, to_pandas_kwargs, context)
+
+    def to_feather(
+        self, path, index=None, compression=None, schema_version=None, **kwargs
+    ):
+        """Write a Feather file, as `GeoDataFrame.to_feather` does.
+
+        **EXPERIMENTAL.** Computes the frame once, into memory, and writes it
+        in its order as an Arrow IPC file (Feather version 2), with geometry
+        columns as WKB
+        and the "geo" metadata GeoPandas writes: each geometry column's CRS,
+        geometry types and bounds, found in what is written. A geography
+        column is marked with spherical edges and given no bounds, as
+        SedonaDB's GeoParquet writer does.
+
+        Args:
+            path: The file to write.
+            index: There is no index to write; only None or False is accepted.
+            compression: `"lz4"`, `"zstd"` or `"uncompressed"`; LZ4 by
+                default, as with pyarrow's `write_feather`.
+            schema_version: The metadata version: `"1.1.0"` by default, as
+                GeoPandas writes, or `"1.0.0-beta.1"`, `"1.0.0"` or `"2.0.0"`
+                (the earlier ones lay it out otherwise).
+            **kwargs: `compression_level`, and `chunksize` (the most rows in
+                one record batch; an integer, none if it is not positive), as
+                for pyarrow's `write_feather`.
+        """
+        from sedonadb_geopandas._arrow import to_feather
+
+        to_feather(self, path, index, compression, schema_version, **kwargs)
 
     def to_parquet(
         self,
@@ -1641,6 +1824,46 @@ class GeoDataFrame:
             geoparquet_version=version,
             compression=_PARQUET_COMPRESSION[codec],
         )
+
+    def to_file(self, filename, driver=None, schema=None, index=None, **kwargs):
+        """Write a GDAL/OGR file, as `GeoDataFrame.to_file` does with pyogrio.
+
+        **EXPERIMENTAL.** Writes the frame with pyogrio's Arrow writer. As in
+        GeoPandas, the driver is found from the file's extension (a path
+        without a known one is written as a shapefile folder), the layer's
+        geometry type from the data (with single geometries promoted to multi
+        where the driver cannot mix them, for GeoPackage and FlatGeobuf), NaN
+        is written as null, unsigned 64-bit integers as signed ones (one too
+        large raises), and a time in a named time zone in UTC. The frame is
+        computed once into memory first, so that what is written is what
+        the geometry type was found of, and its rows are written in the order
+        it gives them.
+
+        Args:
+            filename: The path, or a `BytesIO` with an explicit `driver`.
+            driver: A GDAL/OGR driver name, such as `"GPKG"` or `"GeoJSON"`.
+            schema: Not supported, as with GeoPandas' pyogrio engine.
+            index: There is no index to write; only None or False is accepted.
+            **kwargs: `mode` (`"w"`, or `"a"` to append), `metadata` (for
+                GeoPackage), `engine` (only `"pyogrio"`), and the options of
+                `pyogrio.write_dataframe` (`layer`, `geometry_type`,
+                `promote_to_multi`, `nan_as_null`, `append`, layer and dataset
+                creation options, ...).
+
+        A file takes one geometry column, as in GeoPandas, and geometry rather
+        than geography: GDAL/OGR formats have no spherical edges.
+        """
+        from sedonadb_geopandas._io import to_file
+
+        to_file(self, filename, driver, schema, index, **kwargs)
+
+    @classmethod
+    def from_file(cls, filename, **kwargs):
+        """Read a GDAL/OGR file, as `GeoDataFrame.from_file` does; see
+        `read_file`."""
+        from sedonadb_geopandas._io import read_file
+
+        return read_file(filename, **kwargs)
 
     def __len__(self):
         return self._df.count()

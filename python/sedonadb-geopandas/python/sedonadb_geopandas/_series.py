@@ -1913,6 +1913,87 @@ class GeoSeries(Series):
         return GeoDataFrame(frame, geometry=None)
 
     @property
+    def geometry(self):
+        """This series, as a GeoPandas `GeoSeries.geometry` is."""
+        return self
+
+    @property
+    def type(self):
+        """The geometry type of each element: `geom_type`, as in GeoPandas."""
+        return self.geom_type
+
+    @property
+    def unary_union(self):
+        """`union_all()`, under the name GeoPandas has deprecated, with its
+        warning."""
+        warnings.warn(
+            "The 'unary_union' attribute is deprecated, use the 'union_all()' "
+            "method instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.union_all()
+
+    def to_json(self, show_bbox=True, drop_id=False, to_wgs84=False, **kwargs):
+        """This column as GeoJSON text, as `GeoSeries.to_json` writes it:
+        computed, then written by GeoPandas; see `GeoDataFrame.to_json`."""
+        return self.to_geopandas().to_json(
+            show_bbox=show_bbox, drop_id=drop_id, to_wgs84=to_wgs84, **kwargs
+        )
+
+    def plot(self, *args, **kwargs):
+        """A plot of this column, as `GeoSeries.plot` draws it: computed,
+        then drawn by GeoPandas."""
+        return self.to_geopandas().plot(*args, **kwargs)
+
+    def explore(self, *args, **kwargs):
+        """An interactive map of this column, as `GeoSeries.explore` draws
+        it: computed, then drawn by GeoPandas (which needs folium, matplotlib
+        and mapclassify)."""
+        return self.to_geopandas().explore(*args, **kwargs)
+
+    def estimate_utm_crs(self, datum_name="WGS 84"):
+        """The UTM CRS of the zone at the center of these geometries' bounds,
+        as GeoPandas estimates it: a `pyproj.CRS`.
+
+        The bounds are computed (an aggregate, empty and missing geometries
+        left out) and transformed to longitude and latitude (EPSG:4326),
+        across the antimeridian where they cross it. GeoPandas transforms
+        them only from a projected CRS, taking a geographic CRS's coordinates
+        as degrees east of Greenwich, which gives the wrong zone for one in
+        other units or with another prime meridian (NTF (Paris), in grads).
+        """
+        import numpy as np
+        import pyproj
+        from pyproj.aoi import AreaOfInterest
+        from pyproj.database import query_utm_crs_info
+
+        if self.crs is None:
+            raise RuntimeError("crs must be set to estimate UTM CRS.")
+        crs = pyproj.CRS.from_user_input(self.crs.to_json())
+        transformer = pyproj.Transformer.from_crs(crs, "EPSG:4326", always_xy=True)
+        minx, miny, maxx, maxy = transformer.transform_bounds(*self.total_bounds)
+        y_center = np.mean([miny, maxy])
+        if minx > maxx:
+            # Across the antimeridian: the center of [minx, maxx + 360], back
+            # in [-180, 180).
+            x_center = (np.mean([minx, maxx + 360]) + 180) % 360 - 180
+        else:
+            x_center = np.mean([minx, maxx])
+        zones = query_utm_crs_info(
+            datum_name=datum_name,
+            area_of_interest=AreaOfInterest(
+                west_lon_degree=x_center,
+                south_lat_degree=y_center,
+                east_lon_degree=x_center,
+                north_lat_degree=y_center,
+            ),
+        )
+        if not zones:
+            raise RuntimeError("Unable to determine UTM CRS")
+        return pyproj.CRS.from_epsg(zones[0].code)
+
+    @property
     def total_bounds(self):
         """The bounds of all geometries together, as `[minx, miny, maxx, maxy]`.
 
@@ -3058,6 +3139,24 @@ class GeoSeries(Series):
             )
         return _labeled(df, wkb.funcs.st_geomfromwkb(), crs)
 
+    @classmethod
+    def from_file(cls, filename, **kwargs):
+        """The geometry of a GDAL/OGR file, as `GeoSeries.from_file` reads it:
+        the active geometry of `read_file`, named `"geometry"`."""
+        from sedonadb_geopandas._io import read_file
+
+        frame = read_file(filename, **kwargs)
+        return GeoSeries(frame._df, frame._df[frame._geometry_name], "geometry")
+
+    def to_file(self, filename, driver=None, index=None, **kwargs):
+        """Write a GDAL/OGR file, as `GeoSeries.to_file` does: a frame of this
+        series alone, as its column named `"geometry"`; see
+        `GeoDataFrame.to_file`."""
+        from sedonadb_geopandas._frame import GeoDataFrame
+
+        frame = GeoDataFrame(self._df.select(self._expr.alias("geometry")), "geometry")
+        frame.to_file(filename, driver, index=index, **kwargs)
+
     def set_crs(self, crs=None, epsg=None, inplace=False, allow_override=False):
         """Label each geometry with a CRS without transforming coordinates.
 
@@ -3233,3 +3332,29 @@ class GeoSeries(Series):
     def to_geopandas(self):
         """Execute and return this column as a `geopandas.GeoSeries`."""
         return self.to_pandas()
+
+    def to_arrow(self, geometry_encoding="WKB", interleaved=True, include_z=None):
+        """Compute this column as a pyarrow Array, as `GeoSeries.to_arrow` does.
+
+        **EXPERIMENTAL.** GeoArrow WKB, with the CRS (and spherical edges, for
+        geography). GeoPandas gives an object with `__arrow_c_array__`; an
+        Array is one. Only `geometry_encoding="WKB"` is supported, so
+        `interleaved` and `include_z` do nothing, as in GeoPandas with WKB.
+        """
+        from sedonadb_geopandas._arrow import series_to_arrow
+
+        return series_to_arrow(self, geometry_encoding)
+
+    @classmethod
+    def from_arrow(cls, arr, **kwargs):
+        """A series of a GeoArrow array, as `GeoSeries.from_arrow` reads it.
+
+        **EXPERIMENTAL.** `arr` is anything with `__arrow_c_array__` and a
+        GeoArrow extension type (WKB, WKT, or a native encoding), held in
+        memory in a frame of its own. Of GeoPandas' keyword arguments, `crs`
+        (which must agree with the array's own, if it has one) and `name` are
+        taken, and `context`, an optional SedonaDB context.
+        """
+        from sedonadb_geopandas._arrow import series_from_arrow
+
+        return series_from_arrow(arr, **kwargs)

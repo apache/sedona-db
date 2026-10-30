@@ -62,8 +62,9 @@ deliberately *not* identical to GeoPandas:
   values.
 - **Columns cannot be mixed across frames**: without row alignment, combining
   columns from two different frames raises rather than guessing. Join first.
-- **Plotting and arbitrary `apply`**: use the `to_geopandas()` escape hatch and
-  operate on the materialized result.
+- **Arbitrary `apply`**: use the `to_geopandas()` escape hatch and operate on
+  the materialized result. (`plot()` and `explore()` compute the frame and draw
+  it with GeoPandas themselves.)
 - **Assignment takes a column or a scalar, not a bare expression**: a SedonaDB
   expression records no origin, so one built from another frame would resolve
   against the destination and silently write the wrong values. Assign a `Series`
@@ -90,6 +91,17 @@ result is computed (only `on_invalid="raise"` is supported), and the engine's
 WKT parser refuses a few forms GEOS reads, such as `MULTIPOINT (EMPTY)`.
 `GeoDataFrame.to_wkt()` and `to_wkb()` convert every geometry column and leave
 no active geometry, as in GeoPandas.
+
+What GeoPandas gives as Python objects, text, or drawings is the computed
+frame's, by GeoPandas: `to_json()`, `to_geo_dict()` and `iterfeatures()` (each
+feature's id is its position, as for a default index), `plot()` (reading
+`gdf.plot` computes nothing; drawing does) and `explore()`. Likewise,
+`GeoDataFrame.from_features()` and `from_dict()` are read by GeoPandas into
+memory, keeping its active geometry column. `estimate_utm_crs()` computes only
+the bounds, and transforms them to longitude and latitude from any CRS, where
+GeoPandas takes a geographic CRS's coordinates as degrees east of Greenwich
+(wrong for one in grads, such as NTF (Paris)). The deprecated `unary_union` is
+`union_all()`, lazy, with GeoPandas' warning.
 
 `GeoSeries` properties and methods follow GeoPandas, with a few differences
 in form: `to_wkt()` writes equivalent but differently spaced WKT
@@ -258,6 +270,17 @@ categorical key do not produce empty groups the way GeoPandas' default
 `observed=False` does, because the category domain does not survive a relational
 aggregation.
 
+`to_arrow()` and `from_arrow()` (of a `GeoDataFrame` or a `GeoSeries`),
+`to_feather()` and `read_feather()` follow GeoPandas, with geometry as GeoArrow
+WKB; the `"geoarrow"` encoding is not supported for output. `from_arrow()`
+reads WKB, WKT and native GeoArrow columns into memory and, as GeoPandas does,
+makes the first geometry column the active one. Spherical edges, in a GeoArrow
+type or in a Feather file's metadata, make a geography column, where GeoPandas
+ignores them. `to_feather()` computes the frame once, into memory, writes its
+rows in the order it gives them, and finds each geometry column's types and
+bounds for the file's metadata in what it writes; `read_feather()` reads the whole file into memory, since SedonaDB has
+no Arrow IPC reader.
+
 `read_parquet()`, `read_file()` and `to_parquet()` follow GeoPandas, with
 differences that come from SedonaDB's readers and GeoParquet writer:
 
@@ -280,6 +303,23 @@ differences that come from SedonaDB's readers and GeoParquet writer:
   (apache/sedona-db#1440); reading one works, with the object store's options
   passed as `storage_options` using SedonaDB's keys (for example
   `{"aws.skip_signature": True, "aws.region": "us-west-2"}`), not fsspec's.
+
+`to_file()` (of a `GeoDataFrame` or a `GeoSeries`), `from_file()` and
+`list_layers()` follow GeoPandas with its pyogrio engine: the driver comes from
+the file's extension, the layer's geometry type from the data (with single
+geometries promoted to multi for GeoPackage and FlatGeobuf, as pyogrio does),
+NaN is written as null, and pyogrio's options (`layer`, `promote_to_multi`,
+creation options, ...) are taken; unsigned 64-bit integers are written as
+signed ones (one too large raises), and a time in a named time zone in UTC,
+as GeoPandas writes them. The frame is written through pyogrio's Arrow writer.
+It is computed once into memory first, so that what is written is what the
+layer's geometry types were found of, even for a query whose result changes
+each time (`random()`), and its rows are written in the order it gives them (a
+sort from `sort_values()` included).
+A file takes one geometry column, as in GeoPandas, and not a geography column,
+since GDAL/OGR formats have no spherical edges. A CRS without an EPSG code is
+written as WKT made from the frame's PROJJSON, which can name fewer authority
+codes than the WKT GeoPandas writes for the same CRS.
 
 See the SedonaDB "Migrating from GeoPandas" guide for the relational model that
 underlies each method.

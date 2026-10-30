@@ -185,10 +185,26 @@ unsafe extern "C" fn c_exec_plan_get_schema(
 
 unsafe extern "C" fn c_exec_plan_get_property_schema(
     _self_: *const SedonaCExecutionPlan,
-    _property: *const std::ffi::c_char,
+    property: *const std::ffi::c_char,
     out: *mut FFI_ArrowSchema,
     err: *mut SedonaCError,
 ) -> c_int {
+    let property_name = cstr_from_ptr_or_empty(property);
+    if !matches!(
+        property_name.as_ref(),
+        "plan_properties"
+            | "debug_string"
+            | "display_default"
+            | "display_verbose"
+            | "display_tree_render"
+            | "name"
+            | "cardinality_effect"
+            | "maintains_input_order"
+            | "metrics"
+    ) {
+        set_ffi_error!(err, "Unknown property: {}", property_name);
+        return libc::ENOTSUP;
+    }
     debug_assert!(!out.is_null(), "out pointer is null");
     // All properties are returned as Utf8 strings (including JSON)
     use arrow_schema::{DataType, Field};
@@ -212,6 +228,22 @@ unsafe extern "C" fn c_exec_plan_get_property(
     out: *mut arrow_array::ffi::FFI_ArrowArray,
     err: *mut SedonaCError,
 ) -> c_int {
+    let property_name = cstr_from_ptr_or_empty(property);
+    if !matches!(
+        property_name.as_ref(),
+        "plan_properties"
+            | "debug_string"
+            | "display_default"
+            | "display_verbose"
+            | "display_tree_render"
+            | "name"
+            | "cardinality_effect"
+            | "maintains_input_order"
+            | "metrics"
+    ) {
+        set_ffi_error!(err, "Unknown property: {}", property_name);
+        return libc::ENOTSUP;
+    }
     debug_assert!(!self_.is_null(), "self pointer is null");
     debug_assert!(!out.is_null(), "out pointer is null");
     let self_ref = &*self_;
@@ -821,6 +853,31 @@ mod tests {
         let imported = ImportedSedonaCExec::try_new(ffi_plan).unwrap();
 
         (imported, task_ctx, runtime)
+    }
+
+    #[test]
+    fn unknown_properties_return_enotsup() {
+        let (imported, _, _runtime) = setup_imported_plan();
+        let raw = &imported.inner;
+        let mut schema = FFI_ArrowSchema::empty();
+        let mut array = arrow_array::ffi::FFI_ArrowArray::empty();
+        let mut err = SedonaCError::default();
+        unsafe {
+            assert_eq!(
+                raw.get_property_schema.unwrap()(raw, c"unknown".as_ptr(), &mut schema, &mut err),
+                libc::ENOTSUP
+            );
+            assert_eq!(
+                raw.get_property.unwrap()(
+                    raw,
+                    c"unknown".as_ptr(),
+                    std::ptr::null_mut(),
+                    &mut array,
+                    &mut err
+                ),
+                libc::ENOTSUP
+            );
+        }
     }
 
     #[test]

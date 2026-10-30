@@ -462,10 +462,11 @@ class SedonaContext:
           a sedonadb_catalog_list PyCapsule
         - An object implementing __sedonadb_extension__(ctx, **kwargs), which
           is called with this context and any keyword arguments passed.
-        - A single function object implementing __sedonadb_scalar_udf__(self),
+        - A single function object implementing __sedonadb_scalar_udf_v2__(self)
+          or the legacy __sedonadb_scalar_udf__(self),
           which returns a list of PyCapsule objects -- the overload kernels of
           that one function, each wrapping a natively-compiled
-          SedonaCScalarKernel sharing the function's SQL name -- so real
+          SedonaCScalarKernelV2 (or legacy SedonaCScalarKernel) sharing the function's SQL name -- so real
           compiled Rust runs per invocation, not a Python callback. Register
           each function individually. The kernels are appended as overloads to
           the function of that name (a new function is created when none exists
@@ -473,10 +474,10 @@ class SedonaContext:
           including a built-in's -- overrides that one signature (kernels
           resolve newest-first) while the function's other overloads stay
           reachable, so a plugin can add an overload to an existing function
-          without replacing it. Volatility is always Immutable through this
-          protocol; a kernel needing Volatile or Stable should be registered
-          via __sedonadb_internal_udf__ instead, built with
-          sedonadb.udf.sedona_native_scalar_udf(kernels, volatility=...).
+          without replacing it. V2 is preferred when both methods exist and
+          preserves metadata and volatility. The legacy protocol defaults to
+          Immutable. Producers supporting older consumers should expose the
+          legacy method with legacy capsules as well as the V2 method.
 
         The extension interface is experimental and may change.
 
@@ -524,6 +525,7 @@ class SedonaContext:
             "__sedonadb_external_format__",
             "__sedonadb_catalog_list__",
             "__sedonadb_raster_loader__",
+            "__sedonadb_scalar_udf_v2__",
             "__sedonadb_scalar_udf__",
         )
         for interface in supported_interfaces:

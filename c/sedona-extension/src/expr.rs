@@ -183,6 +183,13 @@ unsafe extern "C" fn c_physical_expr_get_property_schema(
     out: *mut FFI_ArrowSchema,
     err: *mut SedonaCError,
 ) -> c_int {
+    let property_name = cstr_from_ptr_or_empty(property);
+    if !matches!(property_name.as_ref(), "debug_string" | "display_string")
+        && !(cfg!(feature = "protobuf") && property_name == "datafusion_physical_expr_protobuf")
+    {
+        set_ffi_error!(err, "Unknown property: {}", property_name);
+        return libc::ENOTSUP;
+    }
     debug_assert!(!out.is_null(), "out pointer is null");
     let property_str = cstr_from_ptr_or_empty(property);
     let field = Field::new(
@@ -210,6 +217,13 @@ unsafe extern "C" fn c_physical_expr_get_property(
     out: *mut FFI_ArrowArray,
     err: *mut SedonaCError,
 ) -> c_int {
+    let property_name = cstr_from_ptr_or_empty(property);
+    if !matches!(property_name.as_ref(), "debug_string" | "display_string")
+        && !(cfg!(feature = "protobuf") && property_name == "datafusion_physical_expr_protobuf")
+    {
+        set_ffi_error!(err, "Unknown property: {}", property_name);
+        return libc::ENOTSUP;
+    }
     debug_assert!(!self_.is_null(), "self pointer is null");
     debug_assert!(!out.is_null(), "out pointer is null");
     if args_len > 0 {
@@ -239,6 +253,13 @@ unsafe extern "C" fn c_expr_get_property_schema(
     out: *mut FFI_ArrowSchema,
     err: *mut SedonaCError,
 ) -> c_int {
+    let property_name = cstr_from_ptr_or_empty(property);
+    if !matches!(property_name.as_ref(), "debug_string" | "display_string")
+        && !(cfg!(feature = "protobuf") && property_name == "datafusion_expr_protobuf")
+    {
+        set_ffi_error!(err, "Unknown property: {}", property_name);
+        return libc::ENOTSUP;
+    }
     debug_assert!(!out.is_null(), "out pointer is null");
     let property_str = cstr_from_ptr_or_empty(property);
     let data_type = ExportedExprView::get_property_data_type(&property_str);
@@ -263,6 +284,13 @@ unsafe extern "C" fn c_expr_get_property(
     out: *mut FFI_ArrowArray,
     err: *mut SedonaCError,
 ) -> c_int {
+    let property_name = cstr_from_ptr_or_empty(property);
+    if !matches!(property_name.as_ref(), "debug_string" | "display_string")
+        && !(cfg!(feature = "protobuf") && property_name == "datafusion_expr_protobuf")
+    {
+        set_ffi_error!(err, "Unknown property: {}", property_name);
+        return libc::ENOTSUP;
+    }
     debug_assert!(!self_.is_null(), "self pointer is null");
     debug_assert!(!out.is_null(), "out pointer is null");
 
@@ -631,6 +659,42 @@ fn get_expr_view_property_data_type(expr: &SedonaCExprView, property: &str) -> R
 mod tests {
     use super::*;
     use datafusion_expr::col;
+
+    #[test]
+    fn unknown_properties_return_enotsup() {
+        let logical = col("x");
+        let physical = Arc::new(datafusion_physical_expr::expressions::Column::new("x", 0))
+            as Arc<dyn PhysicalExpr>;
+        let logical_export = ExportedExprView::new(&logical);
+        let physical_export = ExportedPhysicalExprView::new(&physical);
+        for raw in [logical_export.as_ffi_view(), physical_export.as_ffi_view()] {
+            let mut schema = FFI_ArrowSchema::empty();
+            let mut array = FFI_ArrowArray::empty();
+            let mut err = SedonaCError::default();
+            unsafe {
+                assert_eq!(
+                    raw.get_property_schema.unwrap()(
+                        &raw,
+                        c"unknown".as_ptr(),
+                        &mut schema,
+                        &mut err
+                    ),
+                    libc::ENOTSUP
+                );
+                assert_eq!(
+                    raw.get_property.unwrap()(
+                        &raw,
+                        c"unknown".as_ptr(),
+                        std::ptr::null(),
+                        0,
+                        &mut array,
+                        &mut err
+                    ),
+                    libc::ENOTSUP
+                );
+            }
+        }
+    }
 
     #[test]
     fn test_expr_view_debug_string() {

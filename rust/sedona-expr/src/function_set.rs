@@ -95,13 +95,14 @@ impl FunctionSet {
 
     /// Add a kernel to a function in this set
     ///
-    /// This adds a scalar UDF with immutable output if a function of that name does not
-    /// exist in this set. A reference to the matching or inserted function is returned.
+    /// Existing function declarations are preserved. New functions default to
+    /// empty metadata and immutable volatility. Returns the matching or inserted function.
     pub fn add_scalar_udf_impl(
         &mut self,
         name: &str,
         kernels: impl IntoScalarKernelRefs,
     ) -> Result<&SedonaScalarUDF> {
+        let kernels = kernels.into_scalar_kernel_refs();
         if let Some(function) = self.scalar_udf_mut(name) {
             function.add_kernels(kernels);
         } else {
@@ -110,6 +111,24 @@ impl FunctionSet {
         }
 
         Ok(self.scalar_udf(name).unwrap())
+    }
+
+    /// Append a scalar UDF's kernels after checking its function-level declarations.
+    /// Conflicts leave the existing function unchanged.
+    pub fn add_scalar_udf(&mut self, udf: SedonaScalarUDF) -> Result<&SedonaScalarUDF> {
+        let name = udf.name().to_string();
+        if let Some(function) = self.scalar_udf_mut(&name) {
+            if function.metadata() != udf.metadata() {
+                return exec_err!("Conflicting metadata declarations for scalar function {name}");
+            }
+            if function.signature().volatility != udf.signature().volatility {
+                return exec_err!("Conflicting volatility declarations for scalar function {name}");
+            }
+            function.add_kernels(udf.kernels().to_vec());
+        } else {
+            self.insert_scalar_udf(udf);
+        }
+        Ok(self.scalar_udf(&name).unwrap())
     }
 
     /// Add an aggregate kernel to a function in this set
@@ -177,6 +196,40 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn scalar_declarations_are_validated_before_appending() {
+        let kernel = SimpleSedonaScalarKernel::new_ref(
+            ArgMatcher::new(vec![], SedonaType::Arrow(DataType::Boolean)),
+            Arc::new(|_, _| Ok(ColumnarValue::Scalar(ScalarValue::Boolean(None)))),
+        );
+        let original = SedonaScalarUDF::new("probe", vec![kernel.clone()], Volatility::Stable)
+            .with_metadata("needs_pixels", "true");
+        let mut functions = FunctionSet::new();
+        functions.add_scalar_udf(original.clone()).unwrap();
+        for conflicting in [
+            SedonaScalarUDF::new("probe", vec![kernel.clone()], Volatility::Stable),
+            original.clone().with_metadata("needs_pixels", "false"),
+            SedonaScalarUDF::new("probe", vec![kernel.clone()], Volatility::Volatile)
+                .with_metadata("needs_pixels", "true"),
+        ] {
+            assert!(functions.add_scalar_udf(conflicting).is_err());
+            let registered = functions.scalar_udf("probe").unwrap();
+            assert_eq!(registered.kernels().len(), 1);
+            assert_eq!(registered.metadata(), original.metadata());
+            assert_eq!(registered.signature().volatility, Volatility::Stable);
+        }
+        functions.add_scalar_udf(original.clone()).unwrap();
+        let registered = functions
+            .add_scalar_udf_impl("probe", kernel.clone())
+            .unwrap();
+        assert_eq!(registered.kernels().len(), 3);
+        assert_eq!(registered.metadata(), original.metadata());
+        assert_eq!(registered.signature().volatility, Volatility::Stable);
+        let legacy = functions.add_scalar_udf_impl("legacy", kernel).unwrap();
+        assert!(legacy.metadata().is_empty());
+        assert_eq!(legacy.signature().volatility, Volatility::Immutable);
+    }
 
     #[test]
     fn function_set() {
