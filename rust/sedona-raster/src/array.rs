@@ -940,6 +940,34 @@ impl<'a> RasterStructArray<'a> {
         Some(self.band_outdb_uri_array.value(band_row))
     }
 
+    /// Whether raster `raster_idx` has a band whose bytes still have to be
+    /// loaded (by [`BandRef::is_indb`], with or without a URI). `false` for a
+    /// null raster.
+    pub fn raster_needs_load(&self, raster_idx: usize) -> bool {
+        raster_idx < self.len()
+            && !self.is_null(raster_idx)
+            && self
+                .band_rows(raster_idx)
+                .any(|band_row| !self.band_row_is_indb(band_row))
+    }
+
+    /// Whether any raster has a band whose bytes still have to be loaded
+    /// ([`Self::raster_needs_load`]). Reads the flattened `data` views first,
+    /// so an array whose bands all hold bytes (InDb, or already loaded) is
+    /// answered without a pass per row.
+    pub fn any_raster_needs_load(&self) -> bool {
+        let offsets = self.bands_list.value_offsets();
+        let bands = offsets[0] as usize..offsets[self.len()] as usize;
+        // A view's low 32 bits are the value's length.
+        if self.band_data_array.views()[bands]
+            .iter()
+            .all(|view| *view as u32 != 0)
+        {
+            return false;
+        }
+        (0..self.len()).any(|idx| self.raster_needs_load(idx))
+    }
+
     /// [`BandRef::is_indb`] for flattened band row `band_row`, without
     /// building the band's view: the visible shape is the view's `steps`, or
     /// the source shape when the view is null (identity).
@@ -1745,6 +1773,8 @@ mod tests {
         // provenance, and the array-level accessor does not report it.
         assert!(rasters.first_outdb_band_uri(0).is_none());
         assert!(rasters.first_outdb_band_uri(1).is_none());
+        assert!(!rasters.raster_needs_load(0));
+        assert!(!rasters.any_raster_needs_load());
 
         // Cross-check against the BandRef slow path.
         let band0 = r.band(0).unwrap();
@@ -2043,6 +2073,22 @@ mod tests {
                 .and_then(|band| band.outdb_uri().map(str::to_string));
             assert_eq!(first_outdb.as_deref(), *uri, "raster {i}");
         }
+        // A load is needed with or without a URI, and only for OutDb bands.
+        let needs_load: Vec<bool> = (0..6).map(|i| rasters.raster_needs_load(i)).collect();
+        assert_eq!(needs_load, [true, true, false, false, true, false]);
+        assert!(rasters.any_raster_needs_load());
+        let in_memory = array.slice(2, 2);
+        assert!(
+            !RasterStructArray::try_new(&in_memory)
+                .unwrap()
+                .any_raster_needs_load()
+        );
+        let without_uri = array.slice(4, 2);
+        assert!(
+            RasterStructArray::try_new(&without_uri)
+                .unwrap()
+                .any_raster_needs_load()
+        );
     }
 
     #[test]
