@@ -463,6 +463,16 @@ impl ExecutionPlan for SpatialJoinExec {
         // Determine which input index corresponds to the probe side for ordering checks
         let probe_input_index = if probe_side == JoinSide::Left { 0 } else { 1 };
 
+        // The spatial index and the stream take the join type with the build side as its left
+        // side. Where the build side is the right (a KNN join whose query side is the left), the
+        // join type is swapped: a LEFT JOIN keeps the unmatched probe rows, as a RIGHT JOIN
+        // does where the build side is the left.
+        let join_type = if probe_side == JoinSide::Left {
+            self.join_type.swap()
+        } else {
+            self.join_type
+        };
+
         // A OnceFut for preparing the spatial join components once.
         let once_fut_spatial_join_components = {
             let mut once_async = self.once_async_spatial_join_components.lock();
@@ -481,7 +491,7 @@ impl ExecutionPlan for SpatialJoinExec {
                         Arc::clone(&context),
                         build_plan.schema(),
                         self.on.clone(),
-                        self.join_type,
+                        join_type,
                         probe_thread_count,
                         self.metrics.clone(),
                         self.join_provider.clone(),
@@ -509,7 +519,7 @@ impl ExecutionPlan for SpatialJoinExec {
             self.schema(),
             &self.on,
             self.filter.clone(),
-            self.join_type,
+            join_type,
             probe_stream,
             column_indices_after_projection,
             probe_side_ordered,

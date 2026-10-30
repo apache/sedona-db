@@ -161,3 +161,17 @@ JOIN restaurants AS r
 ```
 
 In both cases, `ST_KNN` determines the 3 nearest restaurants first, then `r.rating > 4.0` filters the results.
+
+#### Outer, Semi, and Anti KNN Joins
+
+A KNN join can also be a `LEFT`, `RIGHT`, or `FULL` outer join, or a semi or anti join, with the query side on either side of the join. An outer join keeps the rows of its side that have no match, with nulls for the other side's columns: a query row none of whose *k* nearest neighbors passes the other conditions, or an object that is no query row's neighbor.
+
+```sql
+-- Each hotel, with those of its 3 nearest restaurants rated over 4.0, or nulls if there are none
+SELECT h.name AS hotel, r.name AS restaurant
+FROM hotels AS h
+LEFT JOIN restaurants AS r
+    ON ST_KNN(h.geometry, r.geometry, 3, false) AND r.rating > 4.0
+```
+
+These joins are not yet supported when the object side does not fit in memory and is split into spatial partitions ([#1541](https://github.com/apache/sedona-db/issues/1541)): the query then fails with an error. Inner KNN joins have no such limit.

@@ -18,7 +18,7 @@
 use std::{mem, sync::Arc};
 
 use arrow_schema::SchemaRef;
-use datafusion_common::Result;
+use datafusion_common::{Result, not_impl_err};
 use datafusion_common_runtime::JoinSet;
 use datafusion_execution::{
     SendableRecordBatchStream, TaskContext,
@@ -136,6 +136,23 @@ impl SpatialJoinComponentsBuilder {
             compute_memory_plan(build_partitions.iter().map(PartitionMemorySummary::from))?;
         log::debug!("Computed memory plan for spatial join:\n{:#?}", memory_plan);
         let num_partitions = self.num_spatial_partitions(&memory_plan);
+
+        // A partitioned KNN join merges each probe row's nearest neighbours across the
+        // partitions after the join type has been applied to each, which only an inner join
+        // gives the right rows for.
+        if num_partitions > 1
+            && matches!(
+                self.spatial_predicate,
+                SpatialPredicate::KNearestNeighbors(_)
+            )
+            && self.join_type != JoinType::Inner
+        {
+            return not_impl_err!(
+                "KNN joins other than inner joins are not supported when the build side is \
+                 split into several spatial partitions ({num_partitions}), as when it does not \
+                 fit in memory (apache/sedona-db#1541)"
+            );
+        }
 
         if num_partitions == 1 {
             log::debug!("Running single-partitioned in-memory spatial join");

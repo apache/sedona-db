@@ -72,8 +72,10 @@ pub(crate) struct SpatialJoinStream {
     schema: Arc<Schema>,
     /// join filter
     filter: Option<JoinFilter>,
-    /// type of the join
+    /// type of the join, with the build side as its left side
     join_type: JoinType,
+    /// The side of the build stream, either Left or Right
+    build_side: JoinSide,
     /// The stream of the probe side
     probe_stream: Option<SendableEvaluatedBatchStream>,
     /// The schema of the probe side
@@ -169,11 +171,19 @@ impl SpatialJoinStream {
         );
         let probe_stream_schema = probe_stream.schema();
 
+        // For KNN joins, we may have swapped build/probe sides, so build_side might be Right;
+        // For regular joins, build_side is always Left.
+        let build_side = match on {
+            SpatialPredicate::KNearestNeighbors(knn) => knn.probe_side.negate(),
+            _ => JoinSide::Left,
+        };
+
         Self {
             probe_partition_id,
             schema: schema.clone(),
             filter,
             join_type,
+            build_side,
             probe_stream: Some(probe_stream),
             probe_stream_schema,
             column_indices,
@@ -707,7 +717,7 @@ impl SpatialJoinStream {
                     &self.schema,
                     self.join_type,
                     &self.column_indices,
-                    JoinSide::Left,
+                    self.build_side,
                 ) {
                     Ok(opt) => opt,
                     Err(e) => return Poll::Ready(Err(e)),
@@ -828,13 +838,6 @@ impl SpatialJoinStream {
         let is_last_build_partition = matches!(partition_desc.partition, SpatialPartition::Multi)
             && (partition_desc.partition_id + 1) == num_regular_partitions;
 
-        // For KNN joins, we may have swapped build/probe sides, so build_side might be Right;
-        // For regular joins, build_side is always Left.
-        let build_side = match &self.spatial_predicate {
-            SpatialPredicate::KNearestNeighbors(knn) => knn.probe_side.negate(),
-            _ => JoinSide::Left,
-        };
-
         // Move out the knn_results_merger to the iterator, we'll move it back when the iterator is complete
         // by calling `SpatialJoinBatchIterator::take_knn_results_merger`.
         let knn_results_merger = std::mem::take(&mut self.knn_results_merger);
@@ -844,7 +847,7 @@ impl SpatialJoinStream {
             filter: self.filter.clone(),
             join_type: self.join_type,
             column_indices: self.column_indices.clone(),
-            build_side,
+            build_side: self.build_side,
             spatial_index: spatial_index.clone(),
             join_metrics: self.join_metrics.clone(),
             max_batch_size: self.target_output_batch_size,
@@ -967,7 +970,6 @@ type BuildAndProbeIndices<'a> = (&'a [(i32, i32)], &'a [u32], Option<&'a [f64]>)
 impl ProbeProgress {
     fn indices_for_next_batch(
         &mut self,
-        build_side: JoinSide,
         join_type: JoinType,
         max_batch_size: usize,
     ) -> Option<BuildAndProbeIndices<'_>> {
@@ -978,16 +980,10 @@ impl ProbeProgress {
         // semi/anti/mark joins only care about whether a probe row has matches,
         // and we don't want to produce duplicate unmatched probe rows when the same
         // probe row P has multiple matches and we split probe_indices range into
-        // multiple pieces containing P.
+        // multiple pieces containing P. The join type has the build side as its left side.
         let should_skip_lastly_produced_probe_rows = matches!(
-            (build_side, join_type),
-            (
-                JoinSide::Left,
-                JoinType::RightSemi | JoinType::RightAnti | JoinType::RightMark
-            ) | (
-                JoinSide::Right,
-                JoinType::LeftSemi | JoinType::LeftAnti | JoinType::LeftMark
-            )
+            join_type,
+            JoinType::RightSemi | JoinType::RightAnti | JoinType::RightMark
         );
         if should_skip_lastly_produced_probe_rows {
             while self.pos < end
@@ -1270,7 +1266,7 @@ impl SpatialJoinBatchIterator {
         let need_merge_knn_results = progress.knn.is_some();
 
         let Some((build_indices, probe_indices, distances)) =
-            progress.indices_for_next_batch(self.build_side, self.join_type, self.max_batch_size)
+            progress.indices_for_next_batch(self.join_type, self.max_batch_size)
         else {
             // No more results to produce
             return Ok(None);
@@ -2079,7 +2075,7 @@ mod tests {
         };
         let mut produced_probe_indices: Vec<u32> = Vec::new();
         while let Some((_, probe_indices, _)) =
-            progress.indices_for_next_batch(JoinSide::Left, join_type, max_batch_size)
+            progress.indices_for_next_batch(join_type, max_batch_size)
         {
             let probe_indices = probe_indices.to_vec();
             let adjust_range = progress.next_probe_range(&probe_indices);
