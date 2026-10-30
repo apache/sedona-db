@@ -186,4 +186,44 @@ TEST(SegmentRelateOpsTest, FindPolygonInteriorPointWithHole) {
   EXPECT_EQ(poly.locate_point(interior_pt), PointLocation::kInside);
 }
 
+TEST(SegmentRelateOpsTest, FindPolygonInteriorPointMicroPolygon) {
+  Context<point_d, uint32_t> ctx;
+  Polygon<point_d, uint32_t> poly;
+  ParseWKTPolygon(ctx,
+                  "POLYGON ((0 0, 0.00000001 0, 0.00000001 0.00000001, 0 0.00000001, 0 0))",
+                  poly);
+
+  point_d interior_pt;
+  bool ok = detail::FindPolygonInteriorPoint(poly, interior_pt);
+  ASSERT_TRUE(ok);
+  EXPECT_EQ(poly.locate_point(interior_pt), PointLocation::kInside);
+}
+
+TEST(SegmentRelateOpsTest, FindPolygonInteriorPointExceedsMaxCrossingsFallback) {
+  Context<point_d, uint32_t> ctx;
+  Polygon<point_d, uint32_t> poly;
+  // A comb polygon with 45 teeth produces 90 scanline crossings, exceeding kMaxCrossings = 64.
+  // Tests the fallback to the extremal-convex-vertex angle bisector.
+  std::string wkt = "POLYGON ((";
+  wkt += "0 0, ";
+  for (int i = 0; i < 45; ++i) {
+    wkt += std::to_string(2 * i) + " 10, " + std::to_string(2 * i + 1) + " 10, " +
+           std::to_string(2 * i + 1) + " 0, ";
+  }
+  wkt += "90 0, 90 -5, 0 -5, 0 0))";
+
+  ParseWKTPolygon(ctx, wkt.c_str(), poly);
+  point_d interior_pt;
+
+  // Test the extremal vertex method directly
+  bool ok_extremal = detail::FindPolygonInteriorPointExtremalVertex(poly, interior_pt);
+  ASSERT_TRUE(ok_extremal);
+  EXPECT_EQ(poly.locate_point(interior_pt), PointLocation::kInside);
+
+  // Test that FindPolygonInteriorPoint transparently falls back and succeeds
+  bool ok = detail::FindPolygonInteriorPoint(poly, interior_pt);
+  ASSERT_TRUE(ok);
+  EXPECT_EQ(poly.locate_point(interior_pt), PointLocation::kInside);
+}
+
 }  // namespace gpuspatial
