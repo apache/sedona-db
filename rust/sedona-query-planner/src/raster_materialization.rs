@@ -87,7 +87,9 @@
 //!
 //! The rule also decides *where* rasters are loaded: see
 //! [`raster_source_spread`](crate::raster_source_spread), which
-//! hash-partitions the split's input by raster source.
+//! spreads the split's input over partitions by raster source with a
+//! Sedona-owned [`RasterSourceSpreadExec`] (not a `RepartitionExec`, which
+//! would merge and copy the rasters it moves).
 
 use std::fmt;
 use std::sync::Arc;
@@ -110,11 +112,9 @@ use datafusion_physical_plan::execution_plan::CardinalityEffect;
 use datafusion_physical_plan::filter::{FilterExec, FilterExecBuilder};
 use datafusion_physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
 use datafusion_physical_plan::projection::{ProjectionExec, ProjectionExpr};
-use datafusion_physical_plan::repartition::RepartitionExec;
 use datafusion_physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion_physical_plan::{
-    DisplayAs, DisplayFormatType, ExecutionPlan, ExecutionPlanProperties, Partitioning,
-    PlanProperties,
+    DisplayAs, DisplayFormatType, ExecutionPlan, ExecutionPlanProperties, PlanProperties,
 };
 use futures::{StreamExt, stream};
 use sedona_common::option::{DEFAULT_RASTER_MAX_BATCH_BYTES, SedonaOptions};
@@ -123,7 +123,7 @@ use sedona_raster::array::RasterStructArray;
 use sedona_raster::size::estimated_row_bytes;
 use sedona_schema::datatypes::SedonaType;
 
-use crate::raster_source_spread::{RasterSourceKeyExpr, raster_source_spread};
+use crate::raster_source_spread::{RasterSourceSpreadExec, raster_source_spread};
 
 /// Name of the UDF whose raster argument sizes the slices. Kept in sync
 /// with `sedona_raster_functions::rs_ensure_loaded` (this crate can't
@@ -146,7 +146,7 @@ pub const PASSTHROUGH_BATCH_SIZE: usize = 1;
 /// - puts a [`RasterBatchSplitExec`] under every `ProjectionExec`,
 ///   `FilterExec` and `AggregateExec` whose expressions call
 ///   `rs_ensureloaded`, sized by the calls' raster arguments, and
-///   hash-partitions the split's input by raster source where that is safe
+///   spreads the split's input by raster source where that is safe
 ///   (see [`crate::raster_source_spread`]);
 /// - sets the batch size of every `FilterExec` whose output schema carries
 ///   a raster column to [`PASSTHROUGH_BATCH_SIZE`], so it forwards batches
@@ -207,7 +207,7 @@ fn forward_raster_filter_batches(
 /// metadata, or structurally by the raster storage type. A raster can reach
 /// the planner as a plain struct (an array built in Python without the
 /// extension type, say), and `rs_ensureloaded` accepts it either way.
-fn is_raster_field(field: &Field) -> bool {
+pub(crate) fn is_raster_field(field: &Field) -> bool {
     matches!(
         SedonaType::from_storage_field(field),
         Ok(SedonaType::Raster)
@@ -346,7 +346,7 @@ struct HoistedArg {
 
 /// The subtree the rule puts under a loading node.
 struct SplitInput {
-    /// The [`RasterBatchSplitExec`], over the raster-source repartition when
+    /// The [`RasterBatchSplitExec`], over the [`RasterSourceSpreadExec`] when
     /// the input is spread, over a `ProjectionExec` that appends the hoisted
     /// argument expressions when there are any.
     plan: Arc<dyn ExecutionPlan>,
@@ -362,7 +362,7 @@ struct SplitInput {
 /// (see [`raster_source_spread`]), `None` when it does not.
 ///
 /// From the top: the [`RasterBatchSplitExec`], the raster-source
-/// `RepartitionExec` when the input is spread, the `ProjectionExec` that
+/// [`RasterSourceSpreadExec`] when the input is spread, the `ProjectionExec` that
 /// appends the hoisted argument expressions when there are any, then the
 /// input (or what the planner's own repartitioning below the node read).
 /// The hash and the sizing both read a hoisted argument from its appended
@@ -417,13 +417,8 @@ fn split_input(
                 Some(SizedKey::Expr(k)) => input_columns + k,
                 None => return internal_err!("sized arguments without a key"),
             };
-            let key = Column::new(args.schema().field(key_column).name(), key_column);
-            Arc::new(RepartitionExec::try_new(
-                args,
-                Partitioning::Hash(
-                    vec![Arc::new(RasterSourceKeyExpr::new(Arc::new(key)))],
-                    partitions,
-                ),
+            Arc::new(RasterSourceSpreadExec::try_new(
+                args, key_column, partitions,
             )?)
         }
         None => args,
@@ -671,7 +666,7 @@ fn slice_ranges(estimates: &[u64], budget: u64) -> Vec<(usize, usize)> {
 /// 256 MiB — worked examples on the option's docs in `sedona-common`), or an
 /// explicit `SET`. `0` disables slicing. A session without the extension (a
 /// bare DataFusion context) gets the crate default.
-fn budget_bytes(context: &TaskContext) -> u64 {
+pub(crate) fn budget_bytes(context: &TaskContext) -> u64 {
     let bytes = context
         .session_config()
         .options()
@@ -708,8 +703,7 @@ fn estimate_rows(batch: &RecordBatch, sized_columns: &[usize]) -> Result<Vec<u64
 /// Re-slices its input's batches by the estimated bytes of the rasters in
 /// `sized_columns`, so the node above loads at most
 /// `sedona.raster.max_batch_bytes` of pixels per batch. The schema, order and
-/// partitioning are the input's, except over a raster-source spread (see
-/// [`RasterBatchSplitExec::try_new`]). See the module docs.
+/// partitioning are the input's. See the module docs.
 #[derive(Debug)]
 pub struct RasterBatchSplitExec {
     input: Arc<dyn ExecutionPlan>,
@@ -720,15 +714,6 @@ pub struct RasterBatchSplitExec {
 }
 
 impl RasterBatchSplitExec {
-    /// Over a raster-source spread (a `RepartitionExec` hashed by a
-    /// [`RasterSourceKeyExpr`]) the split reports
-    /// `Partitioning::UnknownPartitioning` over that many partitions instead
-    /// of passing `Hash([raster_source(..)], n)` up. That hash is not a
-    /// distribution any other plan can match: rows without an out-DB file
-    /// draw their key from a running counter, so evaluating the same
-    /// expression elsewhere would not reproduce it. The spread is a
-    /// load-balancing device, not a guarantee, and no parent (nor a later
-    /// rewrite of the plan) can rely on it.
     pub fn try_new(input: Arc<dyn ExecutionPlan>, sized_columns: Vec<usize>) -> Result<Self> {
         if sized_columns.is_empty() {
             return internal_err!("RasterBatchSplitExec requires at least one column to size by");
@@ -751,22 +736,7 @@ impl RasterBatchSplitExec {
                 }
             }
         }
-        let cache = match input.output_partitioning() {
-            Partitioning::Hash(keys, n)
-                if keys
-                    .iter()
-                    .any(|key| key.downcast_ref::<RasterSourceKeyExpr>().is_some()) =>
-            {
-                Arc::new(
-                    input
-                        .properties()
-                        .as_ref()
-                        .clone()
-                        .with_partitioning(Partitioning::UnknownPartitioning(*n)),
-                )
-            }
-            _ => Arc::clone(input.properties()),
-        };
+        let cache = Arc::clone(input.properties());
         Ok(Self {
             cache,
             input,

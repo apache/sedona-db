@@ -119,7 +119,7 @@ def test_py_raster_loader_registration():
 
 
 def test_rs_ensureloaded_input_is_partitioned_by_raster_source():
-    """A small catalog's rows are hash-partitioned by raster source under the
+    """A small catalog's rows are spread by raster source under the
     split that feeds rs_ensureloaded, so loading is not confined to the
     partitions a whole-batch round-robin reaches, rows of one raster stay
     together (each raster loaded once), and results match a single-partition
@@ -162,11 +162,15 @@ def test_rs_ensureloaded_input_is_partitioned_by_raster_source():
         split_at = next(
             i for i, line in enumerate(lines) if line.startswith("RasterBatchSplitExec")
         )
-        # The hash repartition sits directly under the split, and it replaces
-        # the planner's round-robin instead of stacking on it.
-        spread = f"partitioning=Hash([raster_source(raster@1)], {target_partitions})"
+        # The spread sits directly under the split, and it replaces the
+        # planner's round-robin instead of stacking on it.
+        spread = (
+            "RasterSourceSpreadExec: key=raster_source(raster@1), "
+            f"partitions={target_partitions}"
+        )
         assert (spread in lines[split_at + 1]) == (target_partitions > 1), plan
         assert "RoundRobinBatch" not in plan, plan
+        assert "RepartitionExec" not in plan, plan
 
         rows = sd.sql(sql).to_arrow_table().to_pylist()
         results[target_partitions] = sorted(rows, key=lambda row: row["id"])

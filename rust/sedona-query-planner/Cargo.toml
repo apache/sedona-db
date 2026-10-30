@@ -32,6 +32,7 @@ arrow-schema = { workspace = true }
 async-trait = { workspace = true }
 datafusion = { workspace = true }
 datafusion-common = { workspace = true }
+datafusion-common-runtime = { workspace = true }
 datafusion-execution = { workspace = true }
 datafusion-expr = { workspace = true }
 datafusion-optimizer = { workspace = true }
@@ -42,6 +43,7 @@ sedona-common = { workspace = true }
 sedona-expr = { workspace = true }
 sedona-raster = { workspace = true }
 sedona-schema = { workspace = true }
+tokio = { workspace = true }
 
 [dev-dependencies]
 arrow = { workspace = true }
