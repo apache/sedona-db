@@ -432,3 +432,168 @@ def test_st_polygonize_single_geom(eng, geom, expected):
         ) AS t(geom)""",
         expected,
     )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+def test_st_union_agg_polygons(eng):
+    eng = eng.create_or_skip()
+    suffix = agg_fn_suffix(eng)
+    eng.assert_query_result(
+        f"""SELECT ST_Normalize(ST_Union{suffix}(ST_GeomFromText(geom))) FROM (
+            VALUES
+                ('POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))'),
+                ('POLYGON ((1 1, 3 1, 3 3, 1 3, 1 1))'),
+                (NULL)
+        ) AS t(geom)""",
+        "POLYGON ((0 0, 0 2, 1 2, 1 3, 3 3, 3 1, 2 1, 2 0, 0 0))",
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geoms", "expected"),
+    [
+        (["POINT Z (1 2 3)"], "POINT Z (1 2 3)"),
+        (["POINT Z (1 2 3)", "POINT Z (5 6 7)"], "MULTIPOINT Z (1 2 3, 5 6 7)"),
+        (["POINT EMPTY", "POINT Z (1 2 3)"], "POINT Z (1 2 3)"),
+    ],
+)
+def test_st_union_agg_z(eng, geoms, expected):
+    eng = eng.create_or_skip()
+    suffix = agg_fn_suffix(eng)
+    values = ", ".join(f"('{geom}')" for geom in geoms)
+    eng.assert_query_result(
+        f"""SELECT ST_Union{suffix}(ST_GeomFromText(geom)) FROM (
+            VALUES {values}
+        ) AS t(geom)""",
+        expected,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB])
+def test_st_union_agg_zm(eng):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        """SELECT ST_Union_Agg(ST_GeomFromText(geom)) FROM (
+            VALUES ('POINT ZM (1 2 3 4)'), ('POINT ZM (5 6 7 8)'), ('POINT ZM EMPTY')
+        ) AS t(geom)""",
+        "MULTIPOINT ZM (1 2 3 4, 5 6 7 8)",
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    "geoms",
+    [
+        ["POINT (1 2)", "POINT Z (3 4 5)"],
+        ["POINT Z (1 2 3)", "POINT ZM (3 4 5 6)"],
+    ],
+)
+def test_st_union_agg_mixed_dimensions(eng, geoms):
+    eng = eng.create_or_skip()
+    suffix = agg_fn_suffix(eng)
+    values = ", ".join(f"('{geom}')" for geom in geoms)
+    with pytest.raises(Exception, match="mixed dimension geometries"):
+        eng.execute_and_collect(
+            f"""SELECT ST_Union{suffix}(ST_GeomFromText(geom)) FROM (
+                VALUES {values}
+            ) AS t(geom)"""
+        )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geoms", "expected"),
+    [
+        (["POINT EMPTY"], "POINT EMPTY"),
+        (["POINT ZM EMPTY"], "POINT EMPTY"),
+        (["POLYGON Z EMPTY", "POINT Z EMPTY"], "POLYGON EMPTY"),
+        (["LINESTRING ZM EMPTY", "POINT ZM EMPTY"], "LINESTRING EMPTY"),
+        (["MULTIPOINT EMPTY", "LINESTRING EMPTY"], "MULTIPOINT EMPTY"),
+        (["POINT EMPTY", "GEOMETRYCOLLECTION EMPTY"], "GEOMETRYCOLLECTION EMPTY"),
+        (["GEOMETRYCOLLECTION Z (POINT Z EMPTY)"], "GEOMETRYCOLLECTION EMPTY"),
+        (["GEOMETRYCOLLECTION Z (POINT Z EMPTY)", "POINT (1 2)"], "POINT (1 2)"),
+        (
+            [
+                "GEOMETRYCOLLECTION (GEOMETRYCOLLECTION (POINT EMPTY))",
+                "POINT Z (1 2 3)",
+            ],
+            "POINT Z (1 2 3)",
+        ),
+    ],
+)
+def test_st_union_agg_empty(eng, geoms, expected):
+    eng = eng.create_or_skip()
+    suffix = agg_fn_suffix(eng)
+    values = ", ".join(f"('{geom}')" for geom in geoms)
+    eng.assert_query_result(
+        f"""SELECT ST_Union{suffix}(ST_GeomFromText(geom)) FROM (
+            VALUES {values}
+        ) AS t(geom)""",
+        expected,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+def test_st_union_agg_all_null(eng):
+    eng = eng.create_or_skip()
+    suffix = agg_fn_suffix(eng)
+    eng.assert_query_result(
+        f"""SELECT ST_Union{suffix}(ST_GeomFromText(geom)) FROM (
+            VALUES (NULL), (NULL), (NULL)
+        ) AS t(geom)""",
+        None,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+def test_st_union_agg_zero_input(eng):
+    eng = eng.create_or_skip()
+    suffix = agg_fn_suffix(eng)
+    eng.assert_query_result(
+        f"""SELECT ST_Union{suffix}(ST_GeomFromText(geom)) AS empty FROM (
+            VALUES ('POINT (1 2)')
+        ) AS t(geom) WHERE false""",
+        None,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize("num_groups", [None, 1, 7, 2000])
+@pytest.mark.parametrize(
+    "geometry",
+    ["geometry", "ST_Force3D(geometry)", "ST_Force4D(geometry)"],
+)
+def test_st_union_agg_matches_collect_chain(eng, con, num_groups, geometry):
+    eng = eng.create_or_skip()
+
+    df_polygons = con.sql("""
+        SELECT id, geometry FROM sd_random_geometry(
+            '{"geom_type": "Polygon", "num_rows": 2000, "seed": 9728}'
+        )
+    """)
+    eng.create_table_arrow("df_polygons", df_polygons.to_arrow_table())
+
+    if num_groups is None:
+        select_prefix = ""
+        group_by_clause = ""
+    else:
+        select_prefix = f"(id % {num_groups}) AS id_mod,"
+        group_by_clause = "GROUP BY id_mod ORDER BY id_mod"
+
+    result_new = eng.execute_and_collect(f"""
+        SELECT {select_prefix} ST_Union_Agg({geometry}) AS geom
+        FROM df_polygons
+        {group_by_clause}
+    """)
+    result_old = eng.execute_and_collect(f"""
+        SELECT {select_prefix} ST_UnaryUnion(ST_Collect_Agg({geometry})) AS geom
+        FROM df_polygons
+        {group_by_clause}
+    """)
+
+    geopandas.testing.assert_geodataframe_equal(
+        eng.result_to_pandas(result_new),
+        eng.result_to_pandas(result_old),
+        normalize=True,
+    )
