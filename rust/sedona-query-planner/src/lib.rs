@@ -24,7 +24,8 @@ mod reconcile_union_crs;
 // https://github.com/apache/sedona-db/issues/1232.
 pub mod push_down_leaf_projections;
 pub mod query_planner;
-pub mod raster_batch_budget;
+pub mod raster_materialization;
+pub mod raster_source_spread;
 mod spatial_expr_utils;
 pub mod spatial_join_physical_planner;
 pub mod spatial_predicate;

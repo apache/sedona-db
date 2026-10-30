@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import re
 import sys
 
 import numpy as np
@@ -418,10 +419,11 @@ def test_sharded_array_reads_one_row_per_inner_chunk(tmp_path):
     """A sharded array yields one row per inner chunk, not one per shard.
 
     Shape (3, 5) with 2x2 inner chunks in 4x4 shards: a 2x3 inner-chunk
-    grid inside a 1x2 shard grid. The reader must emit the six 2x2 rows
-    with the pixels of each inner chunk (fill value past the array edge),
-    in row-major order over the inner-chunk grid. Reading per shard would
-    give two 4x4 rows instead.
+    grid inside a 1x2 shard grid. The reader must emit six 2x2 rows with
+    the pixels of each inner chunk (fill value past the array edge). Reading
+    per shard would give two 4x4 rows instead. The rows come back in no
+    particular order once the loads are spread over partitions, so each is
+    matched to its inner chunk by its chunk anchor.
     """
     values = np.arange(15, dtype=np.uint8).reshape(3, 5) + 1
     root = zarr.open_group(str(tmp_path), mode="w")
@@ -443,12 +445,17 @@ def test_sharded_array_reads_one_row_per_inner_chunk(tmp_path):
 
     padded = np.zeros((4, 6), dtype=np.uint8)
     padded[:3, :5] = values
-    for i, (cy, cx) in enumerate([(0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (1, 2)]):
+    chunks = {}
+    for i in range(tab.num_rows):
         band = tab["raster"][i].as_py().bands[0]
-        chunk = band.to_numpy()
+        anchor = re.search(r"&chunk=(\d+),(\d+)$", band.outdb_uri)
+        assert anchor, band.outdb_uri
+        chunks[(int(anchor.group(1)), int(anchor.group(2)))] = band.to_numpy()
+    assert sorted(chunks) == [(0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (1, 2)]
+    for (cy, cx), chunk in chunks.items():
         assert chunk.shape == (2, 2)
         expected = padded[2 * cy : 2 * cy + 2, 2 * cx : 2 * cx + 2]
-        np.testing.assert_array_equal(chunk, expected)
+        np.testing.assert_array_equal(chunk, expected, err_msg=f"chunk {(cy, cx)}")
 
 
 # Each numpy dtype below maps to a different `BandDataType` arm in
