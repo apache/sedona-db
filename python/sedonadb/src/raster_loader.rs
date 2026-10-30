@@ -134,7 +134,7 @@ impl AsyncRasterLoader for PyRasterLoader {
 
                     // The buffer protocol did not join Python's Limited API
                     // until 3.11. Convert through the built-in bytes type so
-                    // this extension can use abi3 while retaining Python 3.9
+                    // this extension can use abi3 while retaining Python 3.10
                     // support. `Bytes` takes ownership of the resulting Vec,
                     // so this performs one copy at the Python/Rust boundary.
                     let py_bytes = py
