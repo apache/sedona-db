@@ -17,6 +17,7 @@
 use std::{sync::Arc, vec};
 
 use crate::executor::WkbExecutor;
+use crate::wkt_writer::write_geometry;
 use arrow_array::builder::StringBuilder;
 use arrow_schema::DataType;
 use datafusion_common::error::{DataFusionError, Result};
@@ -29,7 +30,8 @@ use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
 
 /// ST_AsText() scalar UDF implementation
 ///
-/// An implementation of WKT writing using GeoRust's wkt crate.
+/// An implementation of WKT writing using GeoRust's wkt crate, with the empty members of
+/// multi-geometries written as the crate does not yet write them.
 pub fn st_astext_udf() -> SedonaScalarUDF {
     let udf = SedonaScalarUDF::new(
         "st_astext",
@@ -71,7 +73,7 @@ impl SedonaScalarKernel for STAsText {
         executor.execute_wkb_void(|maybe_item| {
             match maybe_item {
                 Some(item) => {
-                    wkt::to_wkt::write_geometry(&mut builder, &item)
+                    write_geometry(&mut builder, &item)
                         .map_err(|err| DataFusionError::External(Box::new(err)))?;
                     builder.append_value("");
                 }
@@ -99,6 +101,13 @@ mod tests {
     use sedona_testing::{
         compare::{assert_array_equal, assert_scalar_equal},
         testers::ScalarUdfTester,
+    };
+    use wkt::{
+        Wkt,
+        types::{
+            Coord, Dimension, GeometryCollection, LineString, MultiPoint, MultiPolygon, Point,
+            Polygon,
+        },
     };
 
     use super::*;
@@ -141,5 +150,112 @@ mod tests {
     fn aliases() {
         let udf: ScalarUDF = st_astext_udf().into();
         assert!(udf.aliases().contains(&"st_aswkt".to_string()));
+    }
+
+    #[test]
+    fn empty_members() {
+        // An empty member of a multi-geometry, and an empty interior ring, are written EMPTY, as in
+        // the WKT grammar
+        let tester = ScalarUdfTester::new(st_astext_udf().into(), vec![WKB_GEOMETRY]);
+        for (wkt, expected) in [
+            ("MULTILINESTRING (EMPTY)", "MULTILINESTRING(EMPTY)"),
+            (
+                "MULTILINESTRING ((1 2, 3 4), EMPTY)",
+                "MULTILINESTRING((1 2,3 4),EMPTY)",
+            ),
+            ("MULTIPOLYGON (EMPTY)", "MULTIPOLYGON(EMPTY)"),
+            (
+                "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 0)), EMPTY)",
+                "MULTIPOLYGON(((0 0,1 0,1 1,0 0)),EMPTY)",
+            ),
+            (
+                "GEOMETRYCOLLECTION (POINT (1 2), MULTIPOLYGON (EMPTY))",
+                "GEOMETRYCOLLECTION(POINT(1 2),MULTIPOLYGON(EMPTY))",
+            ),
+        ] {
+            assert_scalar_equal(
+                &tester.invoke_wkb_scalar(Some(wkt)).unwrap(),
+                &ScalarValue::Utf8(Some(expected.to_string())),
+            );
+        }
+
+        // The WKT parser takes neither an empty point in a MULTIPOINT nor an empty ring, so these
+        // are written as WKB
+        let coord = |x, y| Coord {
+            x,
+            y,
+            z: None,
+            m: None,
+        };
+        let ring = |coords: &[(f64, f64)]| {
+            LineString::new(
+                coords.iter().map(|&(x, y)| coord(x, y)).collect(),
+                Dimension::XY,
+            )
+        };
+        let triangle = ring(&[(0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 0.0)]);
+        let polygon_with_empty_hole = Polygon::new(
+            vec![triangle, LineString::empty(Dimension::XY)],
+            Dimension::XY,
+        );
+        for (geom, expected) in [
+            (
+                Wkt::MultiPoint(MultiPoint::new(
+                    vec![Point::empty(Dimension::XY)],
+                    Dimension::XY,
+                )),
+                "MULTIPOINT(EMPTY)",
+            ),
+            (
+                Wkt::MultiPoint(MultiPoint::new(
+                    vec![
+                        Point::from_coord(coord(1.0, 2.0)),
+                        Point::empty(Dimension::XY),
+                    ],
+                    Dimension::XY,
+                )),
+                "MULTIPOINT((1 2),EMPTY)",
+            ),
+            (
+                Wkt::MultiPoint(MultiPoint::new(
+                    vec![Point::empty(Dimension::XYZ)],
+                    Dimension::XYZ,
+                )),
+                "MULTIPOINT Z(EMPTY)",
+            ),
+            (
+                Wkt::Polygon(polygon_with_empty_hole.clone()),
+                "POLYGON((0 0,4 0,4 4,0 0),EMPTY)",
+            ),
+            (
+                Wkt::MultiPolygon(MultiPolygon::new(
+                    vec![polygon_with_empty_hole],
+                    Dimension::XY,
+                )),
+                "MULTIPOLYGON(((0 0,4 0,4 4,0 0),EMPTY))",
+            ),
+            (
+                Wkt::GeometryCollection(GeometryCollection::new(
+                    vec![Wkt::MultiPoint(MultiPoint::new(
+                        vec![
+                            Point::empty(Dimension::XY),
+                            Point::from_coord(coord(1.0, 2.0)),
+                        ],
+                        Dimension::XY,
+                    ))],
+                    Dimension::XY,
+                )),
+                "GEOMETRYCOLLECTION(MULTIPOINT(EMPTY,(1 2)))",
+            ),
+        ] {
+            let mut wkb = vec![];
+            wkb::writer::write_geometry(&mut wkb, &geom, &Default::default()).unwrap();
+            assert_scalar_equal(
+                &tester
+                    .invoke_scalar(ScalarValue::Binary(Some(wkb)))
+                    .unwrap(),
+                &ScalarValue::Utf8(Some(expected.to_string())),
+            );
+        }
     }
 }
