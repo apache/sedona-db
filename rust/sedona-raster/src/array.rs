@@ -927,11 +927,8 @@ impl<'a> RasterStructArray<'a> {
         if raster_idx >= self.len() || self.is_null(raster_idx) {
             return None;
         }
-        let offsets = self.bands_list.value_offsets();
-        let band_row = offsets[raster_idx] as usize + band_idx;
-        if band_row >= offsets[raster_idx + 1] as usize
-            || self.band_outdb_uri_array.is_null(band_row)
-        {
+        let band_row = self.band_rows(raster_idx).nth(band_idx)?;
+        if self.band_outdb_uri_array.is_null(band_row) {
             return None;
         }
         Some(self.band_outdb_uri_array.value(band_row))

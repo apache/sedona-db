@@ -182,7 +182,7 @@ impl RasterSourceKeyExpr {
         }
     }
 
-    fn keys(&self, rasters: &RasterStructArray) -> Result<UInt64Array> {
+    fn keys(&self, rasters: &RasterStructArray) -> UInt64Array {
         let mut out = Vec::with_capacity(rasters.len());
         let mut without_source = 0u64;
         // Raster rows arrive in runs (a join emits a raster's matches
@@ -214,8 +214,7 @@ impl RasterSourceKeyExpr {
         let mut next = self
             .fallback
             .fetch_add(without_source, AtomicOrdering::Relaxed);
-        Ok(out
-            .into_iter()
+        out.into_iter()
             .map(|key| {
                 key.unwrap_or_else(|| {
                     let key = next;
@@ -223,7 +222,7 @@ impl RasterSourceKeyExpr {
                     key
                 })
             })
-            .collect())
+            .collect()
     }
 }
 
@@ -268,7 +267,7 @@ impl PhysicalExpr for RasterSourceKeyExpr {
                 )
             })?;
         let rasters = RasterStructArray::try_new(rasters)?;
-        Ok(ColumnarValue::Array(Arc::new(self.keys(&rasters)?)))
+        Ok(ColumnarValue::Array(Arc::new(self.keys(&rasters))))
     }
 
     /// Fallback keys come from a counter; see the type docs.
