@@ -25,7 +25,7 @@ change without notice.
 
 from sedonadb_geopandas._context import default_context
 from sedonadb_geopandas._frame import GeoDataFrame
-from sedonadb_geopandas._io import read_file, read_parquet
+from sedonadb_geopandas._io import list_layers, read_file, read_parquet
 from sedonadb_geopandas._relational import concat, merge
 from sedonadb_geopandas._series import GeoSeries, Series
 
@@ -35,6 +35,7 @@ __all__ = [
     "Series",
     "concat",
     "from_geopandas",
+    "list_layers",
     "merge",
     "points_from_xy",
     "read_file",

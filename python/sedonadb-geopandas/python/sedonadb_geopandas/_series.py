@@ -3049,6 +3049,24 @@ class GeoSeries(Series):
             )
         return _labeled(df, wkb.funcs.st_geomfromwkb(), crs)
 
+    @classmethod
+    def from_file(cls, filename, **kwargs):
+        """The geometry of a GDAL/OGR file, as `GeoSeries.from_file` reads it:
+        the active geometry of `read_file`, named `"geometry"`."""
+        from sedonadb_geopandas._io import read_file
+
+        frame = read_file(filename, **kwargs)
+        return GeoSeries(frame._df, frame._df[frame._geometry_name], "geometry")
+
+    def to_file(self, filename, driver=None, index=None, **kwargs):
+        """Write a GDAL/OGR file, as `GeoSeries.to_file` does: a frame of this
+        series alone, as its column named `"geometry"`; see
+        `GeoDataFrame.to_file`."""
+        from sedonadb_geopandas._frame import GeoDataFrame
+
+        frame = GeoDataFrame(self._df.select(self._expr.alias("geometry")), "geometry")
+        frame.to_file(filename, driver, index=index, **kwargs)
+
     def set_crs(self, crs=None, epsg=None, inplace=False, allow_override=False):
         """Label each geometry with a CRS without transforming coordinates.
 
