@@ -1232,11 +1232,13 @@ impl SpatialJoinBatchIterator {
             let wkb_opt = &wkbs[progress.current_probe_idx];
 
             let Some(wkb) = wkb_opt else {
-                if let Some(knn) = progress.knn.as_mut() {
-                    if knn.knn_results_merger.is_producing_final() {
-                        knn.empty_raw_probe_indices
-                            .push(progress.current_probe_idx as u32);
-                    }
+                if let Some(knn) = progress
+                    .knn
+                    .as_mut()
+                    .filter(|knn| knn.knn_results_merger.is_producing_final())
+                {
+                    knn.empty_raw_probe_indices
+                        .push(progress.current_probe_idx as u32);
                 }
                 // Move to next probe index
                 progress.current_probe_idx += 1;
@@ -1263,11 +1265,13 @@ impl SpatialJoinBatchIterator {
                     // Only on the final merge pass: intermediate zero-hit probes
                     // must stay absent from spill so later partitions can supply
                     // neighbors without duplicate/out-of-order spill indices.
-                    if let Some(knn) = progress.knn.as_mut() {
-                        if knn.knn_results_merger.is_producing_final() {
-                            knn.empty_raw_probe_indices
-                                .push(progress.current_probe_idx as u32);
-                        }
+                    if let Some(knn) = progress
+                        .knn
+                        .as_mut()
+                        .filter(|knn| knn.knn_results_merger.is_producing_final())
+                    {
+                        knn.empty_raw_probe_indices
+                            .push(progress.current_probe_idx as u32);
                     }
                 } else {
                     progress.probe_indices.extend(std::iter::repeat_n(
