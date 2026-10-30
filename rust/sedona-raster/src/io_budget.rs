@@ -471,11 +471,13 @@ mod tests {
         // The first waiter keeps its permit until the test has looked at the
         // budget, so the second is still in line when the assertions run.
         let (release_first, first_released) = std::sync::mpsc::channel::<()>();
+        let (first_acquired, acquired_first) = std::sync::mpsc::channel::<()>();
         std::thread::scope(|scope| {
             let (budget, order) = (&budget, &order);
             scope.spawn(move || {
                 let _permit = budget.acquire_blocking();
                 order.lock().unwrap().push("first");
+                first_acquired.send(()).unwrap();
                 first_released.recv().unwrap();
             });
             queued(budget, 1);
@@ -487,7 +489,12 @@ mod tests {
             // The freed slot goes to the first waiter; the second stays in
             // line, and a newcomer gets nothing.
             drop(held);
-            queued(budget, 1);
+            // Leaving the queue happens before acquire_blocking() returns.
+            // Wait for the recorded acquisition before inspecting the order.
+            acquired_first
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap();
+            assert_eq!(budget.waiting(), 1);
             assert_eq!(*order.lock().unwrap(), ["first"]);
             assert_eq!(budget.in_use(), 1);
             assert!(budget.try_acquire().is_none());
