@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use arrow_array::{Array, Float64Array, Int32Array, RecordBatch, StringArray};
@@ -1634,6 +1635,321 @@ async fn test_knn_join_with_filter_correctness(
         assert_eq!(actual_results, expected_results);
     }
 
+    Ok(())
+}
+
+/// The ids of every row, those with a missing geometry (which match nothing) too.
+fn ids_of(partitions: &[Vec<RecordBatch>]) -> Vec<i32> {
+    partitions
+        .iter()
+        .flatten()
+        .flat_map(|batch| {
+            let ids = batch.column(batch.schema().index_of("id").unwrap());
+            let ids = ids.as_any().downcast_ref::<Int32Array>().unwrap();
+            ids.values().to_vec()
+        })
+        .collect()
+}
+
+/// A KNN join condition of `L` and `R`, with `L` or `R` as the query side, and an extra
+/// condition that leaves rows of both sides without a match; and the pairs of `L.id` and `R.id`
+/// it matches.
+fn knn_join_with_unmatched_rows(
+    left_partitions: &[Vec<RecordBatch>],
+    right_partitions: &[Vec<RecordBatch>],
+    query_is_left: bool,
+) -> (String, Vec<(i32, i32)>) {
+    let k = 3;
+    let keep_pair = |l_id: i32, r_id: i32| l_id.rem_euclid(7) == r_id.rem_euclid(7);
+    let (knn, matches) = if query_is_left {
+        let matches = compute_knn_ground_truth_with_pair_filter(
+            left_partitions,
+            right_partitions,
+            k,
+            keep_pair,
+        );
+        let matches: Vec<_> = matches.into_iter().map(|(l, r, _)| (l, r)).collect();
+        (
+            format!("ST_KNN(L.geometry, R.geometry, {k}, false)"),
+            matches,
+        )
+    } else {
+        let matches = compute_knn_ground_truth_with_pair_filter(
+            right_partitions,
+            left_partitions,
+            k,
+            |r_id, l_id| keep_pair(l_id, r_id),
+        );
+        let matches: Vec<_> = matches.into_iter().map(|(r, l, _)| (l, r)).collect();
+        (
+            format!("ST_KNN(R.geometry, L.geometry, {k}, false)"),
+            matches,
+        )
+    };
+    let left_ids: HashSet<i32> = matches.iter().map(|(l, _)| *l).collect();
+    let right_ids: HashSet<i32> = matches.iter().map(|(_, r)| *r).collect();
+    assert!(
+        ids_of(left_partitions)
+            .iter()
+            .any(|l| !left_ids.contains(l))
+    );
+    assert!(
+        ids_of(right_partitions)
+            .iter()
+            .any(|r| !right_ids.contains(r))
+    );
+    (format!("{knn} AND (L.id % 7) = (R.id % 7)"), matches)
+}
+
+/// The rows a join of `L` and `R` of `join_type` gives for the KNN `matches` (pairs of `L.id`
+/// and `R.id`): `(L.id, R.id)` with `None` for the side an unmatched row has nothing of, or the
+/// one id a semi or anti join gives (as the first of the pair).
+fn knn_join_rows_of_join_type(
+    matches: &[(i32, i32)],
+    left_ids: &[i32],
+    right_ids: &[i32],
+    join_type: JoinType,
+) -> Vec<(Option<i32>, Option<i32>)> {
+    let matched_left: HashSet<i32> = matches.iter().map(|(l, _)| *l).collect();
+    let matched_right: HashSet<i32> = matches.iter().map(|(_, r)| *r).collect();
+    let pairs = matches.iter().map(|(l, r)| (Some(*l), Some(*r)));
+    let unmatched_left = left_ids
+        .iter()
+        .filter(|l| !matched_left.contains(l))
+        .map(|l| (Some(*l), None));
+    let unmatched_right = right_ids
+        .iter()
+        .filter(|r| !matched_right.contains(r))
+        .map(|r| (None, Some(*r)));
+    let one_side = |ids: &[i32], keep: &dyn Fn(&i32) -> bool| {
+        ids.iter()
+            .filter(|id| keep(id))
+            .map(|id| (Some(*id), None))
+            .collect::<Vec<_>>()
+    };
+    let mut rows: Vec<_> = match join_type {
+        JoinType::Left => pairs.chain(unmatched_left).collect(),
+        JoinType::Right => pairs.chain(unmatched_right).collect(),
+        JoinType::Full => pairs.chain(unmatched_left).chain(unmatched_right).collect(),
+        JoinType::LeftSemi => one_side(left_ids, &|l| matched_left.contains(l)),
+        JoinType::LeftAnti => one_side(left_ids, &|l| !matched_left.contains(l)),
+        JoinType::RightSemi => one_side(right_ids, &|r| matched_right.contains(r)),
+        JoinType::RightAnti => one_side(right_ids, &|r| !matched_right.contains(r)),
+        _ => unreachable!("not tested with {join_type}"),
+    };
+    rows.sort();
+    rows
+}
+
+#[rstest]
+#[tokio::test]
+async fn test_knn_join_with_join_types_correctness(
+    #[values(
+        JoinType::Left,
+        JoinType::Right,
+        JoinType::Full,
+        JoinType::LeftSemi,
+        JoinType::LeftAnti,
+        JoinType::RightSemi,
+        JoinType::RightAnti
+    )]
+    join_type: JoinType,
+    #[values(true, false)] query_is_left: bool,
+    #[values(1, 3)] num_partitions: usize,
+    #[values(10, 1000)] max_batch_size: usize,
+) -> Result<()> {
+    // An outer, semi or anti join keeps or drops the rows without a match by the side they are
+    // on, whichever side the query side is.
+    let ((left_schema, left_partitions), (right_schema, right_partitions)) =
+        create_knn_test_data((0.1, 10.0), WKB_GEOMETRY)?;
+    let options = SpatialJoinOptions {
+        debug: SpatialJoinDebugOptions {
+            num_spatial_partitions: NumSpatialPartitionsConfig::Fixed(num_partitions),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let (on, matches) =
+        knn_join_with_unmatched_rows(&left_partitions, &right_partitions, query_is_left);
+    let sql = match join_type {
+        JoinType::Left => format!("SELECT L.id, R.id FROM L LEFT JOIN R ON {on}"),
+        JoinType::Right => format!("SELECT L.id, R.id FROM L RIGHT JOIN R ON {on}"),
+        JoinType::Full => format!("SELECT L.id, R.id FROM L FULL OUTER JOIN R ON {on}"),
+        JoinType::LeftSemi => format!("SELECT L.id FROM L LEFT SEMI JOIN R ON {on}"),
+        JoinType::LeftAnti => format!("SELECT L.id FROM L LEFT ANTI JOIN R ON {on}"),
+        JoinType::RightSemi => format!("SELECT R.id FROM L RIGHT SEMI JOIN R ON {on}"),
+        JoinType::RightAnti => format!("SELECT R.id FROM L RIGHT ANTI JOIN R ON {on}"),
+        _ => unreachable!(),
+    };
+    let expected = knn_join_rows_of_join_type(
+        &matches,
+        &ids_of(&left_partitions),
+        &ids_of(&right_partitions),
+        join_type,
+    );
+
+    let result = run_spatial_join_query(
+        &left_schema,
+        &right_schema,
+        left_partitions,
+        right_partitions,
+        Some(options),
+        max_batch_size,
+        &sql,
+    )
+    .await;
+    // Over several spatial partitions only the outer joins that keep the query side's
+    // unmatched rows are supported; the rest return an error, not wrong rows or a panic.
+    let supported_partitioned = matches!(
+        (join_type, query_is_left),
+        (JoinType::Left, true) | (JoinType::Right, false)
+    );
+    if num_partitions > 1 && !supported_partitioned {
+        let err = result.expect_err("expected an error over several spatial partitions");
+        assert!(err.to_string().contains("apache/sedona-db#1541"), "{err}");
+        return Ok(());
+    }
+    let batch = result?;
+    let ids = |i: usize| {
+        let ids = batch
+            .column(i)
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .unwrap();
+        ids.iter().collect::<Vec<_>>()
+    };
+    let mut actual: Vec<_> = if batch.num_columns() == 2 {
+        ids(0).into_iter().zip(ids(1)).collect()
+    } else {
+        ids(0).into_iter().map(|id| (id, None)).collect()
+    };
+    actual.sort();
+
+    assert_eq!(actual, expected);
+    Ok(())
+}
+
+#[rstest]
+#[tokio::test]
+async fn test_knn_mark_joins(
+    #[values(JoinType::LeftMark, JoinType::RightMark)] join_type: JoinType,
+    #[values(true, false)] query_is_left: bool,
+) -> Result<()> {
+    // SQL has no mark join: the KNN join is planned as a LEFT JOIN, then made a mark join, which
+    // marks each row of its side by whether it has a match, whichever side the query side is.
+    let ((left_schema, left_partitions), (right_schema, right_partitions)) =
+        create_knn_test_data((0.1, 10.0), WKB_GEOMETRY)?;
+    let (on, matches) =
+        knn_join_with_unmatched_rows(&left_partitions, &right_partitions, query_is_left);
+    let (ids, matched): (Vec<i32>, HashSet<i32>) = match join_type {
+        JoinType::LeftMark => (
+            ids_of(&left_partitions),
+            matches.iter().map(|(l, _)| *l).collect(),
+        ),
+        _ => (
+            ids_of(&right_partitions),
+            matches.iter().map(|(_, r)| *r).collect(),
+        ),
+    };
+    let mut expected: Vec<_> = ids.iter().map(|id| (*id, matched.contains(id))).collect();
+    expected.sort();
+
+    let options = SpatialJoinOptions::default();
+    let ctx = setup_context(Some(options.clone()), 10)?;
+    ctx.register_table(
+        "L",
+        Arc::new(MemTable::try_new(left_schema, left_partitions)?),
+    )?;
+    ctx.register_table(
+        "R",
+        Arc::new(MemTable::try_new(right_schema, right_partitions)?),
+    )?;
+    let df = ctx
+        .sql(&format!("SELECT * FROM L LEFT JOIN R ON {on}"))
+        .await?;
+    let plan = df.create_physical_plan().await?;
+    let spatial_join_execs = collect_spatial_join_exec(&plan)?;
+    assert_eq!(spatial_join_execs.len(), 1);
+    let exec = spatial_join_execs[0];
+    let mark_exec = SpatialJoinExec::try_new(
+        exec.left.clone(),
+        exec.right.clone(),
+        exec.on.clone(),
+        exec.filter.clone(),
+        &join_type,
+        None,
+        &options,
+    )?;
+
+    let batches = datafusion_physical_plan::collect(Arc::new(mark_exec), ctx.task_ctx()).await?;
+    let batch = arrow::compute::concat_batches(&batches[0].schema(), &batches)?;
+    let id_column = batch.schema().index_of("id")?;
+    let ids = batch
+        .column(id_column)
+        .as_any()
+        .downcast_ref::<Int32Array>()
+        .unwrap();
+    let marks = batch.column(batch.num_columns() - 1);
+    let marks = marks
+        .as_any()
+        .downcast_ref::<arrow_array::BooleanArray>()
+        .unwrap();
+    let mut actual: Vec<_> = ids
+        .values()
+        .iter()
+        .copied()
+        .zip(marks.values().iter())
+        .collect();
+    actual.sort();
+
+    assert_eq!(actual, expected);
+    Ok(())
+}
+
+/// The queries of apache/sedona-db#1515: a LEFT JOIN on ST_KNN keeps a query row none of whose
+/// nearest neighbours passes the other conditions, with nulls for the candidates' columns,
+/// whatever their types.
+#[tokio::test]
+async fn test_knn_left_join_keeps_unmatched_query_rows() -> Result<()> {
+    let ctx = setup_context(Some(SpatialJoinOptions::default()), 8192)?;
+    let query = |rids: [&str; 2], on: &str| {
+        format!(
+            "WITH l AS (SELECT * FROM (VALUES (1, ST_Point(0.0, 0.0)), (2, ST_Point(100.0, 0.0))) AS t(id, geom)), \
+             r AS (SELECT * FROM (VALUES ({}, ST_Point(1.0, 0.0)), ({}, ST_Point(5.0, 0.0))) AS t(rid, geom)) \
+             SELECT l.id, r.rid FROM l LEFT JOIN r ON {on} ORDER BY l.id",
+            rids[0], rids[1]
+        )
+    };
+    let rows = async |sql: String| -> Result<String> {
+        let batches = ctx.sql(&sql).await?.collect().await?;
+        Ok(datafusion::arrow::util::pretty::pretty_format_batches(&batches)?.to_string())
+    };
+
+    let unmatched = rows(query(
+        ["10", "30"],
+        "ST_KNN(l.geom, r.geom, 1) AND ST_Distance(l.geom, r.geom) <= 10",
+    ))
+    .await?;
+    assert_eq!(
+        unmatched,
+        "+----+-----+\n\
+         | id | rid |\n\
+         +----+-----+\n\
+         | 1  | 10  |\n\
+         | 2  |     |\n\
+         +----+-----+"
+    );
+
+    let other_types = rows(query(["'a'", "'c'"], "ST_KNN(l.geom, r.geom, 1)")).await?;
+    assert_eq!(
+        other_types,
+        "+----+-----+\n\
+         | id | rid |\n\
+         +----+-----+\n\
+         | 1  | a   |\n\
+         | 2  | c   |\n\
+         +----+-----+"
+    );
     Ok(())
 }
 
