@@ -30,6 +30,7 @@
 #include <gtest/gtest.h>
 #include <thrust/sequence.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
