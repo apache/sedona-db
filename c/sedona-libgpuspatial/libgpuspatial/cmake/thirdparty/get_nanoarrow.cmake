@@ -49,10 +49,6 @@ function(find_and_configure_nanoarrow)
                   ${_exclude_from_all})
   set_target_properties(nanoarrow PROPERTIES POSITION_INDEPENDENT_CODE ON)
   target_compile_options(nanoarrow PRIVATE -Wno-conversion)
-  if(TARGET nanoarrow_ipc)
-    set_target_properties(nanoarrow_ipc PROPERTIES POSITION_INDEPENDENT_CODE ON)
-    target_compile_options(nanoarrow_ipc PRIVATE -Wno-conversion)
-  endif()
   rapids_export_find_package_root(BUILD
                                   nanoarrow
                                   "${nanoarrow_BINARY_DIR}"
