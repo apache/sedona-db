@@ -95,6 +95,7 @@ SEXP savvy_InternalDataFrame_to_provider__ffi(SEXP self__, SEXP c_arg__ctx);
 SEXP savvy_InternalDataFrame_to_view__ffi(SEXP self__, SEXP c_arg__ctx,
                                           SEXP c_arg__table_ref,
                                           SEXP c_arg__overwrite);
+SEXP savvy_InternalDataFrame_unnest__ffi(SEXP self__, SEXP c_arg__columns);
 SEXP savvy_InternalDataFrame_with_params__ffi(SEXP self__,
                                               SEXP c_arg__params_sexp);
 
