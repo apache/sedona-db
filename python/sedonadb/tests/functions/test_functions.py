@@ -122,7 +122,7 @@ def test_st_aswkb_alias(eng):
 )
 def test_st_astext(eng, geom):
     eng = eng.create_or_skip()
-    expected = geom
+    expected = _geoarrow_wkt(geom) if isinstance(eng, SedonaDB) else geom
 
     if isinstance(eng, PostGIS) and expected is not None:
         expected = expected.replace(r"M(", r"M (")
@@ -131,10 +131,43 @@ def test_st_astext(eng, geom):
     eng.assert_query_result(f"SELECT ST_AsText({geom_or_null(geom)})", expected)
 
 
+def _geoarrow_wkt(geom):
+    """Expected formatting from geoarrow-c's WKT writer."""
+    return {
+        None: None,
+        "POINT EMPTY": "POINT EMPTY",
+        "LINESTRING EMPTY": "LINESTRING EMPTY",
+        "POLYGON EMPTY": "POLYGON EMPTY",
+        "MULTIPOINT EMPTY": "MULTIPOINT EMPTY",
+        "MULTILINESTRING EMPTY": "MULTILINESTRING EMPTY",
+        "MULTIPOLYGON EMPTY": "MULTIPOLYGON EMPTY",
+        "GEOMETRYCOLLECTION EMPTY": "GEOMETRYCOLLECTION EMPTY",
+        "POINT(1 1)": "POINT (1 1)",
+        "LINESTRING(0 0,1 1)": "LINESTRING (0 0, 1 1)",
+        "POLYGON((0 0,1 0,1 1,0 1,0 0))": "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
+        "MULTIPOINT((0 0),(1 1))": "MULTIPOINT (0 0, 1 1)",
+        "MULTILINESTRING((0 0,1 1),(1 1,2 2))": "MULTILINESTRING ((0 0, 1 1), (1 1, 2 2))",
+        "MULTIPOLYGON(((0 0,1 0,1 1,0 1,0 0)),((0 0,1 0,1 1,0 1,0 0)))": "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)), ((0 0, 1 0, 1 1, 0 1, 0 0)))",
+        "GEOMETRYCOLLECTION(POINT(0 0),POLYGON((0 0,1 0,1 1,0 1,0 0)),LINESTRING(0 0,1 1),GEOMETRYCOLLECTION(POLYGON((0 0,-1 0,-1 -1,0 -1,0 0))))": "GEOMETRYCOLLECTION (POINT (0 0), POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0)), LINESTRING (0 0, 1 1), GEOMETRYCOLLECTION (POLYGON ((0 0, -1 0, -1 -1, 0 -1, 0 0))))",
+        "POINT Z(0 0 0)": "POINT Z (0 0 0)",
+        "POINT ZM(0 0 0 0)": "POINT ZM (0 0 0 0)",
+        "LINESTRING M(0 0 0,1 1 1)": "LINESTRING M (0 0 0, 1 1 1)",
+    }[geom]
+
+
+@pytest.mark.parametrize("eng", [SedonaDB])
+def test_st_astext_precision(eng):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        "SELECT ST_AsText(ST_Point(1.123456789, 2.5), 6)",
+        "POINT (1.123457 2.5)",
+    )
+
+
 @pytest.mark.parametrize("eng", [SedonaDB])
 def test_st_aswkt_alias(eng):
     eng = eng.create_or_skip()
-    eng.assert_query_result("SELECT ST_AsWKT(ST_Point(1, 2))", "POINT(1 2)")
+    eng.assert_query_result("SELECT ST_AsWKT(ST_Point(1, 2))", "POINT (1 2)")
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
@@ -920,7 +953,7 @@ def test_st_centroid(eng, geom, expected):
             False,
         ),  # Degenerate polygon - zero-area Triangle
         (
-            "Polygon((0 0, 2 0, 1 1, 2 2, 0 2, 1 1, 0 0))",
+            "POLYGON((0 0, 2 0, 1 1, 2 2, 0 2, 1 1, 0 0))",
             False,
         ),  # Star shape with self-intersection
         (
@@ -1034,7 +1067,7 @@ def test_st_issimple(eng, geom, expected):
         # Inner ring shares an edge with the outer ring
         ("POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0), (0 0, 0 1, 1 1, 1 0, 0 0))", False),
         # Self-intersecting polygon (figure-8)
-        ("Polygon((0 0, 2 0, 1 1, 2 2, 0 2, 1 1, 0 0))", False),
+        ("POLYGON((0 0, 2 0, 1 1, 2 2, 0 2, 1 1, 0 0))", False),
         # Inner ring touches the outer ring at a point
         (
             "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0), (1 10, 1 9, 2 9, 2 10, 1 10))",
@@ -1290,8 +1323,8 @@ def test_st_unaryunion(eng, geom, expected):
             "POLYGON ZM ((0 0 10 1, 4 0 10 2, 4 4 10 3, 0 4 10 4, 0 0 10 5))",
             "POLYGON ZM((0 0 10 1,4 0 10 2,4 4 10 3,0 4 10 4,0 0 10 5))",
         ),
-        ("MULTIPOINT Z ((0 0 0), (1 1 1))", "MULTIPOINT Z((0 0 0),(1 1 1))"),
-        ("MULTIPOINT ZM ((0 0 1 2), (1 1 3 4))", "MULTIPOINT ZM((0 0 1 2),(1 1 3 4))"),
+        ("MULTIPOINT Z ((0 0 0), (1 1 1))", "MULTIPOINT Z(0 0 0,1 1 1)"),
+        ("MULTIPOINT ZM ((0 0 1 2), (1 1 3 4))", "MULTIPOINT ZM(0 0 1 2,1 1 3 4)"),
         # Polygons overlap, so it's reduced to a single one
         (
             "MULTIPOLYGON Z (((0 0 10, 4 0 10, 4 4 10, 0 4 10, 0 0 10)), ((1 1 5, 1 2 5, 2 2 5, 2 1 5, 1 1 5)))",
@@ -2395,9 +2428,9 @@ def test_st_geometryfromtext_alias(eng):
     ("ewkt", "expected", "expected_srid"),
     [
         (None, None, None),
-        ("SRID=4326;POINT (0 0)", "POINT(0 0)", 4326),
-        ("SRID=3857;POINT (0 0)", "POINT(0 0)", 3857),
-        ("SRID=0;POINT (0 0)", "POINT(0 0)", 0),
+        ("SRID=4326;POINT (0 0)", "POINT (0 0)", 4326),
+        ("SRID=3857;POINT (0 0)", "POINT (0 0)", 3857),
+        ("SRID=0;POINT (0 0)", "POINT (0 0)", 0),
     ],
 )
 def test_st_geomfromewkt(eng, ewkt, expected, expected_srid):
@@ -2708,7 +2741,10 @@ def test_st_geomfromwkbunchecked_invalid_wkb(eng):
     )
 
     # Using invalid WKB elsewhere may result in undefined behavior.
-    with pytest.raises(sedonadb._lib.SedonaError, match="failed to fill whole buffer"):
+    with pytest.raises(
+        sedonadb._lib.SedonaError,
+        match="Expected uint32 but found end of buffer",
+    ):
         eng.execute_and_collect("SELECT ST_AsText(ST_GeomFromWKBUnchecked(0x01))")
 
 
@@ -4545,7 +4581,7 @@ def test_st_minimum_clearance_line(eng, geom, expected):
         ("POINT (0 0)", "Valid Geometry"),
         ("POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))", "Valid Geometry"),
         ("POLYGON ((0 0, 1 1, 0 1, 1 0, 0 0))", "Self-intersection%"),
-        ("Polygon((0 0, 2 0, 1 1, 2 2, 0 2, 1 1, 0 0))", "Ring Self-intersection%"),
+        ("POLYGON((0 0, 2 0, 1 1, 2 2, 0 2, 1 1, 0 0))", "Ring Self-intersection%"),
     ],
 )
 def test_st_isvalidreason(eng, geom, expected):

@@ -105,7 +105,7 @@ GeoPandas takes a geographic CRS's coordinates as degrees east of Greenwich
 
 `GeoSeries` properties and methods follow GeoPandas, with a few differences
 in form: `to_wkt()` writes equivalent but differently spaced WKT
-(`POINT(1 2)`), `to_wkb()` writes ISO WKB (GeoPandas' `flavor="iso"`),
+(`POINT (1 2)`), `to_wkb()` writes ISO WKB (GeoPandas' `flavor="iso"`),
 `is_simple` and `boundary` answer for geometry collections where GEOS leaves
 them undefined, and `x`/`y`/`z` on a non-point raise when the result is
 computed rather than when the property is read.

@@ -84,6 +84,7 @@ sedona-catalog = { workspace = true }
 sedona-datasource = { workspace = true }
 sedona-expr = { workspace = true }
 sedona-functions = { workspace = true }
+sedona-geoarrow-c = { workspace = true }
 sedona-geo = { workspace = true, optional = true }
 sedona-geometry = { workspace = true }
 sedona-geoparquet = { workspace = true }
