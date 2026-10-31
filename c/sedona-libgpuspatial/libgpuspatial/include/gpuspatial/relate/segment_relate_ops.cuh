@@ -46,11 +46,7 @@ enum : uint32_t {
   SEG_HIT_1D = 1u << 30,
   SEG_PROPER_CROSS = 1u << 31,
   BVH_GEOM_ID_MASK = 0x0fffffffu,
-  SEG_FLAGS_MASK = 0xf0000000u,
-
-  // Maximum number of progression iterations when sweeping along a single probe segment.
-  // Guarantees termination even in degenerate geometries or floating-point clustering.
-  MAX_SEGMENT_SWEEP_ITERATIONS = 128
+  SEG_FLAGS_MASK = 0xf0000000u
 };
 
 DEV_HOST_INLINE uint32_t PackPIPCrossingPayload(uint32_t crossing_count,
@@ -292,7 +288,7 @@ DEV_HOST_INLINE void AnalyzeSegmentIntersection(const POINT_T& v1, const POINT_T
                  denom;
       t = fmax(0.0, fmin(1.0, t));
       bb_flags |= (SEG_HIT_ANY | SEG_HIT_0D | SEG_PROPER_CROSS);
-      if (t > t_cur) {
+      if (t > t_cur + eps) {
         t_next = fmin(t_next, t);
       }
     }
@@ -305,101 +301,261 @@ DEV_HOST_INLINE void AnalyzeSegmentIntersection(const POINT_T& v1, const POINT_T
  * covered by the other geometry's boundary (so neither BOUND_INTER nor BOUND_EXTER
  * was triggered).
  *
- * Works by taking the midpoint M of the first non-degenerate segment of the exterior
- * ring, determining the inward normal direction from the exterior ring's signed area,
- * and finding the closest ray-segment intersection s_min > 0 with any ring of the
- * polygon. The midpoint M + 0.5 * s_min * n is guaranteed to lie strictly in I(poly).
+ * Implements GEOS's InteriorPointArea scanline algorithm (InteriorPointArea.cpp):
+ * 1. Find a scanline Y that bisects the polygon's Y extent without coinciding with
+ *    any vertex Y coordinate.
+ * 2. Intersect the horizontal scanline with all non-horizontal segments of all rings.
+ * 3. Sort the intersection X coordinates (which occur in pairs by Jordan Curve Theorem)
+ *    and choose the midpoint of the widest interior interval.
+ *
+ * This method is completely scale-free (works identically on nanometer and planetary
+ * coordinates) and singularity-free because the scanline is guaranteed not to touch
+ * any vertex.
  */
 template <typename POINT_T, typename INDEX_T>
-DEV_HOST_INLINE bool FindPolygonInteriorPoint(const Polygon<POINT_T, INDEX_T>& poly,
-                                              POINT_T& out_pt) {
+DEV_HOST_INLINE bool FindPolygonInteriorPointScanline(const Polygon<POINT_T, INDEX_T>& poly,
+                                                      POINT_T& out_pt) {
   using scalar_t = typename POINT_T::scalar_t;
   if (poly.empty()) return false;
   auto ext_ring = poly.get_ring(0);
   if (ext_ring.num_segments() < 3) return false;
 
-  // 1. Compute twice the signed area of the exterior ring using shoelace formula
-  //    (translated relative to first vertex for numerical stability)
-  const auto& p0 = ext_ring.get_point(0);
-  double signed_area2 = 0.0;
-  for (size_t i = 0; i < ext_ring.num_segments(); ++i) {
-    const auto& a = ext_ring.get_point(i);
-    const auto& b = ext_ring.get_point(i + 1);
-    double ax = static_cast<double>(a.x()) - static_cast<double>(p0.x());
-    double ay = static_cast<double>(a.y()) - static_cast<double>(p0.y());
-    double bx = static_cast<double>(b.x()) - static_cast<double>(p0.x());
-    double by = static_cast<double>(b.y()) - static_cast<double>(p0.y());
-    signed_area2 += (ax * by - bx * ay);
+  const auto& mbr = poly.get_mbr();
+  double min_y = static_cast<double>(mbr.get_min().y());
+  double max_y = static_cast<double>(mbr.get_max().y());
+  if (min_y >= max_y) return false;
+
+  double centre_y = 0.5 * (min_y + max_y);
+  double lo_y = min_y;
+  double hi_y = max_y;
+
+  // Find vertex Y ordinates closest to centre_y from below and above
+  for (size_t r = 0; r < poly.num_rings(); ++r) {
+    auto ring = poly.get_ring(r);
+    for (size_t i = 0; i < ring.num_points(); ++i) {
+      double y = static_cast<double>(ring.get_point(i).y());
+      if (y <= centre_y) {
+        if (y > lo_y) lo_y = y;
+      } else {
+        if (y < hi_y) hi_y = y;
+      }
+    }
   }
 
-  // Try each segment of the exterior ring until a clean inward ray hit is found
-  for (size_t seg_idx = 0; seg_idx < ext_ring.num_segments(); ++seg_idx) {
-    const auto& v1 = ext_ring.get_point(seg_idx);
-    const auto& v2 = ext_ring.get_point(seg_idx + 1);
-    if (v1 == v2) continue;
+  // Guaranteed: no vertex lies strictly between lo_y and hi_y.
+  // Hence scan_y intersects only interior segment bodies, never vertices or horizontal edges.
+  double scan_y = 0.5 * (lo_y + hi_y);
 
-    double dx = static_cast<double>(v2.x()) - static_cast<double>(v1.x());
-    double dy = static_cast<double>(v2.y()) - static_cast<double>(v1.y());
-    // For CCW ring (signed_area2 > 0), interior is to the left: (-dy, dx).
-    // For CW ring (signed_area2 < 0), interior is to the right: (dy, -dx).
-    double nx = (signed_area2 >= 0.0) ? -dy : dy;
-    double ny = (signed_area2 >= 0.0) ? dx : -dx;
+  // Collect and sort crossing X coordinates on the scanline using insertion sort
+  // (registers/local memory, no dynamic heap allocation)
+  constexpr int kMaxCrossings = 64;
+  double crossings[kMaxCrossings];
+  int num_crossings = 0;
 
-    double mx = 0.5 * (static_cast<double>(v1.x()) + static_cast<double>(v2.x()));
-    double my = 0.5 * (static_cast<double>(v1.y()) + static_cast<double>(v2.y()));
+  for (size_t r = 0; r < poly.num_rings(); ++r) {
+    auto ring = poly.get_ring(r);
+    for (size_t i = 0; i < ring.num_segments(); ++i) {
+      const auto& p0 = ring.get_point(i);
+      const auto& p1 = ring.get_point(i + 1);
+      double y0 = static_cast<double>(p0.y());
+      double y1 = static_cast<double>(p1.y());
 
-    double s_min = std::numeric_limits<double>::max();
-    for (size_t r = 0; r < poly.num_rings(); ++r) {
-      auto ring = poly.get_ring(r);
-      for (size_t j = 0; j < ring.num_segments(); ++j) {
-        if (r == 0 && j == seg_idx) continue;
-        const auto& q1 = ring.get_point(j);
-        const auto& q2 = ring.get_point(j + 1);
-        if (q1 == q2) continue;
+      // Skip segments completely above or below the scanline
+      if ((y0 > scan_y && y1 > scan_y) || (y0 < scan_y && y1 < scan_y)) continue;
+      // Skip horizontal segments
+      if (y0 == y1) continue;
 
-        double qx = static_cast<double>(q2.x()) - static_cast<double>(q1.x());
-        double qy = static_cast<double>(q2.y()) - static_cast<double>(q1.y());
-        double denom = nx * qy - ny * qx;
-        // denom is the 2D cross product of ray normal and segment direction (nx * qy - ny * qx).
-        // Mathematically, denom == 0 when the ray and segment are parallel or collinear.
-        // In IEEE 754 double precision, rounding can yield ~1e-17 instead of exact 0.0.
-        // kParallelEpsilon = 1e-15 (~4.5 * eps_mach) guards against division-by-zero or subnormal
-        // overflow (which produces NaN/Inf) when testing against parallel or collinear edges.
-        constexpr double kParallelEpsilon = 1e-15;
-        if (fabs(denom) < kParallelEpsilon) continue;
+      double x0 = static_cast<double>(p0.x());
+      double x1 = static_cast<double>(p1.x());
+      double x_int = (x0 == x1) ? x0 : (x0 + (scan_y - y0) * (x1 - x0) / (y1 - y0));
 
-        double diff_x = static_cast<double>(q1.x()) - mx;
-        double diff_y = static_cast<double>(q1.y()) - my;
-        double s = (diff_x * qy - diff_y * qx) / denom;
-        double u = (diff_x * ny - diff_y * nx) / denom;
+      // Insertion sort into fixed-capacity buffer
+      if (num_crossings < kMaxCrossings) {
+        int idx = num_crossings - 1;
+        while (idx >= 0 && crossings[idx] > x_int) {
+          crossings[idx + 1] = crossings[idx];
+          --idx;
+        }
+        crossings[idx + 1] = x_int;
+        ++num_crossings;
+      } else if (x_int < crossings[kMaxCrossings - 1]) {
+        int idx = kMaxCrossings - 2;
+        while (idx >= 0 && crossings[idx] > x_int) {
+          crossings[idx + 1] = crossings[idx];
+          --idx;
+        }
+        crossings[idx + 1] = x_int;
+      }
+    }
+  }
 
-        // Ray equation: R(s) = M + s * n (s > 0 is inward into the polygon).
-        // Segment equation: Q(u) = Q1 + u * (Q2 - Q1) for u in [0, 1].
-        //
-        // eps (ParamTolerance<double>):
-        // - s > eps: Avoids false self-intersections with the ray origin M on the
-        //            boundary due to floating-point imprecision on adjacent segments.
-        // - u >= -eps && u <= 1.0 + eps: Accommodates floating-point roundoff when the
-        //                                inward ray strikes an exact vertex of a ring.
-        constexpr double eps = static_cast<double>(ParamTolerance<double>());
-        if (s > eps && u >= -eps && u <= 1.0 + eps) {
-          if (s < s_min) {
-            s_min = s;
-          }
+  if (num_crossings < 2) return false;
+
+  // Find widest interior interval [crossings[2k], crossings[2k+1]]
+  double max_width = 0.0;
+  double best_mid_x = 0.0;
+  bool found = false;
+
+  for (int i = 0; i + 1 < num_crossings; i += 2) {
+    double width = crossings[i + 1] - crossings[i];
+    if (width > max_width || !found) {
+      max_width = width;
+      best_mid_x = 0.5 * (crossings[i] + crossings[i + 1]);
+      found = true;
+    }
+  }
+
+  if (found) {
+    POINT_T candidate(static_cast<scalar_t>(best_mid_x), static_cast<scalar_t>(scan_y));
+    if (poly.locate_point(candidate) == PointLocation::kInside) {
+      out_pt = candidate;
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Bulletproof Fallback: Scale-Normalized Extremal-Convex-Vertex Angle Bisector.
+ *
+ * Used if the horizontal scanline bisector could not yield a confirmed interior point
+ * (e.g. extremely complex geometry where crossings exceeded kMaxCrossings = 64
+ * and the preserved slices were thin slivers, or an extreme degenerate aspect ratio).
+ *
+ * Computational Geometry Guarantee:
+ * 1. The vertex V_min with the minimum X coordinate (and minimum Y if tied) lies
+ *    strictly on the 2D convex hull of the polygon.
+ * 2. Therefore, V_min is strictly convex (interior angle < 180 deg) and there are
+ *    zero polygon vertices or edges to the left of V_min.
+ * 3. The angle bisector vector B of the two edges meeting at V_min points strictly
+ *    into the interior cone of the polygon.
+ * 4. By ray-marching along B against all other polygon segments using scale-normalized
+ *    vector cross products, we determine the distance s_min > 0 to the closest
+ *    boundary intersection.
+ * 5. The midpoint V_min + 0.5 * s_min * B is mathematically guaranteed to lie
+ *    strictly in I(poly), requiring O(1) registers and zero buffer allocations.
+ */
+template <typename POINT_T, typename INDEX_T>
+DEV_HOST_INLINE bool FindPolygonInteriorPointExtremalVertex(const Polygon<POINT_T, INDEX_T>& poly,
+                                                           POINT_T& out_pt) {
+  using scalar_t = typename POINT_T::scalar_t;
+  if (poly.empty()) return false;
+  auto ext_ring = poly.get_ring(0);
+  size_t n_pts = ext_ring.num_points();
+  if (n_pts < 4) return false;
+  size_t n_segs = ext_ring.num_segments();
+
+  size_t min_idx = 0;
+  double min_x = static_cast<double>(ext_ring.get_point(0).x());
+  double min_y_coord = static_cast<double>(ext_ring.get_point(0).y());
+
+  for (size_t i = 1; i < n_segs; ++i) {
+    const auto& pt = ext_ring.get_point(i);
+    double px = static_cast<double>(pt.x());
+    double py = static_cast<double>(pt.y());
+    if (px < min_x || (px == min_x && py < min_y_coord)) {
+      min_x = px;
+      min_y_coord = py;
+      min_idx = i;
+    }
+  }
+
+  const auto& v_curr = ext_ring.get_point(min_idx);
+  const auto& v_prev = ext_ring.get_point((min_idx == 0) ? (n_segs - 1) : (min_idx - 1));
+  const auto& v_next = ext_ring.get_point(min_idx + 1);
+
+  double e1_x = static_cast<double>(v_prev.x()) - static_cast<double>(v_curr.x());
+  double e1_y = static_cast<double>(v_prev.y()) - static_cast<double>(v_curr.y());
+  double e2_x = static_cast<double>(v_next.x()) - static_cast<double>(v_curr.x());
+  double e2_y = static_cast<double>(v_next.y()) - static_cast<double>(v_curr.y());
+
+  double l1 = sqrt(e1_x * e1_x + e1_y * e1_y);
+  double l2 = sqrt(e2_x * e2_x + e2_y * e2_y);
+  if (l1 <= 0.0 || l2 <= 0.0) return false;
+
+  double u1_x = e1_x / l1;
+  double u1_y = e1_y / l1;
+  double u2_x = e2_x / l2;
+  double u2_y = e2_y / l2;
+
+  // Normalized angle bisector vector
+  double bx = u1_x + u2_x;
+  double by = u1_y + u2_y;
+  double blen = sqrt(bx * bx + by * by);
+  if (blen <= 1e-15) {
+    // 180-degree flat/spike edge: perpendicular normal pointing right (+X)
+    bx = -u1_y;
+    by = u1_x;
+    blen = sqrt(bx * bx + by * by);
+    if (blen <= 1e-15) return false;
+  }
+  bx /= blen;
+  by /= blen;
+
+  // Ray equation: R(s) = v_curr + s * B.
+  // Initial upper bound for s: half of the shortest adjacent edge length
+  double s_min = 0.5 * fmin(l1, l2);
+
+  for (size_t r = 0; r < poly.num_rings(); ++r) {
+    auto ring = poly.get_ring(r);
+    for (size_t j = 0; j < ring.num_segments(); ++j) {
+      if (r == 0 && (j == min_idx || (min_idx > 0 && j == min_idx - 1) ||
+                     (min_idx == 0 && j == n_segs - 1))) {
+        continue;
+      }
+      const auto& q1 = ring.get_point(j);
+      const auto& q2 = ring.get_point(j + 1);
+      double qx = static_cast<double>(q2.x()) - static_cast<double>(q1.x());
+      double qy = static_cast<double>(q2.y()) - static_cast<double>(q1.y());
+      double qlen = sqrt(qx * qx + qy * qy);
+      if (qlen <= 0.0) continue;
+
+      // Scale-normalized cross product denominator (sin theta of ray and segment)
+      double denom = bx * qy - by * qx;
+      // Dimensionless threshold: avoid division by near-zero if nearly parallel
+      if (fabs(denom) < 1e-12 * qlen) continue;
+
+      double diff_x = static_cast<double>(q1.x()) - static_cast<double>(v_curr.x());
+      double diff_y = static_cast<double>(q1.y()) - static_cast<double>(v_curr.y());
+      double s = (diff_x * qy - diff_y * qx) / denom;
+      double u = (diff_x * by - diff_y * bx) / denom;
+
+      constexpr double eps = static_cast<double>(ParamTolerance<double>());
+      if (s > eps && u >= -eps && u <= 1.0 + eps) {
+        if (s < s_min) {
+          s_min = s;
         }
       }
     }
+  }
 
-    if (s_min < std::numeric_limits<double>::max()) {
-      POINT_T candidate(static_cast<scalar_t>(mx + 0.5 * s_min * nx),
-                        static_cast<scalar_t>(my + 0.5 * s_min * ny));
-      if (poly.locate_point(candidate) == PointLocation::kInside) {
-        out_pt = candidate;
-        return true;
-      }
+  if (s_min > 0.0) {
+    POINT_T candidate(
+        static_cast<scalar_t>(static_cast<double>(v_curr.x()) + 0.5 * s_min * bx),
+        static_cast<scalar_t>(static_cast<double>(v_curr.y()) + 0.5 * s_min * by));
+    if (poly.locate_point(candidate) == PointLocation::kInside) {
+      out_pt = candidate;
+      return true;
     }
   }
+
   return false;
+}
+
+/**
+ * Finds a point strictly in the interior of a polygon (point in I(poly)).
+ *
+ * Tries the primary GEOS-style scanline bisector algorithm first. If it cannot find
+ * or confirm an interior point, falls back to the extremal-convex-vertex angle bisector.
+ */
+template <typename POINT_T, typename INDEX_T>
+DEV_HOST_INLINE bool FindPolygonInteriorPoint(const Polygon<POINT_T, INDEX_T>& poly,
+                                              POINT_T& out_pt) {
+  if (FindPolygonInteriorPointScanline(poly, out_pt)) {
+    return true;
+  }
+  return FindPolygonInteriorPointExtremalVertex(poly, out_pt);
 }
 
 }  // namespace detail
