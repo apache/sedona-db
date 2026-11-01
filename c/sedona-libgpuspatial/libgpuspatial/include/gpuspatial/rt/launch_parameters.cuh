@@ -118,6 +118,7 @@ struct LaunchParamsPolygonPolygonQuery {
   index_t* query_bvh_ids;
   size_t query_size;
   ArrayView<int> IMs;  // intersection matrices
+  uint32_t* finished_count;
   bool transpose;
   OptixTraversableHandle handle;
   ArrayView<index_t> aabb_poly_ids, aabb_ring_ids;
@@ -141,6 +142,7 @@ struct LaunchParamsMultiPolygonPolygonQuery {
   size_t query_size;
   ArrayView<index_t> uniq_part_begins;
   ArrayView<int> IMs;  // intersection matrices
+  uint32_t* finished_count;
   bool transpose;
   OptixTraversableHandle handle;
   ArrayView<index_t> aabb_multi_poly_ids, aabb_part_ids, aabb_ring_ids;

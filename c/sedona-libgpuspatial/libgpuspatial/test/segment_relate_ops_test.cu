@@ -15,11 +15,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#define GPUSPATIAL_RELATE_TEST
 #include "gpuspatial/relate/segment_relate_ops.cuh"
-#include "test_common.hpp"
 
 #include <gtest/gtest.h>
+#include <algorithm>
+#include <vector>
 
 namespace gpuspatial {
 
@@ -151,10 +151,38 @@ TEST(SegmentRelateOpsTest, AnalyzeSegmentDisjoint) {
   EXPECT_DOUBLE_EQ(t_next, 1.0);
 }
 
+struct TestPolygonHolder {
+  std::vector<uint32_t> ring_offsets;
+  std::vector<point_d> vertices;
+  Box<Point<float, 2>> mbr;
+
+  Polygon<point_d, uint32_t> AsPolygon() const {
+    return Polygon<point_d, uint32_t>(
+        ArrayView<uint32_t>(const_cast<uint32_t*>(ring_offsets.data()), ring_offsets.size()),
+        ArrayView<point_d>(const_cast<point_d*>(vertices.data()), vertices.size()),
+        mbr);
+  }
+};
+
+static TestPolygonHolder MakeTestPolygon(const std::vector<std::vector<point_d>>& rings) {
+  TestPolygonHolder result;
+  result.ring_offsets.push_back(0);
+  for (const auto& ring : rings) {
+    for (const auto& pt : ring) {
+      result.vertices.push_back(pt);
+      result.mbr.Expand(Point<float, 2>(static_cast<float>(pt.x()), static_cast<float>(pt.y())));
+    }
+    result.ring_offsets.push_back(static_cast<uint32_t>(result.vertices.size()));
+  }
+  return result;
+}
+
 TEST(SegmentRelateOpsTest, FindPolygonInteriorPointConvex) {
-  Context<point_d, uint32_t> ctx;
-  Polygon<point_d, uint32_t> poly;
-  ParseWKTPolygon(ctx, "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))", poly);
+  auto poly_holder = MakeTestPolygon({
+      {point_d(0.0, 0.0), point_d(10.0, 0.0), point_d(10.0, 10.0), point_d(0.0, 10.0),
+       point_d(0.0, 0.0)},
+  });
+  auto poly = poly_holder.AsPolygon();
 
   point_d interior_pt;
   bool ok = detail::FindPolygonInteriorPoint(poly, interior_pt);
@@ -163,10 +191,12 @@ TEST(SegmentRelateOpsTest, FindPolygonInteriorPointConvex) {
 }
 
 TEST(SegmentRelateOpsTest, FindPolygonInteriorPointConcaveLShape) {
-  Context<point_d, uint32_t> ctx;
-  Polygon<point_d, uint32_t> poly;
   // L-shaped polygon where centroid might be close to or outside the boundary
-  ParseWKTPolygon(ctx, "POLYGON ((0 0, 10 0, 10 4, 4 4, 4 10, 0 10, 0 0))", poly);
+  auto poly_holder = MakeTestPolygon({
+      {point_d(0.0, 0.0), point_d(10.0, 0.0), point_d(10.0, 4.0), point_d(4.0, 4.0),
+       point_d(4.0, 10.0), point_d(0.0, 10.0), point_d(0.0, 0.0)},
+  });
+  auto poly = poly_holder.AsPolygon();
 
   point_d interior_pt;
   bool ok = detail::FindPolygonInteriorPoint(poly, interior_pt);
@@ -175,12 +205,59 @@ TEST(SegmentRelateOpsTest, FindPolygonInteriorPointConcaveLShape) {
 }
 
 TEST(SegmentRelateOpsTest, FindPolygonInteriorPointWithHole) {
-  Context<point_d, uint32_t> ctx;
-  Polygon<point_d, uint32_t> poly;
   // Donut polygon with a 4x4 hole in the center
-  ParseWKTPolygon(ctx, "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0), (3 3, 7 3, 7 7, 3 7, 3 3))", poly);
+  auto poly_holder = MakeTestPolygon({
+      {point_d(0.0, 0.0), point_d(10.0, 0.0), point_d(10.0, 10.0), point_d(0.0, 10.0),
+       point_d(0.0, 0.0)},
+      {point_d(3.0, 3.0), point_d(7.0, 3.0), point_d(7.0, 7.0), point_d(3.0, 7.0),
+       point_d(3.0, 3.0)},
+  });
+  auto poly = poly_holder.AsPolygon();
 
   point_d interior_pt;
+  bool ok = detail::FindPolygonInteriorPoint(poly, interior_pt);
+  ASSERT_TRUE(ok);
+  EXPECT_EQ(poly.locate_point(interior_pt), PointLocation::kInside);
+}
+
+TEST(SegmentRelateOpsTest, FindPolygonInteriorPointMicroPolygon) {
+  auto poly_holder = MakeTestPolygon({
+      {point_d(0.0, 0.0), point_d(1e-8, 0.0), point_d(1e-8, 1e-8), point_d(0.0, 1e-8),
+       point_d(0.0, 0.0)},
+  });
+  auto poly = poly_holder.AsPolygon();
+
+  point_d interior_pt;
+  bool ok = detail::FindPolygonInteriorPoint(poly, interior_pt);
+  ASSERT_TRUE(ok);
+  EXPECT_EQ(poly.locate_point(interior_pt), PointLocation::kInside);
+}
+
+TEST(SegmentRelateOpsTest, FindPolygonInteriorPointExceedsMaxCrossingsFallback) {
+  // A comb polygon with 45 teeth produces 90 scanline crossings, exceeding kMaxCrossings = 64.
+  // Tests the fallback to the extremal-convex-vertex angle bisector.
+  std::vector<point_d> ring;
+  ring.emplace_back(0.0, 0.0);
+  for (int i = 0; i < 45; ++i) {
+    ring.emplace_back(2.0 * i, 10.0);
+    ring.emplace_back(2.0 * i + 1.0, 10.0);
+    ring.emplace_back(2.0 * i + 1.0, 0.0);
+  }
+  ring.emplace_back(90.0, 0.0);
+  ring.emplace_back(90.0, -5.0);
+  ring.emplace_back(0.0, -5.0);
+  ring.emplace_back(0.0, 0.0);
+
+  auto poly_holder = MakeTestPolygon({ring});
+  auto poly = poly_holder.AsPolygon();
+  point_d interior_pt;
+
+  // Test the extremal vertex method directly
+  bool ok_extremal = detail::FindPolygonInteriorPointExtremalVertex(poly, interior_pt);
+  ASSERT_TRUE(ok_extremal);
+  EXPECT_EQ(poly.locate_point(interior_pt), PointLocation::kInside);
+
+  // Test that FindPolygonInteriorPoint transparently falls back and succeeds
   bool ok = detail::FindPolygonInteriorPoint(poly, interior_pt);
   ASSERT_TRUE(ok);
   EXPECT_EQ(poly.locate_point(interior_pt), PointLocation::kInside);

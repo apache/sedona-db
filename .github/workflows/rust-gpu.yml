@@ -257,6 +257,7 @@ jobs:
           fi
 
       - name: Build libgpuspatial Tests
+        if: matrix.name == 'build'
         run: |
           echo "=== Building libgpuspatial tests ==="
           cd c/sedona-libgpuspatial/libgpuspatial
@@ -277,14 +278,20 @@ jobs:
             echo '```' >> $GITHUB_STEP_SUMMARY
             exit $STATUS
           fi
-          cmake --build build --target all 2>&1 | tee /tmp/cmake_build.log
+          cmake --build build --target all -j 4 2>&1 | tee /tmp/cmake_build.log
           STATUS=${PIPESTATUS[0]}
           if [ $STATUS -ne 0 ]; then
-            MSG=$(tail -n 40 /tmp/cmake_build.log | awk '{printf "%s%%0A", $0}')
+            ERR_MSG=$(grep -in -E -C 3 "error:|fatal error:" /tmp/cmake_build.log | head -n 35)
+            if [ -n "$ERR_MSG" ]; then
+              MSG=$(echo "$ERR_MSG" | awk '{printf "%s%%0A", $0}')
+            else
+              MSG=$(tail -n 40 /tmp/cmake_build.log | awk '{printf "%s%%0A", $0}')
+            fi
             echo "::error::CMake build failed with status $STATUS: $MSG"
             echo "### CMake Build Failed ($STATUS)" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
-            tail -n 200 /tmp/cmake_build.log >> $GITHUB_STEP_SUMMARY
+            grep -in -E -C 3 "error:|fatal error:" /tmp/cmake_build.log | head -n 100 >> $GITHUB_STEP_SUMMARY || true
+            tail -n 100 /tmp/cmake_build.log >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             exit $STATUS
           fi

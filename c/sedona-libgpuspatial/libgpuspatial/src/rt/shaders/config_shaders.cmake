@@ -22,7 +22,8 @@ function(CONFIG_SHADERS SHADER_PTX_FILES)
   set(SHADERS_DEPS
       "${PROJECT_SOURCE_DIR}/include/gpuspatial/geom"
       "${PROJECT_SOURCE_DIR}/include/gpuspatial/relate"
-      "${PROJECT_SOURCE_DIR}/include/gpuspatial/rt")
+      "${PROJECT_SOURCE_DIR}/include/gpuspatial/rt"
+      "${PROJECT_SOURCE_DIR}/src/rt/shaders")
 
   set(OUTPUT_DIR "${PROJECT_BINARY_DIR}/shaders_ptx")
   set(OPTIX_MODULE_EXTENSION ".ptx")
