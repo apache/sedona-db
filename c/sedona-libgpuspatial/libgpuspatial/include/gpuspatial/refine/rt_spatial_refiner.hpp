@@ -31,8 +31,6 @@ struct RTSpatialRefinerConfig {
   bool prefer_fast_build = false;
   // Compress the BVH to save memory
   bool compact = true;
-  // Number of threads per candidate pair in ray tracing
-  uint32_t threads_per_pair = 32;
   // Loader configurations
   // How many threads to use for parsing WKBs
   uint32_t parsing_threads = std::thread::hardware_concurrency();

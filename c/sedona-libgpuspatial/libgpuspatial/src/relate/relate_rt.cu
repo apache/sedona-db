@@ -14,15 +14,15 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+#include "gpuspatial/mem/memory_manager.hpp"
 #include "gpuspatial/relate/relate_engine.cuh"
 #include "gpuspatial/rt/launch_parameters.cuh"
 #include "gpuspatial/utils/array_view.hpp"
 #include "gpuspatial/utils/exception.hpp"
 #include "gpuspatial/utils/helpers.cuh"
 #include "gpuspatial/utils/logger.hpp"
-#include "gpuspatial/mem/memory_manager.hpp"
-#include "rt/shaders/shader_id.hpp"
 #include "relate/relate_predicate.cuh"
+#include "rt/shaders/shader_id.hpp"
 
 #include "rmm/cuda_stream_view.hpp"
 #include "rmm/device_buffer.hpp"
@@ -37,9 +37,11 @@
 #include <thrust/transform.h>
 #include <thrust/tuple.h>
 #include <thrust/unique.h>
-#include <cuda/std/iterator>
 #include <algorithm>
+#include <cuda/std/iterator>
 #include <limits>
+
+#define THREADS_PER_PAIR 32
 
 namespace gpuspatial {
 
@@ -350,7 +352,8 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateImpl(
         thrust::unique(rmm::exec_policy_nosync(stream), uniq_multi_poly_ids.begin(),
                        uniq_multi_poly_ids.end());
     uniq_multi_poly_ids.resize(
-        cuda::std::distance(uniq_multi_poly_ids.begin(), uniq_multi_poly_ids_end), stream);
+        cuda::std::distance(uniq_multi_poly_ids.begin(), uniq_multi_poly_ids_end),
+        stream);
     uniq_multi_poly_ids.shrink_to_fit(stream);
 
     rmm::device_uvector<int> IMs(ids_size_batch, stream);
@@ -424,9 +427,10 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateImpl(
 
 namespace {
 
-// Evaluates whether the bounding box `outer` covers `inner` with conservative floating-point padding.
-// The outer box boundaries are expanded outward by 4 ULPs to ensure coincident or tangent edges
-// are not falsely rejected due to numerical rounding differences across coordinate precisions.
+// Evaluates whether the bounding box `outer` covers `inner` with conservative
+// floating-point padding. The outer box boundaries are expanded outward by 4 ULPs to
+// ensure coincident or tangent edges are not falsely rejected due to numerical rounding
+// differences across coordinate precisions.
 template <typename BOX_T>
 DEV_HOST_INLINE bool PaddedCovers(const BOX_T& outer, const BOX_T& inner) {
   float min_x = next_float_from_double(outer.get_min().x(), -1, 4);
@@ -441,18 +445,21 @@ DEV_HOST_INLINE bool PaddedCovers(const BOX_T& outer, const BOX_T& inner) {
 // before launching expensive OptiX ray-tracing passes.
 //
 // Pruning Rationale:
-// - For containment and equality predicates (Contains, Covers, Within, CoveredBy, Equals),
+// - For containment and equality predicates (Contains, Covers, Within, CoveredBy,
+// Equals),
 //   MBR containment is a strict mathematical prerequisite:
 //     - geom1 contains/covers geom2 => MBR(geom1) must cover MBR(geom2)
 //     - geom1 within/coveredBy geom2 => MBR(geom2) must cover MBR(geom1)
 //     - geom1 equals geom2 => MBR(geom1) and MBR(geom2) must mutually cover each other
-//   Candidate pairs violating these conditions are removed in-place via thrust::remove_if,
-//   preventing unnecessary BVH construction and ray dispatch.
-// - Other predicates (Intersects, Touches, Disjoint) do not require MBR containment and are skipped.
+//   Candidate pairs violating these conditions are removed in-place via
+//   thrust::remove_if, preventing unnecessary BVH construction and ray dispatch.
+// - Other predicates (Intersects, Touches, Disjoint) do not require MBR containment and
+// are skipped.
 //
 // Empty Geometry Semantics:
 // - If either geometry is empty, containment is impossible (pair removed).
-// - For Equals, two empty geometries are topologically equal (kept), whereas one empty and
+// - For Equals, two empty geometries are topologically equal (kept), whereas one empty
+// and
 //   one non-empty geometry are unequal (removed).
 template <typename GEOM1_VIEW_T, typename GEOM2_VIEW_T, typename INDEX_T>
 void PreFilterByMBR(const rmm::cuda_stream_view& stream, const GEOM1_VIEW_T& geom_array1,
@@ -507,9 +514,8 @@ void PreFilterByMBR(const rmm::cuda_stream_view& stream, const GEOM1_VIEW_T& geo
 template <bool GEOM2_IS_SINGLE_POLY, typename GEOM1_VIEW_T, typename GEOM2_VIEW_T,
           typename INDEX_T>
 size_t PartitionForPass2(const rmm::cuda_stream_view& stream,
-                         const GEOM1_VIEW_T& geom_array1,
-                         const GEOM2_VIEW_T& geom_array2, Predicate predicate,
-                         rmm::device_uvector<INDEX_T>& ids1,
+                         const GEOM1_VIEW_T& geom_array1, const GEOM2_VIEW_T& geom_array2,
+                         Predicate predicate, rmm::device_uvector<INDEX_T>& ids1,
                          rmm::device_uvector<INDEX_T>& ids2,
                          rmm::device_uvector<int>& IMs) {
   auto zip3_begin = thrust::make_zip_iterator(
@@ -563,8 +569,8 @@ size_t PartitionForPass2(const rmm::cuda_stream_view& stream,
                   const auto& v0 = poly.get_ring(0).get_point(0);
                   float v0_x = static_cast<float>(v0.x());
                   float v0_y = static_cast<float>(v0.y());
-                  if (v0_x >= g1_min_x && v0_x <= g1_max_x &&
-                      v0_y >= g1_min_y && v0_y <= g1_max_y) {
+                  if (v0_x >= g1_min_x && v0_x <= g1_max_x && v0_y >= g1_min_y &&
+                      v0_y <= g1_max_y) {
                     return true;
                   }
                 }
@@ -584,18 +590,19 @@ size_t PartitionForPass2(const rmm::cuda_stream_view& stream,
           case Predicate::kWithin:
           case Predicate::kCoveredBy:
           case Predicate::kEquals: {
-            // Within / CoveredBy require g1 to be entirely inside g2 (no part of g1 in g2's exterior).
-            // If Pass 1 revealed that g1's interior or boundary touches g2's exterior,
-            // g1 cannot be within g2. Likewise, zero intersections in Pass 1 means disjoint.
+            // Within / CoveredBy require g1 to be entirely inside g2 (no part of g1 in
+            // g2's exterior). If Pass 1 revealed that g1's interior or boundary touches
+            // g2's exterior, g1 cannot be within g2. Likewise, zero intersections in Pass
+            // 1 means disjoint.
             return (im1 & (IntersectionMatrix::INTER_EXTER_2D |
                            IntersectionMatrix::BOUND_EXTER_2D)) == 0 &&
                    (im1 & kAnyIntersectMask) != 0;
           }
           case Predicate::kContains:
           case Predicate::kCovers: {
-            // Contains / Covers require g2 to be entirely inside g1 (no part of g2 in g1's exterior).
-            // If Pass 1 already observed g2's boundary or interior in g1's exterior,
-            // g1 cannot contain g2.
+            // Contains / Covers require g2 to be entirely inside g1 (no part of g2 in
+            // g1's exterior). If Pass 1 already observed g2's boundary or interior in
+            // g1's exterior, g1 cannot contain g2.
             return (im1 & (IntersectionMatrix::EXTER_INTER_2D |
                            IntersectionMatrix::EXTER_BOUND_2D)) == 0;
           }
@@ -621,13 +628,13 @@ void FilterByPredicate(const rmm::cuda_stream_view& stream, Predicate predicate,
   auto invalid_tuple = thrust::make_tuple(std::numeric_limits<INDEX_T>::max(),
                                           std::numeric_limits<INDEX_T>::max());
 
-  thrust::transform(
-      rmm::exec_policy_nosync(stream), zip3_begin, zip3_end, zip2_begin,
-      [=] __device__(const thrust::tuple<INDEX_T, INDEX_T, int>& t) {
-        auto res = thrust::make_tuple(thrust::get<0>(t), thrust::get<1>(t));
-        auto IM = thrust::get<2>(t);
-        return detail::EvaluatePredicate(predicate, IM) ? res : invalid_tuple;
-      });
+  thrust::transform(rmm::exec_policy_nosync(stream), zip3_begin, zip3_end, zip2_begin,
+                    [=] __device__(const thrust::tuple<INDEX_T, INDEX_T, int>& t) {
+                      auto res = thrust::make_tuple(thrust::get<0>(t), thrust::get<1>(t));
+                      auto IM = thrust::get<2>(t);
+                      return detail::EvaluatePredicate(predicate, IM) ? res
+                                                                      : invalid_tuple;
+                    });
 
   auto end = thrust::remove_if(rmm::exec_policy_nosync(stream), zip2_begin, zip2_end,
                                [=] __device__(const thrust::tuple<INDEX_T, INDEX_T>& tu) {
@@ -649,7 +656,8 @@ void RelateEngine<POINT_T, INDEX_T>::Evaluate(
   if (ids1.is_empty()) {
     return;
   }
-  assert(rt_engine_ != nullptr && "OptiX RT engine is required for Polygon-Polygon relate evaluation");
+  assert(rt_engine_ != nullptr &&
+         "OptiX RT engine is required for Polygon-Polygon relate evaluation");
   PreFilterByMBR(stream, geom_array1, geom_array2, predicate, ids1, ids2);
   if (ids1.is_empty()) {
     return;
@@ -698,7 +706,8 @@ void RelateEngine<POINT_T, INDEX_T>::Evaluate(
   if (ids1.is_empty()) {
     return;
   }
-  assert(rt_engine_ != nullptr && "OptiX RT engine is required for Polygon-Polygon relate evaluation");
+  assert(rt_engine_ != nullptr &&
+         "OptiX RT engine is required for Polygon-Polygon relate evaluation");
   PreFilterByMBR(stream, geom_array1, geom_array2, predicate, ids1, ids2);
   if (ids1.is_empty()) {
     return;
@@ -748,7 +757,8 @@ void RelateEngine<POINT_T, INDEX_T>::Evaluate(
   if (ids1.is_empty()) {
     return;
   }
-  assert(rt_engine_ != nullptr && "OptiX RT engine is required for Polygon-Polygon relate evaluation");
+  assert(rt_engine_ != nullptr &&
+         "OptiX RT engine is required for Polygon-Polygon relate evaluation");
   PreFilterByMBR(stream, geom_array1, geom_array2, predicate, ids1, ids2);
   if (ids1.is_empty()) {
     return;
@@ -798,7 +808,8 @@ void RelateEngine<POINT_T, INDEX_T>::Evaluate(
   if (ids1.is_empty()) {
     return;
   }
-  assert(rt_engine_ != nullptr && "OptiX RT engine is required for Polygon-Polygon relate evaluation");
+  assert(rt_engine_ != nullptr &&
+         "OptiX RT engine is required for Polygon-Polygon relate evaluation");
   PreFilterByMBR(stream, geom_array1, geom_array2, predicate, ids1, ids2);
   if (ids1.is_empty()) {
     return;
@@ -890,9 +901,8 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateImpl(
                       stream);
   uniq_bvh_ids.shrink_to_fit(stream);
 
-  auto bvh_bytes = EstimateBVHSize(stream, bvh_poly_array,
-                                   ArrayView<INDEX_T>(uniq_bvh_ids),
-                                   config_.segs_per_aabb);
+  auto bvh_bytes = EstimateBVHSize(
+      stream, bvh_poly_array, ArrayView<INDEX_T>(uniq_bvh_ids), config_.segs_per_aabb);
   size_t avail_bytes = std::max<size_t>(
       1, MemoryManager::instance().get_available_device_memory() * config_.memory_quota);
   auto n_batches = bvh_bytes / avail_bytes + 1;
@@ -955,7 +965,7 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateImpl(
 
     rt_engine_->Render(
         stream, GetPolygonPolygonQueryShaderId<POINT_T>(),
-        dim3{static_cast<unsigned int>(ids_size_batch), config_.threads_per_pair, 1},
+        dim3{static_cast<unsigned int>(ids_size_batch), THREADS_PER_PAIR, 1},
         ArrayView<char>((char*)params_buffer.data(), params_buffer.size()));
   }
 }
@@ -1013,9 +1023,9 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateImpl(
                       stream);
   uniq_bvh_ids.shrink_to_fit(stream);
 
-  auto bvh_bytes = EstimateBVHSize(stream, bvh_multi_poly_array,
-                                   ArrayView<INDEX_T>(uniq_bvh_ids),
-                                   config_.segs_per_aabb);
+  auto bvh_bytes =
+      EstimateBVHSize(stream, bvh_multi_poly_array, ArrayView<INDEX_T>(uniq_bvh_ids),
+                      config_.segs_per_aabb);
   size_t avail_bytes = std::max<size_t>(
       1, MemoryManager::instance().get_available_device_memory() * config_.memory_quota);
   auto n_batches = bvh_bytes / avail_bytes + 1;
@@ -1083,7 +1093,7 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateImpl(
 
     rt_engine_->Render(
         stream, GetMultiPolygonPolygonQueryShaderId<POINT_T>(),
-        dim3{static_cast<unsigned int>(ids_size_batch), config_.threads_per_pair, 1},
+        dim3{static_cast<unsigned int>(ids_size_batch), THREADS_PER_PAIR, 1},
         ArrayView<char>((char*)params_buffer.data(), params_buffer.size()));
   }
 }

@@ -35,7 +35,6 @@ class RelateEngine {
     bool bvh_compact = true;
     float memory_quota = 0.8;
     int segs_per_aabb = 32;
-    uint32_t threads_per_pair = 32;
   };
 
   RelateEngine() = default;
