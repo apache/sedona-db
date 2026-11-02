@@ -267,11 +267,27 @@ where
     T: CoordFloat,
 {
     fn signed_area_trait(&self) -> T {
-        // Shift the triangle so that its first coord is the origin, as for a ring, so that a
-        // small triangle far from the origin keeps its precision (georust/geo#1438). The
-        // sides from and to the first coord then have a zero determinant.
-        let [first, second, third] = self.to_array();
-        crate::Line::new(second - first, third - first).determinant() / (T::one() + T::one())
+        // Shift the triangle so that a coord is the origin, so that a small triangle far
+        // from the origin keeps its precision (georust/geo#1438). The sides from and to that
+        // coord then have a zero determinant. Shift by the coord opposite the longest side,
+        // so that the other two are the shortest: shifting a needle-like triangle by its far
+        // coord can round its other two coords to the same point.
+        let [a, b, c] = self.to_array();
+        let length_squared = |side: crate::Coord<T>| side.x * side.x + side.y * side.y;
+        let (ab, bc, ca) = (
+            length_squared(b - a),
+            length_squared(c - b),
+            length_squared(a - c),
+        );
+        // Rotating the coords keeps the orientation
+        let [origin, second, third] = if bc >= ab && bc >= ca {
+            [a, b, c]
+        } else if ca >= ab {
+            [b, c, a]
+        } else {
+            [c, a, b]
+        };
+        crate::Line::new(second - origin, third - origin).determinant() / (T::one() + T::one())
     }
 
     fn unsigned_area_trait(&self) -> T {
@@ -640,5 +656,25 @@ mod test {
         // and is the area of the same triangle as a polygon
         let polygon_area = shifted.to_polygon().signed_area();
         assert!((polygon_area - shifted.signed_area()).abs() / polygon_area < 1e-2);
+    }
+
+    #[test]
+    fn area_needle_triangle_numerical_stability() {
+        // Shifting by a vertex far from the short side would round the other two
+        // vertices to the same coordinates
+        let far = coord! { x: 1e8, y: 1e8 };
+        let near_a = coord! { x: 0.0, y: 1e-9 };
+        let near_b = coord! { x: 1e-9, y: 0.0 };
+        for (a, b, c) in [
+            (far, near_a, near_b),
+            (near_a, near_b, far),
+            (near_b, far, near_a),
+        ] {
+            // unchecked_winding() so that the clockwise triangle stays clockwise
+            let triangle = Triangle::unchecked_winding(a, b, c);
+            assert_relative_eq!(triangle.signed_area(), 0.1, max_relative = 1e-9);
+            let reversed = Triangle::unchecked_winding(c, b, a);
+            assert_relative_eq!(reversed.signed_area(), -0.1, max_relative = 1e-9);
+        }
     }
 }
