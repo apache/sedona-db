@@ -16,7 +16,7 @@
 // under the License.
 use std::{io::Write, sync::Arc, vec};
 
-use crate::executor::WkbExecutor;
+use crate::executor::{WkbBytesExecutor, WkbExecutor};
 use arrow_array::{Array, ArrayRef, BooleanArray, Int64Array, UInt32Array, builder::BinaryBuilder};
 use arrow_schema::{DataType, Field, FieldRef};
 use datafusion_common::{
@@ -43,7 +43,7 @@ use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY},
     matchers::ArgMatcher,
 };
-use wkb::reader::Wkb;
+use wkb::reader::{Wkb, read_wkb};
 
 /// ST_Collect_Agg() aggregate UDF implementation
 ///
@@ -288,6 +288,11 @@ fn is_selected(opt_filter: Option<&BooleanArray>, i: usize) -> bool {
     opt_filter.is_none_or(|filter| filter.is_valid(i) && filter.value(i))
 }
 
+/// Parse an item as [WkbExecutor] does
+fn parse_item(bytes: &[u8]) -> Result<Wkb<'_>> {
+    read_wkb(bytes).map_err(|e| DataFusionError::External(Box::new(e)))
+}
+
 /// [GroupsAccumulator] for ST_Collect_Agg()
 ///
 /// Each group keeps the WKB of its items without a collection header, along with
@@ -355,16 +360,18 @@ impl GroupsAccumulator for CollectionGroupsAccumulator {
 
         let arg_types = [self.input_type.clone()];
         let args = [ColumnarValue::Array(values[0].clone())];
-        let executor = WkbExecutor::new(&arg_types, &args);
+        // Iterate over the bytes so that rows the filter leaves out aren't parsed
+        let executor = WkbBytesExecutor::new(&arg_types, &args);
         let mut i = 0;
-        executor.execute_wkb_void(|maybe_item| {
-            if let Some(item) = maybe_item
+        executor.execute_wkb_void(|maybe_bytes| {
+            if let Some(bytes) = maybe_bytes
                 && is_selected(opt_filter, i)
             {
+                let item = parse_item(bytes)?;
                 let group_index = group_indices[i];
                 // insert() (not insert_or_ignore()), as in CollectionAccumulator
                 self.types_and_dims[group_index]
-                    .insert(&item_types_and_dims(item)?)
+                    .insert(&item_types_and_dims(&item)?)
                     .map_err(|e| DataFusionError::External(Box::new(e)))?;
                 self.counts[group_index] += 1;
                 self.append_wkb(group_index, item.buf());
@@ -459,16 +466,17 @@ impl GroupsAccumulator for CollectionGroupsAccumulator {
 
         let arg_types = [self.input_type.clone()];
         let args = [ColumnarValue::Array(values[0].clone())];
-        let executor = WkbExecutor::new(&arg_types, &args);
+        let executor = WkbBytesExecutor::new(&arg_types, &args);
         let mut i = 0;
-        executor.execute_wkb_void(|maybe_item| {
+        executor.execute_wkb_void(|maybe_bytes| {
             let mut types_and_dims = GeometryTypeAndDimensionsSet::new();
             builder.write_all(&header)?;
-            if let Some(item) = maybe_item
+            if let Some(bytes) = maybe_bytes
                 && is_selected(opt_filter, i)
             {
+                let item = parse_item(bytes)?;
                 types_and_dims
-                    .insert(&item_types_and_dims(item)?)
+                    .insert(&item_types_and_dims(&item)?)
                     .map_err(|e| DataFusionError::External(Box::new(e)))?;
                 counts.push(1);
                 builder.write_all(item.buf())?;
@@ -503,6 +511,7 @@ impl GroupsAccumulator for CollectionGroupsAccumulator {
 
 #[cfg(test)]
 mod test {
+    use arrow_array::{BinaryArray, BinaryViewArray};
     use datafusion_expr::AggregateUDF;
     use rstest::rstest;
     use sedona_schema::datatypes::{
@@ -690,6 +699,37 @@ mod test {
             .update_batch(&values, &group_indices, Some(&filter), 2)
             .unwrap();
         assert_array_equal(&updated.evaluate(EmitTo::All).unwrap(), &expected);
+    }
+
+    /// Rows the filter leaves out are not parsed, as they are not when DataFusion
+    /// filters the rows for CollectionAccumulator
+    #[rstest]
+    fn groups_filter_skips_unparsable_rows(
+        #[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType,
+    ) {
+        let point = create_array(&[Some("POINT (1 2)")], &WKB_GEOMETRY);
+        let point = as_binary_array(&point).unwrap().value(0);
+        let bad: &[u8] = &[0x01, 0xff, 0xff, 0xff, 0xff];
+        let rows = vec![Some(point), Some(bad), Some(bad)];
+        let values: Vec<ArrayRef> = match sedona_type.storage_type() {
+            DataType::BinaryView => vec![Arc::new(BinaryViewArray::from(rows))],
+            _ => vec![Arc::new(BinaryArray::from(rows))],
+        };
+        let filter = BooleanArray::from(vec![Some(true), Some(false), None]);
+        let group_indices = [0, 0, 0];
+        let expected = create_array(&[Some("MULTIPOINT (1 2)")], &WKB_GEOMETRY);
+
+        let mut updated = CollectionGroupsAccumulator::new(sedona_type.clone());
+        updated
+            .update_batch(&values, &group_indices, Some(&filter), 1)
+            .unwrap();
+        assert_array_equal(&updated.evaluate(EmitTo::All).unwrap(), &expected);
+
+        let converter = CollectionGroupsAccumulator::new(sedona_type.clone());
+        let state = converter.convert_to_state(&values, Some(&filter)).unwrap();
+        let mut merged = CollectionGroupsAccumulator::new(sedona_type);
+        merged.merge_batch(&state, &group_indices, None, 1).unwrap();
+        assert_array_equal(&merged.evaluate(EmitTo::All).unwrap(), &expected);
     }
 
     /// The groups accumulator's state is that of CollectionAccumulator
