@@ -35,6 +35,7 @@ use super::utils::{
     distance_point_to_point_generic,
     distance_point_to_polygon_generic,
     distance_polygon_to_polygon_generic,
+    one_coord_point,
 };
 
 // ┌──────────────────────────────────────────────────────────┐
@@ -488,6 +489,12 @@ where
     LS2: LineStringTraitExt<T = F>,
 {
     fn generic_distance_trait(&self, rhs: &LS2) -> F {
+        if let Some(only) = one_coord_point(self) {
+            return distance_point_to_linestring_generic(&only, rhs);
+        }
+        if let Some(only) = one_coord_point(rhs) {
+            return distance_point_to_linestring_generic(&only, self);
+        }
         let mut min_dist: F = Float::max_value();
         for line1 in self.lines() {
             for line2 in rhs.lines() {
@@ -2321,5 +2328,65 @@ mod tests {
             let distance_result = gc1.distance_ext(&geom_gc2);
             assert_eq!(distance_result, 0.0);
         }
+    }
+
+    #[test]
+    fn test_one_coord_line_string_distance() {
+        // A line string of one coord has no lines: its distances are those of its point
+        use geo_types::{Rect, Triangle};
+        let one = LineString::from(vec![(1.0, 1.0)]);
+        let far_one = LineString::from(vec![(4.0, 5.0)]);
+        let far_line = Line::new(coord! { x: 4.0, y: 5.0 }, coord! { x: 4.0, y: 9.0 });
+        let far_ls = LineString::from(vec![(4.0, 5.0), (4.0, 9.0)]);
+        let far_poly =
+            polygon![(x: 4.0, y: 5.0), (x: 6.0, y: 5.0), (x: 6.0, y: 7.0), (x: 4.0, y: 7.0)];
+        let far_rect = Rect::new(coord! { x: 4.0, y: 5.0 }, coord! { x: 6.0, y: 7.0 });
+        let far_triangle = Triangle::new(
+            coord! { x: 4.0, y: 5.0 },
+            coord! { x: 6.0, y: 5.0 },
+            coord! { x: 6.0, y: 7.0 },
+        );
+        let far_multi_point = MultiPoint::from(vec![(4.0, 5.0), (9.0, 9.0)]);
+        let far_multi_ls = MultiLineString::new(vec![
+            LineString::from(vec![(4.0, 5.0)]),
+            LineString::from(vec![(100.0, 100.0), (100.0, 101.0)]),
+        ]);
+        let far_point = Point::new(4.0, 5.0);
+
+        assert_relative_eq!(one.distance_ext(&far_point), 5.0);
+        assert_relative_eq!(far_point.distance_ext(&one), 5.0);
+        assert_relative_eq!(one.distance_ext(&far_line), 5.0);
+        assert_relative_eq!(far_line.distance_ext(&one), 5.0);
+        assert_relative_eq!(one.distance_ext(&far_ls), 5.0);
+        assert_relative_eq!(far_ls.distance_ext(&one), 5.0);
+        assert_relative_eq!(one.distance_ext(&far_one), 5.0);
+        assert_relative_eq!(one.distance_ext(&far_poly), 5.0);
+        assert_relative_eq!(far_poly.distance_ext(&one), 5.0);
+        assert_relative_eq!(one.distance_ext(&far_rect), 5.0);
+        assert_relative_eq!(far_rect.distance_ext(&one), 5.0);
+        assert_relative_eq!(one.distance_ext(&far_triangle), 5.0);
+        assert_relative_eq!(far_triangle.distance_ext(&one), 5.0);
+        assert_relative_eq!(one.distance_ext(&far_multi_point), 5.0);
+        assert_relative_eq!(far_multi_point.distance_ext(&one), 5.0);
+        assert_relative_eq!(one.distance_ext(&far_multi_ls), 5.0);
+        assert_relative_eq!(far_multi_ls.distance_ext(&one), 5.0);
+
+        // A member of one coord doesn't make every distance of a multi line string zero
+        let multi_ls = MultiLineString::new(vec![
+            one.clone(),
+            LineString::from(vec![(100.0, 100.0), (100.0, 101.0)]),
+        ]);
+        assert_relative_eq!(multi_ls.distance_ext(&far_point), 5.0);
+
+        // and it is zero where the point is on or in the other geometry
+        let near_poly =
+            polygon![(x: 0.0, y: 0.0), (x: 2.0, y: 0.0), (x: 2.0, y: 2.0), (x: 0.0, y: 2.0)];
+        assert_relative_eq!(one.distance_ext(&near_poly), 0.0);
+        assert_relative_eq!(near_poly.distance_ext(&one), 0.0);
+        assert_relative_eq!(one.distance_ext(&Point::new(1.0, 1.0)), 0.0);
+        assert_relative_eq!(one.distance_ext(&one), 0.0);
+        let through = LineString::from(vec![(0.0, 0.0), (2.0, 2.0)]);
+        assert_relative_eq!(one.distance_ext(&through), 0.0);
+        assert_relative_eq!(through.distance_ext(&one), 0.0);
     }
 }

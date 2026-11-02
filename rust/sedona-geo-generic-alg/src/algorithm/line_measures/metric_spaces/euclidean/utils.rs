@@ -223,6 +223,17 @@ fn scaled_distance_coord_to_line<F: CoordFloat>(
     point_factor * (point_scale * ((py * dx - px * dy) / d_squared).abs() * dx.hypot(dy))
 }
 
+/// The point of a line string with one coord. Such a line string has no lines: its distances
+/// are those of its point, as it intersects what its point does.
+pub(crate) fn one_coord_point<F, LS>(linestring: &LS) -> Option<Point<F>>
+where
+    F: GeoFloat,
+    LS: LineStringTraitExt<T = F>,
+{
+    (linestring.num_coords() == 1)
+        .then(|| Point::from(unsafe { linestring.geo_coord_unchecked(0) }))
+}
+
 /// Generic point-to-linestring distance calculation.
 ///
 /// # Algorithm Equivalence to Concrete Implementation
@@ -259,6 +270,8 @@ where
                 min_distance = min_distance.min(distance_coord_to_line_generic(&coord, &line));
             }
             min_distance
+        } else if let Some(only) = one_coord_point(linestring) {
+            distance_point_to_point_generic(point, &only)
         } else {
             F::zero()
         }
@@ -397,6 +410,9 @@ where
     L: LineTraitExt<T = F>,
     LS: LineStringTraitExt<T = F>,
 {
+    if let Some(only) = one_coord_point(linestring) {
+        return distance_coord_to_line_generic(&only.0, line);
+    }
     linestring
         .lines()
         .map(|ls_line| distance_line_to_line_generic(line, &ls_line))
@@ -462,6 +478,12 @@ where
     LS1: LineStringTraitExt<T = F>,
     LS2: LineStringTraitExt<T = F>,
 {
+    if let Some(only) = one_coord_point(ls1) {
+        return distance_point_to_linestring_generic(&only, ls2);
+    }
+    if let Some(only) = one_coord_point(ls2) {
+        return distance_point_to_linestring_generic(&only, ls1);
+    }
     ls1.lines()
         .flat_map(|line1| {
             ls2.lines()
@@ -511,6 +533,10 @@ where
     LS: LineStringTraitExt<T = F>,
     Poly: PolygonTraitExt<T = F>,
 {
+    if let Some(only) = one_coord_point(linestring) {
+        return distance_point_to_polygon_generic(&only, polygon);
+    }
+
     // Early intersect check
     if polygon.intersects(linestring) {
         return F::zero();
@@ -1024,8 +1050,9 @@ mod tests {
         let point = Point::new(1.0, 2.0);
         let linestring = LineString::from(vec![(0.0, 0.0)]);
 
+        // The distance to a single point linestring is the distance to its point
         let distance = distance_point_to_linestring_generic(&point, &linestring);
-        assert_relative_eq!(distance, 0.0); // Single point linestring
+        assert_relative_eq!(distance, 5.0_f64.sqrt());
     }
 
     #[test]
@@ -1421,7 +1448,7 @@ mod tests {
         let point = Point::new(2.0, 2.0);
 
         let dist = distance_point_to_linestring_generic(&point, &single_point_ls);
-        assert_relative_eq!(dist, 0.0); // Should handle gracefully
+        assert_relative_eq!(dist, std::f64::consts::SQRT_2); // Distance to the point
 
         // Two identical points in LineString
         let two_same_points_ls = LineString::from(vec![(1.0, 1.0), (1.0, 1.0)]);
