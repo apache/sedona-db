@@ -34,6 +34,11 @@ macro_rules! impl_intersects_line_string_from_line {
             RHS: $rhs_type<T = T>,
         {
             fn intersects_trait(&self, rhs: &RHS) -> bool {
+                // a line string with one coord has no lines, and is handled as a point
+                // (georust/geo#1481)
+                if self.num_coords() == 1 {
+                    return unsafe { self.geo_coord_unchecked(0) }.intersects(rhs);
+                }
                 if has_disjoint_bboxes(self, rhs) {
                     return false;
                 }
@@ -309,5 +314,32 @@ mod test {
         let ls: LineString<f64> = wkt! {LINESTRING(5 -5, 5 -4)}.convert();
         let poly: Triangle<f64> = wkt! {TRIANGLE(0 0, 10 0, 5 10)}.convert();
         assert!(!ls.intersects(&poly));
+    }
+
+    #[test]
+    fn test_degenerate_linestring() {
+        // A line string of one coordinate, or of two equal ones, intersects what its point does
+        // (georust/geo#1481)
+        let pt: Point<f64> = wkt! {POINT(1 1)}.convert();
+        let other_pt: Point<f64> = wkt! {POINT(2 2)}.convert();
+        let poly: Polygon<f64> = Rect::new((0, 0), (1, 1)).to_polygon().convert();
+        let ls1: LineString<f64> = wkt! {LINESTRING(1 1)}.convert();
+        let ls2: LineString<f64> = wkt! {LINESTRING(1 1, 1 1)}.convert();
+
+        let other_ls1: LineString<f64> = wkt! {LINESTRING(0 0, 2 2)}.convert();
+        let other_ls2: LineString<f64> = wkt! {LINESTRING(2 2)}.convert();
+        for ls in [&ls1, &ls2] {
+            assert!(ls.intersects(&pt));
+            assert!(pt.intersects(ls));
+            assert!(ls.intersects(&pt.0));
+            assert!(ls.intersects(&poly));
+            assert!(ls.intersects(&other_ls1));
+            assert!(other_ls1.intersects(ls));
+            assert!(ls.intersects(&ls1));
+            assert!(!ls.intersects(&other_pt));
+            assert!(!other_pt.intersects(ls));
+            assert!(!ls.intersects(&other_ls2));
+            assert!(!other_ls2.intersects(ls));
+        }
     }
 }

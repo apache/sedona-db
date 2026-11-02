@@ -267,10 +267,11 @@ where
     T: CoordFloat,
 {
     fn signed_area_trait(&self) -> T {
-        self.to_lines()
-            .iter()
-            .fold(T::zero(), |total, line| total + line.determinant())
-            / (T::one() + T::one())
+        // Shift the triangle so that its first coord is the origin, as for a ring, so that a
+        // small triangle far from the origin keeps its precision (georust/geo#1438). The
+        // sides from and to the first coord then have a zero determinant.
+        let [first, second, third] = self.to_array();
+        crate::Line::new(second - first, third - first).determinant() / (T::one() + T::one())
     }
 
     fn unsigned_area_trait(&self) -> T {
@@ -618,5 +619,26 @@ mod test {
             0.006547948219252177,
             max_relative = 0.0001
         );
+    }
+
+    #[test]
+    fn area_triangle_numerical_stability() {
+        // The area of a small triangle far from the origin keeps its precision
+        // (georust/geo#1438)
+        let triangle = Triangle::<f64>::new(
+            coord! { x: 0.0, y: 0.0 },
+            coord! { x: 0.1, y: 10.0 },
+            coord! { x: 0.0, y: 20.0 },
+        );
+        let area = triangle.signed_area();
+
+        use crate::map_coords::MapCoords;
+        let shift = coord! { x: 1.5e8, y: 1.5e8 };
+        let shifted = triangle.map_coords(|c| c + shift);
+        assert!((area - shifted.signed_area()).abs() / area < 1e-2);
+
+        // and is the area of the same triangle as a polygon
+        let polygon_area = shifted.to_polygon().signed_area();
+        assert!((polygon_area - shifted.signed_area()).abs() / polygon_area < 1e-2);
     }
 }

@@ -113,14 +113,15 @@ where
 /// # Algorithm Equivalence to Concrete Implementation
 ///
 /// This function is algorithmically identical to the concrete `line_segment_distance` function
-/// in `geo-types/src/private_utils.rs`.
+/// in `geo-types/src/private_utils.rs`, as of georust/geo#1613 (not yet in a geo-types release).
 ///
 /// **Equivalence Details:**
 /// - **Same parametric approach**: Both compute parameter `r` to find the closest point on the line
 /// - **Same boundary handling**: Both check if `r <= 0` (closest to start) or `r >= 1` (closest to end)
 /// - **Same degenerate case**: Both handle zero-length lines by computing direct point distance
 /// - **Same perpendicular distance formula**: Both use cross product formula `s.abs() * dx.hypot(dy)` for interior points
-/// - **Same numerical precision**: Both use identical calculations and `hypot()` calls
+/// - **Same scaled fallback**: Both scale the vectors where the squared length of the segment
+///   overflows or underflows
 ///
 /// The concrete implementation uses `line_euclidean_length()` helper for endpoint distances,
 /// while this uses inline `delta.hypot()` - both compute the same Euclidean distance.
@@ -130,39 +131,96 @@ where
     C: CoordTrait<T = F>,
     L: LineTraitExt<T = F>,
 {
-    let point_x = coord.x();
-    let point_y = coord.y();
+    let point = Coord {
+        x: coord.x(),
+        y: coord.y(),
+    };
     let start = line.start_coord();
     let end = line.end_coord();
 
     // Handle degenerate case: line segment is a point
-    if start.x == end.x && start.y == end.y {
-        let delta_x = point_x - start.x;
-        let delta_y = point_y - start.y;
-        return delta_x.hypot(delta_y);
+    if start == end {
+        return (point.x - start.x).hypot(point.y - start.y);
     }
 
-    let dx = end.x - start.x;
-    let dy = end.y - start.y;
+    let (dx, dy) = (end.x - start.x, end.y - start.y);
+    let (px, py) = (point.x - start.x, point.y - start.y);
+
+    // The squared segment length can overflow or underflow, which makes the projection
+    // parameter NaN or wrong. Use the raw differences only where it does neither.
     let d_squared = dx * dx + dy * dy;
-    let r = ((point_x - start.x) * dx + (point_y - start.y) * dy) / d_squared;
+    if !(d_squared.is_finite() && d_squared >= F::min_positive_value()) {
+        return scaled_distance_coord_to_line(point, start, end);
+    }
+    let r = (px * dx + py * dy) / d_squared;
 
     if r <= F::zero() {
         // Closest point is the start point
-        let delta_x = point_x - start.x;
-        let delta_y = point_y - start.y;
-        return delta_x.hypot(delta_y);
+        return px.hypot(py);
     }
     if r >= F::one() {
         // Closest point is the end point
-        let delta_x = point_x - end.x;
-        let delta_y = point_y - end.y;
-        return delta_x.hypot(delta_y);
+        return (point.x - end.x).hypot(point.y - end.y);
     }
 
     // Closest point is on the line segment - use perpendicular distance
-    let s = ((start.y - point_y) * dx - (start.x - point_x) * dy) / d_squared;
-    s.abs() * dx.hypot(dy)
+    ((py * dx - px * dy) / d_squared).abs() * dx.hypot(dy)
+}
+
+/// The distance from `point` to a segment of distinct endpoints whose squared length
+/// overflows or underflows, as `scaled_line_segment_distance` in georust/geo#1613
+#[cold]
+#[inline(never)]
+fn scaled_distance_coord_to_line<F: CoordFloat>(
+    point: Coord<F>,
+    start: Coord<F>,
+    end: Coord<F>,
+) -> F {
+    let two = F::one() + F::one();
+    let (mut dx, mut dy) = (end.x - start.x, end.y - start.y);
+    let (mut px, mut py) = (point.x - start.x, point.y - start.y);
+    let mut segment_scale = dx.abs().max(dy.abs());
+    let mut point_scale = px.abs().max(py.abs());
+
+    // The difference of two finite coordinates can overflow. Halve the coordinates before
+    // the subtraction, and keep the factor of 2 separately.
+    let mut segment_factor = F::one();
+    let mut point_factor = F::one();
+    if !segment_scale.is_finite() {
+        dx = end.x / two - start.x / two;
+        dy = end.y / two - start.y / two;
+        segment_scale = dx.abs().max(dy.abs());
+        segment_factor = two;
+    }
+    if !point_scale.is_finite() {
+        px = point.x / two - start.x / two;
+        py = point.y / two - start.y / two;
+        point_scale = px.abs().max(py.abs());
+        point_factor = two;
+    }
+    if point_scale == F::zero() {
+        // The point is the start of the segment.
+        return F::zero();
+    }
+    // Scale each vector by its largest component. The two vectors get independent scales:
+    // one shared scale underflows the squared segment length when a distant point meets a
+    // short segment.
+    dx = dx / segment_scale;
+    dy = dy / segment_scale;
+    px = px / point_scale;
+    py = py / point_scale;
+    let d_squared = dx * dx + dy * dy;
+    let dot = px * dx + py * dy;
+    if dot <= F::zero() {
+        return (point.x - start.x).hypot(point.y - start.y);
+    }
+    // This tests dot >= d_squared for the unscaled vectors. Where the scales are far apart,
+    // their ratio overflows or underflows, and the test still selects the correct branch.
+    let scale_ratio = point_scale / segment_scale * (point_factor / segment_factor);
+    if scale_ratio * dot >= d_squared {
+        return (point.x - end.x).hypot(point.y - end.y);
+    }
+    point_factor * (point_scale * ((py * dx - px * dy) / d_squared).abs() * dx.hypot(dy))
 }
 
 /// Generic point-to-linestring distance calculation.
@@ -2377,5 +2435,61 @@ mod tests {
             // They should be identical now
             assert_relative_eq!(concrete_distance, generic_distance, epsilon = 1e-15);
         }
+    }
+
+    // ┌────────────────────────────────────────────────────────────┐
+    // │ Distances whose squares overflow or underflow              │
+    // │ (georust/geo#1613)                                         │
+    // └────────────────────────────────────────────────────────────┘
+
+    fn coord_to_line(point: Coord<f64>, start: Coord<f64>, end: Coord<f64>) -> f64 {
+        distance_coord_to_line_generic(&point, &Line::new(start, end))
+    }
+
+    #[test]
+    fn test_coord_to_line_at_large_coordinates() {
+        for y in [-1e100f64, -1e200, -8.988465674311469e307] {
+            // The end of the segment is the nearest point to the origin.
+            let distance = coord_to_line(
+                coord! { x: 0.0, y: 0.0 },
+                coord! { x: 0.0, y: y },
+                coord! { x: 3.0, y: -0.0 },
+            );
+            assert_relative_eq!(distance, 3.0);
+        }
+    }
+
+    #[test]
+    fn test_coord_to_line_at_small_coordinates() {
+        let start = coord! { x: 0.0, y: 0.0 };
+        let end = coord! { x: 0.0, y: 1e-162 };
+        assert_relative_eq!(coord_to_line(start, start, end), 0.0);
+        assert_relative_eq!(
+            coord_to_line(coord! { x: 1e-162, y: 0.0 }, start, end),
+            1e-162
+        );
+    }
+
+    #[test]
+    fn test_coord_to_line_perpendicular_at_large_coordinates() {
+        // The projection lands inside a segment whose squared length overflows.
+        let start = coord! { x: 0.0, y: 0.0 };
+        let end = coord! { x: 0.0, y: 1e200 };
+        assert_relative_eq!(coord_to_line(coord! { x: 3.0, y: 5e199 }, start, end), 3.0);
+    }
+
+    #[test]
+    fn test_coord_to_line_with_a_distant_point() {
+        // A distant point and a short segment need independent scales.
+        let start = coord! { x: 0.0, y: 0.0 };
+        let end = coord! { x: 1.0, y: 0.0 };
+        assert_relative_eq!(
+            coord_to_line(coord! { x: 0.0, y: 1e300 }, start, end),
+            1e300
+        );
+        assert_relative_eq!(
+            coord_to_line(coord! { x: -1e300, y: 0.0 }, start, end),
+            1e300
+        );
     }
 }
