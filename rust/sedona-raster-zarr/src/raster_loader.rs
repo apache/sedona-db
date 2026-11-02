@@ -258,6 +258,11 @@ pub struct HandleStats {
 /// would make the first reads of different shards wait for each other's
 /// fetches; per shard, only reads of the same shard wait, and they would
 /// have waited for that index anyway.
+///
+/// This per-shard map is a workaround for zarrs 0.23. Unreleased zarrs
+/// removes `ArrayShardedReadableExt` in favour of `ArrayCached` and async
+/// chunk caches that load each key once without a cache-wide lock. Remove
+/// the map when we move to the zarrs release that has them.
 struct OpenedArray {
     array: Array<dyn AsyncReadableListableStorageTraits>,
     /// The inner-chunk grid, for finding the shard an inner chunk is in;
