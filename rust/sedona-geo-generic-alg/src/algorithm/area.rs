@@ -271,14 +271,11 @@ where
         // from the origin keeps its precision (georust/geo#1438). The sides from and to that
         // coord then have a zero determinant. Shift by the coord opposite the longest side,
         // so that the other two are the shortest: shifting a needle-like triangle by its far
-        // coord can round its other two coords to the same point.
+        // coord can round its other two coords to the same point. hypot() rather than squared
+        // lengths, which can overflow and tie when the sides from that coord don't.
         let [a, b, c] = self.to_array();
-        let length_squared = |side: crate::Coord<T>| side.x * side.x + side.y * side.y;
-        let (ab, bc, ca) = (
-            length_squared(b - a),
-            length_squared(c - b),
-            length_squared(a - c),
-        );
+        let length = |side: crate::Coord<T>| side.x.hypot(side.y);
+        let (ab, bc, ca) = (length(b - a), length(c - b), length(a - c));
         // Rotating the coords keeps the orientation
         let [origin, second, third] = if bc >= ab && bc >= ca {
             [a, b, c]
@@ -675,6 +672,21 @@ mod test {
             assert_relative_eq!(triangle.signed_area(), 0.1, max_relative = 1e-9);
             let reversed = Triangle::unchecked_winding(c, b, a);
             assert_relative_eq!(reversed.signed_area(), -0.1, max_relative = 1e-9);
+        }
+    }
+
+    #[test]
+    fn area_triangle_with_overflowing_side_lengths() {
+        // The squares of all three side lengths overflow, and so does the longest side,
+        // but the sides from the coord opposite it don't
+        let left = coord! { x: -1e308, y: 0.0 };
+        let right = coord! { x: 1e308, y: 0.0 };
+        let top = coord! { x: 0.0, y: 1e-308 };
+        for (a, b, c) in [(left, right, top), (right, top, left), (top, left, right)] {
+            let triangle = Triangle::unchecked_winding(a, b, c);
+            assert_relative_eq!(triangle.signed_area(), 1.0, max_relative = 1e-9);
+            let reversed = Triangle::unchecked_winding(c, b, a);
+            assert_relative_eq!(reversed.signed_area(), -1.0, max_relative = 1e-9);
         }
     }
 }
