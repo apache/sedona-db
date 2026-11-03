@@ -52,6 +52,8 @@ use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex};
 
 use arrow_array::{Array, RecordBatch, StructArray, UInt32Array};
+use arrow_schema::DataType;
+use datafusion_common::arrow::array::ArrayData;
 use datafusion_common::arrow::compute::take_record_batch;
 use datafusion_common::{DataFusionError, Result, internal_err};
 use datafusion_common_runtime::SpawnedTask;
@@ -66,6 +68,7 @@ use datafusion_physical_plan::{
     DisplayAs, DisplayFormatType, ExecutionPlan, ExecutionPlanProperties, Partitioning,
     PlanProperties,
 };
+use futures::future::BoxFuture;
 use futures::{FutureExt, StreamExt, stream};
 use sedona_common::sedona_internal_datafusion_err;
 use sedona_raster::array::RasterStructArray;
@@ -223,14 +226,16 @@ pub fn raster_source_keys(rasters: &RasterStructArray) -> Vec<Option<u64>> {
 ///   A `take` copies the BinaryView views, not the bytes they point to.
 ///
 /// Pieces are queued as they are, never merged. Each output's queue holds
-/// at most `sedona.raster.max_batch_bytes` (by `get_array_memory_size`,
-/// which counts a buffer a piece shares with its siblings in full, so the
-/// bound is conservative), and always admits one piece when it is empty, so
-/// a piece larger than the budget still goes through, alone. Queued pieces
-/// are accounted to a per-output `MemoryReservation`. When the pool refuses
-/// a piece, the sender waits for that output's queue to empty and then
-/// queues it anyway: the input is not pulled further meanwhile, and the
-/// query goes on one piece per output at a time instead of failing. Nothing
+/// at most `sedona.raster.max_batch_bytes`, measured by the bytes a piece's
+/// rows reference (see [`referenced_bytes`]: a piece shares its buffers
+/// with its siblings and its input batch, so counting every reachable
+/// buffer in full would charge them once per piece), and always admits one
+/// piece when it is empty, so a piece larger than the budget still goes
+/// through, alone. Queued pieces are accounted to a per-output
+/// `MemoryReservation`. When the pool refuses a piece, the sender waits for
+/// that output's queue to empty and then queues it anyway: the input is not
+/// pulled further meanwhile, and the query goes on one piece per output at
+/// a time instead of failing, over the pool by at most that piece. Nothing
 /// is spilled: the queues are bounded, and the rows usually queued here are
 /// metadata-only OutDb references.
 ///
@@ -346,34 +351,38 @@ impl RasterSourceSpreadExec {
             let spread = spread_input(input, senders.clone(), self.key_column, input_partition);
             // Only the channels, so the error path keeps nothing else alive.
             let txs: Vec<_> = senders.iter().map(|sender| sender.tx.clone()).collect();
-            // One task per input, aborted directly when the outputs go. An
-            // error or a panic reaches every output instead of ending it as
-            // if the input were done.
-            tasks.push(SpawnedTask::spawn(async move {
-                let error = match AssertUnwindSafe(spread).catch_unwind().await {
-                    Ok(Ok(())) => return,
-                    Ok(Err(e)) => e,
-                    Err(panic) => {
-                        let message = panic
-                            .downcast_ref::<&str>()
-                            .map(|m| m.to_string())
-                            .or_else(|| panic.downcast_ref::<String>().cloned())
-                            .unwrap_or_default();
-                        sedona_internal_datafusion_err!(
-                            "RasterSourceSpreadExec: input task panicked: {message}"
-                        )
+            // One task per input, spawned on the first poll of an output and
+            // aborted directly when the outputs go. An error or a panic
+            // reaches every output instead of ending it as if the input
+            // were done.
+            tasks.push(
+                async move {
+                    let error = match AssertUnwindSafe(spread).catch_unwind().await {
+                        Ok(Ok(())) => return,
+                        Ok(Err(e)) => e,
+                        Err(panic) => {
+                            let message = panic
+                                .downcast_ref::<&str>()
+                                .map(|m| m.to_string())
+                                .or_else(|| panic.downcast_ref::<String>().cloned())
+                                .unwrap_or_default();
+                            sedona_internal_datafusion_err!(
+                                "RasterSourceSpreadExec: input task panicked: {message}"
+                            )
+                        }
+                    };
+                    let error = Arc::new(error);
+                    for tx in txs {
+                        tx.send(Err(DataFusionError::Shared(Arc::clone(&error))))
+                            .ok();
                     }
-                };
-                let error = Arc::new(error);
-                for tx in txs {
-                    tx.send(Err(DataFusionError::Shared(Arc::clone(&error))))
-                        .ok();
                 }
-            }));
+                .boxed(),
+            );
         }
-        // Every output holds the tasks: they are aborted once all outputs
-        // are dropped.
-        let tasks = Arc::new(tasks);
+        // Every output holds the tasks: they are aborted (or, never
+        // started, dropped with their input streams) once all outputs are.
+        let tasks = Arc::new(Mutex::new(InputTasks::Pending(tasks)));
         Ok(queues
             .into_iter()
             .map(|(rx, space, polled, baseline)| {
@@ -382,10 +391,42 @@ impl RasterSourceSpreadExec {
                     space,
                     polled,
                     baseline,
-                    _tasks: Arc::clone(&tasks),
+                    tasks: Arc::clone(&tasks),
+                    started: false,
                 })
             })
             .collect())
+    }
+}
+
+/// The input tasks: executed on the first `execute`, as `RepartitionExec`
+/// does, so a parent that executes its children early and polls them late
+/// (the probe side of a join, polled after the build) does not have the
+/// input spread into unpolled queues meanwhile; spawned on the first poll
+/// of any output.
+enum InputTasks {
+    Pending(Vec<BoxFuture<'static, ()>>),
+    Running(Vec<SpawnedTask<()>>),
+}
+
+impl InputTasks {
+    fn start(&mut self) {
+        if let InputTasks::Pending(pending) = self {
+            let tasks = std::mem::take(pending)
+                .into_iter()
+                .map(SpawnedTask::spawn)
+                .collect();
+            *self = InputTasks::Running(tasks);
+        }
+    }
+}
+
+impl fmt::Debug for InputTasks {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            InputTasks::Pending(tasks) => write!(f, "Pending({} inputs)", tasks.len()),
+            InputTasks::Running(tasks) => write!(f, "Running({} inputs)", tasks.len()),
+        }
     }
 }
 
@@ -426,7 +467,7 @@ impl OutputSender {
     /// cannot spill; a parent that polls every output at once (a
     /// `CoalescePartitionsExec`) bounds every queue from its first poll.
     async fn send(&self, batch: RecordBatch) -> bool {
-        let bytes = batch.get_array_memory_size();
+        let bytes = referenced_bytes(&batch);
         let reservation = self.reservation.new_empty();
         if !self.polled.load(AtomicOrdering::Acquire) {
             reservation.grow(bytes);
@@ -474,7 +515,9 @@ struct OutputQueue {
     space: Arc<Semaphore>,
     polled: Arc<AtomicBool>,
     baseline: BaselineMetrics,
-    _tasks: Arc<Vec<SpawnedTask<()>>>,
+    tasks: Arc<Mutex<InputTasks>>,
+    /// Whether this output has started the input tasks (see [`InputTasks`]).
+    started: bool,
 }
 
 impl fmt::Debug for Piece {
@@ -491,6 +534,17 @@ impl fmt::Debug for Piece {
 impl OutputQueue {
     async fn next(&mut self) -> Option<Result<RecordBatch>> {
         self.polled.store(true, AtomicOrdering::Release);
+        if !self.started {
+            match self.tasks.lock() {
+                Ok(mut tasks) => tasks.start(),
+                Err(_) => {
+                    return Some(Err(sedona_internal_datafusion_err!(
+                        "RasterSourceSpreadExec: poisoned"
+                    )));
+                }
+            }
+            self.started = true;
+        }
         let piece = match self.rx.recv().await? {
             Ok(piece) => piece,
             Err(e) => return Some(Err(e)),
@@ -590,16 +644,86 @@ fn split_by_source(
     if let Some(partition) = rows.iter().position(|rows| rows.len() == batch.num_rows()) {
         return Ok(vec![(partition, batch)]);
     }
-    rows.into_iter()
-        .enumerate()
-        .filter(|(_, rows)| !rows.is_empty())
-        .map(|(partition, rows)| {
-            Ok((
-                partition,
-                take_record_batch(&batch, &UInt32Array::from(rows))?,
-            ))
-        })
-        .collect()
+    // One `take` of the rows grouped by output, then a slice per output, as
+    // `RepartitionExec` does: the nested raster arrays are rebuilt once per
+    // batch instead of once per output.
+    let mut grouped = Vec::with_capacity(batch.num_rows());
+    let mut ranges = Vec::with_capacity(partitions);
+    for (partition, rows) in rows.iter().enumerate() {
+        if !rows.is_empty() {
+            ranges.push((partition, grouped.len(), rows.len()));
+            grouped.extend_from_slice(rows);
+        }
+    }
+    let grouped = take_record_batch(&batch, &UInt32Array::from(grouped))?;
+    Ok(ranges
+        .into_iter()
+        .map(|(partition, start, len)| (partition, grouped.slice(start, len)))
+        .collect())
+}
+
+/// The bytes the rows of `batch` reference: the views, offsets, validity
+/// and values within each array's own range, and the out-of-line bytes its
+/// views point to. A piece shares its buffers with its siblings (a slice of
+/// one grouped `take`) and with the input batch it was cut from (pixels a
+/// `take` does not copy), so `get_array_memory_size`, which counts every
+/// buffer it can reach in full, would count those buffers once per piece.
+fn referenced_bytes(batch: &RecordBatch) -> usize {
+    batch
+        .columns()
+        .iter()
+        .map(|column| array_referenced_bytes(&column.to_data()))
+        .sum()
+}
+
+fn array_referenced_bytes(data: &ArrayData) -> usize {
+    let len = data.len();
+    if len == 0 {
+        return 0;
+    }
+    let validity = data.nulls().map_or(0, |_| len.div_ceil(8));
+    let values = match data.data_type() {
+        DataType::BinaryView | DataType::Utf8View => {
+            // A view's low 32 bits are its length; up to 12 bytes are inline.
+            let out_of_line: usize = data.buffer::<u128>(0)[..len]
+                .iter()
+                .map(|view| *view as u32 as usize)
+                .filter(|&bytes| bytes > 12)
+                .sum();
+            len * 16 + out_of_line
+        }
+        DataType::Binary | DataType::Utf8 => {
+            let offsets = data.buffer::<i32>(0);
+            (len + 1) * 4 + (offsets[len] - offsets[0]) as usize
+        }
+        DataType::LargeBinary | DataType::LargeUtf8 => {
+            let offsets = data.buffer::<i64>(0);
+            (len + 1) * 8 + (offsets[len] - offsets[0]) as usize
+        }
+        DataType::List(_) | DataType::Map(_, _) => {
+            let offsets = data.buffer::<i32>(0);
+            let (start, end) = (offsets[0] as usize, offsets[len] as usize);
+            (len + 1) * 4 + array_referenced_bytes(&data.child_data()[0].slice(start, end - start))
+        }
+        DataType::LargeList(_) => {
+            let offsets = data.buffer::<i64>(0);
+            let (start, end) = (offsets[0] as usize, offsets[len] as usize);
+            (len + 1) * 8 + array_referenced_bytes(&data.child_data()[0].slice(start, end - start))
+        }
+        DataType::FixedSizeList(_, size) => {
+            let size = *size as usize;
+            array_referenced_bytes(&data.child_data()[0].slice(data.offset() * size, len * size))
+        }
+        // A struct's children are sliced along with it.
+        DataType::Struct(_) => data.child_data().iter().map(array_referenced_bytes).sum(),
+        // Fixed-width and the rest: validity is part of the measure.
+        _ => {
+            return data
+                .get_slice_memory_size()
+                .unwrap_or_else(|_| data.get_buffer_memory_size());
+        }
+    };
+    validity + values
 }
 
 impl DisplayAs for RasterSourceSpreadExec {
@@ -2019,9 +2143,8 @@ mod tests {
         let ids = Arc::new(Int32Array::from_iter_values(0..64));
         let batch = RecordBatch::try_new(Arc::clone(&schema), vec![ids, rasters]).unwrap();
         let one_row_batches: Vec<RecordBatch> = (0..64).map(|i| batch.slice(i, 1)).collect();
-        // Every slice shares the same buffers, so every piece reserves the
-        // same bytes.
-        let piece_bytes = one_row_batches[0].get_array_memory_size();
+        // Every one-row piece references the same number of bytes.
+        let piece_bytes = referenced_bytes(&one_row_batches[0]);
         let input = MemorySourceConfig::try_new_exec(&[one_row_batches], Arc::clone(&schema), None)
             .unwrap();
         let spread = RasterSourceSpreadExec::try_new(input, 1, 2).unwrap();
@@ -2070,6 +2193,140 @@ mod tests {
             tokio::task::yield_now().await;
         }
         assert_eq!(pool.reserved(), 0);
+    }
+
+    #[tokio::test]
+    async fn the_input_starts_on_the_first_poll_and_queues_several_small_pieces() {
+        // 64 independently allocated one-row batches of a loaded 1 KiB
+        // raster, one output, and a budget of four and a half pieces.
+        let mut batches = Vec::with_capacity(64);
+        let mut schema = None;
+        for i in 0..64 {
+            let mut b = RasterBuilder::new(1);
+            b.start_raster_nd(
+                &[0.0, 1.0, 0.0, 0.0, 0.0, -1.0],
+                &["y", "x"],
+                &[32, 32],
+                None,
+            )
+            .unwrap();
+            b.start_band(StartBandArgs::new(
+                &["y", "x"],
+                &[32, 32],
+                BandDataType::UInt8,
+            ))
+            .unwrap();
+            b.band_data_writer().append_value(vec![i as u8; 1024]);
+            b.finish_band().unwrap();
+            b.finish_raster().unwrap();
+            let rasters: ArrayRef = Arc::new(b.finish().unwrap());
+            let raster_field = SedonaType::Raster.to_storage_field("rast", true).unwrap();
+            let batch_schema = schema
+                .get_or_insert_with(|| {
+                    Arc::new(Schema::new(vec![
+                        Field::new("id", DataType::Int32, false),
+                        Field::new("rast", rasters.data_type().clone(), true)
+                            .with_metadata(raster_field.metadata().clone()),
+                    ]))
+                })
+                .clone();
+            let ids = Arc::new(Int32Array::from_iter_values([i]));
+            batches.push(RecordBatch::try_new(batch_schema, vec![ids, rasters]).unwrap());
+        }
+        let schema = schema.unwrap();
+        let piece_bytes = referenced_bytes(&batches[0]);
+        assert!(batches.iter().all(|b| referenced_bytes(b) == piece_bytes));
+        let input =
+            MemorySourceConfig::try_new_exec(&[batches], Arc::clone(&schema), None).unwrap();
+        let spread = RasterSourceSpreadExec::try_new(input, 1, 1).unwrap();
+        let pool: Arc<dyn MemoryPool> = Arc::new(GreedyMemoryPool::new(64 * 1024 * 1024));
+        let config = SessionConfig::new().with_option_extension(SedonaOptions {
+            raster: RasterOptions {
+                max_batch_bytes: 4 * piece_bytes + piece_bytes / 2,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let ctx = SessionStateBuilder::new()
+            .with_config(config)
+            .with_runtime_env(
+                RuntimeEnvBuilder::new()
+                    .with_memory_pool(Arc::clone(&pool))
+                    .build_arc()
+                    .unwrap(),
+            )
+            .build()
+            .task_ctx();
+
+        // Executed but not polled (a join's probe side while it builds):
+        // nothing is pulled into the queue.
+        let mut stream = spread.execute(0, Arc::clone(&ctx)).unwrap();
+        for _ in 0..100 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(pool.reserved(), 0);
+
+        // Polled once and left unread: four pieces fit, the fifth waits.
+        assert!(stream.next().now_or_never().is_none());
+        for _ in 0..100 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(pool.reserved(), 4 * piece_bytes);
+
+        let rows: usize = collect(stream)
+            .await
+            .unwrap()
+            .iter()
+            .map(RecordBatch::num_rows)
+            .sum();
+        assert_eq!(rows, 64);
+        assert_eq!(pool.reserved(), 0);
+    }
+
+    #[test]
+    fn pieces_are_sized_by_the_bytes_their_rows_reference() {
+        // 64 loaded 1 KiB rasters: a one-row slice or a `take` of a few
+        // rows shares the whole array's buffers, but references only its
+        // own rows' pixels.
+        let mut b = RasterBuilder::new(64);
+        for i in 0..64 {
+            b.start_raster_nd(
+                &[0.0, 1.0, 0.0, 0.0, 0.0, -1.0],
+                &["y", "x"],
+                &[32, 32],
+                None,
+            )
+            .unwrap();
+            b.start_band(StartBandArgs::new(
+                &["y", "x"],
+                &[32, 32],
+                BandDataType::UInt8,
+            ))
+            .unwrap();
+            b.band_data_writer().append_value(vec![i as u8; 1024]);
+            b.finish_band().unwrap();
+            b.finish_raster().unwrap();
+        }
+        let rasters: ArrayRef = Arc::new(b.finish().unwrap());
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "rast",
+            rasters.data_type().clone(),
+            true,
+        )]));
+        let batch = RecordBatch::try_new(schema, vec![rasters]).unwrap();
+
+        let whole = referenced_bytes(&batch);
+        let one = referenced_bytes(&batch.slice(10, 1));
+        assert!(whole >= 64 * 1024, "{whole}");
+        assert!((1024..2 * 1024).contains(&one), "{one}");
+        assert!(batch.slice(10, 1).get_array_memory_size() >= 64 * 1024);
+        let four = referenced_bytes(
+            &take_record_batch(&batch, &UInt32Array::from(vec![3, 9, 27, 63])).unwrap(),
+        );
+        // Less than four one-row pieces: those each count an extra offset
+        // per list level.
+        assert!((4 * 1024..=4 * one).contains(&four), "{four} vs {one}");
+        assert_eq!(referenced_bytes(&batch.slice(0, 0)), 0);
     }
 
     #[tokio::test]
