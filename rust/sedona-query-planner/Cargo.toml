@@ -50,7 +50,7 @@ arrow = { workspace = true }
 criterion = { workspace = true }
 datafusion = { workspace = true, features = ["nested_expressions", "sql"] }
 sedona-schema = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt"] }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
 
 [[bench]]
 name = "raster_materialization"

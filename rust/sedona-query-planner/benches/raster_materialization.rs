@@ -270,5 +270,94 @@ fn bench_spread(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench, bench_spread);
+/// 64 independently built batches of 128 OutDb rows, 256 × 256 UInt8 each
+/// and over 256 files (`r{row % 256}.tif#band=1`), in four input
+/// partitions: many small metadata-only batches, each cut into a piece per
+/// output. The rule spreads them over four partitions under a 1 MiB budget,
+/// on four workers, and the outputs are merged.
+fn bench_spread_small_batches(c: &mut Criterion) {
+    const BATCHES: usize = 64;
+    const BATCH_ROWS: usize = 128;
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .build()
+        .unwrap();
+    let mut schema = None;
+    let batches: Vec<RecordBatch> = (0..BATCHES)
+        .map(|batch| {
+            let mut b = RasterBuilder::new(BATCH_ROWS);
+            for row in batch * BATCH_ROWS..(batch + 1) * BATCH_ROWS {
+                b.start_raster_nd(
+                    &[0.0, 1.0, 0.0, 0.0, 0.0, -1.0],
+                    &["y", "x"],
+                    &[256, 256],
+                    None,
+                )
+                .unwrap();
+                let uri = format!("s3://bucket/r{}.tif#band=1", row % 256);
+                b.start_band(StartBandArgs {
+                    outdb_uri: Some(&uri),
+                    outdb_format: Some("geotiff"),
+                    ..StartBandArgs::new(&["y", "x"], &[256, 256], BandDataType::UInt8)
+                })
+                .unwrap();
+                b.band_data_writer().append_value([0u8; 0]);
+                b.finish_band().unwrap();
+                b.finish_raster().unwrap();
+            }
+            let rasters: ArrayRef = Arc::new(b.finish().unwrap());
+            let schema = schema.get_or_insert_with(|| {
+                let raster_field = SedonaType::Raster.to_storage_field("rast", true).unwrap();
+                Arc::new(Schema::new(vec![
+                    Field::new("rast", rasters.data_type().clone(), true)
+                        .with_metadata(raster_field.metadata().clone()),
+                ]))
+            });
+            RecordBatch::try_new(Arc::clone(schema), vec![rasters]).unwrap()
+        })
+        .collect();
+    let schema: SchemaRef = schema.unwrap();
+    let partitions: Vec<Vec<RecordBatch>> = batches
+        .chunks(BATCHES / 4)
+        .map(<[RecordBatch]>::to_vec)
+        .collect();
+    let udf = Arc::new(ScalarUDF::new_from_impl(IdentityEnsureLoaded {
+        signature: Signature::any(1, Volatility::Stable),
+    }));
+    let plan = || -> Arc<dyn ExecutionPlan> {
+        let input =
+            MemorySourceConfig::try_new_exec(&partitions, Arc::clone(&schema), None).unwrap();
+        let call = Arc::new(
+            ScalarFunctionExpr::try_new(
+                Arc::clone(&udf),
+                vec![col("rast", &schema).unwrap()],
+                &schema,
+                Arc::new(ConfigOptions::default()),
+            )
+            .unwrap(),
+        );
+        Arc::new(
+            ProjectionExec::try_new(vec![ProjectionExpr::new(call, "loaded")], input).unwrap(),
+        )
+    };
+    let mut config = ConfigOptions::default();
+    config.execution.target_partitions = 4;
+    let ctx = task_context(1024 * 1024);
+
+    let mut group = c.benchmark_group("raster_source_spread_small_batches");
+    group.throughput(Throughput::Elements((BATCHES * BATCH_ROWS) as u64));
+    group.bench_function("outdb", |b| {
+        b.iter_batched(
+            || RasterMaterializationRule.optimize(plan(), &config).unwrap(),
+            |spread| {
+                rt.block_on(datafusion_physical_plan::collect(spread, Arc::clone(&ctx)))
+                    .unwrap()
+            },
+            BatchSize::SmallInput,
+        )
+    });
+    group.finish();
+}
+
+criterion_group!(benches, bench, bench_spread, bench_spread_small_batches);
 criterion_main!(benches);
