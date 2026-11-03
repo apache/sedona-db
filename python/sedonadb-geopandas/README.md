@@ -211,11 +211,12 @@ when the result is computed.
 `dtypes` and a column's `dtype` are what `to_pandas()` gives for each column's
 type when no value is missing: whether one is isn't known before computing, so
 an integer column with a missing value reports an integer dtype, where pandas
-makes its values floats. `len()`, `shape`, `size` and `empty` compute the number
-of rows (or whether there is one). `tail()` gives the last rows of a sorted
-frame or column, computing the number of rows; like `head()`, it takes no
-negative count. A column's `name` is a string, and `rename()` of a column only
-names it, as there is no index to relabel.
+makes its values floats. A categorical column's categories are those of its
+values, so its dtype computes the column. `len()`, `shape`, `size` and `empty`
+compute the number of rows (or whether there is one). `tail()` gives the last
+rows of a sorted frame or column, computing the number of rows; like `head()`,
+it takes no negative count. A column's `name` is a string, and `rename()` of a
+column only names it, as there is no index to relabel.
 
 Reductions (`sum()`, `mean()`, `min()`, `max()`, `count()`, `median()`,
 `std()`, `var()`, `quantile()`, `nunique()`) compute their result, skipping
@@ -241,13 +242,13 @@ count back from.
 `replace()` takes values, lists and dicts as pandas does, but no regular
 expressions, and replaces a value with one of its column's kind, raising for
 another kind where pandas would turn the column into Python objects. A value
-replaced in every column of a frame is replaced in those that hold its kind,
-but a missing value only in those that hold its replacement's kind, as
-`fillna()` fills them. A replacement of a wider type (a float in an integer
-column) widens the column whether or not a value matches, as the result's types
-can't depend on its rows. A frame's `isin()` takes a list or a dict of lists, as
-pandas does, but no Series or frame, which would need row alignment; a value
-that is not a geometry matches no geometry, as in GeoPandas.
+replaced in every column of a frame is replaced in those that hold its kind, but
+a missing value only in those that hold its replacement's kind, as `fillna()`
+fills them. A replacement of a wider type (a float in an integer column) widens
+the column whether or not a value matches, as the result's types can't depend on
+its rows. A frame's `isin()` takes a list or a dict of lists, as pandas does,
+but no Series or frame (a pandas one included), which would need row alignment;
+a value that is not a geometry matches no geometry, as in GeoPandas.
 
 `merge()` joins on columns as pandas does, including in matching a missing key
 (NaN or None) with a missing key, unlike SQL; without an index, its rows don't

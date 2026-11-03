@@ -706,15 +706,21 @@ class Series:
 
     def _equals(self, value):
         """Where this column holds `value` (never null). A missing `value`
-        matches the missing values."""
+        matches the missing values, and an integer beyond int64 as `isin()`
+        matches it: exactly, as a value of this column's type."""
         from sedonadb_geopandas._frame import _is_missing
 
         if _is_missing(normalize_scalar(value)):
             return self._missing()
+        if _beyond_int64(value):
+            return self.isin([value])._expr
         return self._compare(value, operator.eq)._expr
 
     def _holds(self, value):
         """Whether a scalar `value` is the kind of value this column holds."""
+        if _beyond_int64(value):
+            # A number, though no literal holds it without a type.
+            return _kind(self._dtype()) == "number"
         try:
             self._replacement(value, "fillna")
         except TypeError:
@@ -755,7 +761,7 @@ class Series:
             else:
                 present.append(normalized)
         dtype = self._dtype()
-        present = _comparable(dtype, present)
+        present = self._members(dtype, present)
         # False, as an expression over this column: a bare literal is not an
         # expression, so `~`, `isna()` or `astype()` on the result would fail.
         expr = self._expr.is_null() & lit(False)
@@ -775,6 +781,11 @@ class Series:
             if matches_nan:
                 expr = expr | self._decoded().funcs.isnan().funcs.coalesce(lit(False))
         return Series(self._df, expr, self._name)
+
+    def _members(self, dtype, values):
+        """The `values`, none missing, that `isin()` can match in this column
+        of `dtype`, in its terms (see `_comparable`)."""
+        return _comparable(dtype, values)
 
     def astype(self, dtype):
         """Cast to `dtype` (a NumPy/pandas dtype name, Python type, or Arrow type).
@@ -1133,14 +1144,12 @@ class Series:
 
         Whether a value is missing isn't known before the column is
         computed, so an integer column with a missing value has an integer
-        dtype here, where pandas makes its values floats.
+        dtype here, where pandas makes its values floats. A categorical
+        column's categories are those of its values, so its dtype computes
+        it.
         """
-        return (
-            self._df.select(self._expr.alias(self._name))
-            .limit(0)
-            .to_pandas()[self._name]
-            .dtype
-        )
+        df = self._df.select(self._expr.alias(self._name))
+        return _pandas_dtypes(df)[self._name]
 
     def __len__(self):
         return self._df.count()
@@ -1461,6 +1470,30 @@ def _is_temporal(arrow_type):
         or pa.types.is_duration(arrow_type)
         or pa.types.is_time(arrow_type)
     )
+
+
+def _beyond_int64(value):
+    """Whether `value` is a plain integer no int64 holds."""
+    return isinstance(value, int) and not -(2**63) <= value < 2**63
+
+
+def _pandas_dtypes(df):
+    """The pandas dtype `df.to_pandas()` gives each column, as a pandas
+    Series: from a query of no rows, except a categorical column's, whose
+    categories are those of its values (unused ones too), so that column is
+    computed."""
+    import pandas as pd
+
+    dtypes = df.limit(0).to_pandas().dtypes
+    categorical = [
+        name for name, dtype in dtypes.items() if isinstance(dtype, pd.CategoricalDtype)
+    ]
+    if categorical:
+        computed = df.select(*categorical).to_pandas().dtypes
+        dtypes = dtypes.copy()
+        for name in categorical:
+            dtypes[name] = computed[name]
+    return dtypes
 
 
 def _comparable(dtype, values):
@@ -3255,13 +3288,12 @@ class GeoSeries(Series):
 
     # -- serialization and CRS --------------------------------------------
 
-    def isin(self, values):
-        """Whether each geometry is one of `values`, as `Series.isin()` tells:
-        a value that is not a geometry matches none, as in GeoPandas, and a
-        missing one the missing geometries."""
-        if isinstance(values, (str, bytes, Series)) or not hasattr(values, "__iter__"):
-            return super().isin(values)
-        return super().isin([value for value in values if self._holds(value)])
+    def _members(self, dtype, values):
+        # A value that is not a geometry matches none, as in GeoPandas, where
+        # the engine would refuse to compare it with a geometry. (Which
+        # missing values match is read from all the values, which GeoPandas
+        # answers from.)
+        return [value for value in values if self._holds(value)]
 
     def astype(self, dtype):
         """This column as `dtype`, as GeoPandas casts geometries: to a string

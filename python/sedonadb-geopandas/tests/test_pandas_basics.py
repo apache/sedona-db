@@ -97,6 +97,20 @@ def test_dtype_is_that_of_the_type_when_no_value_is_missing():
     assert ours.dtypes["i"] == np.dtype("int64")
 
 
+def test_dtype_of_a_categorical_column_has_its_categories():
+    # Its categories are those of its values, unused ones too, which a query
+    # of no rows has none of; given another column, they keep its values.
+    values = pd.Categorical(["a", "b", "a"], categories=["a", "b", "c"])
+    ours = sgpd.from_geopandas(
+        gpd.GeoDataFrame({"c": values, "i": [1, 2, 3]}, geometry=[None] * 3)
+    )
+    computed = ours.to_pandas()
+    assert ours["c"].dtype == computed["c"].dtype
+    assert list(ours["c"].dtype.categories) == ["a", "b", "c"]
+    pd.testing.assert_series_equal(ours.dtypes, computed.dtypes)
+    assert pd.Series(["b", "c"]).astype(ours.dtypes["c"]).tolist() == ["b", "c"]
+
+
 def test_shape_size_empty_and_ndim_match_geopandas():
     ours, expected = _ours(), _geopandas()
     assert ours.shape == expected.shape
@@ -271,14 +285,32 @@ def test_isin_of_geometries_matches_geopandas():
         assert _rows(ours) == _rows(expected)
 
 
+@pytest.mark.parametrize(
+    "values",
+    [
+        [np.datetime64("NaT"), 1],
+        [np.datetime64("NaT"), "x"],
+        [np.timedelta64("NaT"), Point(0, 0)],
+        [np.datetime64("NaT")],
+    ],
+)
+def test_geometry_isin_of_a_missing_value_reads_every_value(values):
+    # GeoPandas matches a missing geometry with NumPy's NaT only when NaT is
+    # the only value that is not a geometry, so the values that are not
+    # geometries count, though they match nothing.
+    ours, expected = _ours()["geometry"], _geopandas()["geometry"]
+    assert _values(ours.isin(values)) == _values(expected.isin(values))
+
+
 def test_isin_takes_values_not_a_frame_or_a_string():
     ours = _ours()
     with pytest.raises(TypeError, match="list-like"):
         ours.isin("a")
-    with pytest.raises(TypeError, match="list-like"):
-        ours.isin(ours)
-    with pytest.raises(TypeError, match="list-like"):
-        ours.isin(ours["i"])
+    # pandas aligns a Series or a frame of values with the rows by index.
+    expected = _geopandas()
+    for values in (ours, ours["i"], expected, expected["i"], pd.Series([1, 2])):
+        with pytest.raises(TypeError, match="alignment"):
+            ours.isin(values)
 
 
 # -- where and mask --------------------------------------------------------------
@@ -305,6 +337,19 @@ def test_frame_where_and_mask_with_other(method):
     want = getattr(expected, method)(expected["i"] > 2, -1, axis=0)
     assert _rows(got) == _rows(want)
     got = getattr(ours, method)(ours["i"] > 2, ours["i"] * 10)
+    want = getattr(expected, method)(expected["i"] > 2, expected["i"] * 10, axis=0)
+    assert _rows(got) == _rows(want)
+
+
+@pytest.mark.parametrize("method", ["where", "mask"])
+def test_frame_where_and_mask_take_series_read_before_a_column_was_added(method):
+    # Adding a column leaves the rows as they were, so a condition or other
+    # read before stays valid, as it does for assignment.
+    ours, expected = _ours()[["i", "f"]], _geopandas()[["i", "f"]].copy()
+    cond, other = ours["i"] > 2, ours["i"] * 10
+    ours["j"] = 7
+    expected["j"] = 7
+    got = getattr(ours, method)(cond, other)
     want = getattr(expected, method)(expected["i"] > 2, expected["i"] * 10, axis=0)
     assert _rows(got) == _rows(want)
 
@@ -388,6 +433,27 @@ def test_replace_matches_nan_and_null():
     ours = sgpd.GeoDataFrame(sgpd.default_context().create_data_frame(table))
     assert _values(ours["f"].replace(np.nan, 0.0)) == [1.0, 0.0, 0.0]
     assert _values(ours.replace(None, 0.0)["f"]) == [1.0, 0.0, 0.0]
+
+
+@pytest.mark.parametrize(
+    "args", [(2**63, 0), ({2**63: 0, 1: 5},), ([2**64, 1], 7), (-(2**63) - 1, 0)]
+)
+def test_replace_of_integers_beyond_int64_matches_pandas(args):
+    # Matched exactly, as isin() matches them: 2**63 is a uint64 and a float,
+    # and no int64.
+    table = pa.table(
+        {
+            "u": pa.array([2**63, 1], pa.uint64()),
+            "i": pa.array([1, 2], pa.int64()),
+            "f": pa.array([2.0**63, 1.0]),
+        }
+    )
+    ours = sgpd.GeoDataFrame(sgpd.default_context().create_data_frame(table))
+    expected = table.to_pandas()
+    assert _rows(ours.replace(*args)) == _rows(expected.replace(*args))
+    for name in ("u", "i", "f"):
+        got, want = ours[name].replace(*args), expected[name].replace(*args)
+        assert _values(got) == _values(want)
 
 
 def test_replace_validation():

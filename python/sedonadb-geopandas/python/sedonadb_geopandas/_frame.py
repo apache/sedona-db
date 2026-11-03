@@ -33,6 +33,7 @@ from sedonadb_geopandas._series import (
     _CoordinateIndexer,
     _geometry_from_wkb,
     _kind,
+    _pandas_dtypes,
     _replacement_pairs,
     _same_crs,
     is_scalar,
@@ -148,6 +149,15 @@ def _is_missing(value):
     except Exception:
         # Without pandas, catch NaN via its self-inequality.
         return isinstance(value, float) and value != value
+
+
+def _is_pandas_object(value):
+    """Whether `value` is a pandas Series or DataFrame (or a GeoPandas one)."""
+    try:
+        import pandas as pd
+    except ImportError:
+        return False
+    return isinstance(value, (pd.Series, pd.DataFrame))
 
 
 def _explode_parts(df, column):
@@ -338,8 +348,8 @@ class GeoDataFrame:
     def dtypes(self):
         """The pandas dtype of each column, as a pandas Series, as
         `to_pandas()` gives them when no value is missing (see
-        `Series.dtype`)."""
-        return self._df.limit(0).to_pandas().dtypes
+        `Series.dtype`): this computes the categorical columns."""
+        return _pandas_dtypes(self._df)
 
     @property
     def shape(self):
@@ -1028,13 +1038,17 @@ class GeoDataFrame:
         """
         if isinstance(values, dict):
             lists = values
-        elif isinstance(values, (str, bytes, Series, GeoDataFrame)) or not hasattr(
-            values, "__iter__"
-        ):
+        elif isinstance(values, (Series, GeoDataFrame)) or _is_pandas_object(values):
+            raise TypeError(
+                f"isin() takes a list or a dict of lists, not a "
+                f"{type(values).__name__}: pandas aligns a Series or a frame of "
+                f"values with the rows by index, and there is no row alignment "
+                f"here"
+            )
+        elif isinstance(values, (str, bytes)) or not hasattr(values, "__iter__"):
             raise TypeError(
                 f"only list-like or dict-like objects are allowed to be passed to "
-                f"isin(), you passed a {type(values).__name__!r} (there is no row "
-                f"alignment for a Series or a frame)"
+                f"isin(), you passed a {type(values).__name__!r}"
             )
         else:
             lists = dict.fromkeys(self.columns, list(values))
@@ -1087,6 +1101,14 @@ class GeoDataFrame:
                     f"{method}(): there is no row alignment, so the result would "
                     f"be silently wrong."
                 )
+        # A Series read before columns were added reads the same values from
+        # this frame, whose columns' methods take only its own.
+        cond, other = (
+            type(value)(self._df, value._expr, value._name)
+            if isinstance(value, Series)
+            else value
+            for value in (cond, other)
+        )
         exprs = {
             name: getattr(self[name], method)(cond, other)._expr
             for name in self.columns
