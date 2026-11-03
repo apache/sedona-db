@@ -25,13 +25,23 @@ kernels:
       type: geometry
     - name: pct_convex
       type: double
+  - returns: geometry
+    args:
+    - name: geom
+      type: geometry
+    - name: pct_convex
+      type: double
+    - name: allow_holes
+      type: boolean
+      description: Whether the hull may have holes. Defaults to false.
 ---
 
 ## Description
 
 Returns a concave hull enclosing the input geometry. The `pct_convex` parameter
 controls how "tight" the hull is: 1.0 produces the convex hull, while smaller
-values produce tighter, more concave shapes.
+values produce tighter, more concave shapes. With `allow_holes` set to true, the
+hull may have holes; otherwise (the default) it has none.
 
 ## Examples
 
@@ -39,5 +49,16 @@ values produce tighter, more concave shapes.
 SELECT ST_ConcaveHull(
     ST_GeomFromText('LINESTRING(100 150, 50 60, 70 80, 160 170)'),
     0.3
+);
+```
+
+```sql
+SELECT ST_ConcaveHull(
+    ST_Segmentize(
+        ST_GeomFromText('POLYGON ((0 0, 3 0, 3 3, 0 3, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))'),
+        1
+    ),
+    0.1,
+    true
 );
 ```

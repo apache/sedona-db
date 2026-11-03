@@ -428,7 +428,9 @@ impl InternalContext {
             )?);
             self.inner.register_catalog_list(foreign);
             return Ok(());
-        } else if component.hasattr("__sedonadb_scalar_udf__")? {
+        } else if component.hasattr("__sedonadb_scalar_udf_v2__")?
+            || component.hasattr("__sedonadb_scalar_udf__")?
+        {
             // One function's overload kernels, each a natively-compiled kernel
             // capsule (see import_sedona_ffi_scalar_kernel) all sharing this
             // function's SQL name. `sedona_native_scalar_udf` imports each
@@ -441,17 +443,24 @@ impl InternalContext {
             // function's other overloads stay reachable. This lets a plugin add
             // an overload to an existing function (e.g. an st_intersects
             // overload for a new type) without discarding its other signatures.
-            // Volatility is Immutable via this path; a plugin needing
-            // Volatile/Stable builds a PySedonaScalarUdf with
-            // sedona_native_scalar_udf(..., volatility=...) and returns it
-            // through __sedonadb_internal_udf__ instead.
+            // V2 declarations are preserved and validated when appending kernels.
+            let protocol = if component.hasattr("__sedonadb_scalar_udf_v2__")? {
+                "__sedonadb_scalar_udf_v2__"
+            } else {
+                "__sedonadb_scalar_udf__"
+            };
             let capsules = component
-                .call_method0("__sedonadb_scalar_udf__")?
+                .call_method0(protocol)?
                 .extract::<Vec<Bound<PyAny>>>()?;
-            let py_udf = crate::udf::sedona_native_scalar_udf(capsules, "immutable", None)?;
-            let name = py_udf.inner.name().to_string();
-            let kernels = py_udf.inner.kernels().to_vec();
-            self.inner.append_sedona_scalar_kernels(&name, kernels)?;
+            let py_udf = crate::udf::sedona_native_scalar_udf(capsules, None, None)?;
+            if protocol == "__sedonadb_scalar_udf_v2__" {
+                self.inner.append_sedona_scalar_udf(py_udf.inner)?;
+            } else {
+                self.inner.append_sedona_scalar_kernels(
+                    py_udf.inner.name(),
+                    py_udf.inner.kernels().to_vec(),
+                )?;
+            }
             return Ok(());
         } else if let Ok(py_raster_loader) = component.extract::<PyRasterLoaderWrapper>() {
             self.inner.register_raster_loader(py_raster_loader.inner);

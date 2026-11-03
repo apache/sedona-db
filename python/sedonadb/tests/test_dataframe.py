@@ -154,6 +154,7 @@ def test_schema(con):
     assert repr(df.schema.field(0).type) == "SedonaType int64<Int64>"
     assert df.schema.field(0).type.edge_type is None
     assert df.schema.field(0).type.crs is None
+    assert df.schema.field(0).type.extension_name is None
 
     # Geometry field accessor
     assert df.schema.field(1).name == "geom"
@@ -161,6 +162,7 @@ def test_schema(con):
     assert repr(df.schema.field(1).type) == "SedonaType geometry<Wkb>"
     assert df.schema.field(1).type.edge_type == gat.EdgeType.PLANAR
     assert df.schema.field(1).type.crs is None
+    assert df.schema.field(1).type.extension_name == "geoarrow.wkb"
 
     # Arrow export
     assert pa.schema(df.schema) == pa.schema(
@@ -177,6 +179,31 @@ def test_schema(con):
 
     with pytest.raises(TypeError):
         df.schema.field({})
+
+
+def test_type_extension_name():
+    assert sedonadb._lib.raster_type().extension_name == "sedona.raster"
+    field = pa.field(
+        "custom",
+        pa.int64(),
+        metadata={b"ARROW:extension:name": b"custom.extension"},
+    )
+    assert sedonadb._lib.PySedonaType(field).extension_name == "custom.extension"
+
+
+@pytest.mark.parametrize(
+    "type",
+    [pa.int64(), ga.wkb().with_crs(ga.OGC_CRS84), sedonadb._lib.raster_type()],
+)
+def test_type_from_schema_capsule(type):
+    actual = sedonadb._lib.PySedonaType(type.__arrow_c_schema__())
+    assert actual == sedonadb._lib.PySedonaType(type)
+
+
+def test_type_rejects_array_capsule():
+    _, array = pa.array([1]).__arrow_c_array__()
+    with pytest.raises(sedonadb._lib.SedonaError):
+        sedonadb._lib.PySedonaType(array)
 
 
 def test_columns(con):
@@ -441,6 +468,38 @@ def test_dataframe_to_pandas(con):
     pd.testing.assert_frame_equal(
         df_without_geo.to_pandas(), pd.DataFrame({"one": [1]})
     )
+
+
+def test_dataframe_to_parquet_file_url(con, tmp_path):
+    # A URL is passed through as given (a Path would collapse its `//`).
+    target = tmp_path / "with space.parquet"
+    con.sql("SELECT 1 AS a").to_parquet(target.as_uri())
+    assert target.is_file()
+    assert pd.read_parquet(target)["a"].tolist() == [1]
+
+
+def test_dataframe_to_parquet_object_store_options(con):
+    # Options for a remote path's object store go to the store, not the Parquet
+    # writer: an invalid one is rejected by the store's configuration, without
+    # any network access.
+    with pytest.raises(
+        sedonadb._lib.SedonaError,
+        match='Config value "skip_sig" not found on AwsOptions',
+    ):
+        con.sql("SELECT 1 AS a").to_parquet(
+            "s3://bucket/out.parquet", options={"aws.skip_sig": "true"}
+        )
+
+
+def test_dataframe_to_parquet_remote_url_reaches_the_store(con):
+    # A bucket that does not exist: the write gets as far as S3, rather than
+    # finding no object store for the URL.
+    with pytest.raises(sedonadb._lib.SedonaError) as err:
+        con.sql("SELECT 1 AS a").to_parquet(
+            "s3://sedona-nonexistent-write-test-bucket/out.parquet",
+            options={"aws.skip_signature": True, "aws.region": "us-west-2"},
+        )
+    assert "No suitable object store" not in str(err.value)
 
 
 def test_dataframe_to_parquet(con):

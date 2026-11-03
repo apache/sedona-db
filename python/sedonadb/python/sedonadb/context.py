@@ -37,7 +37,11 @@ if TYPE_CHECKING:
 from sedonadb._lib import (
     InternalContext,
     configure_gdal_shared,
+    configure_gdal_prefix_native,
+    configure_gdal_system_native,
+    configure_proj_prefix_native,
     configure_proj_shared,
+    configure_proj_system_native,
     gdal_version as _gdal_version,
 )
 from sedonadb._options import Options
@@ -56,6 +60,18 @@ from sedonadb.utility import sedona  # noqa: F401
 # created, so that `SELECT * FROM 'file:///path/to/data.<ext>'` works without a
 # manual `register()` call. Add an extension here to enable another format.
 _DEFAULT_PYOGRIO_EXTENSIONS = ("fgb", "gpkg", "shp", "geojson")
+
+
+class ConfigurationWarning(UserWarning):
+    """Warning issued when an optional native dependency can't be configured
+
+    SedonaDB attempts to locate PROJ and GDAL when it is imported (see
+    `configure_proj()` and `configure_gdal()`). Most functionality
+    works without them, so a failure to find either is reported with this
+    warning rather than an error. To skip the automatic configuration on
+    import entirely, set the `SEDONADB_AUTO_CONFIGURE` environment variable
+    to `false`.
+    """
 
 
 class SedonaContext:
@@ -446,10 +462,11 @@ class SedonaContext:
           a sedonadb_catalog_list PyCapsule
         - An object implementing __sedonadb_extension__(ctx, **kwargs), which
           is called with this context and any keyword arguments passed.
-        - A single function object implementing __sedonadb_scalar_udf__(self),
+        - A single function object implementing __sedonadb_scalar_udf_v2__(self)
+          or the legacy __sedonadb_scalar_udf__(self),
           which returns a list of PyCapsule objects -- the overload kernels of
           that one function, each wrapping a natively-compiled
-          SedonaCScalarKernel sharing the function's SQL name -- so real
+          SedonaCScalarKernelV2 (or legacy SedonaCScalarKernel) sharing the function's SQL name -- so real
           compiled Rust runs per invocation, not a Python callback. Register
           each function individually. The kernels are appended as overloads to
           the function of that name (a new function is created when none exists
@@ -457,10 +474,10 @@ class SedonaContext:
           including a built-in's -- overrides that one signature (kernels
           resolve newest-first) while the function's other overloads stay
           reachable, so a plugin can add an overload to an existing function
-          without replacing it. Volatility is always Immutable through this
-          protocol; a kernel needing Volatile or Stable should be registered
-          via __sedonadb_internal_udf__ instead, built with
-          sedonadb.udf.sedona_native_scalar_udf(kernels, volatility=...).
+          without replacing it. V2 is preferred when both methods exist and
+          preserves metadata and volatility. The legacy protocol defaults to
+          Immutable. Producers supporting older consumers should expose the
+          legacy method with legacy capsules as well as the V2 method.
 
         The extension interface is experimental and may change.
 
@@ -508,6 +525,7 @@ class SedonaContext:
             "__sedonadb_external_format__",
             "__sedonadb_catalog_list__",
             "__sedonadb_raster_loader__",
+            "__sedonadb_scalar_udf_v2__",
             "__sedonadb_scalar_udf__",
         )
         for interface in supported_interfaces:
@@ -622,7 +640,8 @@ def configure_proj(
             - None: Use custom values of shared_library and/or other keyword
               arguments.
             - auto: Try all presets in the order pyproj, conda, homebrew,
-              system and warn if none succeeded.
+              system and warn (with `ConfigurationWarning`)
+              if none succeeded.
             - pyproj: Attempt to use shared libraries bundled with pyproj.
               This aligns transformations with those performed by geopandas
               and is the option that is tried first.
@@ -683,7 +702,9 @@ def configure_proj(
             all_errors = "\n".join(errors)
             warnings.warn(
                 "Failed to configure PROJ. Is pyproj or a system install of PROJ available?"
-                f"\nDetails: tried {tried}\n{all_errors}"
+                f"\nDetails: tried {tried}\n{all_errors}",
+                ConfigurationWarning,
+                stacklevel=2,
             )
             return
         else:
@@ -815,52 +836,11 @@ def _find_proj_shared_library_near_data(data_dir: Path) -> Optional[Path]:
 
 
 def _configure_proj_system():
-    # For system installs, try common library names that might be on PATH/LD_LIBRARY_PATH
-    import ctypes
-
-    names_to_try = []
-    if sys.platform == "win32":
-        names_to_try = ["proj.dll", "proj_9.dll"]
-    elif sys.platform == "darwin":
-        names_to_try = ["libproj.dylib"]
-    else:
-        names_to_try = ["libproj.so"]
-
-    for name in names_to_try:
-        try:
-            ctypes.CDLL(name)
-            configure_proj(shared_library=name)
-            return
-        except OSError:
-            continue
-
-    raise ValueError(
-        f"Can't load PROJ shared library '{names_to_try[0]}': "
-        "Could not find module (or one of its dependencies). "
-        "Try using the full path with constructor syntax."
-    )
+    configure_proj_system_native()
 
 
 def _configure_proj_prefix(prefix: str):
-    prefix = Path(prefix)
-    if not prefix.exists():
-        raise ValueError(f"Can't configure PROJ from prefix '{prefix}': does not exist")
-
-    if sys.platform == "win32":
-        # Windows conda uses Library/bin for DLLs and Library/share for data
-        lib_dir = prefix / "Library" / "bin"
-        data_dir = prefix / "Library" / "share" / "proj"
-    else:
-        lib_dir = prefix / "lib"
-        data_dir = prefix / "share" / "proj"
-
-    shared_library = _find_proj_shared_library(lib_dir)
-
-    configure_proj(
-        shared_library=shared_library,
-        database_path=data_dir / "proj.db",
-        search_path=data_dir,
-    )
+    configure_proj_prefix_native(str(prefix))
 
 
 def configure_gdal(
@@ -884,7 +864,8 @@ def configure_gdal(
         preset: One of:
             - None: Use a custom `shared_library` path.
             - auto: Try all presets in the order rasterio, pyogrio, conda,
-              homebrew, system and warn if none succeeded.
+              homebrew, system and warn (with
+              `ConfigurationWarning`) if none succeeded.
             - pyogrio: Attempt to use the GDAL shared library bundled with
               pyogrio. This aligns the GDAL version with the one used by
               `read_pyogrio()` / `geopandas.read_file()`.
@@ -917,9 +898,11 @@ def configure_gdal(
             return
         elif preset == "homebrew":
             prefix = os.environ.get("HOMEBREW_PREFIX", "/opt/homebrew")
-            shared_library = Path(prefix) / "lib" / _gdal_lib_name()
+            configure_gdal_prefix_native(prefix)
+            return
         elif preset == "system":
-            shared_library = _gdal_lib_name()
+            configure_gdal_system_native()
+            return
         elif preset == "auto":
             # The GDAL library bundled with rasterio has more features enabled by default
             # (e.g., more compression codecs) than the one bundled with pyogrio, so try
@@ -945,7 +928,9 @@ def configure_gdal(
             all_errors = "\n".join(errors)
             warnings.warn(
                 "Failed to configure GDAL. Is rasterio, pyogrio, or a system install of GDAL available?"
-                f"\nDetails: tried {tried}\n{all_errors}"
+                f"\nDetails: tried {tried}\n{all_errors}",
+                ConfigurationWarning,
+                stacklevel=2,
             )
             return
         else:
@@ -963,15 +948,6 @@ def configure_gdal(
         raise ValueError(f"Can't load GDAL shared library '{shared_library}': {e}")
 
     configure_gdal_shared(str(shared_library))
-
-
-def _gdal_lib_name() -> str:
-    if sys.platform == "win32":
-        return "gdal.dll"
-    elif sys.platform == "darwin":
-        return "libgdal.dylib"
-    else:
-        return "libgdal.so"
 
 
 def _find_gdal_in_package(pkg_name: str) -> Path:
@@ -1027,42 +1003,6 @@ def _configure_gdal_rasterio():
     configure_gdal(shared_library=_find_gdal_in_package("rasterio"))
 
 
-def _gdal_lib_pattern() -> str:
-    """Return a glob pattern for finding GDAL shared libraries."""
-    if sys.platform == "win32":
-        return "gdal*.dll"
-    elif sys.platform == "darwin":
-        return "libgdal*.dylib"
-    else:
-        return "libgdal.so*"
-
-
-def _find_gdal_shared_library(lib_dir: Path) -> Path:
-    """Find the GDAL shared library in the given directory.
-
-    Raises ValueError if not found or multiple matches.
-    """
-    pattern = _gdal_lib_pattern()
-    possible_files = list(lib_dir.glob(pattern))
-
-    # Filter out debug/test variants if multiple matches
-    if len(possible_files) > 1:
-        # Prefer exact matches or versioned libraries without suffixes like _d
-        filtered = [f for f in possible_files if "_d." not in f.name]
-        if filtered:
-            possible_files = filtered
-
-    if len(possible_files) == 0:
-        raise ValueError(
-            f"Can't find GDAL shared library matching '{pattern}' in '{lib_dir}'"
-        )
-    if len(possible_files) > 1:
-        # Pick the one with shortest name (usually the main library)
-        possible_files.sort(key=lambda p: len(p.name))
-
-    return possible_files[0]
-
-
 def _configure_gdal_conda():
     # Try CONDA_PREFIX first, then fall back to sys.prefix
     conda_prefix = os.environ.get("CONDA_PREFIX")
@@ -1073,19 +1013,7 @@ def _configure_gdal_conda():
         # may not be set, but sys.prefix points to the environment
         prefix = Path(sys.prefix)
 
-    if not prefix.exists():
-        raise ValueError(f"Can't configure GDAL from prefix '{prefix}': does not exist")
-
-    if sys.platform == "win32":
-        lib_dir = prefix / "Library" / "bin"
-    else:
-        lib_dir = prefix / "lib"
-
-    if not lib_dir.exists():
-        raise ValueError(f"Can't find GDAL library directory '{lib_dir}'")
-
-    shared_library = _find_gdal_shared_library(lib_dir)
-    configure_gdal(shared_library=shared_library)
+    configure_gdal_prefix_native(str(prefix))
 
 
 def gdal_version() -> Optional[str]:

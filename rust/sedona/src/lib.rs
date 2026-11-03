@@ -14,13 +14,15 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-mod catalog;
+pub mod catalog;
 mod catalog_planner;
 pub mod context;
 pub mod context_builder;
 mod exec;
 pub mod memory_pool;
+pub mod native_library;
 mod object_storage;
+pub use object_storage::is_object_store_option;
 pub mod pool_type;
 pub mod projected_reader;
 pub mod random_geometry_provider;

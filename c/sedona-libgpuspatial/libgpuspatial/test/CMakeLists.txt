@@ -69,7 +69,14 @@ if(GPUSPATIAL_BUILD_TESTS)
                          PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-extended-lambda
                                  --expt-relaxed-constexpr>)
 
-  add_executable(relate_test main.cc array_stream.cc relate_test.cu)
+  add_executable(relate_test
+                 main.cc
+                 array_stream.cc
+                 relate_point_test.cu
+                 relate_linestring_test.cu
+                 relate_polygon_test.cu
+                 segment_relate_ops_test.cu
+                 polygon_polygon_shader_test.cu)
   target_link_libraries(relate_test
                         PRIVATE cuda
                                 GTest::gtest_main

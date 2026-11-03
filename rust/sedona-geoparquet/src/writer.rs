@@ -98,45 +98,32 @@ pub fn create_geoparquet_writer_physical_plan(
         .unwrap_or_default();
 
     // Check the version
-    match options.geoparquet_version {
-        GeoParquetVersion::V1_0 => {
-            metadata.version = "1.0.0".to_string();
-            projection = project_normalize_geo(
-                &input.schema(),
-                &sedona_options.runtime,
-                GeoParquetVersion::V1_0,
-                session_config_options,
-            )?;
-        }
-        GeoParquetVersion::V1_1 => {
-            metadata.version = "1.1.0".to_string();
-            (projection, bbox_columns) = project_bboxes(
-                &input,
-                options.overwrite_bbox_columns,
-                session_config_options,
-                &sedona_options.runtime,
-                GeoParquetVersion::V1_1,
-            )?;
-        }
-        GeoParquetVersion::V2_0 => {
-            metadata.version = "2.0.0".to_string();
-            projection = project_normalize_geo(
-                &input.schema(),
-                &sedona_options.runtime,
-                GeoParquetVersion::V2_0,
-                session_config_options,
-            )?;
-        }
-        GeoParquetVersion::Omitted => {
-            // Sentinel...we'll only write the metadata if there's a version to write
-            metadata.version = "".to_string();
-            projection = project_normalize_geo(
-                &input.schema(),
-                &sedona_options.runtime,
-                GeoParquetVersion::Omitted,
-                session_config_options,
-            )?;
-        }
+    metadata.version = match options.geoparquet_version {
+        GeoParquetVersion::V1_0 => "1.0.0",
+        GeoParquetVersion::V1_1 => "1.1.0",
+        GeoParquetVersion::V2_0 => "2.0.0",
+        // Sentinel...we'll only write the metadata if there's a version to write
+        GeoParquetVersion::Omitted => "",
+    }
+    .to_string();
+
+    // Whether or not we write bounding box columns is independent of the version
+    // (except that GeoParquet 1.0 can't declare a covering)
+    if options.should_write_bbox_columns()? {
+        (projection, bbox_columns) = project_bboxes(
+            &input,
+            options.overwrite_bbox_columns,
+            session_config_options,
+            &sedona_options.runtime,
+            options.geoparquet_version,
+        )?;
+    } else {
+        projection = project_normalize_geo(
+            &input.schema(),
+            &sedona_options.runtime,
+            options.geoparquet_version,
+            session_config_options,
+        )?;
     }
 
     let parquet_output_schema = compute_final_schema(&projection, &input.schema())?;
@@ -727,10 +714,7 @@ fn normalize_crs_for_geoparquet(
 
         Ok(Some(crs_value))
     } else {
-        exec_err!(
-            "Can't write GeoParquet from null CRS\nUse ST_SetSRID({}, ...) to assign it one",
-            field_name
-        )
+        Ok(Some(Value::Null))
     }
 }
 
@@ -741,6 +725,7 @@ mod test {
     use std::path::Path;
 
     use arrow_array::{Array, RecordBatch, create_array};
+    use datafusion::catalog::MemTable;
     use datafusion::datasource::file_format::format_as_file_type;
     use datafusion::prelude::DataFrame;
     use datafusion::{
@@ -753,7 +738,7 @@ mod test {
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
     use parquet::basic::{EdgeInterpolationAlgorithm, LogicalType};
     use sedona_schema::crs::deserialize_crs;
-    use sedona_schema::datatypes::WKB_GEOMETRY;
+    use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
     use sedona_testing::create::create_array;
     use sedona_testing::data::test_geoparquet;
     use sedona_testing::testers::ScalarUdfTester;
@@ -794,6 +779,36 @@ mod test {
             .iter()
             .map(|col| (col.name().to_string(), col.logical_type_ref().cloned()))
             .collect()
+    }
+
+    fn read_geoparquet_metadata(path: &Path) -> GeoParquetMetadata {
+        let file = File::open(path).unwrap();
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file).unwrap();
+        GeoParquetMetadata::try_from_parquet_metadata(builder.metadata(), None)
+            .unwrap()
+            .unwrap()
+    }
+
+    async fn write_dataframe_to_path(
+        ctx: &SessionContext,
+        src: DataFrame,
+        path: &Path,
+        options: TableGeoParquetOptions,
+    ) {
+        let format = GeoParquetFormatFactory::new_with_options(options);
+        let file_type = format_as_file_type(Arc::new(format));
+        let plan = LogicalPlanBuilder::copy_to(
+            src.into_unoptimized_plan(),
+            path.to_string_lossy().into(),
+            file_type,
+            Default::default(),
+            vec![],
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+        DataFrame::new(ctx.state(), plan).collect().await.unwrap();
     }
 
     async fn test_write_dataframe_sql(
@@ -939,6 +954,75 @@ mod test {
     }
 
     #[tokio::test]
+    async fn preserves_null_crs() {
+        let ctx = setup_context();
+        let tmpdir = tempdir().unwrap();
+        let path = tmpdir.path().join("null_crs.parquet");
+        let schema = Arc::new(Schema::new(vec![
+            WKB_GEOMETRY.to_storage_field("geometry", true).unwrap(),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![create_array(&[Some("POINT (1 1)")], &WKB_GEOMETRY)],
+        )
+        .unwrap();
+        let source = ctx
+            .read_table(Arc::new(
+                MemTable::try_new(schema, vec![vec![batch]]).unwrap(),
+            ))
+            .unwrap();
+
+        write_dataframe_to_path(
+            &ctx,
+            source.clone(),
+            &path,
+            TableGeoParquetOptions::default(),
+        )
+        .await;
+        let metadata = read_geoparquet_metadata(&path);
+        assert_eq!(metadata.columns["geometry"].crs, Some(Value::Null));
+
+        let read_back = ctx
+            .table(path.to_string_lossy().into_owned())
+            .await
+            .unwrap();
+        assert_eq!(
+            read_back
+                .schema()
+                .sedona_types()
+                .collect::<Result<Vec<_>>>()
+                .unwrap(),
+            vec![WKB_VIEW_GEOMETRY]
+        );
+
+        let path = tmpdir.path().join("null_crs_native.parquet");
+        let options = TableGeoParquetOptions {
+            geoparquet_version: GeoParquetVersion::Omitted,
+            ..Default::default()
+        };
+        write_dataframe_to_path(&ctx, source, &path, options).await;
+
+        assert_eq!(
+            read_parquet_logical_types(&path)["geometry"],
+            Some(LogicalType::Geometry(parquet::basic::GeometryType {
+                crs: Some("srid:0".to_string())
+            }))
+        );
+        let read_back = ctx
+            .table(path.to_string_lossy().into_owned())
+            .await
+            .unwrap();
+        assert_eq!(
+            read_back
+                .schema()
+                .sedona_types()
+                .collect::<Result<Vec<_>>>()
+                .unwrap(),
+            vec![WKB_VIEW_GEOMETRY]
+        );
+    }
+
+    #[tokio::test]
     async fn geoparquet_1_1_basic() {
         let example = test_geoparquet("example", "geometry").unwrap();
         let ctx = setup_context();
@@ -991,6 +1075,126 @@ mod test {
         .unwrap();
 
         assert!(logical_types.get("geometry").unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn geoparquet_1_1_without_bbox_columns() {
+        let example = test_geoparquet("example", "geometry").unwrap();
+        let ctx = setup_context();
+        let df = ctx.table(&example).await.unwrap();
+
+        let options = TableGeoParquetOptions {
+            geoparquet_version: GeoParquetVersion::V1_1,
+            write_bbox_columns: Some(false),
+            ..Default::default()
+        };
+
+        // No bbox column should be added
+        let df_batches = df.clone().collect().await.unwrap();
+        let tmpdir = tempdir().unwrap();
+        let tmp_parquet = tmpdir.path().join("foofy_spatial.parquet");
+        write_dataframe_to_path(&ctx, df, &tmp_parquet, options).await;
+        test_write_dataframe_common(&ctx, &tmp_parquet, df_batches)
+            .await
+            .unwrap();
+
+        // ...but the metadata should still be GeoParquet 1.1
+        let metadata = read_geoparquet_metadata(&tmp_parquet);
+        assert_eq!(metadata.version, "1.1.0");
+        assert!(metadata.columns.get("geometry").unwrap().covering.is_none());
+    }
+
+    #[tokio::test]
+    async fn geoparquet_2_0_with_bbox_columns() {
+        let example = test_geoparquet("example", "geometry").unwrap();
+        let ctx = setup_context();
+        let df = ctx.table(&example).await.unwrap();
+
+        let options = TableGeoParquetOptions {
+            geoparquet_version: GeoParquetVersion::V2_0,
+            write_bbox_columns: Some(true),
+            ..Default::default()
+        };
+
+        let bbox_udf: ScalarUDF = geoparquet_bbox_udf().into();
+        let df_batches_with_bbox = df
+            .clone()
+            .select(vec![
+                col("wkt"),
+                bbox_udf.call(vec![col("geometry")]).alias("bbox"),
+                col("geometry"),
+            ])
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+
+        let tmpdir = tempdir().unwrap();
+        let tmp_parquet = tmpdir.path().join("foofy_spatial.parquet");
+        write_dataframe_to_path(&ctx, df, &tmp_parquet, options).await;
+        let logical_types =
+            test_write_dataframe_common(&ctx, &tmp_parquet, df_batches_with_bbox.clone())
+                .await
+                .unwrap();
+
+        // Geometry is still written as Parquet native geometry
+        assert!(matches!(
+            logical_types.get("geometry").unwrap(),
+            Some(LogicalType::Geometry(_))
+        ));
+
+        // ...and the bbox column is declared as the covering
+        let metadata = read_geoparquet_metadata(&tmp_parquet);
+        assert_eq!(metadata.version, "2.0.0");
+        assert_eq!(
+            metadata.columns.get("geometry").unwrap().covering,
+            Some(GeoParquetCovering::bbox_struct_xy("bbox"))
+        );
+
+        // Check that we can do this from SQL too
+        let tmp_parquet = tmpdir.path().join("foofy_spatial_sql.parquet");
+        test_write_dataframe_sql(
+            &ctx,
+            &format!(
+                r#"COPY (
+                    SELECT * FROM '{example}'
+                   ) TO '{}'
+                   OPTIONS (GEOPARQUET_VERSION '2.0', WRITE_BBOX_COLUMNS true)
+                "#,
+                tmp_parquet.display()
+            ),
+            &tmp_parquet,
+            df_batches_with_bbox,
+        )
+        .await
+        .unwrap();
+        let metadata = read_geoparquet_metadata(&tmp_parquet);
+        assert!(metadata.columns.get("geometry").unwrap().covering.is_some());
+    }
+
+    #[tokio::test]
+    async fn bbox_columns_require_covering_support() {
+        let example = test_geoparquet("example", "geometry").unwrap();
+        let ctx = setup_context();
+        let df = ctx.table(&example).await.unwrap();
+        let df_batches = df.clone().collect().await.unwrap();
+
+        for geoparquet_version in [GeoParquetVersion::V1_0, GeoParquetVersion::Omitted] {
+            let options = TableGeoParquetOptions {
+                geoparquet_version,
+                write_bbox_columns: Some(true),
+                ..Default::default()
+            };
+
+            let err = test_write_dataframe(&ctx, df.clone(), df_batches.clone(), options, vec![])
+                .await
+                .unwrap_err();
+            assert!(
+                err.message()
+                    .starts_with("Bounding box columns require GeoParquet 1.1 or 2.0"),
+                "{err}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -1214,7 +1418,7 @@ mod test {
         let logical_type = logical_types.get("geometry").unwrap().clone().unwrap();
         match logical_type {
             LogicalType::Geometry(geometry) => {
-                assert!(geometry.crs.is_none());
+                assert_eq!(geometry.crs.as_deref(), Some("srid:0"));
             }
             unknown => panic!("Unexpected logical type {unknown:?}"),
         }
@@ -1279,13 +1483,51 @@ mod test {
         let example = test_geoparquet("example", "geometry").unwrap();
         let ctx = setup_context();
         let df = ctx.table(&example).await.unwrap();
+        // GeoParquet metadata is intentionally omitted in this test, so use the
+        // Parquet logical type's default CRS instead of an explicit null CRS.
+        let lnglat_field = SedonaType::WkbView(Edges::Planar, lnglat())
+            .to_storage_field("geometry", true)
+            .unwrap();
+        let batches = df
+            .collect()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|batch| {
+                let schema = Arc::new(Schema::new(vec![
+                    batch.schema().field(0).clone(),
+                    lnglat_field.clone(),
+                ]));
+                RecordBatch::try_new(schema, batch.columns().to_vec()).unwrap()
+            })
+            .collect::<Vec<_>>();
+        let schema = batches[0].schema();
+        let df = ctx
+            .read_table(Arc::new(MemTable::try_new(schema, vec![batches]).unwrap()))
+            .unwrap();
 
         let options = TableGeoParquetOptions {
             geoparquet_version: GeoParquetVersion::Omitted,
             ..Default::default()
         };
 
-        let logical_types = test_dataframe_roundtrip(&ctx, df, options).await;
+        let expected_batches = df
+            .clone()
+            .collect()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|batch| {
+                let schema = Arc::new(Schema::new(vec![
+                    batch.schema().field(0).clone(),
+                    lnglat_field.clone(),
+                ]));
+                RecordBatch::try_new(schema, batch.columns().to_vec()).unwrap()
+            })
+            .collect();
+        let logical_types = test_write_dataframe(&ctx, df, expected_batches, options, vec![])
+            .await
+            .unwrap();
         let logical_type = logical_types.get("geometry").unwrap().clone().unwrap();
         match logical_type {
             LogicalType::Geometry(geometry) => {

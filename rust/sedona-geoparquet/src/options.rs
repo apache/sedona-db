@@ -29,9 +29,18 @@ pub struct TableGeoParquetOptions {
     pub inner: TableParquetOptions,
     /// [GeoParquetVersion] to use when writing GeoParquet files
     pub geoparquet_version: GeoParquetVersion,
-    /// When writing [GeoParquetVersion::V1_1], use `true` to overwrite existing
+    /// When writing bounding box columns, use `true` to overwrite existing
     /// bounding box columns.
     pub overwrite_bbox_columns: bool,
+    /// Whether to write a bounding box (covering) column for each geometry column
+    ///
+    /// When unset, a bounding box column is written exactly when writing
+    /// [GeoParquetVersion::V1_1]. Bounding box columns can also be requested
+    /// with [GeoParquetVersion::V2_0] or turned off for [GeoParquetVersion::V1_1].
+    /// GeoParquet 1.0 has no way to declare a covering, so requesting bounding
+    /// box columns with [GeoParquetVersion::V1_0] (or when omitting GeoParquet
+    /// metadata) is an error.
+    pub write_bbox_columns: Option<bool>,
     /// Optional geometry column metadata overrides for schema inference.
     pub geometry_columns: GeometryColumns,
     /// Validate geometry column contents against metadata when reading.
@@ -46,12 +55,28 @@ impl TableGeoParquetOptions {
     /// these are the option names that get created (e.g. OPTIONS ('validate' true))
     /// becomes a string key of format.validate). There are several places that we
     /// need to intercept these before they are used to update the TableOptions.
-    pub const TABLE_OPTIONS_KEYS: [&str; 4] = [
+    pub const TABLE_OPTIONS_KEYS: [&str; 5] = [
         "format.geoparquet_version",
         "format.geometry_columns",
         "format.validate",
         "format.overwrite_bbox_columns",
+        "format.write_bbox_columns",
     ];
+
+    /// Whether bounding box columns should be written for these options
+    ///
+    /// Resolves [TableGeoParquetOptions::write_bbox_columns] against the
+    /// default for the requested [GeoParquetVersion].
+    pub fn should_write_bbox_columns(&self) -> Result<bool> {
+        match (self.geoparquet_version, self.write_bbox_columns) {
+            (GeoParquetVersion::V1_1, None) => Ok(true),
+            (_, None) => Ok(false),
+            (GeoParquetVersion::V1_0 | GeoParquetVersion::Omitted, Some(true)) => plan_err!(
+                "Bounding box columns require GeoParquet 1.1 or 2.0 (use geoparquet_version '1.1' or '2.0')"
+            ),
+            (_, Some(write)) => Ok(write),
+        }
+    }
 }
 
 impl ConfigField for TableGeoParquetOptions {
@@ -68,7 +93,12 @@ impl ConfigField for TableGeoParquetOptions {
         self.overwrite_bbox_columns.visit(
             v,
             &format!("{key_prefix}.overwrite_bbox_columns"),
-            "Overwrite existing bounding box columns when writing GeoParquet 1.1",
+            "Overwrite existing bounding box columns when writing them",
+        );
+        self.write_bbox_columns.visit(
+            v,
+            &format!("{key_prefix}.write_bbox_columns"),
+            "Write a bounding box column for each geometry column (defaults to true for GeoParquet 1.1 only)",
         );
         self.geometry_columns.visit(
             v,
@@ -90,6 +120,9 @@ impl ConfigField for TableGeoParquetOptions {
             }
             "overwrite_bbox_columns" => {
                 self.overwrite_bbox_columns.set(key, value)?;
+            }
+            "write_bbox_columns" => {
+                self.write_bbox_columns.set(key, value)?;
             }
             "geometry_columns" => {
                 self.geometry_columns.set(key, value)?;

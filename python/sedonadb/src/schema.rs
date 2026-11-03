@@ -90,8 +90,8 @@ impl PySedonaSchema {
             } else {
                 Err(PyIndexError::new_err(format!("Field index {index} out of range")).into())
             }
-        } else if let Ok(name) = index_or_name.extract::<&str>(py) {
-            match self.field_by_name(name) {
+        } else if let Ok(name) = index_or_name.extract::<String>(py) {
+            match self.field_by_name(&name) {
                 Some(field) => Ok(field),
                 None => Err(PyKeyError::new_err(format!("No field named '{name}'")).into()),
             }
@@ -189,8 +189,8 @@ impl PySedonaField {
     }
 }
 
-#[pyclass(skip_from_py_object)]
-#[derive(Clone, Debug)]
+#[pyclass(eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PySedonaType {
     pub inner: SedonaType,
 }
@@ -207,6 +207,16 @@ impl PySedonaType {
 
 #[pymethods]
 impl PySedonaType {
+    #[new]
+    fn from_arrow_schema(obj: &Bound<PyAny>) -> Result<Self, PySedonaError> {
+        Ok(Self::new(crate::import_from::import_sedona_type(obj)?))
+    }
+
+    #[getter]
+    fn extension_name(&self) -> Option<&str> {
+        self.inner.extension_name()
+    }
+
     #[getter]
     fn crs<'py>(&self, py: Python<'py>) -> Result<Option<Py<PyAny>>, PySedonaError> {
         if let Some(crs) = self.inner.crs() {

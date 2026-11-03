@@ -16,18 +16,16 @@
 // under the License.
 
 pub mod ensure_loaded;
-// DF-22662 workaround (remove when async UDF return-field metadata is
-// preserved upstream): see wrap_async_udf.rs.
 mod logical_plan_node;
 pub mod optimizer;
 pub mod probe_shuffle_exec;
+mod reconcile_union_crs;
 // DataFusion #22620 compatibility workaround; removal tracked at
 // https://github.com/apache/sedona-db/issues/1232.
 pub mod push_down_leaf_projections;
 pub mod query_planner;
-pub mod raster_batch_budget;
-mod restore_metadata;
+pub mod raster_materialization;
+pub mod raster_source_spread;
 mod spatial_expr_utils;
 pub mod spatial_join_physical_planner;
 pub mod spatial_predicate;
-pub mod wrap_async_udf;

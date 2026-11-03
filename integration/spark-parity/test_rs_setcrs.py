@@ -103,17 +103,11 @@ def test_rs_setcrs_wkt_with_authority(wkt, tmp_path):
         pytest.param(WKT1_CUSTOM, id="custom"),
     ],
 )
-@pytest.mark.xfail(
-    reason="an authority-less CRS reads back through RS_SRID as an error on "
-    "SedonaDB ('Can't extract SRID from item-level CRS') and as 0 on "
-    "Sedona Spark"
-)
 def test_rs_setcrs_wkt_without_authority_srid(wkt, tmp_path):
-    """A CRS WKT without an authority reads back the same SRID from both
-    engines."""
+    """A CRS WKT without an authority reads back SRID 0 from both engines."""
     sedona, spark = _engines("setcrs_noauth_src", tmp_path)
     sql = f"SELECT RS_SRID(RS_SetCRS(rast, '{wkt}')) FROM setcrs_noauth_src"
-    compare(sql, sedona, spark)
+    compare(sql, sedona, spark, expected=0)
 
 
 @pytest.mark.parametrize(

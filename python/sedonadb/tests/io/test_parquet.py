@@ -441,6 +441,43 @@ def test_write_geoparquet_1_1(con, geoarrow_data):
         assert "bbox" in df_roundtrip.columns
 
 
+def test_write_geoparquet_bbox_columns_option(con):
+    # Bounding box columns can be requested or omitted independently of the version
+    df = con.sql("SELECT ST_Point(1, 2) AS geometry")
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp_parquet = Path(td) / "tmp.parquet"
+
+        df.to_parquet(tmp_parquet, geoparquet_version="1.1", write_bbox_columns=False)
+        geo_metadata = json.loads(
+            parquet.ParquetFile(tmp_parquet).metadata.metadata[b"geo"]
+        )
+        assert geo_metadata["version"] == "1.1.0"
+        assert "covering" not in geo_metadata["columns"]["geometry"]
+        assert parquet.ParquetFile(tmp_parquet).schema_arrow.names == ["geometry"]
+
+        df.to_parquet(tmp_parquet, geoparquet_version="2.0", write_bbox_columns=True)
+        geo_metadata = json.loads(
+            parquet.ParquetFile(tmp_parquet).metadata.metadata[b"geo"]
+        )
+        assert geo_metadata["version"] == "2.0.0"
+        assert geo_metadata["columns"]["geometry"]["covering"]["bbox"]["xmin"] == [
+            "bbox",
+            "xmin",
+        ]
+        assert parquet.ParquetFile(tmp_parquet).schema_arrow.names == [
+            "bbox",
+            "geometry",
+        ]
+
+        with pytest.raises(
+            SedonaError, match="Bounding box columns require GeoParquet 1.1 or 2.0"
+        ):
+            df.to_parquet(
+                tmp_parquet, geoparquet_version="1.0", write_bbox_columns=True
+            )
+
+
 def test_write_geoparquet_ensure_projjson_crs(con):
     df = con.sql("SELECT ST_Point(1, 2, 'EPSG:3857') AS geometry")
 

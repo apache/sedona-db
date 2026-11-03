@@ -339,7 +339,7 @@ def test_rs_clip_skewed_rasters_match_rasterio(con, tmp_path, gdal_transform, cr
     )
     affine = Affine.from_gdal(*gdal_transform)
     geom = shapely.Polygon(
-        [affine * corner for corner in [(1.2, 0.8), (5.7, 1.3), (2.4, 4.9)]]
+        [affine @ corner for corner in [(1.2, 0.8), (5.7, 1.3), (2.4, 4.9)]]
     )
 
     row = {
