@@ -148,7 +148,7 @@ def test_sjoin_nearest_keeps_every_tied_neighbour():
 def test_sjoin_nearest_leaves_the_tie_option_as_it_was(before):
     # The engine reads the option when a frame is made, so sjoin_nearest sets
     # it only while it makes its own: the context keeps its setting, a KNN
-    # join made afterwards follows that setting, and no view is left behind.
+    # join made afterwards follows that setting, and no table is left behind.
     ctx = sedonadb.connect()
     ctx.sql(f"SET {TIES} = {before}").execute()
     left = gpd.GeoDataFrame({"a": [0]}, geometry=gpd.points_from_xy([0], [0]), crs=3857)
@@ -169,6 +169,36 @@ def test_sjoin_nearest_leaves_the_tie_option_as_it_was(before):
     )
     assert knn.count() == (2 if before == "true" else 1)
     assert sorted(joined.to_geopandas()["b"]) == [0, 1]
+
+
+@pytest.mark.parametrize("how", ["inner", "left", "right"])
+@pytest.mark.parametrize("side", ["left", "right"])
+def test_sjoin_nearest_leaves_knn_joins_within_its_frames_as_they_were(how, side):
+    # A frame whose own query has a KNN join keeps its rows: that join follows
+    # the context's setting, here one of two tied neighbours, while the nearest
+    # join made of it gives every tie.
+    ctx = sedonadb.connect()
+    ctx.sql(f"SET {TIES} = false").execute()
+    knn = sgpd.GeoDataFrame(
+        ctx.sql(
+            "WITH l AS (SELECT ST_Point(0, 0) AS g), "
+            "r AS (SELECT * FROM (VALUES (1, ST_Point(1, 0)), (2, ST_Point(-1, 0))) "
+            "AS t(id, g)) "
+            "SELECT r.id, l.g AS geometry FROM l JOIN r ON ST_KNN(l.g, r.g, 1)"
+        ),
+        geometry="geometry",
+    )
+    other = sgpd.GeoDataFrame(
+        ctx.sql("SELECT 3 AS target, ST_Point(3, 0) AS geometry"), geometry="geometry"
+    )
+    left, right = (knn, other) if side == "left" else (other, knn)
+    joined = left.sjoin_nearest(right, how=how, distance_col="d").to_geopandas()
+    expected = gpd.sjoin_nearest(
+        left.to_geopandas(), right.to_geopandas(), how=how, distance_col="d"
+    )
+    assert len(knn.to_geopandas()) == 1
+    assert len(joined) == len(expected) == 1
+    assert joined["d"].tolist() == [3.0]
 
 
 def test_sjoin_nearest_of_frames_from_two_contexts():

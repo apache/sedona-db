@@ -21,7 +21,6 @@ import inspect
 import numbers
 import operator
 import os
-import uuid
 
 import pyarrow as pa
 from sedonadb.expr import Expr, Literal, lit
@@ -274,33 +273,43 @@ def _join_distance(value, method, name):
     return float(number)
 
 
-def _with_knn_ties(df):
-    """`df`, made again so that a KNN join with it on the left gives each row
-    every equally near neighbour, as GeoPandas' nearest join does, rather than
-    one of them.
+class _PlannedApart:
+    """A frame's query as a table that is planned on its own, with the settings
+    its context has when this is made, whatever settings the query reading it
+    is planned with. (A view's query is planned as part of the query reading
+    it.)"""
+
+    def __init__(self, df):
+        self._provider = df.__sedonadb_table_provider__()
+
+    def __sedonadb_table_provider__(self):
+        return self._provider
+
+
+def _with_knn_ties(left, right):
+    """`left` and `right`, read into frames of `left`'s context such that a KNN
+    join of the first with the second gives each row every equally near
+    neighbour, as GeoPandas' nearest join does, rather than one of them.
 
     That is an option of the engine, which a frame copies from its context
-    when it is made and a join takes from its left frame. So `df` is read back
-    through a view while the context has the option set, and the option is
-    then put back as it was: other frames of the context, made before or after,
-    keep their own. (A KNN join within `df`'s own query gives ties too.)
+    when it is made and a join takes from its left frame. So the frames are
+    made while the context has the option set, and the option is then put back
+    as it was: other frames of the context, made before or after, keep their
+    own. Each frame's own query is planned apart, so a KNN join within it keeps
+    its context's setting and its rows.
     """
-    ctx = df._ctx
+    ctx = left._ctx
+    inputs = _PlannedApart(left), _PlannedApart(right)
     option = "sedona.spatial_join.knn_include_tie_breakers"
     settings = ctx.sql(
         f"SELECT value FROM information_schema.df_settings WHERE name = '{option}'"
     ).to_arrow_table()
     previous = settings.column("value").to_pylist()[0]
-    view = f"_sedonadb_geopandas_nearest_{uuid.uuid4().hex}"
-    df.to_view(view)
+    ctx.sql(f"SET {option} = true").execute()
     try:
-        ctx.sql(f"SET {option} = true").execute()
-        try:
-            return ctx.view(view)
-        finally:
-            ctx.sql(f"SET {option} = {previous}").execute()
+        return tuple(ctx.create_data_frame(planned) for planned in inputs)
     finally:
-        ctx.drop_view(view)
+        ctx.sql(f"SET {option} = {previous}").execute()
 
 
 def _from_geopandas(data, context):
@@ -1512,8 +1521,8 @@ class GeoDataFrame:
             )
         self._check_join_crs(right, "sjoin_nearest")
 
-        left = _with_knn_ties(self._df).alias("sjoin_left")
-        right_df = right._df.alias("sjoin_right")
+        left, right_df = _with_knn_ties(self._df, right._df)
+        left, right_df = left.alias("sjoin_left"), right_df.alias("sjoin_right")
         left_geom, right_geom = self._join_geometries(right, left, right_df)
         # Each row of the query side gets its nearest rows of the other.
         if how == "right":
