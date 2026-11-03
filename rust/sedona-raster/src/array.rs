@@ -919,6 +919,43 @@ impl<'a> RasterStructArray<'a> {
         self.raster_array.is_null(index)
     }
 
+    /// The `outdb_uri` of the first band of raster `raster_idx` whose bytes
+    /// still have to be loaded, borrowed from the array rather than from a
+    /// [`RasterRefImpl`], so it can outlive the per-row accessor (e.g. to
+    /// compare consecutive rows). `None` for a null raster, a raster whose
+    /// bands are all InDb, or an OutDb band without a URI. InDb is decided as
+    /// in [`BandRef::is_indb`], by `data` and the visible shape: a loaded band
+    /// keeps its `outdb_uri` as provenance, so the URI alone does not say
+    /// whether a load is needed.
+    pub fn first_outdb_band_uri(&self, raster_idx: usize) -> Option<&'a str> {
+        if raster_idx >= self.len() || self.is_null(raster_idx) {
+            return None;
+        }
+        let band_row = self
+            .band_rows(raster_idx)
+            .find(|&band_row| !self.band_row_is_indb(band_row))?;
+        if self.band_outdb_uri_array.is_null(band_row) {
+            return None;
+        }
+        Some(self.band_outdb_uri_array.value(band_row))
+    }
+
+    /// [`BandRef::is_indb`] for flattened band row `band_row`, without
+    /// building the band's view: the visible shape is the view's `steps`, or
+    /// the source shape when the view is null (identity).
+    fn band_row_is_indb(&self, band_row: usize) -> bool {
+        if !self.band_data_array.value(band_row).is_empty() {
+            return true;
+        }
+        let (list, values) = if self.band_view_list.is_null(band_row) {
+            (self.band_source_shape_list, self.band_source_shape_values)
+        } else {
+            (self.band_view_list, self.band_view_steps)
+        };
+        let offsets = list.value_offsets();
+        values.values()[offsets[band_row] as usize..offsets[band_row + 1] as usize].contains(&0)
+    }
+
     /// The flattened band `data` column (BinaryView) shared by every raster
     /// in this array. Pair with [`Self::band_data_row`] to address a single
     /// band's bytes — e.g. for zero-copy passthrough into a
@@ -1704,6 +1741,11 @@ mod tests {
         assert!(r.band_outdb_format(1).is_none());
         assert!(r.band_nodata(1).is_none());
 
+        // Both bands hold bytes, so nothing is left to load: band 0's URI is
+        // provenance, and the array-level accessor does not report it.
+        assert!(rasters.first_outdb_band_uri(0).is_none());
+        assert!(rasters.first_outdb_band_uri(1).is_none());
+
         // Cross-check against the BandRef slow path.
         let band0 = r.band(0).unwrap();
         assert_eq!(band0.data_type(), BandDataType::UInt16);
@@ -1924,6 +1966,83 @@ mod tests {
             band.is_indb(),
             "a 0-element band holds 0 bytes legitimately and must be InDb"
         );
+    }
+
+    #[test]
+    fn first_outdb_band_uri_skips_bands_that_need_no_load() {
+        let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        let empty_view = ViewEntries::new(vec![ViewEntry {
+            source_axis: 0,
+            start: 0,
+            step: 1,
+            steps: 0,
+        }]);
+        let mut builder = RasterBuilder::new(6);
+
+        // A loaded band keeps its URI as provenance; the next band is OutDb.
+        builder
+            .start_raster_nd(&transform, &["x"], &[4], None)
+            .unwrap();
+        for (uri, data) in [("s3://b/a.tif#band=1", 4), ("s3://b/a.tif#band=2", 0)] {
+            builder
+                .start_band(StartBandArgs {
+                    outdb_uri: Some(uri),
+                    ..StartBandArgs::new(&["x"], &[4], BandDataType::UInt8)
+                })
+                .unwrap();
+            builder.band_data_writer().append_value(vec![0u8; data]);
+            builder.finish_band().unwrap();
+        }
+        builder.finish_raster().unwrap();
+
+        // OutDb with a URI; empty `data` over an empty visible region, through
+        // a view and through the source shape (InDb, nothing to load); OutDb
+        // without a URI.
+        for (spatial, source, view, uri) in [
+            (4, 4, None, Some("s3://b/b.tif")),
+            (0, 4, Some(&empty_view), Some("s3://b/c.tif")),
+            (0, 0, None, Some("s3://b/d.tif")),
+            (4, 4, None, None),
+        ] {
+            builder
+                .start_raster_nd(&transform, &["x"], &[spatial], None)
+                .unwrap();
+            builder
+                .start_band(StartBandArgs {
+                    view,
+                    outdb_uri: uri,
+                    ..StartBandArgs::new(&["x"], &[source], BandDataType::UInt8)
+                })
+                .unwrap();
+            builder.band_data_writer().append_value([0u8; 0]);
+            builder.finish_band().unwrap();
+            builder.finish_raster().unwrap();
+        }
+        builder.append_null().unwrap();
+        let array = builder.finish().unwrap();
+        let rasters = RasterStructArray::try_new(&array).unwrap();
+
+        let uris: Vec<_> = (0..6).map(|i| rasters.first_outdb_band_uri(i)).collect();
+        assert_eq!(
+            uris,
+            [
+                Some("s3://b/a.tif#band=2"),
+                Some("s3://b/b.tif"),
+                None,
+                None,
+                None,
+                None
+            ]
+        );
+        // The same verdict as the per-band accessor.
+        for (i, uri) in uris.iter().enumerate().take(5) {
+            let raster = rasters.get(i).unwrap();
+            let first_outdb = (0..raster.num_bands())
+                .map(|b| raster.band(b).unwrap())
+                .find(|band| !band.is_indb())
+                .and_then(|band| band.outdb_uri().map(str::to_string));
+            assert_eq!(first_outdb.as_deref(), *uri, "raster {i}");
+        }
     }
 
     #[test]
