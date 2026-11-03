@@ -48,7 +48,8 @@ test = [
 [tool.cibuildwheel]
 # PyO3's stable ABI support makes this one wheel per platform compatible with
 # every supported non-free-threaded CPython version.
-build = "cp39-*"
+# Test against the current sedonadb wheel, which requires Python 3.10.
+build = "cp310-*"
 
 [tool.maturin]
 features = ["pyo3/extension-module", "pyo3/abi3-py39"]

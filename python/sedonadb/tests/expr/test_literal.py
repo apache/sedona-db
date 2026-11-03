@@ -23,7 +23,7 @@ import pandas as pd
 import geoarrow.pyarrow as ga
 import geopandas.testing
 
-from sedonadb.expr.literal import lit
+from sedonadb.expr.literal import _resolve_arrow_array, lit
 from sedonadb.expr.expression import Expr
 import pytest
 
@@ -87,6 +87,204 @@ def test_shapely_linearring():
 
     array = pa.array(literal)
     assert array == ga.as_wkb(["LINESTRING (0 0, 1 0, 0 1, 0 0)"])
+
+
+@pytest.mark.parametrize(
+    "type",
+    [ga.wkb(), ga.large_wkb()],
+    ids=["wkb", "large_wkb"],
+)
+def test_shapely_array(type):
+    values = [shapely.Point(1, 2), None, shapely.Point(3, 4)]
+    array = _resolve_arrow_array(values, type)
+
+    assert array.type == type
+    assert ga.as_wkb(array).storage.to_pylist() == shapely.to_wkb(values).tolist()
+
+
+@pytest.mark.parametrize("type", [ga.wkb(), ga.large_wkb()])
+@pytest.mark.parametrize("values", [[], [None], [None, shapely.Point(1, 2).wkb, None]])
+def test_wkb_list_array(type, values):
+    array = _resolve_arrow_array(values, type)
+
+    assert array.type == type
+    assert array.storage.to_pylist() == values
+
+
+@pytest.mark.parametrize("source_type", [ga.wkb(), ga.wkt(), ga.point()])
+@pytest.mark.parametrize("target_type", [ga.wkb(), ga.large_wkb(), ga.wkb_view()])
+def test_geoarrow_scalar_list_array(source_type, target_type):
+    source = ga.as_geoarrow(["POINT (1 2)", None], type=source_type)
+    result = _resolve_arrow_array([None, source[0], source[1]], target_type)
+
+    assert result.type == target_type
+    assert result.storage.to_pylist() == [None, shapely.Point(1, 2).wkb, None]
+
+
+def test_resolve_array_requires_target_type():
+    with pytest.raises(ValueError, match="without a target type"):
+        _resolve_arrow_array([1], None)
+
+
+@pytest.mark.parametrize("values", [[], [None], [1, None, 2]])
+def test_resolve_array_plain_list(values):
+    result = _resolve_arrow_array(values, pa.int32())
+    assert result.equals(pa.array(values, pa.int32()))
+
+
+def test_resolve_array_same_type_preserves_slice_and_buffers():
+    source = pa.array([99, 1, None, 2], pa.int32()).slice(1)
+    result = _resolve_arrow_array(source, pa.int32())
+    assert result.equals(source)
+    assert result.offset == source.offset
+    assert result.buffers()[1].address == source.buffers()[1].address
+
+
+def test_resolve_array_cast():
+    source = pa.array([99, 1, None, 2], pa.int32()).slice(1)
+    result = _resolve_arrow_array(source, pa.float64())
+    assert result.equals(pa.array([1.0, None, 2.0], pa.float64()))
+
+
+def test_resolve_array_cast_rejects_overflow():
+    with pytest.raises(pa.ArrowInvalid):
+        _resolve_arrow_array(pa.array([128]), pa.int8())
+
+
+@pytest.mark.parametrize(
+    "target_type",
+    [
+        ga.wkt(),
+        ga.point(),
+        pa.field(
+            "custom",
+            pa.int64(),
+            metadata={b"ARROW:extension:name": b"test.unregistered"},
+        ),
+    ],
+)
+@pytest.mark.parametrize("values", [[None], pa.array([None])])
+def test_resolve_array_rejects_unsupported_extension(values, target_type):
+    # Unregistered extensions must not silently fall back to their storage type.
+    with pytest.raises(TypeError, match="Unsupported cast to extension"):
+        _resolve_arrow_array(values, target_type)
+
+
+def test_geometry_array_rejects_non_wkb_extension():
+    source = ga.wkt().wrap_array(pa.array(["POINT (1 2)"]))
+    with pytest.raises(TypeError, match="Unsupported cast from"):
+        _resolve_arrow_array(source, ga.wkb())
+
+
+def test_geometry_array_rejects_non_list():
+    with pytest.raises(TypeError, match="Can't create geometry array from tuple"):
+        _resolve_arrow_array((shapely.Point(1, 2),), ga.wkb())
+
+
+def test_shapely_geography_array_preserves_type():
+    type = ga.wkb().with_edge_type(ga.EdgeType.SPHERICAL).with_crs(ga.OGC_CRS84)
+    array = _resolve_arrow_array([shapely.Point(1, 2), None], type)
+
+    assert array.type == type
+    assert array.type.edge_type == ga.EdgeType.SPHERICAL
+    assert array.type.crs == ga.OGC_CRS84
+
+
+@pytest.mark.parametrize("source_type", [ga.wkb(), ga.large_wkb(), ga.wkb_view()])
+@pytest.mark.parametrize("target_type", [ga.wkb(), ga.large_wkb(), ga.wkb_view()])
+@pytest.mark.parametrize("extension", [False, True])
+def test_geometry_array_storage_cast(source_type, target_type, extension):
+    source_type = source_type.with_crs(ga.OGC_CRS84).with_edge_type(
+        ga.EdgeType.SPHERICAL
+    )
+    target_type = target_type.with_crs(ga.OGC_CRS84).with_edge_type(
+        ga.EdgeType.SPHERICAL
+    )
+    values = shapely.to_wkb([shapely.Point(1, 2), None], flavor="iso").tolist()
+    source = pa.array(values, source_type.storage_type)
+    if extension:
+        source = source_type.wrap_array(source)
+
+    result = _resolve_arrow_array(source, target_type)
+
+    result.validate(full=True)
+    assert result.type == target_type
+    assert result.storage.to_pylist() == values
+
+
+@pytest.mark.parametrize("target_type", [ga.wkb(), ga.large_wkb(), ga.wkb_view()])
+@pytest.mark.parametrize("values", [[], [None], [shapely.Point(1, 2, 3), None]])
+def test_shapely_array_wkb_storage(target_type, values):
+    result = _resolve_arrow_array(values, target_type)
+
+    result.validate(full=True)
+    assert result.type == target_type
+    assert result.storage.to_pylist() == shapely.to_wkb(values, flavor="iso").tolist()
+
+
+@pytest.mark.parametrize(
+    "source_type",
+    [ga.wkb().with_crs(ga.OGC_CRS84), ga.wkb().with_edge_type(ga.EdgeType.SPHERICAL)],
+)
+def test_geometry_array_rejects_metadata_change(source_type):
+    source = source_type.wrap_array(pa.array([None], pa.binary()))
+    with pytest.raises(TypeError, match="different CRS or edge type"):
+        _resolve_arrow_array(source, ga.large_wkb())
+
+
+@pytest.mark.parametrize("kind", ["empty", "null", "mixed"])
+def test_raster_array(kind):
+    from sedonadb._lib import raster_type
+    from sedonadb.raster import Raster
+
+    pixels = np.arange(6, dtype=np.uint8).reshape(2, 3)
+    raster = Raster.from_numpy(pixels)
+    values = {"empty": [], "null": [None, None], "mixed": [raster, None, raster]}[kind]
+
+    result = _resolve_arrow_array(values, raster_type())
+
+    result.validate(full=True)
+    assert result.type == pa.array(raster).type
+    assert len(result) == len(values)
+    assert result.is_null().to_pylist() == [value is None for value in values]
+    for i, value in enumerate(values):
+        if value is not None:
+            assert result.slice(i, 1).equals(pa.array(value))
+            np.testing.assert_array_equal(result[i].as_py().to_numpy(), pixels[None])
+
+
+def test_raster_array_rejects_invalid_element():
+    from sedonadb._lib import raster_type
+
+    with pytest.raises(TypeError, match="list of Raster or None"):
+        _resolve_arrow_array([None, 1], raster_type())
+
+
+def test_raster_array_same_type():
+    from sedonadb._lib import raster_type
+    from sedonadb.raster import Raster
+
+    raster = Raster.from_numpy(np.arange(1024, dtype=np.uint8).reshape(32, 32))
+    source = _resolve_arrow_array([raster, None], raster_type())
+    result = _resolve_arrow_array(source, raster_type())
+    assert result.equals(source)
+    source_data = source.storage.field("bands").values.field("data")
+    result_data = result.storage.field("bands").values.field("data")
+    assert result_data.buffers()[2].address == source_data.buffers()[2].address
+
+
+def test_raster_array_rejects_non_list():
+    from sedonadb._lib import raster_type
+
+    with pytest.raises(TypeError, match="list of Raster or None"):
+        _resolve_arrow_array((None,), raster_type())
+
+
+def test_raster_array_rejects_different_array_type():
+    from sedonadb._lib import raster_type
+
+    with pytest.raises(TypeError, match="Unsupported cast to extension"):
+        _resolve_arrow_array(pa.array([None]), raster_type())
 
 
 def test_geopandas_literal():

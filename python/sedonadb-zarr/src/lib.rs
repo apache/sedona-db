@@ -141,7 +141,7 @@ impl ZarrLoadResult {
 }
 
 /// View entry for Zarr load results.
-#[pyclass(skip_from_py_object)]
+#[pyclass]
 #[derive(Clone, Copy)]
 pub struct ZarrViewEntry {
     #[pyo3(get)]

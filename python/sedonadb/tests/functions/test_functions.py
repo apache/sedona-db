@@ -248,6 +248,13 @@ def test_st_azimuth(eng, geom1, geom2, expected):
             "POINT (3 7)"
         ),
         (
+            "POINT (1 2)",
+            2.0, 3.0,
+            5.0, 7.0,
+            1.0, 1.0,
+            "POINT (9 20)"
+        ),
+        (
             "LINESTRING (0 0, 1 1)",
             1.0, 0.0,
             0.0, 1.0,
@@ -312,6 +319,14 @@ def test_st_affine_2d(eng, geom, a, b, d, e, xoff, yoff, expected):
             0.0, 0.0, 2.0,
             1.0, 3.0, 5.0,
             "POINT Z (3 7 11)",
+        ),
+        (
+            "POINT Z (1 2 3)",
+            1.0, 2.0, 3.0,
+            4.0, 5.0, 6.0,
+            7.0, 8.0, 9.0,
+            10.0, 11.0, 12.0,
+            "POINT Z (24 43 62)",
         ),
     ],
 )
@@ -2953,6 +2968,28 @@ def test_st_hasm(eng, geom, expected):
     eng.assert_query_result(f"SELECT ST_HasM({geom_or_null(geom)})", expected)
 
 
+@pytest.mark.parametrize(
+    ("geom", "has_z", "has_m"),
+    [
+        ("GEOMETRYCOLLECTION (POINT (0 0), POINT Z (1 1 1))", True, False),
+        ("GEOMETRYCOLLECTION (POINT (0 0), POINT M (1 1 1))", False, True),
+        ("GEOMETRYCOLLECTION (POINT (0 0), POINT M EMPTY)", False, True),
+        (
+            "GEOMETRYCOLLECTION (POINT (0 0), GEOMETRYCOLLECTION (POINT ZM (1 1 1 1)))",
+            True,
+            True,
+        ),
+        ("GEOMETRYCOLLECTION (POINT (0 0), POINT (1 1))", False, False),
+    ],
+)
+def test_st_haszm_of_a_later_member(geom, has_z, has_m):
+    # A collection has Z (or M) when any member does, empty or not, as in
+    # GEOS. PostGIS can't mix dimensions in a collection, so SedonaDB only.
+    eng = SedonaDB.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_HasZ({geom_or_null(geom)})", has_z)
+    eng.assert_query_result(f"SELECT ST_HasM({geom_or_null(geom)})", has_m)
+
+
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
     ("geom", "expected"),
@@ -3045,6 +3082,56 @@ def test_st_isclosed(eng, geom, expected):
 def test_st_iscollection(eng, geom, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(f"SELECT ST_IsCollection({geom_or_null(geom)})", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected_cw", "expected_ccw"),
+    [
+        (None, None, None),
+        ("POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))", True, False),
+        ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", False, True),
+        (
+            "POLYGON ((0 0, 0 4, 4 4, 4 0, 0 0), (1 1, 2 1, 2 2, 1 2, 1 1))",
+            True,
+            False,
+        ),
+        (
+            "POLYGON ((0 0, 0 4, 4 4, 4 0, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))",
+            False,
+            False,
+        ),
+        (
+            "MULTIPOLYGON (((0 0, 0 1, 1 1, 1 0, 0 0)), ((5 5, 6 5, 6 6, 5 6, 5 5)))",
+            False,
+            False,
+        ),
+        (
+            "GEOMETRYCOLLECTION (POINT (1 1), POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0)))",
+            True,
+            False,
+        ),
+        ("LINESTRING (0 0, 1 1)", True, True),
+        ("POLYGON EMPTY", True, True),
+        ("GEOMETRYCOLLECTION EMPTY", True, True),
+        (
+            "POLYGON ((10000000 10000000, 10000000.1 10000000, 10000000.1 10000000.1, 10000000 10000000.1, 10000000 10000000))",
+            False,
+            True,
+        ),
+        (
+            "POLYGON ((10000000 10000000, 10000000 10000000.1, 10000000.1 10000000.1, 10000000.1 10000000, 10000000 10000000))",
+            True,
+            False,
+        ),
+    ],
+)
+def test_st_ispolygoncw_ccw(eng, geom, expected_cw, expected_ccw):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_IsPolygonCW({geom_or_null(geom)})", expected_cw)
+    eng.assert_query_result(
+        f"SELECT ST_IsPolygonCCW({geom_or_null(geom)})", expected_ccw
+    )
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
@@ -3161,6 +3248,24 @@ def test_st_linemerge_directed(eng, geom, expected):
     eng.assert_query_result(
         f"SELECT ST_LineMerge({geom_or_null(geom)}, true)",
         expected,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+def test_st_linemerge_directed_per_row(eng):
+    # directed is read for each row, and a missing one gives a missing result
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        """SELECT ST_LineMerge(ST_GeomFromText(wkt), directed) FROM (VALUES
+            (1, 'MULTILINESTRING ((0 0, 1 0), (1 1, 1 0))', false),
+            (2, 'MULTILINESTRING ((0 0, 1 0), (1 1, 1 0))', true),
+            (3, 'MULTILINESTRING ((0 0, 1 0), (1 1, 1 0))', NULL)
+        ) AS t(id, wkt, directed) ORDER BY id""",
+        [
+            ("LINESTRING (0 0, 1 0, 1 1)",),
+            ("MULTILINESTRING ((0 0, 1 0), (1 1, 1 0))",),
+            (None,),
+        ],
     )
 
 

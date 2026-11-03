@@ -168,8 +168,8 @@ impl SedonaScalarKernel for ImportedScalarKernel {
 
 /// Wrapper class handling the verbose details of preparing and executing FFI calls
 /// for the [SedonaCScalarKernelImpl]
-struct CScalarKernelImplWrapper {
-    inner: SedonaCScalarKernelImpl,
+pub(crate) struct CScalarKernelImplWrapper {
+    pub(crate) inner: SedonaCScalarKernelImpl,
 }
 
 impl CScalarKernelImplWrapper {
@@ -183,7 +183,7 @@ impl CScalarKernelImplWrapper {
         }
     }
 
-    fn init(
+    pub(crate) fn init(
         &mut self,
         arg_types: &[SedonaType],
         arg_scalars: &[Option<&ScalarValue>],
@@ -267,7 +267,7 @@ impl CScalarKernelImplWrapper {
         }
     }
 
-    fn execute(
+    pub(crate) fn execute(
         &mut self,
         args: &[ColumnarValue],
         return_type: &SedonaType,
@@ -473,7 +473,7 @@ unsafe extern "C" fn c_factory_release(self_: *mut SedonaCScalarKernel) {
 }
 
 /// Rust-backed implementation of [SedonaCScalarKernelImpl]
-struct ExportedScalarKernelImpl {
+pub(crate) struct ExportedScalarKernelImpl {
     inner: ScalarKernelRef,
     config_options: Arc<ConfigOptions>,
     last_arg_types: Option<Vec<SedonaType>>,
@@ -495,7 +495,7 @@ impl From<ExportedScalarKernelImpl> for SedonaCScalarKernelImpl {
 }
 
 impl ExportedScalarKernelImpl {
-    fn new(kernel: ScalarKernelRef, config_options: Arc<ConfigOptions>) -> Self {
+    pub(crate) fn new(kernel: ScalarKernelRef, config_options: Arc<ConfigOptions>) -> Self {
         Self {
             inner: kernel,
             config_options,

@@ -53,7 +53,7 @@ BEFORE_ALL_MANYLINUX="yum install -y curl zip unzip tar clang perl"
 # add quite a bit of complexity but could save time if we build wheels for linux frequently.
 # The native and Rust builds are cached on each image such that compile work is effectively
 # cached between Python versions (just not between invocations of this script).
-export CIBW_ENVIRONMENT_LINUX="VCPKG_ROOT=/vcpkg VCPKG_REF=$VCPKG_REF VCPKG_DEFAULT_TRIPLET=$VCPKG_DEFAULT_TRIPLET CMAKE_TOOLCHAIN_FILE=/vcpkg/scripts/buildsystems/vcpkg.cmake PKG_CONFIG_PATH=/vcpkg/installed/$VCPKG_DEFAULT_TRIPLET/lib/pkgconfig LD_LIBRARY_PATH=/vcpkg/installed/$VCPKG_DEFAULT_TRIPLET/lib $SEDONADB_RELEASE_PROFILE_ENV MATURIN_PEP517_ARGS='--features s2geography,pyo3/extension-module,pyo3/abi3-py39'"
+export CIBW_ENVIRONMENT_LINUX="VCPKG_ROOT=/vcpkg VCPKG_REF=$VCPKG_REF VCPKG_DEFAULT_TRIPLET=$VCPKG_DEFAULT_TRIPLET CMAKE_TOOLCHAIN_FILE=/vcpkg/scripts/buildsystems/vcpkg.cmake PKG_CONFIG_PATH=/vcpkg/installed/$VCPKG_DEFAULT_TRIPLET/lib/pkgconfig LD_LIBRARY_PATH=/vcpkg/installed/$VCPKG_DEFAULT_TRIPLET/lib $SEDONADB_RELEASE_PROFILE_ENV MATURIN_PEP517_ARGS='--features s2geography,pyo3/extension-module,pyo3/abi3-py310'"
 
 # Host directories to bind-mount into the build container. cibuildwheel copies
 # the project into the container rather than bind-mounting it, so anything the

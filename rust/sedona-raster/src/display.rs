@@ -17,6 +17,8 @@
 
 use std::fmt;
 
+use sedona_schema::crs::deserialize_crs;
+
 use crate::affine_transformation::to_world_coordinate;
 use crate::traits::RasterRef;
 
@@ -95,13 +97,10 @@ impl fmt::Display for RasterDisplay<'_> {
             write!(f, " skew=({skew_x}, {skew_y})")?;
         }
 
-        // Append CRS if present. For PROJJSON (starts with '{'), show compact placeholder.
+        // Append CRS if present, abbreviated to its authority code where possible
         if let Some(crs) = raster.crs() {
-            if crs.starts_with('{') {
-                write!(f, " / {{...}}")?;
-            } else {
-                write!(f, " / {crs}")?;
-            }
+            write!(f, " / ")?;
+            write_abbreviated_crs(f, crs)?;
         }
 
         if has_outdb {
@@ -112,11 +111,28 @@ impl fmt::Display for RasterDisplay<'_> {
     }
 }
 
+/// Write a compact form of a raster's CRS string
+///
+/// CRSes that can be parsed are written using the CRS `Display` implementation
+/// (i.e., as their authority code where one is available, such as the `id` of a
+/// PROJJSON object or the trailing `ID[...]`/`AUTHORITY[...]` of a WKT string,
+/// or `{...}` otherwise).
+fn write_abbreviated_crs(f: &mut fmt::Formatter<'_>, crs: &str) -> fmt::Result {
+    match deserialize_crs(crs) {
+        Ok(Some(parsed)) => write!(f, "{parsed}"),
+        // Strings we can't parse as a CRS are written as-is unless they look
+        // like (invalid) JSON, which may be arbitrarily long
+        _ if crs.starts_with('{') => write!(f, "{{...}}"),
+        _ => write!(f, "{crs}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::array::RasterStructArray;
-    use sedona_testing::rasters::generate_test_rasters;
+    use sedona_schema::crs::OGC_CRS84_PROJJSON;
+    use sedona_testing::rasters::{build_in_db_raster, generate_test_rasters};
 
     #[test]
     fn display_non_skewed_raster() {
@@ -127,7 +143,7 @@ mod tests {
         let raster = raster_array.get(0).unwrap();
 
         let display = format!("{}", RasterDisplay(&raster));
-        assert_eq!(display, "[1x2/1] @ [1 1.6 1.1 2] / OGC:CRS84");
+        assert_eq!(display, "[1x2/1] @ [1 1.6 1.1 2] / ogc:crs84");
     }
 
     #[test]
@@ -142,7 +158,7 @@ mod tests {
         let display = format!("{}", RasterDisplay(&raster));
         assert_eq!(
             display,
-            "[3x4/1] @ [3 2.4 3.84 4.24] skew=(0.06, 0.08) / OGC:CRS84"
+            "[3x4/1] @ [3 2.4 3.84 4.24] skew=(0.06, 0.08) / ogc:crs84"
         );
     }
 
@@ -156,6 +172,58 @@ mod tests {
         let mut buf = String::new();
         use std::fmt::Write;
         write!(buf, "{}", RasterDisplay(&raster)).unwrap();
-        assert_eq!(buf, "[1x2/1] @ [1 1.6 1.1 2] / OGC:CRS84");
+        assert_eq!(buf, "[1x2/1] @ [1 1.6 1.1 2] / ogc:crs84");
+    }
+
+    fn display_with_crs(crs: Option<&str>) -> String {
+        let rasters = build_in_db_raster(2, 3, [10.0, 1.0, 0.0, 20.0, 0.0, -1.0], crs, &[]);
+        let raster_array = RasterStructArray::try_new(&rasters).unwrap();
+        let raster = raster_array.get(0).unwrap();
+        format!("{}", RasterDisplay(&raster))
+    }
+
+    #[test]
+    fn display_crs_authority_code() {
+        assert_eq!(
+            display_with_crs(Some("EPSG:32618")),
+            "[2x3/0] @ [10 17 12 20] / epsg:32618"
+        );
+        assert_eq!(display_with_crs(None), "[2x3/0] @ [10 17 12 20]");
+    }
+
+    #[test]
+    fn display_crs_projjson_abbreviated() {
+        assert_eq!(
+            display_with_crs(Some(OGC_CRS84_PROJJSON)),
+            "[2x3/0] @ [10 17 12 20] / ogc:crs84"
+        );
+
+        let nad83 = r#"{"type":"GeographicCRS","name":"NAD83","datum":{"type":"GeodeticReferenceFrame","name":"NAD83","ellipsoid":{"name":"GRS 1980","semi_major_axis":6378137,"inverse_flattening":298.257222101}},"coordinate_system":{"subtype":"ellipsoidal","axis":[{"name":"Geodetic latitude","abbreviation":"Lat","direction":"north","unit":"degree"},{"name":"Geodetic longitude","abbreviation":"Lon","direction":"east","unit":"degree"}]},"id":{"authority":"EPSG","code":4269}}"#;
+        assert_eq!(
+            display_with_crs(Some(nad83)),
+            "[2x3/0] @ [10 17 12 20] / epsg:4269"
+        );
+
+        // PROJJSON without an id can't be abbreviated
+        let no_id = r#"{"type":"GeographicCRS","name":"Unknown"}"#;
+        assert_eq!(
+            display_with_crs(Some(no_id)),
+            "[2x3/0] @ [10 17 12 20] / {...}"
+        );
+    }
+
+    #[test]
+    fn display_crs_wkt_abbreviated() {
+        let wkt = r#"GEOGCRS["WGS 84",DATUM["World Geodetic System 1984",ELLIPSOID["WGS 84",6378137,298.257223563]],CS[ellipsoidal,2],AXIS["latitude",north],AXIS["longitude",east],ANGLEUNIT["degree",0.0174532925199433],ID["EPSG",4326]]"#;
+        assert_eq!(
+            display_with_crs(Some(wkt)),
+            "[2x3/0] @ [10 17 12 20] / epsg:4326"
+        );
+
+        let wkt_no_id = r#"GEOGCRS["Unknown",DATUM["Unknown",ELLIPSOID["WGS 84",6378137,298.257223563]],CS[ellipsoidal,2],AXIS["latitude",north],AXIS["longitude",east],ANGLEUNIT["degree",0.0174532925199433]]"#;
+        assert_eq!(
+            display_with_crs(Some(wkt_no_id)),
+            "[2x3/0] @ [10 17 12 20] / {...}"
+        );
     }
 }

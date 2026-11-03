@@ -29,7 +29,9 @@ use crate::{
     evaluated_batch::{EvaluatedBatch, evaluated_batch_stream::SendableEvaluatedBatchStream},
     index::{default_spatial_index::DefaultSpatialIndex, knn_adapter::KnnComponents},
     spatial_predicate::SpatialPredicate,
-    utils::join_utils::need_produce_result_in_final,
+    utils::join_utils::{
+        build_side_for_predicate, emission_join_type, need_produce_result_in_final,
+    },
 };
 use async_trait::async_trait;
 use datafusion_common::{Result, utils::proxy::VecAllocExt};
@@ -235,7 +237,13 @@ impl DefaultSpatialIndexBuilder {
 
     /// Build visited bitmaps for tracking left-side indices in outer joins.
     fn build_visited_bitmaps(&mut self) -> Result<Option<Mutex<Vec<BooleanBufferBuilder>>>> {
-        if !need_produce_result_in_final(self.join_type) {
+        // KNN may build on the SQL right; use emission join type so visited bitmaps
+        // track unmatched *build* rows only when the outer-join preserved side is build.
+        let emission_jt = emission_join_type(
+            self.join_type,
+            build_side_for_predicate(&self.spatial_predicate),
+        );
+        if !need_produce_result_in_final(emission_jt) {
             return Ok(None);
         }
 

@@ -98,45 +98,32 @@ pub fn create_geoparquet_writer_physical_plan(
         .unwrap_or_default();
 
     // Check the version
-    match options.geoparquet_version {
-        GeoParquetVersion::V1_0 => {
-            metadata.version = "1.0.0".to_string();
-            projection = project_normalize_geo(
-                &input.schema(),
-                &sedona_options.runtime,
-                GeoParquetVersion::V1_0,
-                session_config_options,
-            )?;
-        }
-        GeoParquetVersion::V1_1 => {
-            metadata.version = "1.1.0".to_string();
-            (projection, bbox_columns) = project_bboxes(
-                &input,
-                options.overwrite_bbox_columns,
-                session_config_options,
-                &sedona_options.runtime,
-                GeoParquetVersion::V1_1,
-            )?;
-        }
-        GeoParquetVersion::V2_0 => {
-            metadata.version = "2.0.0".to_string();
-            projection = project_normalize_geo(
-                &input.schema(),
-                &sedona_options.runtime,
-                GeoParquetVersion::V2_0,
-                session_config_options,
-            )?;
-        }
-        GeoParquetVersion::Omitted => {
-            // Sentinel...we'll only write the metadata if there's a version to write
-            metadata.version = "".to_string();
-            projection = project_normalize_geo(
-                &input.schema(),
-                &sedona_options.runtime,
-                GeoParquetVersion::Omitted,
-                session_config_options,
-            )?;
-        }
+    metadata.version = match options.geoparquet_version {
+        GeoParquetVersion::V1_0 => "1.0.0",
+        GeoParquetVersion::V1_1 => "1.1.0",
+        GeoParquetVersion::V2_0 => "2.0.0",
+        // Sentinel...we'll only write the metadata if there's a version to write
+        GeoParquetVersion::Omitted => "",
+    }
+    .to_string();
+
+    // Whether or not we write bounding box columns is independent of the version
+    // (except that GeoParquet 1.0 can't declare a covering)
+    if options.should_write_bbox_columns()? {
+        (projection, bbox_columns) = project_bboxes(
+            &input,
+            options.overwrite_bbox_columns,
+            session_config_options,
+            &sedona_options.runtime,
+            options.geoparquet_version,
+        )?;
+    } else {
+        projection = project_normalize_geo(
+            &input.schema(),
+            &sedona_options.runtime,
+            options.geoparquet_version,
+            session_config_options,
+        )?;
     }
 
     let parquet_output_schema = compute_final_schema(&projection, &input.schema())?;
@@ -1112,6 +1099,126 @@ mod test {
         .unwrap();
 
         assert!(logical_types.get("geometry").unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn geoparquet_1_1_without_bbox_columns() {
+        let example = test_geoparquet("example", "geometry").unwrap();
+        let ctx = setup_context();
+        let df = ctx.table(&example).await.unwrap();
+
+        let options = TableGeoParquetOptions {
+            geoparquet_version: GeoParquetVersion::V1_1,
+            write_bbox_columns: Some(false),
+            ..Default::default()
+        };
+
+        // No bbox column should be added
+        let df_batches = df.clone().collect().await.unwrap();
+        let tmpdir = tempdir().unwrap();
+        let tmp_parquet = tmpdir.path().join("foofy_spatial.parquet");
+        write_dataframe_to_path(&ctx, df, &tmp_parquet, options).await;
+        test_write_dataframe_common(&ctx, &tmp_parquet, df_batches)
+            .await
+            .unwrap();
+
+        // ...but the metadata should still be GeoParquet 1.1
+        let metadata = read_geoparquet_metadata(&tmp_parquet);
+        assert_eq!(metadata.version, "1.1.0");
+        assert!(metadata.columns.get("geometry").unwrap().covering.is_none());
+    }
+
+    #[tokio::test]
+    async fn geoparquet_2_0_with_bbox_columns() {
+        let example = test_geoparquet("example", "geometry").unwrap();
+        let ctx = setup_context();
+        let df = ctx.table(&example).await.unwrap();
+
+        let options = TableGeoParquetOptions {
+            geoparquet_version: GeoParquetVersion::V2_0,
+            write_bbox_columns: Some(true),
+            ..Default::default()
+        };
+
+        let bbox_udf: ScalarUDF = geoparquet_bbox_udf().into();
+        let df_batches_with_bbox = df
+            .clone()
+            .select(vec![
+                col("wkt"),
+                bbox_udf.call(vec![col("geometry")]).alias("bbox"),
+                col("geometry"),
+            ])
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+
+        let tmpdir = tempdir().unwrap();
+        let tmp_parquet = tmpdir.path().join("foofy_spatial.parquet");
+        write_dataframe_to_path(&ctx, df, &tmp_parquet, options).await;
+        let logical_types =
+            test_write_dataframe_common(&ctx, &tmp_parquet, df_batches_with_bbox.clone())
+                .await
+                .unwrap();
+
+        // Geometry is still written as Parquet native geometry
+        assert!(matches!(
+            logical_types.get("geometry").unwrap(),
+            Some(LogicalType::Geometry { .. })
+        ));
+
+        // ...and the bbox column is declared as the covering
+        let metadata = read_geoparquet_metadata(&tmp_parquet);
+        assert_eq!(metadata.version, "2.0.0");
+        assert_eq!(
+            metadata.columns.get("geometry").unwrap().covering,
+            Some(GeoParquetCovering::bbox_struct_xy("bbox"))
+        );
+
+        // Check that we can do this from SQL too
+        let tmp_parquet = tmpdir.path().join("foofy_spatial_sql.parquet");
+        test_write_dataframe_sql(
+            &ctx,
+            &format!(
+                r#"COPY (
+                    SELECT * FROM '{example}'
+                   ) TO '{}'
+                   OPTIONS (GEOPARQUET_VERSION '2.0', WRITE_BBOX_COLUMNS true)
+                "#,
+                tmp_parquet.display()
+            ),
+            &tmp_parquet,
+            df_batches_with_bbox,
+        )
+        .await
+        .unwrap();
+        let metadata = read_geoparquet_metadata(&tmp_parquet);
+        assert!(metadata.columns.get("geometry").unwrap().covering.is_some());
+    }
+
+    #[tokio::test]
+    async fn bbox_columns_require_covering_support() {
+        let example = test_geoparquet("example", "geometry").unwrap();
+        let ctx = setup_context();
+        let df = ctx.table(&example).await.unwrap();
+        let df_batches = df.clone().collect().await.unwrap();
+
+        for geoparquet_version in [GeoParquetVersion::V1_0, GeoParquetVersion::Omitted] {
+            let options = TableGeoParquetOptions {
+                geoparquet_version,
+                write_bbox_columns: Some(true),
+                ..Default::default()
+            };
+
+            let err = test_write_dataframe(&ctx, df.clone(), df_batches.clone(), options, vec![])
+                .await
+                .unwrap_err();
+            assert!(
+                err.message()
+                    .starts_with("Bounding box columns require GeoParquet 1.1 or 2.0"),
+                "{err}"
+            );
+        }
     }
 
     #[tokio::test]

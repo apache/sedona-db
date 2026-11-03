@@ -246,6 +246,28 @@ pub type Crs = Option<Arc<dyn CoordinateReferenceSystem + Send + Sync>>;
 /// need to inspect a CRS without taking ownership.
 pub type CrsRef<'a> = Option<&'a (dyn CoordinateReferenceSystem + Send + Sync)>;
 
+/// Return a clone of the first CRS when every value is equal under [`PartialEq`]
+/// (i.e. [`CoordinateReferenceSystem::crs_equals`]), including lon/lat aliases.
+///
+/// Returns `None` when `crses` is empty or any pair disagrees (including a mix of
+/// `None` and `Some`). Callers that only care about a present CRS can check the
+/// result with [`Option::is_some`] / [`Option::as_ref`].
+///
+/// This matches how argument CRS reconciliation works in
+/// [`crate::matchers::ArgMatcher::match_args`]: require agreement, then keep the
+/// first representation rather than normalizing to an authority:code form.
+pub fn first_if_all_equal<'a, I>(crses: I) -> Option<Crs>
+where
+    I: IntoIterator<Item = &'a Crs>,
+{
+    let mut iter = crses.into_iter();
+    let first = iter.next()?.clone();
+    if iter.any(|crs| crs != &first) {
+        return None;
+    }
+    Some(first)
+}
+
 impl Display for dyn CoordinateReferenceSystem + Send + Sync {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Ok(Some(auth_code)) = self.to_authority_code() {
@@ -1590,5 +1612,22 @@ mod wkt_tests {
             bare.to_json(),
             Value::String(WKT_NO_AUTHORITY.to_string()).to_string()
         );
+    }
+
+    #[test]
+    fn first_if_all_equal_keeps_first_representation() {
+        let proj = deserialize_crs(OGC_CRS84_PROJJSON).unwrap();
+        let auth = deserialize_crs("OGC:CRS84").unwrap();
+        assert_eq!(proj, auth);
+
+        let out = first_if_all_equal([&proj, &auth]).unwrap();
+        assert_eq!(
+            out.as_ref().unwrap().to_json(),
+            proj.as_ref().unwrap().to_json()
+        );
+
+        assert!(first_if_all_equal([&proj, &deserialize_crs("EPSG:3857").unwrap()]).is_none());
+        assert!(first_if_all_equal([&None, &auth]).is_none());
+        assert_eq!(first_if_all_equal([&None, &None]), Some(None));
     }
 }

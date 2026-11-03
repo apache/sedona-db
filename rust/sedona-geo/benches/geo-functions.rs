@@ -105,23 +105,5 @@ fn criterion_benchmark(c: &mut Criterion) {
     );
 }
 
-fn criterion_benchmark_aggr(c: &mut Criterion) {
-    let mut f = sedona_functions::register::default_function_set();
-    for udf in sedona_geo::register::aggregate_udfs() {
-        f.add_aggregate_udf(udf).unwrap();
-    }
-
-    // st_intersection_agg would need its own configuration because most of the generated
-    // polygons would not intersect and result in empty output almost immediately
-    benchmark::aggregate(c, &f, "geo", "st_union_agg", Polygon(10));
-}
-
 criterion_group!(benches, criterion_benchmark);
-criterion_group! {
-    name = benches_aggr;
-    // These are currently very slow, so only run 10 samples
-    config = Criterion::default().sample_size(10);
-    targets = criterion_benchmark_aggr
-}
-
-criterion_main!(benches, benches_aggr);
+criterion_main!(benches);

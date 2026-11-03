@@ -99,14 +99,19 @@ extern "C" __global__ void __raygen__gpuspatial() {
            multi_polygon_idx);
 
     auto handle_point = [&](const point_t& p, uint32_t point_part_id, int& IM) {
-      assert(!p.empty());
+      const auto& multi_polygon = multi_polygons[multi_polygon_idx];
+      if (p.empty()) {
+        if (!multi_polygon.empty()) {
+          IM |= IntersectionMatrix::EXTER_INTER_2D | IntersectionMatrix::EXTER_BOUND_1D;
+        }
+        return false;
+      }
       float3 origin;
       // each polygon takes a z-plane
       origin.x = p.x();
       origin.y = p.y();
       // cast ray toward positive x-axis
       float3 dir = {1, 0, 0};
-      const auto& multi_polygon = multi_polygons[multi_polygon_idx];
       const auto& mbr = multi_polygon.get_mbr();
       auto width = mbr.get_max().x() - mbr.get_min().x();
       float tmin = 0;
@@ -123,9 +128,7 @@ extern "C" __global__ void __raygen__gpuspatial() {
       bool matched = false;
 
       if (multi_polygon.empty()) {
-        IM = IntersectionMatrix::INTER_EXTER_0D | IntersectionMatrix::EXTER_EXTER_2D;
-      } else {
-        IM = IntersectionMatrix::EXTER_EXTER_2D;
+        IM |= IntersectionMatrix::INTER_EXTER_0D;
       }
       RayCrossingCounter locator;
 
@@ -232,10 +235,7 @@ extern "C" __global__ void __raygen__gpuspatial() {
       auto mp = params.multi_points[point_idx];
       for (uint32_t j = 0; j < mp.num_points(); j++) {
         const auto& p = mp.get_point(j);
-        if (handle_point(p, j, IM)) {
-          // IM will not be changed anymore
-          break;
-        }
+        handle_point(p, j, IM);
       }
     } else {
       assert(false);

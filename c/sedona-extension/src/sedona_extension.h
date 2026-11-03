@@ -290,6 +290,107 @@ struct SedonaCError {
   void (*release)(struct SedonaCError* self);
 };
 
+/// \brief Borrowed configuration view
+///
+/// Provides read-only access to configuration options and extensions. All callbacks
+/// are thread safe. The view and its private data remain valid until the receiving
+/// kernel implementation is released.
+struct SedonaCConfigOptionsView {
+  /// \brief Get a configuration option
+  ///
+  /// key must be non-NULL, null-terminated UTF-8. Returns a nullable, length-one
+  /// Arrow value for key together with its schema. ConfigOptions currently exposes
+  /// values as Utf8 strings. A missing or unset key is returned as a null value.
+  /// Successful outputs belong to the caller. Malformed arguments return EINVAL.
+  /// On error, both outputs are untouched.
+  int (*get_option)(const struct SedonaCConfigOptionsView* self, const char* key,
+                    struct ArrowSchema* out_schema, struct ArrowArray* out,
+                    struct SedonaCError* err);
+
+  /// \brief Get a configuration option object
+  ///
+  /// key must be non-NULL, null-terminated UTF-8 and identifies the object (for
+  /// example, "sedona.crs_engine"). object_type identifies an independently agreed
+  /// output layout. No object type constants are currently defined. Object resources
+  /// require their own documented lifetime and release rules; native Rust objects
+  /// must never be passed directly through this interface.
+  ///
+  /// out_size_bytes is the size of the caller-provided output buffer. Unknown keys
+  /// or unsupported types return ENOTSUP; malformed arguments return EINVAL. On
+  /// error, out is untouched.
+  int (*get_option_object)(const struct SedonaCConfigOptionsView* self, const char* key,
+                           int object_type, void* out, size_t out_size_bytes,
+                           struct SedonaCError* err);
+
+  /// \brief Reserved for future use. Must be NULL.
+  void* reserved;
+
+  /// \brief Opaque implementation-specific data
+  ///
+  /// Borrowed for the lifetime of the receiving kernel implementation.
+  const void* private_data;
+};
+
+/// \brief Extensible scalar kernel factory
+///
+/// Provides function-level properties and initializes scalar kernel implementations.
+/// V1 remains ABI-compatible and independent. Callbacks accepting const self are
+/// thread safe. A NULL release callback indicates an invalid instance.
+struct SedonaCScalarKernelV2 {
+  /// \brief Get the data type of a property
+  ///
+  /// The properties documented by get_property have a non-null Utf8 schema.
+  /// Successful outputs belong to the caller. Unknown properties return ENOTSUP
+  /// and leave out untouched.
+  int (*get_property_schema)(const struct SedonaCScalarKernelV2* self,
+                             const char* property, struct ArrowSchema* out,
+                             struct SedonaCError* err);
+
+  /// \brief Get a function-level property
+  ///
+  /// Arguments are borrowed, null-terminated UTF-8 JSON (NULL when unused).
+  /// Each property returns one non-null Utf8 Arrow value containing JSON:
+  /// - "function_name": string or null.
+  /// - "volatility": "immutable", "stable", or "volatile".
+  /// - "metadata_keys": array of unique strings (including an empty array).
+  /// - "metadata": args is a JSON string key; result is a string.
+  ///
+  /// These declarations are stable for the factory lifetime and cached on import.
+  /// All V2 overloads of a function must agree on volatility and the entire
+  /// metadata map. Metadata is attached to the registered UDF for use by the planner.
+  ///
+  /// Successful outputs belong to the caller. Unknown properties or missing
+  /// metadata keys return ENOTSUP; invalid arguments return EINVAL. On error,
+  /// out is untouched.
+  int (*get_property)(const struct SedonaCScalarKernelV2* self, const char* property,
+                      const char* args, struct ArrowArray* out, struct SedonaCError* err);
+
+  /// \brief Initialize a new implementation
+  ///
+  /// config may be NULL. Otherwise the caller keeps it valid through release of
+  /// out, including all init/execute calls.
+  /// On success out must be a valid independently owned implementation.
+  /// The implementation uses the existing V1 init/execute protocol. The factory
+  /// must copy any state needed after its own release into the implementation.
+  ///
+  /// Returns zero on success or an errno-compatible error code on failure.
+  /// On error, out is untouched.
+  int (*new_impl)(const struct SedonaCScalarKernelV2* self,
+                  const struct SedonaCConfigOptionsView* config,
+                  struct SedonaCScalarKernelImpl* out, struct SedonaCError* err);
+
+  /// \brief Reserved for future use. Must be NULL.
+  void* reserved;
+
+  /// \brief Release this factory
+  ///
+  /// Implementations of this callback must set self->release to NULL.
+  void (*release)(struct SedonaCScalarKernelV2* self);
+
+  /// \brief Opaque implementation-specific data
+  void* private_data;
+};
+
 /// \brief Non-owning view of an expression
 ///
 /// This structure provides a read-only view into an expression without taking
@@ -313,6 +414,8 @@ struct SedonaCError {
 /// Instances with a NULL private_data are not valid and must not be used.
 struct SedonaCExprView {
   /// \brief Get the data type of a property
+  ///
+  /// Unknown properties return ENOTSUP from both property callbacks.
   int (*get_property_schema)(const struct SedonaCExprView* self, const char* property,
                              struct ArrowSchema* out, struct SedonaCError* err);
 
@@ -374,6 +477,8 @@ struct SedonaCExecutionPlan {
                     struct SedonaCError* err);
 
   /// \brief Get the data type of a property
+  ///
+  /// Unknown properties return ENOTSUP from both property callbacks.
   int (*get_property_schema)(const struct SedonaCExecutionPlan* self,
                              const char* property, struct ArrowSchema* out,
                              struct SedonaCError* err);
@@ -437,6 +542,8 @@ struct SedonaCTableProvider {
                     struct SedonaCError* err);
 
   /// \brief Get the data type of a property
+  ///
+  /// Unknown properties return ENOTSUP from both property callbacks.
   int (*get_property_schema)(const struct SedonaCTableProvider* self,
                              const char* property, struct ArrowSchema* out,
                              struct SedonaCError* err);
@@ -504,6 +611,7 @@ struct SedonaCTableProvider {
 /// duration of the call. All successful outputs transfer ownership to the caller.
 struct SedonaCCatalogProviderList {
   /// Get a property's schema. name and list_identifiers are non-null Utf8.
+  /// Unknown properties return ENOTSUP from both property callbacks.
   int (*get_property_schema)(const struct SedonaCCatalogProviderList* self,
                              const char* property, struct ArrowSchema* out,
                              struct SedonaCError* err);

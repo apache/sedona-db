@@ -93,8 +93,7 @@ jobs:
           VCPKG_DEFAULT_TRIPLET: x64-windows-dynamic-release
           VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-bincache
           CMAKE_TOOLCHAIN_FILE: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
-          CIBW_BUILD: "cp39-win_amd64"
-          CIBW_TEST_REQUIRES: pytest adbc_driver_manager geoarrow-pyarrow geopandas
+          CIBW_BUILD: "cp310-win_amd64"
           # Test command exits 0 even on failure so CIBW continues building all wheels;
           # failures are recorded in .test_failed and checked after upload.
           # We use Python here to be absolutely sure there are no shell escaping issues.
@@ -113,7 +112,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: release-wheels-windows-x86_64
-          path: python/sedonadb/dist/*-cp39-abi3-*.whl
+          path: python/sedonadb/dist/*-cp310-abi3-*.whl
           if-no-files-found: error
 
       - name: Fail if tests failed
@@ -179,7 +178,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: release-wheels-macOS-arm64
-          path: python/sedonadb/dist/*-cp39-abi3-*.whl
+          path: python/sedonadb/dist/*-cp310-abi3-*.whl
           if-no-files-found: error
 
       - name: Fail if tests failed
@@ -246,7 +245,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: release-wheels-macOS-amd64
-          path: python/sedonadb/dist/*-cp39-abi3-*.whl
+          path: python/sedonadb/dist/*-cp310-abi3-*.whl
           if-no-files-found: error
 
       - name: Fail if tests failed
@@ -312,7 +311,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: release-wheels-${{ matrix.config.label }}
-          path: python/sedonadb/dist/*-cp39-abi3-*.whl
+          path: python/sedonadb/dist/*-cp310-abi3-*.whl
           if-no-files-found: error
 
       - name: Fail if tests failed

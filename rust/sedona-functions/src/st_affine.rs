@@ -230,6 +230,32 @@ mod tests {
             .unwrap();
         assert_array_equal(&result_scale, &expected_scale);
 
+        // general transformation: x' = a x + b y + xOff, y' = d x + e y + yOff,
+        // as in PostGIS (each off-diagonal term on its own row)
+
+        #[rustfmt::skip]
+        let m_general = &[
+            Some(2.0), Some(3.0),
+            Some(5.0), Some(7.0),
+            Some(1.0), Some(1.0),
+        ];
+
+        let expected_general = create_array(
+            &[
+                None,
+                Some("POINT EMPTY"),
+                Some("POINT M EMPTY"),
+                Some("POINT (9 20)"),
+                Some("POINT M (9 20 3)"),
+            ],
+            &WKB_GEOMETRY,
+        );
+
+        let result_general = tester_2d
+            .invoke_arrays(prepare_args(points.clone(), m_general))
+            .unwrap();
+        assert_array_equal(&result_general, &expected_general);
+
         // 2D matrix with 3D input (z/m preserved)
         let points_3d = create_array(
             &[
@@ -340,9 +366,35 @@ mod tests {
         );
 
         let result_scale = tester_3d
-            .invoke_arrays(prepare_args(points, m_scale))
+            .invoke_arrays(prepare_args(points.clone(), m_scale))
             .unwrap();
         assert_array_equal(&result_scale, &expected_scale);
+
+        // general transformation: x' = a x + b y + c z + xOff,
+        // y' = d x + e y + f z + yOff, z' = g x + h y + i z + zOff, as in PostGIS
+        #[rustfmt::skip]
+        let m_general = &[
+            Some(1.0), Some(2.0), Some(3.0),
+            Some(4.0), Some(5.0), Some(6.0),
+            Some(7.0), Some(8.0), Some(9.0),
+            Some(10.0), Some(11.0), Some(12.0),
+        ];
+
+        let expected_general = create_array(
+            &[
+                None,
+                Some("POINT Z EMPTY"),
+                Some("POINT ZM EMPTY"),
+                Some("POINT Z (24 43 62)"),
+                Some("POINT ZM (24 43 62 4)"),
+            ],
+            &WKB_GEOMETRY,
+        );
+
+        let result_general = tester_3d
+            .invoke_arrays(prepare_args(points, m_general))
+            .unwrap();
+        assert_array_equal(&result_general, &expected_general);
 
         // 3D matrix with 2D input (z translation ignored, m preserved)
         let points_2d = create_array(
