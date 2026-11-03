@@ -56,7 +56,7 @@ criterion = { workspace = true }
 object_store = { workspace = true, features = ["aws", "http"] }
 sedona-testing = { workspace = true }
 tempfile = { workspace = true }
-tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "test-util"] }
 tower-http = { workspace = true, features = ["fs"] }
 # Test fixtures write Zarr groups to a temp dir; the loader itself
 # reads everything through object_store, so this is dev-only.

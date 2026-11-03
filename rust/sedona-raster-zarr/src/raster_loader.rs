@@ -69,8 +69,8 @@ use sedona_common::sedona_internal_datafusion_err;
 use sedona_raster::raster_loader::{AsyncRasterLoader, RasterLoadRequest, RasterLoadResult};
 use tokio::sync::Semaphore;
 use zarrs::array::{
-    Array, ArrayBytes, AsyncArrayShardedReadableExt, AsyncArrayShardedReadableExtCache,
-    CodecOptions,
+    Array, ArrayBytes, ArrayShardedExt, AsyncArrayShardedReadableExt,
+    AsyncArrayShardedReadableExtCache, ChunkGrid, CodecOptions,
 };
 use zarrs::storage::AsyncReadableListableStorageTraits;
 
@@ -244,18 +244,69 @@ pub struct HandleStats {
     pub array_misses: u64,
 }
 
-/// An opened array together with the shard-index cache its chunk reads
-/// go through. The cache is what makes a sharded array's inner-chunk
+/// An opened array together with the shard-index caches its chunk reads
+/// go through. The caches are what make a sharded array's inner-chunk
 /// reads cheap: a shard's index is fetched and decoded on the first read
 /// into that shard and reused by every later read into it, by this call
-/// and by later calls while the handle lives. It holds one entry per
-/// shard touched, each the shard's decoded index (16 bytes per inner
-/// chunk) and nothing of the pixel data; it is dropped with the handle.
-/// For an unsharded array the cache stays empty and reads go straight
-/// to the chunk.
+/// and by later calls while the handle lives. Each holds the shard's
+/// decoded index (16 bytes per inner chunk) and nothing of the pixel data;
+/// they are dropped with the handle. For an unsharded array the one cache
+/// stays empty and reads go straight to the chunk.
+///
+/// There is one cache per shard, not one per array, because zarrs' cache
+/// holds its lock while it fetches an index. Shared by every shard, it
+/// would make the first reads of different shards wait for each other's
+/// fetches; per shard, only reads of the same shard wait, and they would
+/// have waited for that index anyway.
+///
+/// This per-shard map is a workaround for zarrs 0.23. Unreleased zarrs
+/// removes `ArrayShardedReadableExt` in favour of `ArrayCached` and async
+/// chunk caches that load each key once without a cache-wide lock. Remove
+/// the map when we move to the zarrs release that has them.
 struct OpenedArray {
     array: Array<dyn AsyncReadableListableStorageTraits>,
-    shards: AsyncArrayShardedReadableExtCache,
+    /// The inner-chunk grid, for finding the shard an inner chunk is in;
+    /// `None` for an unsharded array.
+    subchunk_grid: Option<ChunkGrid>,
+    shards: Mutex<HashMap<Vec<u64>, Arc<AsyncArrayShardedReadableExtCache>>>,
+}
+
+impl OpenedArray {
+    fn new(array: Array<dyn AsyncReadableListableStorageTraits>) -> Self {
+        let subchunk_grid = array.is_sharded().then(|| array.subchunk_grid());
+        Self {
+            array,
+            subchunk_grid,
+            shards: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// The shard-index cache for the shard holding inner chunk
+    /// `chunk_indices`, or the array's one cache when it is unsharded.
+    fn shard_cache(
+        &self,
+        chunk_indices: &[u64],
+    ) -> Result<Arc<AsyncArrayShardedReadableExtCache>, String> {
+        let shard = match &self.subchunk_grid {
+            Some(grid) => {
+                let subset = grid
+                    .subset(chunk_indices)
+                    .map_err(|e| e.to_string())?
+                    .ok_or("inner chunk is outside the array")?;
+                let shards = self
+                    .array
+                    .chunks_in_array_subset(&subset)
+                    .map_err(|e| e.to_string())?
+                    .ok_or("inner chunk is outside the shard grid")?;
+                shards.start().to_vec()
+            }
+            None => Vec::new(),
+        };
+        Ok(lock(&self.shards)
+            .entry(shard)
+            .or_insert_with(|| Arc::new(AsyncArrayShardedReadableExtCache::new(&self.array)))
+            .clone())
+    }
 }
 
 type SharedArray = Arc<OpenedArray>;
@@ -265,14 +316,45 @@ struct ArrayHandle {
     opened_at: Instant,
 }
 
-/// The cross-call state of a [`ZarrLoader`]. Locks are held only around
-/// map access, never across an await; two calls racing to open the same
-/// array both open it and the later insert wins, which is harmless.
+/// `(store URI, array path)`: what identifies an opened array.
+type ArrayKey = (String, String);
+
+/// Taken by the calls racing to open one array, so that one of them does.
+type OpenGate = Arc<tokio::sync::Mutex<()>>;
+
+/// Removes an array's gate from `opening` when the call holding it finishes
+/// or is dropped. Only that gate: a later call may have put in a new one.
+struct GateRelease<'a> {
+    opening: &'a Mutex<HashMap<ArrayKey, OpenGate>>,
+    key: &'a ArrayKey,
+    gate: &'a OpenGate,
+}
+
+impl Drop for GateRelease<'_> {
+    fn drop(&mut self) {
+        let mut opening = lock(self.opening);
+        if opening
+            .get(self.key)
+            .is_some_and(|gate| Arc::ptr_eq(gate, self.gate))
+        {
+            opening.remove(self.key);
+        }
+    }
+}
+
+/// The cross-call state of a [`ZarrLoader`]. The map locks are held only
+/// around map access, never across an await. Calls racing to open the same
+/// array (partitions loading chunks of one array at once) take that array's
+/// gate in `opening` in turn: the first opens it and the rest find the
+/// handle in the cache, so an array is opened once however its rows are
+/// partitioned.
 struct HandleCache {
     capacity: usize,
     ttl: Duration,
     stores: Mutex<HashMap<String, Arc<dyn ObjectStore>>>,
-    arrays: Mutex<LruCache<(String, String), ArrayHandle>>,
+    arrays: Mutex<LruCache<ArrayKey, ArrayHandle>>,
+    /// One gate per array being opened right now.
+    opening: Mutex<HashMap<ArrayKey, OpenGate>>,
     store_hits: AtomicU64,
     store_misses: AtomicU64,
     array_misses: AtomicU64,
@@ -289,6 +371,7 @@ impl HandleCache {
             arrays: Mutex::new(LruCache::new(
                 NonZeroUsize::new(capacity).expect("capacity clamped to at least 1"),
             )),
+            opening: Mutex::new(HashMap::new()),
             store_hits: AtomicU64::new(0),
             store_misses: AtomicU64::new(0),
             array_misses: AtomicU64::new(0),
@@ -318,19 +401,47 @@ impl HandleCache {
     }
 
     /// The opened array at `array_path` in `store_uri`, reusing an
-    /// unexpired handle from an earlier call.
+    /// unexpired handle from an earlier call or from a concurrent one.
     async fn array(&self, store_uri: &str, array_path: &str) -> Result<SharedArray, ArrowError> {
-        let key = (store_uri.to_string(), array_path.to_string());
-        {
-            let mut arrays = lock(&self.arrays);
-            if let Some(handle) = arrays.get(&key) {
-                if handle.opened_at.elapsed() < self.ttl {
-                    self.array_hits.fetch_add(1, Ordering::Relaxed);
-                    return Ok(handle.array.clone());
-                }
-                arrays.pop(&key);
-            }
+        let key: ArrayKey = (store_uri.to_string(), array_path.to_string());
+        if let Some(array) = self.cached(&key) {
+            return Ok(array);
         }
+        let gate = lock(&self.opening)
+            .entry(key.clone())
+            .or_insert_with(|| OpenGate::new(tokio::sync::Mutex::new(())))
+            .clone();
+        let _opening = gate.lock().await;
+        // Later callers start from the cache; the ones still queued on this
+        // gate hold their own reference to it and re-check the cache too.
+        // Removed on drop so a call cancelled during the open leaves no entry.
+        let _release = GateRelease {
+            opening: &self.opening,
+            key: &key,
+            gate: &gate,
+        };
+        // Another call may have opened it while this one waited for the gate.
+        if let Some(array) = self.cached(&key) {
+            return Ok(array);
+        }
+        self.open(store_uri, array_path).await
+    }
+
+    /// The unexpired handle for `key`, counted as a hit.
+    fn cached(&self, key: &ArrayKey) -> Option<SharedArray> {
+        let mut arrays = lock(&self.arrays);
+        if let Some(handle) = arrays.get(key) {
+            if handle.opened_at.elapsed() < self.ttl {
+                self.array_hits.fetch_add(1, Ordering::Relaxed);
+                return Some(handle.array.clone());
+            }
+            arrays.pop(key);
+        }
+        None
+    }
+
+    /// Open the array and cache its handle, counted as a miss.
+    async fn open(&self, store_uri: &str, array_path: &str) -> Result<SharedArray, ArrowError> {
         let storage = open_storage_from_uri(store_uri, self.store(store_uri)?)?;
         let array = Array::async_open(storage, array_path).await.map_err(|e| {
             ArrowError::ExternalError(Box::new(sedona_internal_datafusion_err!(
@@ -338,10 +449,9 @@ impl HandleCache {
             )))
         })?;
         self.array_misses.fetch_add(1, Ordering::Relaxed);
-        let shards = AsyncArrayShardedReadableExtCache::new(&array);
-        let array: SharedArray = Arc::new(OpenedArray { array, shards });
+        let array: SharedArray = Arc::new(OpenedArray::new(array));
         lock(&self.arrays).put(
-            key,
+            (store_uri.to_string(), array_path.to_string()),
             ArrayHandle {
                 array: array.clone(),
                 opened_at: Instant::now(),
@@ -533,19 +643,24 @@ impl AsyncRasterLoader for ZarrLoader {
 /// falls through to a plain chunk read for an unsharded array, so there
 /// is one path for both. Within a shard, reads of distinct inner chunks
 /// proceed concurrently once the shard's index is cached; the first read
-/// into a shard fetches the index while holding the cache's lock, which
-/// serializes the other reads of that array for the length of that one
-/// small ranged request.
+/// into a shard fetches the index while holding that shard's cache lock,
+/// so the other reads of that shard wait for that one small ranged
+/// request. Reads of other shards do not.
 async fn retrieve_chunk(
     opened: &OpenedArray,
     store_uri: &str,
     array_path: &str,
     chunk_indices: &[u64],
 ) -> Result<Buffer, ArrowError> {
+    let shards = opened.shard_cache(chunk_indices).map_err(|e| {
+        ArrowError::ExternalError(Box::new(sedona_internal_datafusion_err!(
+            "failed to find the shard of chunk {chunk_indices:?} in {array_path} in {store_uri}: {e}"
+        )))
+    })?;
     let bytes = opened
         .array
         .async_retrieve_subchunk_opt::<ArrayBytes<'static>>(
-            &opened.shards,
+            &shards,
             chunk_indices,
             &CodecOptions::default(),
         )
@@ -631,6 +746,146 @@ mod tests {
     /// A sharded array's anchor indexes an inner chunk: the bytes come
     /// back for that 2×2 block alone, not the 4×4 shard it sits in. The
     /// array has one shard; the second load reuses its index.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn zarr_loader_opens_an_array_once_under_concurrent_loads() {
+        // Partitions loading chunks of one array at the same time (the
+        // planner spreads a raster's rows over partitions) must not each
+        // open it: the first call opens, the rest reuse the handle.
+        let tmp = TempDir::new().unwrap();
+        let (store_uri, array_path, pixels) = build_uint8_zarr(&tmp);
+        let uri = build_chunk_anchor(&store_uri, array_path, &[0, 0]);
+        let loader = ZarrLoader::new();
+        let loads = (0..8).map(|_| {
+            let loader = loader.clone();
+            let uri = uri.clone();
+            tokio::spawn(async move {
+                let req = RasterLoadRequest {
+                    uri: &uri,
+                    dim_names: &["y", "x"],
+                    source_shape: &[2, 3],
+                    view: &ViewEntries::identity_for_shape(&[2, 3]),
+                    data_type: BandDataType::UInt8,
+                };
+                loader.load(&[&req]).await.unwrap()[0].bytes.clone()
+            })
+        });
+        for loaded in futures::future::join_all(loads).await {
+            assert_eq!(loaded.unwrap().as_slice(), pixels.as_slice());
+        }
+        let stats = loader.handle_stats();
+        assert_eq!(stats.array_misses, 1, "{stats:?}");
+        assert_eq!(stats.array_hits, 7, "{stats:?}");
+        assert_eq!(stats.store_misses, 1, "{stats:?}");
+    }
+
+    #[tokio::test]
+    async fn canceled_array_opens_release_gate_entries() {
+        use object_store::memory::InMemory;
+        use object_store::throttle::{ThrottleConfig, ThrottledStore};
+
+        let cache = HandleCache::new(1, Duration::from_secs(300));
+        let store = Arc::new(ThrottledStore::new(
+            InMemory::new(),
+            ThrottleConfig {
+                wait_get_per_call: Duration::from_secs(60),
+                ..Default::default()
+            },
+        ));
+        lock(&cache.stores).insert("file://".into(), store);
+
+        for i in 0..16 {
+            let path = format!("/array{i}");
+            let mut opening = Box::pin(cache.array("file:///review.zarr", &path));
+            assert!(futures::poll!(&mut opening).is_pending());
+            drop(opening);
+        }
+
+        assert_eq!(lock(&cache.arrays).len(), 0);
+        assert_eq!(lock(&cache.opening).len(), 0);
+    }
+
+    /// Concurrent first reads of different shards share the opened array
+    /// but fetch their shard indexes at the same time. Every store call
+    /// waits 100 ms of paused (virtual) time, so a batch that fetched the
+    /// 32 indexes one after another would take over 3.2 s.
+    #[tokio::test(start_paused = true)]
+    async fn cold_reads_of_different_shards_fetch_their_indexes_concurrently() {
+        use object_store::ObjectStoreExt;
+        use object_store::memory::InMemory;
+        use object_store::path::Path;
+        use object_store::throttle::{ThrottleConfig, ThrottledStore};
+
+        // 32 shards of shape [4, 4] side by side, each four 2×2 inner chunks.
+        let tmp = TempDir::new().unwrap();
+        let filesystem = Arc::new(FilesystemStore::new(tmp.path()).unwrap());
+        let array = ArrayBuilder::new(
+            vec![4, 128],
+            vec![4, 4],
+            zarr_dtype::uint8(),
+            FillValue::from(0u8),
+        )
+        .dimension_names(Some(["y", "x"]))
+        .subchunk_shape(vec![2, 2])
+        .build(filesystem, "/sharded")
+        .unwrap();
+        array.store_metadata().unwrap();
+        let memory = InMemory::new();
+        let metadata = std::fs::read(tmp.path().join("sharded/zarr.json")).unwrap();
+        memory
+            .put(
+                &Path::from("review.zarr/sharded/zarr.json"),
+                metadata.into(),
+            )
+            .await
+            .unwrap();
+        for shard in 0..32u8 {
+            let pixels: Vec<u8> = (0..16u8).map(|v| v + shard).collect();
+            array.store_chunk(&[0, shard as u64], pixels).unwrap();
+            let key = format!("sharded/c/0/{shard}");
+            let bytes = std::fs::read(tmp.path().join(&key)).unwrap();
+            memory
+                .put(&Path::from(format!("review.zarr/{key}")), bytes.into())
+                .await
+                .unwrap();
+        }
+        let store = Arc::new(ThrottledStore::new(
+            memory,
+            ThrottleConfig {
+                wait_get_per_call: Duration::from_millis(100),
+                ..Default::default()
+            },
+        ));
+
+        let loader = ZarrLoader::new();
+        lock(&loader.handles.stores).insert("file://".into(), store);
+        let start = tokio::time::Instant::now();
+        let loads = (0..32u8).map(|shard| {
+            let loader = loader.clone();
+            tokio::spawn(async move {
+                // Inner chunk (0, 2 * shard) is the first one of that shard.
+                let uri = format!("file:///review.zarr#array=sharded&chunk=0,{}", 2 * shard);
+                let req = RasterLoadRequest {
+                    uri: &uri,
+                    dim_names: &["y", "x"],
+                    source_shape: &[2, 2],
+                    view: &ViewEntries::identity_for_shape(&[2, 2]),
+                    data_type: BandDataType::UInt8,
+                };
+                let loaded = loader.load(&[&req]).await.unwrap()[0].bytes.clone();
+                assert_eq!(loaded.as_slice(), [shard, shard + 1, shard + 4, shard + 5]);
+            })
+        });
+        for load in futures::future::join_all(loads).await {
+            load.unwrap();
+        }
+        let elapsed = start.elapsed();
+
+        assert!(elapsed < Duration::from_secs(1), "{elapsed:?}");
+        let stats = loader.handle_stats();
+        assert_eq!(stats.array_misses, 1, "{stats:?}");
+        assert_eq!(stats.array_hits, 31, "{stats:?}");
+    }
+
     #[tokio::test]
     async fn zarr_loader_reads_one_inner_chunk_of_a_sharded_array() {
         let tmp = TempDir::new().unwrap();
