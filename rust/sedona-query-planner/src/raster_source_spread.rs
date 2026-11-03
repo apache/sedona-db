@@ -329,13 +329,12 @@ impl RasterSourceSpreadExec {
                 space: Arc::clone(&space),
                 polled: Arc::clone(&polled),
                 capacity,
-                reservation: Arc::clone(&reservation),
+                reservation,
             });
             queues.push((
                 rx,
                 space,
                 polled,
-                reservation,
                 BaselineMetrics::new(&self.metrics, partition),
             ));
         }
@@ -345,7 +344,8 @@ impl RasterSourceSpreadExec {
         for input_partition in 0..input_partitions {
             let input = self.input.execute(input_partition, Arc::clone(context))?;
             let spread = spread_input(input, senders.clone(), self.key_column, input_partition);
-            let senders = senders.clone();
+            // Only the channels, so the error path keeps nothing else alive.
+            let txs: Vec<_> = senders.iter().map(|sender| sender.tx.clone()).collect();
             // One task per input, aborted directly when the outputs go. An
             // error or a panic reaches every output instead of ending it as
             // if the input were done.
@@ -365,10 +365,8 @@ impl RasterSourceSpreadExec {
                     }
                 };
                 let error = Arc::new(error);
-                for sender in senders {
-                    sender
-                        .tx
-                        .send(Err(DataFusionError::Shared(Arc::clone(&error))))
+                for tx in txs {
+                    tx.send(Err(DataFusionError::Shared(Arc::clone(&error))))
                         .ok();
                 }
             }));
@@ -378,12 +376,11 @@ impl RasterSourceSpreadExec {
         let tasks = Arc::new(tasks);
         Ok(queues
             .into_iter()
-            .map(|(rx, space, polled, reservation, baseline)| {
+            .map(|(rx, space, polled, baseline)| {
                 Some(OutputQueue {
                     rx,
                     space,
                     polled,
-                    reservation,
                     baseline,
                     _tasks: Arc::clone(&tasks),
                 })
@@ -394,10 +391,12 @@ impl RasterSourceSpreadExec {
 
 /// A piece of an input batch queued for an output, with the queue space
 /// (none before the output is first polled) and the reserved bytes it holds
-/// until the output takes it.
+/// until the output takes it. Both go back when the piece is dropped, so a
+/// piece left in the queue of a dropped output, or one that failed to send,
+/// releases its bytes too.
 struct Piece {
     batch: RecordBatch,
-    bytes: usize,
+    reservation: MemoryReservation,
     _space: Option<OwnedSemaphorePermit>,
 }
 
@@ -410,6 +409,8 @@ struct OutputSender {
     /// Whether the output has been polled yet; see [`OutputSender::send`].
     polled: Arc<AtomicBool>,
     capacity: u32,
+    /// Holds nothing itself: each piece reserves its bytes on a
+    /// reservation made from it.
     reservation: Arc<MemoryReservation>,
 }
 
@@ -426,13 +427,14 @@ impl OutputSender {
     /// `CoalescePartitionsExec`) bounds every queue from its first poll.
     async fn send(&self, batch: RecordBatch) -> bool {
         let bytes = batch.get_array_memory_size();
+        let reservation = self.reservation.new_empty();
         if !self.polled.load(AtomicOrdering::Acquire) {
-            self.reservation.grow(bytes);
+            reservation.grow(bytes);
             return self
                 .tx
                 .send(Ok(Piece {
                     batch,
-                    bytes,
+                    reservation,
                     _space: None,
                 }))
                 .is_ok();
@@ -441,7 +443,7 @@ impl OutputSender {
         let Ok(mut space) = Arc::clone(&self.space).acquire_many_owned(wanted).await else {
             return false;
         };
-        if self.reservation.try_grow(bytes).is_err() {
+        if reservation.try_grow(bytes).is_err() {
             // Over the memory limit: wait for this queue to empty, then
             // queue the piece anyway. Release the partial space first, or two
             // senders each holding part of it would wait on each other.
@@ -453,12 +455,12 @@ impl OutputSender {
                 Ok(space) => space,
                 Err(_) => return false,
             };
-            self.reservation.grow(bytes);
+            reservation.grow(bytes);
         }
         self.tx
             .send(Ok(Piece {
                 batch,
-                bytes,
+                reservation,
                 _space: Some(space),
             }))
             .is_ok()
@@ -471,7 +473,6 @@ struct OutputQueue {
     rx: mpsc::UnboundedReceiver<Result<Piece>>,
     space: Arc<Semaphore>,
     polled: Arc<AtomicBool>,
-    reservation: Arc<MemoryReservation>,
     baseline: BaselineMetrics,
     _tasks: Arc<Vec<SpawnedTask<()>>>,
 }
@@ -482,7 +483,7 @@ impl fmt::Debug for Piece {
             f,
             "Piece({} rows, {} bytes)",
             self.batch.num_rows(),
-            self.bytes
+            self.reservation.size()
         )
     }
 }
@@ -494,8 +495,8 @@ impl OutputQueue {
             Ok(piece) => piece,
             Err(e) => return Some(Err(e)),
         };
-        // The piece leaves the queue: its space goes back with the permit.
-        self.reservation.shrink(piece.bytes);
+        // The piece leaves the queue: its space and its reserved bytes go
+        // back as it is dropped here.
         self.baseline.record_output(piece.batch.num_rows());
         Some(Ok(piece.batch))
     }
@@ -1981,6 +1982,93 @@ mod tests {
         .unwrap();
         assert_eq!(outputs.iter().flatten().count(), 64);
         drop(outputs);
+        assert_eq!(pool.reserved(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_dropped_output_releases_what_it_had_queued() {
+        // Loaded one-row batches are dealt round-robin to two outputs under
+        // a 1 KiB budget, so each queue holds one piece and the input waits
+        // with the third batch for output 0's space.
+        let mut b = RasterBuilder::new(64);
+        for i in 0..64 {
+            b.start_raster_nd(
+                &[0.0, 1.0, 0.0, 0.0, 0.0, -1.0],
+                &["y", "x"],
+                &[32, 32],
+                None,
+            )
+            .unwrap();
+            b.start_band(StartBandArgs::new(
+                &["y", "x"],
+                &[32, 32],
+                BandDataType::UInt8,
+            ))
+            .unwrap();
+            b.band_data_writer().append_value(vec![i as u8; 1024]);
+            b.finish_band().unwrap();
+            b.finish_raster().unwrap();
+        }
+        let rasters: ArrayRef = Arc::new(b.finish().unwrap());
+        let raster_field = SedonaType::Raster.to_storage_field("rast", true).unwrap();
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            Field::new("rast", rasters.data_type().clone(), true)
+                .with_metadata(raster_field.metadata().clone()),
+        ]));
+        let ids = Arc::new(Int32Array::from_iter_values(0..64));
+        let batch = RecordBatch::try_new(Arc::clone(&schema), vec![ids, rasters]).unwrap();
+        let one_row_batches: Vec<RecordBatch> = (0..64).map(|i| batch.slice(i, 1)).collect();
+        // Every slice shares the same buffers, so every piece reserves the
+        // same bytes.
+        let piece_bytes = one_row_batches[0].get_array_memory_size();
+        let input = MemorySourceConfig::try_new_exec(&[one_row_batches], Arc::clone(&schema), None)
+            .unwrap();
+        let spread = RasterSourceSpreadExec::try_new(input, 1, 2).unwrap();
+        let pool: Arc<dyn MemoryPool> = Arc::new(GreedyMemoryPool::new(64 * 1024 * 1024));
+        let config = SessionConfig::new().with_option_extension(SedonaOptions {
+            raster: RasterOptions {
+                max_batch_bytes: 1024,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let ctx = SessionStateBuilder::new()
+            .with_config(config)
+            .with_runtime_env(
+                RuntimeEnvBuilder::new()
+                    .with_memory_pool(Arc::clone(&pool))
+                    .build_arc()
+                    .unwrap(),
+            )
+            .build()
+            .task_ctx();
+
+        let mut streams: Vec<_> = (0..2)
+            .map(|partition| spread.execute(partition, Arc::clone(&ctx)).unwrap())
+            .collect();
+        for stream in &mut streams {
+            assert!(stream.next().now_or_never().is_none());
+        }
+        for _ in 0..100 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(pool.reserved(), 2 * piece_bytes);
+
+        // Output 0 goes with its piece still queued; the input is still
+        // open, and only output 1's piece stays reserved.
+        let mut output_1 = streams.pop().unwrap();
+        drop(streams);
+        for _ in 0..100 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(pool.reserved(), piece_bytes);
+        assert_eq!(output_1.next().await.unwrap().unwrap().num_rows(), 1);
+
+        drop(output_1);
+        for _ in 0..100 {
+            tokio::task::yield_now().await;
+        }
         assert_eq!(pool.reserved(), 0);
     }
 
