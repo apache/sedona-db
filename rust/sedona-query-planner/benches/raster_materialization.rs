@@ -336,9 +336,7 @@ fn bench_spread_small_batches(c: &mut Criterion) {
             )
             .unwrap(),
         );
-        Arc::new(
-            ProjectionExec::try_new(vec![ProjectionExpr::new(call, "loaded")], input).unwrap(),
-        )
+        Arc::new(ProjectionExec::try_new(vec![ProjectionExpr::new(call, "loaded")], input).unwrap())
     };
     let mut config = ConfigOptions::default();
     config.execution.target_partitions = 4;

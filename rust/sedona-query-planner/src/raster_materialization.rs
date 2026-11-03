@@ -254,15 +254,14 @@ struct SizedArgs {
     /// file once); a genuinely nondeterministic argument written twice in
     /// one node therefore yields the same raster twice.
     exprs: Vec<Arc<dyn PhysicalExpr>>,
-    /// The first sized argument, which keys the raster-source spread. When
-    /// several `rs_ensureloaded` calls share a node they usually read
-    /// rasters from the same catalog row, and one key is all a
-    /// partitioning can follow.
-    key: Option<SizedKey>,
+    /// Every sized argument in call order, which key the raster-source
+    /// spread: a row is keyed by the first of them it still has to load, so
+    /// an argument already in memory does not hide one that is not.
+    keys: Vec<SizedKey>,
 }
 
 /// Where a sized argument is read from (see [`SizedArgs`]).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum SizedKey {
     /// An input column.
     Column(usize),
@@ -293,7 +292,7 @@ impl SizedArgs {
                 if !self.columns.contains(&column.index()) {
                     self.columns.push(column.index());
                 }
-                self.key.get_or_insert(SizedKey::Column(column.index()));
+                self.key(SizedKey::Column(column.index()));
             } else if !conditional {
                 let k = self
                     .exprs
@@ -303,7 +302,7 @@ impl SizedArgs {
                         self.exprs.push(Arc::clone(arg));
                         self.exprs.len() - 1
                     });
-                self.key.get_or_insert(SizedKey::Expr(k));
+                self.key(SizedKey::Expr(k));
             }
             return;
         }
@@ -329,6 +328,12 @@ impl SizedArgs {
         }
         for child in expr.children() {
             self.visit(child, conditional);
+        }
+    }
+
+    fn key(&mut self, key: SizedKey) {
+        if !self.keys.contains(&key) {
+            self.keys.push(key);
         }
     }
 
@@ -412,13 +417,18 @@ fn split_input(
     };
     let below_split = match spread {
         Some((_, partitions)) => {
-            let key_column = match sized.key {
-                Some(SizedKey::Column(idx)) => idx,
-                Some(SizedKey::Expr(k)) => input_columns + k,
-                None => return internal_err!("sized arguments without a key"),
-            };
+            let key_columns = sized
+                .keys
+                .iter()
+                .map(|key| match *key {
+                    SizedKey::Column(idx) => idx,
+                    SizedKey::Expr(k) => input_columns + k,
+                })
+                .collect();
             Arc::new(RasterSourceSpreadExec::try_new(
-                args, key_column, partitions,
+                args,
+                key_columns,
+                partitions,
             )?)
         }
         None => args,
