@@ -267,10 +267,24 @@ where
     T: CoordFloat,
 {
     fn signed_area_trait(&self) -> T {
-        self.to_lines()
-            .iter()
-            .fold(T::zero(), |total, line| total + line.determinant())
-            / (T::one() + T::one())
+        // Shift the triangle so that a coord is the origin, so that a small triangle far
+        // from the origin keeps its precision (georust/geo#1438). The sides from and to that
+        // coord then have a zero determinant. Shift by the coord opposite the longest side,
+        // so that the other two are the shortest: shifting a needle-like triangle by its far
+        // coord can round its other two coords to the same point. hypot() rather than squared
+        // lengths, which can overflow and tie when the sides from that coord don't.
+        let [a, b, c] = self.to_array();
+        let length = |side: crate::Coord<T>| side.x.hypot(side.y);
+        let (ab, bc, ca) = (length(b - a), length(c - b), length(a - c));
+        // Rotating the coords keeps the orientation
+        let [origin, second, third] = if bc >= ab && bc >= ca {
+            [a, b, c]
+        } else if ca >= ab {
+            [b, c, a]
+        } else {
+            [c, a, b]
+        };
+        crate::Line::new(second - origin, third - origin).determinant() / (T::one() + T::one())
     }
 
     fn unsigned_area_trait(&self) -> T {
@@ -618,5 +632,61 @@ mod test {
             0.006547948219252177,
             max_relative = 0.0001
         );
+    }
+
+    #[test]
+    fn area_triangle_numerical_stability() {
+        // The area of a small triangle far from the origin keeps its precision
+        // (georust/geo#1438)
+        let triangle = Triangle::<f64>::new(
+            coord! { x: 0.0, y: 0.0 },
+            coord! { x: 0.1, y: 10.0 },
+            coord! { x: 0.0, y: 20.0 },
+        );
+        let area = triangle.signed_area();
+
+        use crate::map_coords::MapCoords;
+        let shift = coord! { x: 1.5e8, y: 1.5e8 };
+        let shifted = triangle.map_coords(|c| c + shift);
+        assert!((area - shifted.signed_area()).abs() / area < 1e-2);
+
+        // and is the area of the same triangle as a polygon
+        let polygon_area = shifted.to_polygon().signed_area();
+        assert!((polygon_area - shifted.signed_area()).abs() / polygon_area < 1e-2);
+    }
+
+    #[test]
+    fn area_needle_triangle_numerical_stability() {
+        // Shifting by a vertex far from the short side would round the other two
+        // vertices to the same coordinates
+        let far = coord! { x: 1e8, y: 1e8 };
+        let near_a = coord! { x: 0.0, y: 1e-9 };
+        let near_b = coord! { x: 1e-9, y: 0.0 };
+        for (a, b, c) in [
+            (far, near_a, near_b),
+            (near_a, near_b, far),
+            (near_b, far, near_a),
+        ] {
+            // unchecked_winding() so that the clockwise triangle stays clockwise
+            let triangle = Triangle::unchecked_winding(a, b, c);
+            assert_relative_eq!(triangle.signed_area(), 0.1, max_relative = 1e-9);
+            let reversed = Triangle::unchecked_winding(c, b, a);
+            assert_relative_eq!(reversed.signed_area(), -0.1, max_relative = 1e-9);
+        }
+    }
+
+    #[test]
+    fn area_triangle_with_overflowing_side_lengths() {
+        // The squares of all three side lengths overflow, and so does the longest side,
+        // but the sides from the coord opposite it don't
+        let left = coord! { x: -1e308, y: 0.0 };
+        let right = coord! { x: 1e308, y: 0.0 };
+        let top = coord! { x: 0.0, y: 1e-308 };
+        for (a, b, c) in [(left, right, top), (right, top, left), (top, left, right)] {
+            let triangle = Triangle::unchecked_winding(a, b, c);
+            assert_relative_eq!(triangle.signed_area(), 1.0, max_relative = 1e-9);
+            let reversed = Triangle::unchecked_winding(c, b, a);
+            assert_relative_eq!(reversed.signed_area(), -1.0, max_relative = 1e-9);
+        }
     }
 }

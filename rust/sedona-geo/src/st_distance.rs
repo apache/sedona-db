@@ -341,4 +341,34 @@ mod tests {
             )
         );
     }
+
+    #[rstest]
+    // A line string of one coord has the distances of its point
+    #[case("LINESTRING (1 1)", "POINT (4 5)", 5.0)]
+    #[case("POINT (4 5)", "LINESTRING (1 1)", 5.0)]
+    #[case("LINESTRING (1 1)", "LINESTRING (4 5, 4 9)", 5.0)]
+    #[case("LINESTRING (1 1)", "LINESTRING (4 5)", 5.0)]
+    #[case("LINESTRING (1 1)", "POLYGON ((4 5, 6 5, 6 7, 4 7, 4 5))", 5.0)]
+    #[case("MULTILINESTRING ((1 1), (100 100, 100 101))", "POINT (4 5)", 5.0)]
+    #[case("LINESTRING (1 1)", "POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))", 0.0)]
+    // The squared length of the segment overflows
+    #[case("POINT (0 0)", "LINESTRING (0 -1e200, 3 0)", 3.0)]
+    #[case("POINT (3 5e199)", "LINESTRING (0 0, 0 1e200)", 3.0)]
+    fn degenerate_and_huge_line_strings(
+        #[case] lhs: &str,
+        #[case] rhs: &str,
+        #[case] expected: f64,
+    ) {
+        let tester = ScalarUdfTester::new(
+            SedonaScalarUDF::from_impl("st_distance", st_distance_impl()).into(),
+            vec![WKB_GEOMETRY, WKB_GEOMETRY],
+        );
+        let result = tester
+            .invoke_scalar_scalar(
+                create_scalar(Some(lhs), &WKB_GEOMETRY),
+                create_scalar(Some(rhs), &WKB_GEOMETRY),
+            )
+            .unwrap();
+        assert_eq!(result, ScalarValue::Float64(Some(expected)));
+    }
 }
