@@ -14,6 +14,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+#include <cuda_runtime.h>
 #include <filesystem>  // Requires C++17
 #include <iostream>
 #include <string>
@@ -65,5 +66,6 @@ void Initialize(const char* argv0) {
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   TestUtils::Initialize(argv[0]);  // Initialize our utility
+  cudaDeviceSetLimit(cudaLimitStackSize, 65536);
   return RUN_ALL_TESTS();
 }
