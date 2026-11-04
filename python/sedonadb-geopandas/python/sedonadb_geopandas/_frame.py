@@ -275,15 +275,14 @@ def _join_distance(value, method, name):
 
 class _PlannedApart:
     """A frame's query as a table that is planned on its own, with the settings
-    its context has when this is made, whatever settings the query reading it
-    is planned with. (A view's query is planned as part of the query reading
-    it.)"""
+    the frame was made with, whatever settings the query reading it is planned
+    with. (A view's query is planned as part of the query reading it.)"""
 
     def __init__(self, df):
-        self._provider = df.__sedonadb_table_provider__()
+        self._df = df
 
     def __sedonadb_table_provider__(self):
-        return self._provider
+        return self._df.__sedonadb_table_provider__()
 
 
 def _with_knn_ties(left, right):
@@ -295,11 +294,10 @@ def _with_knn_ties(left, right):
     when it is made and a join takes from its left frame. So the frames are
     made while the context has the option set, and the option is then put back
     as it was: other frames of the context, made before or after, keep their
-    own. Each frame's own query is planned apart, so a KNN join within it keeps
-    its context's setting and its rows.
+    own. Each of `left` and `right` is planned apart, with the settings it was
+    made with, so a KNN join within it keeps its rows.
     """
     ctx = left._ctx
-    inputs = _PlannedApart(left), _PlannedApart(right)
     option = "sedona.spatial_join.knn_include_tie_breakers"
     settings = ctx.sql(
         f"SELECT value FROM information_schema.df_settings WHERE name = '{option}'"
@@ -307,7 +305,7 @@ def _with_knn_ties(left, right):
     previous = settings.column("value").to_pylist()[0]
     ctx.sql(f"SET {option} = true").execute()
     try:
-        return tuple(ctx.create_data_frame(planned) for planned in inputs)
+        return tuple(ctx.create_data_frame(_PlannedApart(df)) for df in (left, right))
     finally:
         ctx.sql(f"SET {option} = {previous}").execute()
 
@@ -1553,7 +1551,13 @@ class GeoDataFrame:
                 projection[names.index(distance_col)] = distance
             else:
                 projection.append(distance)
-        return GeoDataFrame(joined.select(*projection), geometry)
+        # The join is planned apart in turn, so that the frame it gives has the
+        # context's settings rather than the ties: a query made of that frame
+        # later, such as a join with another KNN join, is planned with those.
+        joined = self._df._ctx.create_data_frame(
+            _PlannedApart(joined.select(*projection))
+        )
+        return GeoDataFrame(joined, geometry)
 
     def _check_join(self, other, how, method):
         """Raises unless `other` and `how` can be joined to this frame by

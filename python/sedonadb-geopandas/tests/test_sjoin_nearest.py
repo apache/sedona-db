@@ -89,6 +89,29 @@ def _tie_option(ctx):
     return ctx.sql(query).to_pandas()["value"].tolist()
 
 
+def _points(ctx, column, rows):
+    """A frame of `ctx` of (`column`, x, y) rows, with point geometries."""
+    values = ", ".join(f"({value}, ST_Point({x}, {y}))" for value, x, y in rows)
+    return sgpd.GeoDataFrame(
+        ctx.sql(f"SELECT * FROM (VALUES {values}) AS t({column}, geometry)"),
+        geometry="geometry",
+    )
+
+
+def _tied_knn(ctx):
+    """A frame of `ctx` whose query is a KNN join of a point to its nearest of
+    two equally near points: one row (of `id` 1 or 2) without ties, two with."""
+    return sgpd.GeoDataFrame(
+        ctx.sql(
+            "WITH l AS (SELECT ST_Point(0, 0) AS g), "
+            "r AS (SELECT * FROM (VALUES (1, ST_Point(1, 0)), (2, ST_Point(-1, 0))) "
+            "AS t(id, g)) "
+            "SELECT r.id, l.g AS geometry FROM l JOIN r ON ST_KNN(l.g, r.g, 1)"
+        ),
+        geometry="geometry",
+    )
+
+
 @pytest.mark.parametrize("how", ["inner", "left", "right"])
 @pytest.mark.parametrize("max_distance", [None, 0.5, 1.0, 100.0])
 def test_sjoin_nearest_matches_geopandas_pair_for_pair(how, max_distance):
@@ -179,18 +202,8 @@ def test_sjoin_nearest_leaves_knn_joins_within_its_frames_as_they_were(how, side
     # join made of it gives every tie.
     ctx = sedonadb.connect()
     ctx.sql(f"SET {TIES} = false").execute()
-    knn = sgpd.GeoDataFrame(
-        ctx.sql(
-            "WITH l AS (SELECT ST_Point(0, 0) AS g), "
-            "r AS (SELECT * FROM (VALUES (1, ST_Point(1, 0)), (2, ST_Point(-1, 0))) "
-            "AS t(id, g)) "
-            "SELECT r.id, l.g AS geometry FROM l JOIN r ON ST_KNN(l.g, r.g, 1)"
-        ),
-        geometry="geometry",
-    )
-    other = sgpd.GeoDataFrame(
-        ctx.sql("SELECT 3 AS target, ST_Point(3, 0) AS geometry"), geometry="geometry"
-    )
+    knn = _tied_knn(ctx)
+    other = _points(ctx, "target", [(3, 3, 0)])
     left, right = (knn, other) if side == "left" else (other, knn)
     joined = left.sjoin_nearest(right, how=how, distance_col="d").to_geopandas()
     expected = gpd.sjoin_nearest(
@@ -199,6 +212,57 @@ def test_sjoin_nearest_leaves_knn_joins_within_its_frames_as_they_were(how, side
     assert len(knn.to_geopandas()) == 1
     assert len(joined) == len(expected) == 1
     assert joined["d"].tolist() == [3.0]
+
+
+@pytest.mark.parametrize("before, after", [("false", "true"), ("true", "false")])
+@pytest.mark.parametrize("side", ["left", "right"])
+def test_sjoin_nearest_reads_frames_with_the_settings_they_were_made_with(
+    before, after, side
+):
+    # A frame keeps the setting its context had when it was made, as when it is
+    # collected itself, whatever the context has been set to since.
+    ctx = sedonadb.connect()
+    ctx.sql(f"SET {TIES} = {before}").execute()
+    knn = _tied_knn(ctx)
+    ctx.sql(f"SET {TIES} = {after}").execute()
+    other = _points(ctx, "target", [(3, 3, 0)])
+    left, right = (knn, other) if side == "left" else (other, knn)
+    joined = left.sjoin_nearest(right).to_geopandas()
+    rows = 2 if before == "true" else 1
+    assert len(knn.to_geopandas()) == rows
+    assert len(joined) == rows
+
+
+@pytest.mark.parametrize("how", ["inner", "left", "right"])
+@pytest.mark.parametrize("side", ["left", "right"])
+def test_sjoin_nearest_of_a_nearest_join_keeps_its_ties(how, side):
+    # A nearest join's rows are the same when it is joined again: both of the
+    # two equally near neighbours, whatever the context's setting.
+    ctx = sedonadb.connect()
+    ctx.sql(f"SET {TIES} = false").execute()
+    first = _points(ctx, "a", [(0, 0, 0)]).sjoin_nearest(
+        _points(ctx, "b", [(1, 1, 0), (2, -1, 0)])
+    )
+    other = _points(ctx, "c", [(3, 3, 0)])
+    left, right = (first, other) if side == "left" else (other, first)
+    joined = left.sjoin_nearest(right, how=how).to_geopandas()
+    expected = gpd.sjoin_nearest(left.to_geopandas(), right.to_geopandas(), how=how)
+    assert sorted(first.to_geopandas()["b"]) == [1, 2]
+    assert sorted(joined["b"]) == sorted(expected["b"]) == [1, 2]
+
+
+def test_sjoin_nearest_result_leaves_later_knn_joins_as_they_were():
+    # The setting stays with the nearest join: a KNN join that its result is
+    # joined with later follows its own, here one of two tied neighbours.
+    ctx = sedonadb.connect()
+    ctx.sql(f"SET {TIES} = false").execute()
+    first = _points(ctx, "a", [(0, 0, 0)]).sjoin_nearest(
+        _points(ctx, "b", [(1, 1, 0), (2, -1, 0)])
+    )
+    knn = _tied_knn(ctx)
+    merged = first.merge(knn, how="cross").to_geopandas()
+    assert len(knn.to_geopandas()) == 1
+    assert len(merged) == 2
 
 
 def test_sjoin_nearest_of_frames_from_two_contexts():
