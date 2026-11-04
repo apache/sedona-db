@@ -37,6 +37,9 @@ Unlike [ST_Dump](st_dump.qmd), which recurses into nested collections down to th
 atomic parts, `ST_Geometries` returns only a geometry's direct members. See also
 [ST_GeometryN](st_geometryn.qmd).
 
+For inputs with an item-level CRS, each list member carries its input row's CRS
+as an `item_crs` struct.
+
 ## Examples
 
 ```sql

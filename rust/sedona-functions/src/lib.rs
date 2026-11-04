@@ -16,6 +16,7 @@
 // under the License.
 
 pub mod executor;
+mod geometry_list;
 pub mod register;
 mod sd_format;
 pub mod sd_order;

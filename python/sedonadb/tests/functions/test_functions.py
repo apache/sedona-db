@@ -1441,6 +1441,36 @@ def test_st_geometries_members_keep_the_input_type(constructor, expected):
     assert item_meta == input_meta
 
 
+@pytest.mark.parametrize("constructor", ["ST_GeomFromText", "ST_GeogFromWKT"])
+@pytest.mark.parametrize(
+    ("function", "member"), [("ST_Geometries", "part"), ("ST_Dump", "part.geom")]
+)
+def test_geometry_list_item_crs(constructor, function, member):
+    # A CRS column produces item_crs inputs. Unnested members must retain that
+    # CRS and their spatial metadata so other geometry functions can use them.
+    con = sedonadb.connect()
+    result = con.sql(
+        f"""
+        WITH input AS (
+            SELECT ST_SetSRID({constructor}(wkt), srid) AS geom
+            FROM (VALUES
+                ('MULTIPOINT (1 2, 3 4)', 4326),
+                ('POINT (5 6)', 4269),
+                ('POINT (7 8)', 0)
+            ) AS t(wkt, srid)
+        ), parts AS (
+            SELECT UNNEST({function}(geom)) AS part FROM input
+        )
+        SELECT ST_AsText({member}) AS wkt, ST_SRID({member}) AS srid
+        FROM parts ORDER BY wkt
+        """
+    ).to_arrow_table()
+    assert result.to_pydict() == {
+        "wkt": ["POINT(1 2)", "POINT(3 4)", "POINT(5 6)", "POINT(7 8)"],
+        "srid": [4326, 4326, 4269, 0],
+    }
+
+
 def _extension(field):
     """A field's extension name and metadata, whether or not the extension
     type is registered with pyarrow (geoarrow-pyarrow registers it)."""
