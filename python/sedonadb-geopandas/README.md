@@ -247,8 +247,9 @@ a missing value only in those that hold its replacement's kind, as `fillna()`
 fills them. A replacement of a wider type (a float in an integer column) widens
 the column whether or not a value matches, as the result's types can't depend on
 its rows. A frame's `isin()` takes a list or a dict of lists, as pandas does,
-but no Series or frame (a pandas one included), which would need row alignment;
-a value that is not a geometry matches no geometry, as in GeoPandas.
+but no Series or frame (a pandas one included), alone or in the dict, which
+would need row alignment; a value that is not a geometry matches no geometry, as
+in GeoPandas.
 
 `merge()` joins on columns as pandas does, including in matching a missing key
 (NaN or None) with a missing key, unlike SQL; without an index, its rows don't

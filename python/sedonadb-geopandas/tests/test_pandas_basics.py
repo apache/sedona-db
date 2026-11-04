@@ -313,6 +313,33 @@ def test_isin_takes_values_not_a_frame_or_a_string():
             ours.isin(values)
 
 
+def test_isin_takes_a_dict_of_lists_not_of_frames_or_series():
+    # pandas aligns a column's Series or frame of values with the rows by
+    # index, as it aligns one given in place of the dict.
+    ours, expected = _ours(), _geopandas()
+    aligned = (
+        ours,
+        ours["i"],
+        expected,
+        expected["i"],
+        pd.Series([2, 1], index=[99, 98]),
+        pd.DataFrame({"i": [1, 2, 3]}),
+    )
+    for values in aligned:
+        with pytest.raises(TypeError, match="alignment"):
+            ours.isin({"i": values})
+    # As in pandas, the values of a column the frame lacks are not read, and a
+    # column's values are those of a frame of the column alone, so a dict there
+    # names columns too.
+    for values in (
+        {"i": [1, 2], "missing": pd.Series([1])},
+        {"i": {1: 2}},
+        {"i": {"i": [1, 2]}},
+        {"i": {"i": {"i": [3]}}, "f": {}},
+    ):
+        assert _rows(ours.isin(values)) == _rows(expected.isin(values))
+
+
 # -- where and mask --------------------------------------------------------------
 
 

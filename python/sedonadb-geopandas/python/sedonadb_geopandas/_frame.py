@@ -160,6 +160,17 @@ def _is_pandas_object(value):
     return isinstance(value, (pd.Series, pd.DataFrame))
 
 
+def _refuse_alignment(values):
+    """Raises for `isin()` values that pandas aligns with the rows by index: a
+    Series or a frame, pandas' (or GeoPandas') or this package's."""
+    if isinstance(values, (Series, GeoDataFrame)) or _is_pandas_object(values):
+        raise TypeError(
+            f"isin() takes a list or a dict of lists, not a "
+            f"{type(values).__name__}: pandas aligns a Series or a frame of "
+            f"values with the rows by index, and there is no row alignment here"
+        )
+
+
 def _explode_parts(df, column):
     """`df` with one row per part of its geometry column `column`.
 
@@ -1033,24 +1044,26 @@ class GeoDataFrame:
         `values` is a list of values, for every column, or a dict of column
         names to lists of values (a column it does not name is all False).
         Values compare as `Series.isin()` compares them. A frame of booleans,
-        with no active geometry. A Series or frame of values would need row
-        alignment, which there is none of.
+        with no active geometry. A Series or frame of values, alone or in the
+        dict, would need row alignment, which there is none of.
         """
         if isinstance(values, dict):
-            lists = values
-        elif isinstance(values, (Series, GeoDataFrame)) or _is_pandas_object(values):
-            raise TypeError(
-                f"isin() takes a list or a dict of lists, not a "
-                f"{type(values).__name__}: pandas aligns a Series or a frame of "
-                f"values with the rows by index, and there is no row alignment "
-                f"here"
-            )
-        elif isinstance(values, (str, bytes)) or not hasattr(values, "__iter__"):
-            raise TypeError(
-                f"only list-like or dict-like objects are allowed to be passed to "
-                f"isin(), you passed a {type(values).__name__!r}"
-            )
+            lists = {}
+            for name in self.columns:
+                # As in pandas, which reads a column's values as those of a
+                # frame of the column alone, so a dict there names columns too.
+                value = values.get(name, [])
+                while isinstance(value, dict):
+                    value = value.get(name, [])
+                _refuse_alignment(value)
+                lists[name] = value
         else:
+            _refuse_alignment(values)
+            if isinstance(values, (str, bytes)) or not hasattr(values, "__iter__"):
+                raise TypeError(
+                    f"only list-like or dict-like objects are allowed to be passed "
+                    f"to isin(), you passed a {type(values).__name__!r}"
+                )
             lists = dict.fromkeys(self.columns, list(values))
         exprs = {
             name: self[name].isin(lists.get(name, []))._expr for name in self.columns
