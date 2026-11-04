@@ -60,6 +60,26 @@ def test_dataframe_from_dataframe(con):
     pd.testing.assert_frame_equal(df.to_pandas(), new_df.to_pandas())
 
 
+def test_dataframe_from_dataframe_keeps_its_settings():
+    # A data frame read into another context is planned with the settings it
+    # was made with, as when it is collected itself, rather than those its
+    # context has been given since. Here that is whether a KNN join gives
+    # both of two equally near neighbours.
+    option = "sedona.spatial_join.knn_include_tie_breakers"
+    con = sedonadb.connect()
+    con.sql(f"SET {option} TO false").execute()
+    df = con.sql(
+        """
+        WITH l AS (SELECT ST_Point(0, 0) AS g),
+        r AS (SELECT * FROM (VALUES (1, ST_Point(1, 0)), (2, ST_Point(-1, 0))) AS t(id, g))
+        SELECT r.id FROM l JOIN r ON ST_KNN(l.g, r.g, 1)
+        """
+    )
+    con.sql(f"SET {option} TO true").execute()
+    assert df.count() == 1
+    assert sedonadb.connect().create_data_frame(df).count() == 1
+
+
 def test_dataframe_from_table(con):
     tab = pa.table(
         {
