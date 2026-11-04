@@ -105,6 +105,16 @@ def test_round_half_floats_matches_pandas(decimals):
     assert np.array_equal(got.to_numpy(), expected.to_numpy(), equal_nan=True)
 
 
+@pytest.mark.parametrize("dtype", [np.float16, np.float32, np.float64])
+@pytest.mark.parametrize("decimals", [0, 1, -1])
+def test_round_keeps_the_sign(dtype, decimals):
+    # As NumPy: -0.0, and a negative value rounding to zero, round to -0.0;
+    # -inf stays -inf.
+    values = np.array([-0.0, 0.0, -0.4, 0.4, -0.5, -2.5, -math.inf, math.inf], dtype)
+    expected = pd.Series(values).round(decimals)
+    _check(_series(values).round(decimals), expected)
+
+
 def test_abs_matches_pandas():
     gdf = _frame()
     frame = gdf.to_geopandas()

@@ -1516,8 +1516,10 @@ def _half_even(value, dtype):
     odd = (floor / number(2.0)).funcs.floor() * number(2.0) != floor
     up = (fraction > number(0.5)) | ((fraction == number(0.5)) & odd)
     rounded = floor + up.cast(dtype)
-    # The engine orders -0.0 (and a negative NaN) below 0.0.
-    negative = value < number(0.0)
+    # The sign bit, -0.0's too, which compares equal to 0.0 in DataFusion 55
+    # (earlier versions order it below). atan2(±0.0, -1.0) is ±pi, and atan2
+    # with -1.0 is never zero, so its sign compares the same in either.
+    negative = value.funcs.atan2(number(-1.0)) < number(0.0)
     return rounded * (number(1.0) - number(2.0) * negative.cast(dtype))
 
 
