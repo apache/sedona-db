@@ -17,17 +17,12 @@
 
 use std::sync::Arc;
 
-use arrow_array::{
-    Array, ArrayRef, BinaryArray, StringViewArray, StructArray, builder::StringViewBuilder,
-};
+use arrow_array::{Array, ArrayRef, BinaryArray, StringViewArray, builder::StringViewBuilder};
 use arrow_buffer::OffsetBuffer;
-use arrow_schema::{DataType, Field};
-use datafusion_common::{
-    Result, ScalarValue,
-    cast::{as_string_view_array, as_struct_array},
-};
+use arrow_schema::Field;
+use datafusion_common::{Result, cast::as_string_view_array};
 use datafusion_expr::ColumnarValue;
-use sedona_common::sedona_internal_err;
+use sedona_expr::item_crs::{make_item_crs, parse_item_crs_arg, parse_item_crs_arg_type};
 use sedona_schema::datatypes::SedonaType;
 
 /// Input for functions that return lists containing geometry values.
@@ -41,7 +36,8 @@ pub(crate) struct GeometryListInput {
 
 impl GeometryListInput {
     pub fn new(arg_type: &SedonaType, arg: &ColumnarValue) -> Result<Self> {
-        if !arg_type.is_item_crs() {
+        let (item_type, crs_type) = parse_item_crs_arg_type(arg_type)?;
+        if crs_type.is_none() {
             return Ok(Self {
                 types: [arg_type.clone()],
                 args: [arg.clone()],
@@ -53,18 +49,17 @@ impl GeometryListInput {
             ColumnarValue::Array(array) => array.len(),
             ColumnarValue::Scalar(_) => 1,
         };
-        let array = arg.to_array(num_rows)?;
-        let array = as_struct_array(&array)?;
-        // Propagate the struct's validity before the executor reads its WKB.
-        let (fields, columns) = array.flatten();
-        let item = match arg {
-            ColumnarValue::Array(_) => ColumnarValue::Array(columns[0].clone()),
-            ColumnarValue::Scalar(_) => ScalarValue::try_from_array(&columns[0], 0)?.into(),
-        };
+        let (item, crs) = parse_item_crs_arg(&item_type, &crs_type, arg)?;
+        let crs = crs
+            .map(|crs| {
+                let array = crs.into_array(num_rows)?;
+                as_string_view_array(&array).cloned()
+            })
+            .transpose()?;
         Ok(Self {
-            types: [SedonaType::from_storage_field(&fields[0])?],
+            types: [item_type],
             args: [item],
-            crs: Some(as_string_view_array(&columns[1])?.clone()),
+            crs,
         })
     }
 
@@ -79,9 +74,7 @@ impl GeometryListInput {
         let Some(crs) = &self.crs else {
             return Ok(Arc::new(values));
         };
-        let DataType::Struct(fields) = field.data_type() else {
-            return sedona_internal_err!("Expected item_crs field for geometry list members");
-        };
+        let (item_type, _) = parse_item_crs_arg_type(&SedonaType::from_storage_field(field)?)?;
         let mut crs_builder = StringViewBuilder::with_capacity(values.len());
         for (crs, offsets) in crs.iter().zip(offsets.windows(2)) {
             let count = (offsets[1] - offsets[0]) as usize;
@@ -94,12 +87,14 @@ impl GeometryListInput {
                 }
             }
         }
-        let nulls = values.nulls().cloned();
-        Ok(Arc::new(StructArray::try_new(
-            fields.clone(),
-            vec![Arc::new(values), Arc::new(crs_builder.finish())],
-            nulls,
-        )?))
+        let num_values = values.len();
+        make_item_crs(
+            &item_type,
+            ColumnarValue::Array(Arc::new(values)),
+            &ColumnarValue::Array(Arc::new(crs_builder.finish())),
+            None,
+        )?
+        .into_array(num_values)
     }
 }
 
