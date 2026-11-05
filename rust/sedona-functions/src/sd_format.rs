@@ -17,6 +17,7 @@
 use std::{fmt::Write, sync::Arc, vec};
 
 use crate::executor::WkbExecutor;
+use crate::wkt_writer::write_geometry;
 use arrow_array::{
     Array, GenericListArray, GenericListViewArray, OffsetSizeTrait, StructArray,
     builder::StringBuilder, cast::AsArray,
@@ -231,7 +232,7 @@ fn geospatial_value_to_formatted_value(
                 // We ignore this error on purpose: we raised it on purpose to prevent
                 // the WKT writer from writing too many characters
                 #[allow(unused_must_use)]
-                wkt::to_wkt::write_geometry(&mut builder_wrapper, &item);
+                write_geometry(&mut builder_wrapper, &item);
 
                 builder.append_value("");
             }
@@ -496,6 +497,44 @@ mod tests {
         assert_eq!(
             &binary_tester
                 .invoke_array_scalar(wkt_array.clone(), r#"{"width_hint": 3}"#)
+                .unwrap(),
+            &expected_array
+        );
+    }
+
+    #[test]
+    fn sd_format_empty_members() {
+        // An empty member of a multi-geometry is written EMPTY, as ST_AsText writes it
+        let udf = sd_format_udf();
+        let unary_tester = ScalarUdfTester::new(udf.clone().into(), vec![WKB_GEOMETRY]);
+        let binary_tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![WKB_GEOMETRY, SedonaType::Arrow(DataType::Utf8)],
+        );
+        let wkt_values = vec![
+            Some("MULTIPOLYGON (((0 0, 1 0, 1 1, 0 0)), EMPTY)"),
+            Some("MULTILINESTRING (EMPTY, (1 2, 3 4))"),
+        ];
+        let wkt_array = create_array(&wkt_values, &WKB_GEOMETRY);
+
+        let expected_array: ArrayRef = create_array!(
+            Utf8,
+            [
+                Some("MULTIPOLYGON(((0 0,1 0,1 1,0 0)),EMPTY)"),
+                Some("MULTILINESTRING(EMPTY,(1 2,3 4))")
+            ]
+        );
+        assert_eq!(
+            &unary_tester.invoke_wkb_array(wkt_values).unwrap(),
+            &expected_array
+        );
+
+        // A width hint still stops the writing
+        let expected_array: ArrayRef =
+            create_array!(Utf8, [Some("MULTIPOLYGON"), Some("MULTILINESTRING")]);
+        assert_eq!(
+            &binary_tester
+                .invoke_array_scalar(wkt_array, r#"{"width_hint": 3}"#)
                 .unwrap(),
             &expected_array
         );
