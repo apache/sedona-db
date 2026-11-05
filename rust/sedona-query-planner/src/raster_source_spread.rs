@@ -41,8 +41,8 @@
 //! it buffers up to a full batch of them per partition before
 //! `sedona.raster.max_batch_bytes` (enforced by the split above) or the
 //! memory pool sees a byte. [`RasterSourceSpreadExec`] never merges: it
-//! forwards a batch that has nothing to load whole, sends each hash piece of
-//! the rest as is, and bounds and accounts what it queues per output.
+//! forwards a small batch that has nothing to load whole, sends each piece
+//! of the rest as is, and bounds and accounts what it queues per output.
 
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
@@ -136,7 +136,7 @@ use crate::raster_materialization::{budget_bytes, is_raster_field};
 /// the plan cannot tell how many batches a partition will deliver, and the
 /// cost of the spread is one hash of rows that are still metadata-only
 /// OutDb references, while the locality it adds is worth having either way.
-/// Batches with nothing to load pass through whole.
+/// Small batches with nothing to load pass through whole.
 pub(crate) fn raster_source_spread(
     input: &Arc<dyn ExecutionPlan>,
     target_partitions: usize,
@@ -209,6 +209,11 @@ pub fn raster_source_keys(rasters: &RasterStructArray) -> Vec<Option<u64>> {
         .collect()
 }
 
+/// The pixel bytes per output from which a batch with nothing to load is
+/// spread row by row instead of forwarded whole (see
+/// [`RasterSourceSpreadExec`]).
+const SPREAD_LOADED_BYTES_PER_OUTPUT: u64 = 1024 * 1024;
+
 /// Spreads the rows of its input partitions over `partitions` output
 /// partitions by raster source, for the
 /// [`RasterBatchSplitExec`](crate::raster_materialization::RasterBatchSplitExec)
@@ -223,20 +228,21 @@ pub fn raster_source_keys(rasters: &RasterStructArray) -> Vec<Option<u64>> {
 /// One task per input partition pulls its batches and, per batch:
 ///
 /// - forwards it whole, to the next output in a round-robin, when no row
-///   has a band to load in any key column, so rasters already in memory
-///   are never taken apart, copied or merged;
+///   has a band to load in any key column and its rasters are small: under
+///   [`SPREAD_LOADED_BYTES_PER_OUTPUT`] of pixels per output (read from the
+///   band views, with no pass per row), so a stream of small batches is not
+///   cut into smaller ones;
 /// - otherwise sends the rows of each source to output `key % partitions`
 ///   and deals rows without a source round-robin: one `take` of the rows
 ///   grouped by output, sliced per output (none when one output receives
 ///   the whole batch). A `take` copies the BinaryView views, not the bytes
 ///   they point to.
 ///
-/// A batch with nothing to load goes to one output however large it is,
-/// so a few large batches of rasters already in memory occupy as many
-/// outputs as there are batches. With more batches than outputs every
-/// output gets work; with fewer, CPU-heavy work above the loading node
-/// (`RS_SummaryStats` over in-db rasters, say) runs on fewer partitions
-/// than a per-row repartition would give it.
+/// A larger batch with nothing to load has its rows dealt round-robin like
+/// rows without a source: there is nothing to load, but the work above the
+/// loading node (`RS_SummaryStats` over in-db rasters, say) would otherwise
+/// run on one partition when a few large batches are all the input there
+/// is. The pixels are not copied either way.
 ///
 /// Pieces are queued as they are, never merged. Each output's queue holds
 /// at most `sedona.raster.max_batch_bytes`, measured by the bytes a piece's
@@ -787,21 +793,35 @@ fn split_by_source(
         partition
     };
     // Only the columns with something to load key any row.
-    columns.retain(RasterStructArray::any_raster_needs_load);
-    let Some((first, rest)) = columns.split_first() else {
-        return Ok(vec![(round_robin(), batch)]);
-    };
-    let mut keys = raster_source_keys(first);
-    for rasters in rest {
-        if keys.iter().all(Option::is_some) {
-            break;
-        }
-        for (key, other) in keys.iter_mut().zip(raster_source_keys(rasters)) {
-            if key.is_none() {
-                *key = other;
+    let loading: Vec<&RasterStructArray> = columns
+        .iter()
+        .filter(|rasters| rasters.any_raster_needs_load())
+        .collect();
+    let keys = match loading.split_first() {
+        Some((first, rest)) => {
+            let mut keys = raster_source_keys(first);
+            for rasters in rest {
+                if keys.iter().all(Option::is_some) {
+                    break;
+                }
+                for (key, other) in keys.iter_mut().zip(raster_source_keys(rasters)) {
+                    if key.is_none() {
+                        *key = other;
+                    }
+                }
             }
+            keys
         }
-    }
+        None => {
+            let bytes: u64 = columns.iter().map(RasterStructArray::band_data_bytes).sum();
+            if bytes < partitions as u64 * SPREAD_LOADED_BYTES_PER_OUTPUT {
+                return Ok(vec![(round_robin(), batch)]);
+            }
+            // Large enough that the work above is worth spreading: every
+            // row is dealt round-robin below.
+            vec![None; batch.num_rows()]
+        }
+    };
     let mut rows: Vec<Vec<u32>> = vec![Vec::new(); partitions];
     for (row, key) in keys.into_iter().enumerate() {
         let partition = match key {
@@ -1944,10 +1964,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn batches_with_nothing_to_load_pass_through_whole_without_a_copy() {
+    async fn small_batches_with_nothing_to_load_pass_through_whole_without_a_copy() {
         // Three batches of loaded 32 × 32 rasters that still name the file
-        // they came from: nothing to load, so each batch goes whole to the
-        // next output, and its pixels are the input's buffers.
+        // they came from: nothing to load and 8 KiB each, so each batch goes
+        // whole to the next output, and its pixels are the input's buffers.
         let mut batches = Vec::new();
         let mut schema = None;
         for batch_idx in 0..3 {
@@ -2025,6 +2045,85 @@ mod tests {
             for buffer in rasters.band_data_array().data_buffers() {
                 assert!(input_buffers.contains(&buffer.as_ptr()));
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_large_batch_with_nothing_to_load_is_dealt_row_by_row_without_a_copy() {
+        // 64 loaded 256 × 256 UInt8 rasters in one batch: 4 MiB of pixels,
+        // 1 MiB per output, so its rows are dealt over all four outputs,
+        // sharing the input's pixel buffers. One row fewer stays whole.
+        let mut b = RasterBuilder::new(64);
+        for i in 0..64 {
+            b.start_raster_nd(
+                &[0.0, 1.0, 0.0, 0.0, 0.0, -1.0],
+                &["y", "x"],
+                &[256, 256],
+                None,
+            )
+            .unwrap();
+            b.start_band(StartBandArgs::new(
+                &["y", "x"],
+                &[256, 256],
+                BandDataType::UInt8,
+            ))
+            .unwrap();
+            b.band_data_writer().append_value(vec![i as u8; 256 * 256]);
+            b.finish_band().unwrap();
+            b.finish_raster().unwrap();
+        }
+        let rasters: ArrayRef = Arc::new(b.finish().unwrap());
+        let raster_field = SedonaType::Raster.to_storage_field("rast", true).unwrap();
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            Field::new("rast", rasters.data_type().clone(), true)
+                .with_metadata(raster_field.metadata().clone()),
+        ]));
+        let ids = Arc::new(Int32Array::from_iter_values(0..64));
+        let batch = RecordBatch::try_new(Arc::clone(&schema), vec![ids, rasters]).unwrap();
+        let input_buffers: Vec<*const u8> = {
+            let rasters = batch.column(1).as_any().downcast_ref::<StructArray>();
+            RasterStructArray::try_new(rasters.unwrap())
+                .unwrap()
+                .band_data_array()
+                .data_buffers()
+                .iter()
+                .map(|buffer| buffer.as_ptr())
+                .collect()
+        };
+
+        let ctx = task_context(DEFAULT_RASTER_MAX_BATCH_BYTES);
+        for (rows, expected) in [(64, vec![16; 4]), (63, vec![63, 0, 0, 0])] {
+            let input = MemorySourceConfig::try_new_exec(
+                &[vec![batch.slice(0, rows)]],
+                Arc::clone(&schema),
+                None,
+            )
+            .unwrap();
+            let spread = RasterSourceSpreadExec::try_new(input, vec![1], 4).unwrap();
+            let outputs =
+                futures::future::try_join_all((0..4).map(|partition| {
+                    collect(spread.execute(partition, Arc::clone(&ctx)).unwrap())
+                }))
+                .await
+                .unwrap();
+            let mut per_output = Vec::new();
+            let mut ids = Vec::new();
+            for batches in &outputs {
+                per_output.push(batches.iter().map(RecordBatch::num_rows).sum::<usize>());
+                for batch in batches {
+                    let rasters = batch.column(1).as_any().downcast_ref::<StructArray>();
+                    let rasters = RasterStructArray::try_new(rasters.unwrap()).unwrap();
+                    for buffer in rasters.band_data_array().data_buffers() {
+                        assert!(input_buffers.contains(&buffer.as_ptr()));
+                    }
+                    let row_ids = batch.column(0).as_any().downcast_ref::<Int32Array>();
+                    ids.extend_from_slice(row_ids.unwrap().values());
+                }
+            }
+            assert_eq!(per_output, expected);
+            ids.sort();
+            assert_eq!(ids, (0..rows as i32).collect::<Vec<_>>());
         }
     }
 

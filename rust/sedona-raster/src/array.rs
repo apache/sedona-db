@@ -968,6 +968,18 @@ impl<'a> RasterStructArray<'a> {
         (0..self.len()).any(|idx| self.raster_needs_load(idx))
     }
 
+    /// The bytes the bands of every raster hold in memory: the sum of their
+    /// `data` lengths, read from the views without a pass per row.
+    pub fn band_data_bytes(&self) -> u64 {
+        let offsets = self.bands_list.value_offsets();
+        let bands = offsets[0] as usize..offsets[self.len()] as usize;
+        // A view's low 32 bits are the value's length.
+        self.band_data_array.views()[bands]
+            .iter()
+            .map(|view| u64::from(*view as u32))
+            .sum()
+    }
+
     /// [`BandRef::is_indb`] for flattened band row `band_row`, without
     /// building the band's view: the visible shape is the view's `steps`, or
     /// the source shape when the view is null (identity).
@@ -1775,6 +1787,8 @@ mod tests {
         assert!(rasters.first_outdb_band_uri(1).is_none());
         assert!(!rasters.raster_needs_load(0));
         assert!(!rasters.any_raster_needs_load());
+        // 12 bytes inline in band 0's view, 24 out of line for band 1.
+        assert_eq!(rasters.band_data_bytes(), 36);
 
         // Cross-check against the BandRef slow path.
         let band0 = r.band(0).unwrap();
