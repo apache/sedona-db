@@ -24,7 +24,6 @@
 namespace gpuspatial {
 
 using point_d = Point<double, 2>;
-using point_f = Point<float, 2>;
 
 TEST(SegmentRelateOpsTest, ParamToleranceValues) {
   EXPECT_DOUBLE_EQ(detail::ParamTolerance<double>(), 1e-12);

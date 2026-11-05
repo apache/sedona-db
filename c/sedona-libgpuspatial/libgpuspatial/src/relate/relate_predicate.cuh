@@ -29,6 +29,9 @@ namespace detail {
 DEV_HOST_INLINE bool EvaluatePredicate(Predicate p, int32_t im) {
   switch (p) {
     case Predicate::kEquals: {
+      if (im == IntersectionMatrix::EXTER_EXTER_2D) {
+        return true;
+      }
       return (im & IntersectionMatrix::INTER_INTER_2D) != 0 &&
              (im & IntersectionMatrix::INTER_EXTER_2D) == 0 &&
              (im & IntersectionMatrix::BOUND_EXTER_2D) == 0 &&
