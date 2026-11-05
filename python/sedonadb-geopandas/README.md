@@ -229,12 +229,24 @@ it takes no negative count. A column's `name` is a string, and `rename()` of a
 column only names it, as there is no index to relabel.
 
 Reductions (`sum()`, `mean()`, `min()`, `max()`, `count()`, `median()`,
-`std()`, `var()`, `quantile()`, `nunique()`) compute their result, skipping
-missing values (NaN included) as pandas does by default; an integer column keeps
-its integer type where pandas, having turned its missing values into NaN, would
-report a float. `unique()` and `value_counts()` cannot follow the order of first
-appearance, since a lazy frame has no row order: `value_counts()` breaks ties by
-value.
+`std()`, `var()`, `sem()`, `skew()`, `kurt()`, `any()`, `all()`, `quantile()`,
+`nunique()`) compute their result, skipping missing values (NaN included) as
+pandas does by default; an integer column keeps its integer type where pandas,
+having turned its missing values into NaN, would report a float. A frame's
+reduce each column in one scan, as pandas' do with `axis=0` (there is no
+`axis=1`). `skew()` and `kurt()` of values that are all alike are NaN, as in
+pandas 3 (pandas 2 says 0); `any()` and `all()` refuse timestamps, as pandas 3
+does. Quantiles, and the percentiles of `describe()`, are interpolated as pandas
+interpolates them, not with the engine's `percentile_cont()`, which rounds its
+interpolation to millionths. `unique()`, `value_counts()` and `mode()` cannot
+follow the order of first appearance, since a lazy frame has no row order:
+`value_counts()` breaks ties by value, and so does the top value of
+`describe()`; `nlargest()` and `nsmallest()` keep any of tied values. Geometries
+count as distinct by their WKB, as in GeoPandas, but `nunique(dropna=False)`
+counts a missing one, as pandas does (GeoPandas' `unique()` drops it). A frame's
+`skew()` is GeoPandas' (an affine transformation of the active geometry) when it
+has an active geometry column, and pandas' otherwise; `info()` writes no memory
+usage, which a lazy frame doesn't know.
 
 `where()`, `mask()`, and `clip()` keep a column to one kind of value: a
 replacement or bound of another kind (text in a number column, say) raises,

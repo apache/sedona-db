@@ -80,7 +80,9 @@ def test_spread_with_ddof(ddof):
     assert _same(series.var(ddof=ddof), series.to_pandas().var(ddof=ddof))
 
 
-@pytest.mark.parametrize("q", [0.0, 0.25, 0.5, 1.0])
+# The last between values at a weight of many digits, which the engine's
+# percentile_cont() would round.
+@pytest.mark.parametrize("q", [0.0, 0.25, 0.5, 1.0, 0.123456789])
 def test_quantile_matches_pandas(q):
     for column in ("i", "f"):
         series = _frame()[column]
@@ -241,6 +243,23 @@ def test_reductions_of_derived_and_filtered_columns():
     assert gdf.geometry.count() == 4
 
 
+def test_nunique_of_geometry():
+    # Geometries are alike if their WKB is, as GeoPandas tells them apart.
+    ctx = sgpd.default_context()
+    gdf = sgpd.GeoDataFrame(
+        ctx.sql(
+            "SELECT ST_Point(x, x) AS geometry FROM "
+            "(VALUES (0.0), (1.0), (0.0), (NULL)) AS v(x)"
+        )
+    )
+    expected = gdf.geometry.to_pandas()
+    assert gdf.geometry.nunique() == expected.nunique() == 2
+    # The missing geometry counts with dropna=False, as pandas counts one
+    # (and as GeoPandas' value_counts() does, though its unique() drops it).
+    assert gdf.geometry.nunique(dropna=False) == 3
+    assert len(expected.value_counts(dropna=False)) == 3
+
+
 def test_reductions_validate_their_input():
     gdf = _frame()
     with pytest.raises(TypeError, match="numeric"):
@@ -249,8 +268,6 @@ def test_reductions_validate_their_input():
         gdf.geometry.mean()
     with pytest.raises(TypeError, match="not supported"):
         gdf.geometry.min()
-    with pytest.raises(NotImplementedError, match="geometry"):
-        gdf.geometry.nunique()
     with pytest.raises(NotImplementedError, match="ddof"):
         gdf["f"].std(ddof=2)
     with pytest.raises(ValueError, match="interval"):

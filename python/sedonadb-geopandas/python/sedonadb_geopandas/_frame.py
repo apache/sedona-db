@@ -18,9 +18,11 @@
 
 import functools
 import inspect
+import math
 import numbers
 import operator
 import os
+import warnings
 
 import pyarrow as pa
 from sedonadb.expr import Expr, Literal, lit
@@ -30,12 +32,16 @@ from sedonadb_geopandas._series import (
     _NO_VALUE,
     GeoSeries,
     Series,
+    _REDUCTIONS,
     _CoordinateIndexer,
+    _descriptions,
     _geometry_from_wkb,
     _kind,
+    _one_row,
     _pandas_dtypes,
     _replacement_pairs,
     _same_crs,
+    _shapes,
     is_scalar,
     normalize_scalar,
 )
@@ -1293,6 +1299,281 @@ class GeoDataFrame:
     def __abs__(self):
         return self.abs()
 
+    # -- reductions and summaries ---------------------------------------------
+    def _reduced(self, func, axis, numeric_only=False, names=None, **options):
+        """The reduction `func` of each column (of `names`, or of the numeric
+        ones), as a pandas Series indexed by name, as pandas reduces a frame:
+        each column's as `Series.<func>()` gives it, in one scan (three for
+        skew and kurt). A column the reduction is not for raises, as in
+        pandas."""
+        import pandas as pd
+
+        names, values = self._reductions(func, axis, numeric_only, names, **options)
+        if not names:
+            return pd.Series([], dtype=_NO_COLUMNS.get(func, "float64"))
+        return pd.Series(values, index=names)
+
+    def _reductions(self, func, axis, numeric_only=False, names=None, **options):
+        """The names of the columns `_reduced()` reduces, and the result of
+        each, of its own type (a Series of them would share one)."""
+        _check_axis(axis, func)
+        names = self.columns if names is None else names
+        if numeric_only:
+            names = [
+                name
+                for name in names
+                if _kind(self[name]._dtype()) in ("number", "bool")
+            ]
+        columns = [self[name] for name in names]
+        if not columns:
+            return names, []
+        if func in ("skew", "kurt"):
+            values = _shapes(columns, func, options.get("skipna", True))
+        elif func == "nunique":
+            values = [column.nunique(**options) for column in columns]
+        else:
+            aggregates = [
+                column._aggregate(func, **options)[0].alias(f"c{i}")
+                for i, column in enumerate(columns)
+            ]
+            row = _one_row(self._df.agg(*aggregates))
+            values = [row[f"c{i}"] for i in range(len(columns))]
+            if func in ("min", "max"):
+                # No values: NaN, as Series.min() gives.
+                values = [math.nan if value is None else value for value in values]
+        return names, values
+
+    def sum(self, axis=0, numeric_only=False, min_count=0):
+        """The sum of each column, as pandas' `DataFrame.sum()` (see
+        `Series.sum()`); this computes it."""
+        return self._reduced("sum", axis, numeric_only, min_count=min_count)
+
+    def mean(self, axis=0, numeric_only=False):
+        return self._reduced("mean", axis, numeric_only)
+
+    def median(self, axis=0, numeric_only=False):
+        return self._reduced("median", axis, numeric_only)
+
+    def std(self, axis=0, ddof=1, numeric_only=False):
+        return self._reduced("std", axis, numeric_only, ddof=ddof)
+
+    def var(self, axis=0, ddof=1, numeric_only=False):
+        return self._reduced("var", axis, numeric_only, ddof=ddof)
+
+    def sem(self, axis=0, ddof=1, numeric_only=False):
+        return self._reduced("sem", axis, numeric_only, ddof=ddof)
+
+    def skew(self, *args, **kwargs):
+        """With an active geometry column, GeoPandas' skew: of the geometries,
+        an affine transformation (see `GeoSeries.skew()`). Without one, as a
+        pandas DataFrame's: the skewness of each column (see `Series.skew()`),
+        taking `axis`, `skipna` and `numeric_only`."""
+        if self._geometry_name is not None:
+            return self.geometry.skew(*args, **kwargs)
+        return self._skewness(*args, **kwargs)
+
+    def _skewness(self, axis=0, skipna=True, numeric_only=False):
+        return self._reduced("skew", axis, numeric_only, skipna=skipna)
+
+    def kurt(self, axis=0, skipna=True, numeric_only=False):
+        return self._reduced("kurt", axis, numeric_only, skipna=skipna)
+
+    kurtosis = kurt
+
+    def min(self, axis=0, numeric_only=False):
+        return self._reduced("min", axis, numeric_only)
+
+    def max(self, axis=0, numeric_only=False):
+        return self._reduced("max", axis, numeric_only)
+
+    def count(self, axis=0, numeric_only=False):
+        """The number of values that are not missing in each column."""
+        return self._reduced("count", axis, numeric_only)
+
+    def nunique(self, axis=0, dropna=True):
+        """The number of distinct values in each column (see
+        `Series.nunique()`)."""
+        return self._reduced("nunique", axis, dropna=dropna)
+
+    def any(self, *, axis=0, bool_only=False, skipna=True):
+        """Whether any value of each column (of each boolean one, with
+        `bool_only=True`) is true (see `Series.any()`)."""
+        return self._reduced(
+            "any", axis, names=self._truth_columns(bool_only), skipna=skipna
+        )
+
+    def all(self, *, axis=0, bool_only=False, skipna=True):
+        """Whether every value of each column is true (see `Series.all()`)."""
+        return self._reduced(
+            "all", axis, names=self._truth_columns(bool_only), skipna=skipna
+        )
+
+    def _truth_columns(self, bool_only):
+        if not bool_only:
+            return self.columns
+        return [name for name in self.columns if _kind(self[name]._dtype()) == "bool"]
+
+    def describe(self, percentiles=None, include=None, exclude=None):
+        """A summary of the columns, as a pandas DataFrame, as pandas'
+        `describe()` (see `Series.describe()`), with the columns pandas
+        would select. This computes it: the numbers and times in one scan.
+        """
+        import pandas as pd
+
+        # The columns pandas selects, from its description of no rows of
+        # these columns' types (which, of times, pandas 2 warns about its own
+        # internals for).
+        probe = self._df.limit(0).to_pandas()
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=r"(Datetime|Timedelta)Array.__init__ is deprecated",
+                category=FutureWarning,
+            )
+            selected = probe.describe(
+                percentiles=percentiles, include=include, exclude=exclude
+            )
+        names = list(selected.columns)
+        descriptions = _descriptions([self[name] for name in names], percentiles)
+        # pandas' row order: the labels of the shortest description first.
+        rows = []
+        for labels in sorted((d.index for d in descriptions), key=len):
+            rows += [label for label in labels if label not in rows]
+        frame = pd.concat([d.reindex(rows) for d in descriptions], axis=1, sort=False)
+        frame.columns = names
+        return frame
+
+    def info(
+        self, verbose=None, buf=None, max_cols=None, memory_usage=None, show_counts=None
+    ):
+        """A summary of the frame, written as pandas' `info()` writes it, to
+        `buf` (by default, standard output): its rows, and each column's
+        values that are not missing and dtype, as `to_pandas()` would give
+        them. This computes those counts. There is no memory usage to tell,
+        as the frame is lazy: `memory_usage` changes nothing.
+        """
+        import sys
+
+        import pandas as pd
+
+        names = self.columns
+        dtypes = self.dtypes
+        if max_cols is None:
+            max_cols = pd.get_option("display.max_info_columns")
+        if verbose is None:
+            verbose = len(names) <= max_cols
+        if show_counts is None:
+            show_counts = True
+        counted = [self._df._ctx.lit(1).funcs.count().alias("rows")]
+        if verbose and show_counts:
+            # NaN is missing, as pandas counts it.
+            counted += [
+                self[name]._aggregate("count")[0].alias(f"c{i}")
+                for i, name in enumerate(names)
+            ]
+        counts = _one_row(self._df.agg(*counted))
+        rows = int(counts["rows"])
+        lines = [str(type(self))]
+        lines.append(
+            f"RangeIndex: {rows} entries, 0 to {rows - 1}"
+            if rows
+            else "RangeIndex: 0 entries"
+        )
+        if not names:
+            lines.append(f"Empty {type(self).__name__}")
+        elif verbose:
+            lines.append(f"Data columns (total {len(names)} columns):")
+            headers = [
+                " # ",
+                "Column",
+                *(["Non-Null Count"] if show_counts else []),
+                "Dtype",
+            ]
+            body = []
+            for i, name in enumerate(names):
+                count = [f"{int(counts[f'c{i}'])} non-null"] if show_counts else []
+                body.append([f" {i}", name, *count, str(dtypes[name])])
+            widths = [
+                max(len(header), *(len(row[j]) for row in body))
+                for j, header in enumerate(headers)
+            ]
+
+            def line(cells):
+                return "  ".join(
+                    cell[:width].ljust(width) for cell, width in zip(cells, widths)
+                )
+
+            lines.append(line(headers))
+            lines.append(line(["-" * len(header) for header in headers]))
+            lines += [line(row) for row in body]
+        else:
+            lines.append(f"Columns: {len(names)} entries, {names[0]} to {names[-1]}")
+        counted_dtypes = dtypes.value_counts().groupby(lambda dtype: dtype.name).sum()
+        lines.append(
+            "dtypes: "
+            + ", ".join(
+                f"{name}({count:d})" for name, count in sorted(counted_dtypes.items())
+            )
+        )
+        (sys.stdout if buf is None else buf).write("\n".join(lines) + "\n")
+
+    def agg(self, func=None, axis=0, *args, **kwargs):
+        """The frame reduced by the reduction named `func`, as pandas' `agg()`:
+        one name gives a pandas Series of each column's, a list of names a
+        DataFrame of them (a row per name), and a dict from columns to a name
+        or a list of names the reductions of those columns."""
+        import pandas as pd
+
+        _check_axis(axis, "agg")
+        if isinstance(func, str):
+            return self._by_name(func)(*args, **kwargs)
+        if isinstance(func, (list, tuple)):
+            if args:
+                raise TypeError("agg() of a list of names takes keyword arguments")
+            # Each column of its own type, as in pandas: from each reduction's
+            # values, not from a Series of them, which would share one.
+            results = []
+            for name in func:
+                self._by_name(name)
+                names, values = self._reductions(
+                    _REDUCED.get(name, name), axis, **kwargs
+                )
+                results.append(dict(zip(names, values)))
+            return pd.DataFrame(
+                {column: [result[column] for result in results] for column in names},
+                index=list(func),
+            )
+        if isinstance(func, dict):
+            unknown = [name for name in func if name not in self.columns]
+            if unknown:
+                raise KeyError(f"Column(s) {unknown} do not exist")
+            if all(isinstance(names, str) for names in func.values()):
+                values = [
+                    self[column].agg(name, *args, **kwargs)
+                    for column, name in func.items()
+                ]
+                return pd.Series(values, index=list(func))
+            columns, rows = {}, []
+            for column, names in func.items():
+                names = [names] if isinstance(names, str) else list(names)
+                columns[column] = self[column].agg(names, *args, **kwargs)
+                rows += [name for name in names if name not in rows]
+            return pd.DataFrame(
+                {column: values.reindex(rows) for column, values in columns.items()}
+            )
+        raise NotImplementedError(
+            f"agg() takes reductions by name, not {type(func).__name__}"
+        )
+
+    aggregate = agg
+
+    def _by_name(self, name):
+        if name not in _REDUCTIONS:
+            raise AttributeError(
+                f"'{name}' is not a valid function for '{type(self).__name__}' object"
+            )
+        return getattr(self, name)
+
     def to_crs(self, crs=None, epsg=None):
         """Reproject the geometry column to `crs` (`ST_Transform`), as
         `GeoSeries.to_crs` does."""
@@ -2481,7 +2762,6 @@ _GEOMETRY_METHODS = (
     "simplify",
     "simplify_coverage",
     "sindex",
-    "skew",
     "snap",
     "symmetric_difference",
     "total_bounds",
@@ -2495,6 +2775,22 @@ _GEOMETRY_METHODS = (
     "voronoi_polygons",
     "within",
 )
+
+
+# The reductions of `agg()`'s names that are spelled otherwise there.
+_REDUCED = {"kurtosis": "kurt"}
+
+# The dtype of a reduction of no columns, as pandas gives it.
+_NO_COLUMNS = {"count": "int64", "nunique": "int64", "any": "bool", "all": "bool"}
+
+
+def _check_axis(axis, method):
+    """A frame reduces each column (pandas' axis 0)."""
+    if not (isinstance(axis, (str, numbers.Integral)) and axis in (0, "index")):
+        raise NotImplementedError(
+            f"{method}() reduces each column (axis=0); reducing each row "
+            f"(axis={axis!r}) is not supported"
+        )
 
 
 def _forwarded(name):
