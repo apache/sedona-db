@@ -27,10 +27,14 @@ from sedonadb.expr import Expr, Literal, lit
 from shapely.geometry.base import BaseGeometry
 
 from sedonadb_geopandas._series import (
+    _NO_VALUE,
     GeoSeries,
     Series,
     _CoordinateIndexer,
     _geometry_from_wkb,
+    _kind,
+    _pandas_dtypes,
+    _replacement_pairs,
     _same_crs,
     is_scalar,
     normalize_scalar,
@@ -147,6 +151,26 @@ def _is_missing(value):
         return isinstance(value, float) and value != value
 
 
+def _is_pandas_object(value):
+    """Whether `value` is a pandas Series or DataFrame (or a GeoPandas one)."""
+    try:
+        import pandas as pd
+    except ImportError:
+        return False
+    return isinstance(value, (pd.Series, pd.DataFrame))
+
+
+def _refuse_alignment(values):
+    """Raises for `isin()` values that pandas aligns with the rows by index: a
+    Series or a frame, pandas' (or GeoPandas') or this package's."""
+    if isinstance(values, (Series, GeoDataFrame)) or _is_pandas_object(values):
+        raise TypeError(
+            f"isin() takes a list or a dict of lists, not a "
+            f"{type(values).__name__}: pandas aligns a Series or a frame of "
+            f"values with the rows by index, and there is no row alignment here"
+        )
+
+
 def _explode_parts(df, column):
     """`df` with one row per part of its geometry column `column`.
 
@@ -211,6 +235,14 @@ def _explode_parts(df, column):
 def _binary_flag(condition):
     """A binary value that is non-null exactly where `condition` is true."""
     return condition.funcs.nullif(lit(False)).cast(pa.string()).cast(pa.binary())
+
+
+def _tail_offset(df, n):
+    """The number of rows of `df` before its last `n`, for `tail(n)` (this
+    computes how many rows it has)."""
+    if not isinstance(n, numbers.Integral) or n < 0:
+        raise ValueError(f"tail() needs a non-negative number of rows, got {n!r}")
+    return max(df.count() - n, 0)
 
 
 def _unused_name(df, name, reserved=()):
@@ -322,6 +354,32 @@ class GeoDataFrame:
     def columns(self):
         """Column names, mirroring `GeoDataFrame.columns`."""
         return list(self._df.schema.names)
+
+    @property
+    def dtypes(self):
+        """The pandas dtype of each column, as a pandas Series, as
+        `to_pandas()` gives them when no value is missing (see
+        `Series.dtype`): this computes the categorical columns."""
+        return _pandas_dtypes(self._df)
+
+    @property
+    def shape(self):
+        """The numbers of rows and of columns (this computes the first)."""
+        return (len(self), len(self.columns))
+
+    @property
+    def size(self):
+        """The number of values: of rows times columns (this computes it)."""
+        return len(self) * len(self.columns)
+
+    @property
+    def empty(self):
+        """Whether this frame has no rows (this computes whether it has one)."""
+        return self._df.limit(1).count() == 0
+
+    @property
+    def ndim(self):
+        return 2
 
     def __getitem__(self, key):
         # Boolean mask -> row filter (gdf[gdf["pop"] > 1000]).
@@ -602,6 +660,16 @@ class GeoDataFrame:
                 f"frame has no row order to count back from)"
             )
         return GeoDataFrame(self._df.limit(n), self._geometry_name)
+
+    def tail(self, n=5):
+        """The last `n` rows, as in pandas.
+
+        Last in the order of a sorted frame (see `sort_values()`); otherwise
+        which rows come back isn't guaranteed, as for `head()`. This computes
+        the number of rows.
+        """
+        offset = _tail_offset(self._df, n)
+        return GeoDataFrame(self._df.limit(n, offset=offset), self._geometry_name)
 
     def groupby(
         self,
@@ -909,6 +977,264 @@ class GeoDataFrame:
         self._geometry_name = result._geometry_name
         self._ancestors = result._ancestors
         return None
+
+    def _with_columns(self, exprs):
+        """This frame with the columns `exprs` names replaced by their
+        expressions, each in its place. The active geometry column stays
+        active while it holds geometries."""
+        df = self._df.select(
+            *[
+                exprs[name].alias(name) if name in exprs else self._df[name]
+                for name in self.columns
+            ]
+        )
+        keep = self._geometry_name in _geometry_column_names(df)
+        return GeoDataFrame(df, self._geometry_name if keep else None)
+
+    # -- casting, and values per column ------------------------------------
+
+    def astype(self, dtype, copy=None, errors="raise"):
+        """Cast columns, as in pandas: every column to `dtype`, or those a dict
+        names to theirs.
+
+        Each column is cast as `Series.astype()` casts it, and a geometry
+        column as `GeoSeries.astype()` does (to text, its WKT). The active
+        geometry column stays active while it holds geometries. Only
+        `errors="raise"` is supported: which values fail to cast is known only
+        when the result is computed.
+        """
+        if errors != "raise":
+            raise NotImplementedError(
+                "astype() supports errors='raise' only: which values fail to cast "
+                "is known only when the result is computed"
+            )
+        if isinstance(dtype, dict):
+            unknown = [name for name in dtype if name not in self.columns]
+            if unknown:
+                raise KeyError(
+                    f"Only a column name can be used for the key in a dtype "
+                    f"mappings argument. '{unknown[0]}' not found in columns."
+                )
+            casts = dtype
+        else:
+            casts = dict.fromkeys(self.columns, dtype)
+        return self._with_columns(
+            {name: self[name].astype(cast)._expr for name, cast in casts.items()}
+        )
+
+    def isna(self):
+        """Whether each value is missing, as in pandas: null, NaN in a float
+        column, or a missing geometry (an empty one is not missing). A frame
+        of booleans, with no active geometry."""
+        exprs = {name: self[name].isna()._expr for name in self.columns}
+        return self._with_columns(exprs)
+
+    isnull = isna
+
+    def notna(self):
+        """Whether each value is present: the inverse of `isna()`."""
+        exprs = {name: self[name].notna()._expr for name in self.columns}
+        return self._with_columns(exprs)
+
+    notnull = notna
+
+    def isin(self, values):
+        """Whether each value is one of `values`, as in pandas.
+
+        `values` is a list of values, for every column, or a dict of column
+        names to lists of values (a column it does not name is all False).
+        Values compare as `Series.isin()` compares them. A frame of booleans,
+        with no active geometry. A Series or frame of values, alone or in the
+        dict, would need row alignment, which there is none of.
+        """
+        if isinstance(values, dict):
+            lists = {}
+            for name in self.columns:
+                # As in pandas, which reads a column's values as those of a
+                # frame of the column alone, so a dict there names columns too.
+                value = values.get(name, [])
+                while isinstance(value, dict):
+                    value = value.get(name, [])
+                _refuse_alignment(value)
+                lists[name] = value
+        else:
+            _refuse_alignment(values)
+            if isinstance(values, (str, bytes)) or not hasattr(values, "__iter__"):
+                raise TypeError(
+                    f"only list-like or dict-like objects are allowed to be passed "
+                    f"to isin(), you passed a {type(values).__name__!r}"
+                )
+            lists = dict.fromkeys(self.columns, list(values))
+        exprs = {
+            name: self[name].isin(lists.get(name, []))._expr for name in self.columns
+        }
+        return self._with_columns(exprs)
+
+    def where(self, cond, other=None, *, inplace=False, axis=None, level=None):
+        """Each row's values where `cond` is true, and `other` elsewhere, as in
+        pandas with a condition per row (`axis=0`).
+
+        `cond` is a boolean Series of this frame, or a callable that takes
+        this frame and returns one; a missing condition replaces, as in
+        pandas. `other` is a scalar or a Series of this frame (or a callable
+        that returns one), by default a missing value. Each column is replaced
+        as `Series.where()` replaces it, so `other` must be a value of each
+        column's kind (a column holds one kind of value), where a missing
+        value fits any column. A condition per value, a frame, would need row
+        alignment, which there is none of.
+        """
+        return self._chosen("where", cond, other, inplace, axis, level)
+
+    def mask(self, cond, other=None, *, inplace=False, axis=None, level=None):
+        """Each row's values, with `other` where `cond` is true: the inverse
+        of `where()`, a missing condition replacing here too."""
+        return self._chosen("mask", cond, other, inplace, axis, level)
+
+    def _chosen(self, method, cond, other, inplace, axis, level):
+        if level is not None:
+            raise NotImplementedError(f"{method}() has no index levels")
+        if axis not in (None, 0, "index"):
+            raise NotImplementedError(
+                f"{method}() takes a condition per row (axis=0): there is no "
+                f"index to align one per column"
+            )
+        if callable(cond) and not isinstance(cond, Series):
+            cond = cond(self)
+        if callable(other) and not isinstance(other, Series):
+            other = other(self)
+        if isinstance(cond, GeoDataFrame):
+            raise TypeError(
+                f"{method}() takes a boolean Series from this frame as its "
+                f"condition: a frame of conditions would need row alignment"
+            )
+        for value in (cond, other):
+            if isinstance(value, Series) and not self._accepts(value):
+                raise ValueError(
+                    f"Cannot use a Series from a different DataFrame in "
+                    f"{method}(): there is no row alignment, so the result would "
+                    f"be silently wrong."
+                )
+        # A Series read before columns were added reads the same values from
+        # this frame, whose columns' methods take only its own.
+        cond, other = (
+            type(value)(self._df, value._expr, value._name)
+            if isinstance(value, Series)
+            else value
+            for value in (cond, other)
+        )
+        exprs = {
+            name: getattr(self[name], method)(cond, other)._expr
+            for name in self.columns
+        }
+        return self._finish(self._with_columns(exprs), inplace)
+
+    def replace(self, to_replace=None, value=_NO_VALUE, *, inplace=False, regex=False):
+        """Replace values, as pandas' `DataFrame.replace()` does without
+        regular expressions.
+
+        As for `Series.replace()`, in every column: a value and its
+        replacement, a list of values and one replacement or a list of as
+        many, or a dict of values to their replacements. Or column by column:
+        a dict of column names to values (or lists of values), all replaced
+        by `value`, or each by `value`'s value for the column if it is a dict
+        too; or a dict of column names to dicts of values to their
+        replacements. A scalar `value` with a list or value `to_replace` can
+        also be a dict of column names to replacements. Names of no column
+        are ignored, as in pandas.
+
+        A value in every column is replaced in the columns that hold its
+        kind of value, and raises for a replacement of another kind, as a
+        column holds one kind of value; but a missing value is replaced only
+        in the columns that hold its replacement's kind, as `fillna()` fills
+        them, where pandas would make the others columns of Python objects.
+        A replacement of a wider type (a float in an integer column) widens
+        the column whether or not a value matches: the result's types can't
+        depend on its rows.
+        """
+        if regex:
+            raise NotImplementedError("replace() does not support regex")
+        if isinstance(to_replace, dict):
+            nested = [isinstance(item, dict) for item in to_replace.values()]
+            if value is _NO_VALUE and any(nested):
+                if not all(nested):
+                    raise ValueError(
+                        "replace() takes a dict of column names to nested dicts "
+                        "of replacements, or a dict of values to replacements, "
+                        "not both"
+                    )
+                specs = {
+                    name: list(pairs.items()) for name, pairs in to_replace.items()
+                }
+            elif value is _NO_VALUE:
+                specs = None
+            elif isinstance(value, dict):
+                specs = {
+                    name: _replacement_pairs(to_replace[name], value[name])
+                    for name in to_replace
+                    if name in value
+                }
+            else:
+                specs = {
+                    name: _replacement_pairs(old, value)
+                    for name, old in to_replace.items()
+                }
+        elif isinstance(value, dict):
+            specs = {
+                name: _replacement_pairs(to_replace, new) for name, new in value.items()
+            }
+        else:
+            specs = None
+        if specs is None:
+            # The same values in every column.
+            pairs = _replacement_pairs(to_replace, value)
+            specs = {}
+            for name in self.columns:
+                column = self[name]
+                specs[name] = [
+                    (old, new)
+                    for old, new in pairs
+                    if not _is_missing(normalize_scalar(old)) or column._holds(new)
+                ]
+        exprs = {
+            name: self[name]._replaced(pairs)._expr
+            for name, pairs in specs.items()
+            if name in self.columns
+        }
+        return self._finish(self._with_columns(exprs), inplace)
+
+    def round(self, decimals=0):
+        """Each number rounded to `decimals` places, as in pandas: `decimals`
+        is an integer, for every column, or a dict of column names to
+        integers (names of no column are ignored). Each column is rounded as
+        `Series.round()` rounds it; a column that holds no numbers is left as
+        it is, as in pandas."""
+        if isinstance(decimals, dict):
+            places = {
+                name: places
+                for name, places in decimals.items()
+                if name in self.columns
+            }
+        elif isinstance(decimals, numbers.Integral) and not isinstance(decimals, bool):
+            places = dict.fromkeys(self.columns, decimals)
+        else:
+            raise TypeError("decimals must be an integer or a dict-like")
+        exprs = {
+            name: self[name].round(places)._expr
+            for name, places in places.items()
+            if _kind(self[name]._dtype()) == "number"
+        }
+        return self._with_columns(exprs)
+
+    def abs(self):
+        """The absolute value of each value, as in pandas: of numbers and
+        timedeltas, a boolean left as it is. A column of another kind
+        raises, as in pandas."""
+        return self._with_columns(
+            {name: self[name].abs()._expr for name in self.columns}
+        )
+
+    def __abs__(self):
+        return self.abs()
 
     def to_crs(self, crs=None, epsg=None):
         """Reproject the geometry column to `crs` (`ST_Transform`), as
