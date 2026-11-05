@@ -269,14 +269,19 @@ match right after another. `find()` and `rfind()` take no `start` or `end`,
 `slice()` a step of 1 (or -1 over the whole value), `replace()` replaces all,
 the first, or none (`n` of -1, 1 or 0) and takes no callable, and `cat()` joins
 columns of the same frame: without `others` it would join values in row order,
-which a lazy frame does not have. A boolean string method answers for a missing
-value as the installed pandas does (pandas 2 leaves it missing, pandas 3 makes
-it False). `.dt` reads the wall time of timestamps with a time zone, as pandas
-does; `floor()`, `ceil()` and `round()` take fixed frequencies, and a wall time
-that is ambiguous or does not exist after rounding or localizing fails, as in
-pandas by default (`ambiguous` and `nonexistent` take `"raise"` only).
-`day_name()` and `month_name()` are in English, and `date` and `time` give a
-missing value as None rather than NaT.
+which a lazy frame does not have. `contains()` of text (`regex=False`) ignoring
+case compares the values in upper case, as pandas does for Python strings ("ß"
+contains "ss"; pandas 3's pyarrow-backed strings fold one character at a time).
+A boolean string method answers for a missing value as the installed pandas
+does (pandas 2 leaves it missing, pandas 3 makes it False). `.dt` reads the
+wall time of timestamps with a time zone, as pandas does; `floor()`, `ceil()`
+and `round()` take fixed frequencies, positive ones that are a multiple of the
+column's unit or divide it, as in pandas 3 (pandas 2 rounds to a whole number of
+units), and a wall time that is ambiguous or does not exist after rounding or
+localizing fails, as in pandas by default (`ambiguous` and `nonexistent` take
+`"raise"` only). `day_name()` and `month_name()` are in English, `date` and
+`time` give a missing value as None rather than NaT, and `time` is to the
+microsecond, as Python's times are.
 
 `merge()` joins on columns as pandas does, including in matching a missing key
 (NaN or None) with a missing key, unlike SQL; without an index, its rows don't

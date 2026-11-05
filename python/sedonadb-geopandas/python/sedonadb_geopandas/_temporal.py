@@ -195,19 +195,19 @@ def coerce_duration_scalar(dtype, scalar):
 _OVERFLOW_MESSAGE = "duration arithmetic overflowed the 64-bit tick range"
 
 
-def _overflow_check(in_range):
+def _overflow_check(in_range, message=_OVERFLOW_MESSAGE):
     """An int64 expression that is 0 where `in_range` holds and raises where not.
 
     A lazy expression has no way to raise for a particular row except by
     failing to evaluate there, so the failure is a cast: rows in range (or
-    null) cast the string "0", and rows out of range cast the overflow
-    message, which fails with that message in the error. Adding the result
-    leaves in-range values unchanged.
+    null) cast the string "0", and rows out of range cast `message`, which
+    fails with that message in the error. Adding the result leaves in-range
+    values unchanged.
     """
     from sedonadb.expr import lit
 
     flag = in_range.funcs.nullif(lit(True)).cast(pa.string())
-    text = flag.funcs.replace(lit("false"), lit(_OVERFLOW_MESSAGE))
+    text = flag.funcs.replace(lit("false"), lit(message))
     return text.funcs.coalesce(lit("0")).cast(pa.int64())
 
 

@@ -131,15 +131,31 @@ def test_property_aliases():
 
 
 @pytest.mark.parametrize("tz", ZONES)
-def test_names_dates_and_times(tz):
-    series = _times("us", tz)
+@pytest.mark.parametrize("unit", UNITS)
+def test_names_dates_and_times(unit, tz):
+    series = _times(unit, tz)
     expected = series.to_pandas()
     _check(series.dt.day_name(), expected.dt.day_name())
     _check(series.dt.month_name(), expected.dt.month_name())
     # Dates and times are Python objects in either, a missing one None here
-    # where pandas has NaT.
+    # where pandas has NaT; a time has whole microseconds, as Python's do.
     _check(series.dt.date, expected.dt.date)
     _check(series.dt.time, expected.dt.time)
+
+
+@pytest.mark.parametrize("tz", ZONES)
+def test_times_to_the_microsecond(tz):
+    # Python's times have microseconds: the nanoseconds are cut, rounding
+    # down before 1970 too.
+    values = [
+        "1969-12-31 23:59:59.999999999",
+        "1969-12-31 00:00:00.000000001",
+        "1969-12-31 12:00:00.000001999",
+        "2020-01-01 00:00:01.123456789",
+        None,
+    ]
+    series = _times("ns", tz, values)
+    _check(series.dt.time, series.to_pandas().dt.time)
 
 
 FREQUENCIES = ["D", "2D", "h", "15min", "1h30min", "s", "ms", "us", "ns"]
@@ -239,6 +255,57 @@ def test_time_zone_errors_as_pandas():
         naive.dt.floor("h", nonexistent="shift_forward")
 
 
+# The last tick of the first or last day each unit holds: rounding out to
+# the day there is past the bounds, rounding in is not. (Which way the day
+# rounds depends on the unit.)
+OUTWARD = [(b, m, u) for b, m in [("max", "ceil"), ("min", "floor")] for u in UNITS]
+OUTWARD += [(b, "round", u) for b in ("max", "min") for u in ("s", "ns")]
+INWARD = [(b, m, u) for b, m in [("max", "floor"), ("min", "ceil")] for u in UNITS]
+INWARD += [(b, "round", u) for b in ("max", "min") for u in ("ms", "us")]
+
+
+def _bound(bound, unit):
+    ticks = 2**63 - 1 if bound == "max" else -(2**63) + 1
+    return _series(pa.array([ticks, None], pa.timestamp(unit)))
+
+
+@pytest.mark.parametrize(("bound", "method", "unit"), OUTWARD)
+def test_rounding_past_the_bounds_fails(bound, method, unit):
+    # An OverflowError in pandas; an error here too, once computed, rather
+    # than a date wrapped around to the other end.
+    series = _bound(bound, unit)
+    with pytest.raises(OverflowError):
+        getattr(series.to_pandas().dt, method)("D")
+    with pytest.raises(Exception, match="overflow"):
+        getattr(series.dt, method)("D").to_pandas()
+
+
+@pytest.mark.parametrize(("bound", "method", "unit"), INWARD)
+def test_rounding_near_the_bounds(bound, method, unit):
+    series = _bound(bound, unit)
+    _check(getattr(series.dt, method)("D"), getattr(series.to_pandas().dt, method)("D"))
+
+
+def test_frequencies_the_unit_cannot_step_by():
+    # As in pandas 3: one that is not a whole number of units fails (pandas 2
+    # rounds to a whole number of units instead), one that divides the unit
+    # changes nothing.
+    series = _times("s")
+    expected = series.to_pandas()
+    for freq in ("1500ms", "300ms", "1001us"):
+        with pytest.raises(ValueError, match="incompatible with unit=s"):
+            series.dt.floor(freq)
+    for freq in ("500ms", "2000ms", "1us", "0s"):
+        _check(series.dt.floor(freq), expected.dt.floor(freq))
+    # A negative frequency is refused: pandas rounds the other way for it.
+    for method in ("floor", "ceil", "round"):
+        with pytest.raises(ValueError, match="negative"):
+            getattr(series.dt, method)("-1s")
+    # One too long for nanoseconds, as in pandas 2.
+    with pytest.raises(OverflowError, match="106752"):
+        _times("ns").dt.floor("106752D")
+
+
 def test_frequencies_that_are_not_fixed():
     series = _times()
     for freq in ("W", "MS"):
@@ -262,6 +329,17 @@ def test_duration_properties(unit):
         _check(getattr(series.dt, name), getattr(expected.dt, name))
     _check(series.dt.total_seconds(), expected.dt.total_seconds())
     assert series.dt.unit == unit
+
+
+@pytest.mark.parametrize("unit", UNITS)
+def test_parts_of_the_longest_durations(unit):
+    # Rounded down without overflowing (Timedelta.min is -106752 days and
+    # more).
+    values = pa.array([-(2**63) + 1, 2**63 - 1, None, -1], pa.duration(unit))
+    series = _series(values)
+    expected = series.to_pandas()
+    for name in ("days", "seconds", "microseconds", "nanoseconds"):
+        _check(getattr(series.dt, name), getattr(expected.dt, name))
 
 
 def test_only_for_datetimelike_values():

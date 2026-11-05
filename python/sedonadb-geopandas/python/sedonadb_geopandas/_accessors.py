@@ -36,6 +36,7 @@ from sedonadb_geopandas._series import (
     _operand,
     _pandas_missing,
 )
+from sedonadb_geopandas._temporal import _overflow_check
 
 # Default for `na`, telling "not given" from None, a missing value.
 _NO_DEFAULT = object()
@@ -138,6 +139,35 @@ def _escaped(text):
     return "".join(f"\\{c}" if c in _META else c for c in text)
 
 
+def _literal_template(text):
+    """`text` as a replacement template of the engine's `regexp_replace()`
+    that writes it as it is.
+
+    The engine reads `$` as the start of a group (`$$` writes a `$`), and
+    first reads one or two backslashes before digits as a group too (`\\1`
+    as `${1}`): so each backslash is followed by `${}`, a group no pattern
+    can have, which writes nothing.
+    """
+    return text.replace("$", "$$").replace("\\", "\\${}")
+
+
+def _check_groups(pat, flags, case, repl):
+    """Python's error for a replacement template `repl` that refers to a
+    group `pat` does not have, as `re.sub()` (and pandas) raises: the engine
+    would replace it with nothing.
+
+    Python reads the whole template before it looks for a match. A pattern
+    Python cannot read (in the engine's own syntax, such as `\\p{L}`) is
+    not checked.
+    """
+    text, flags = _pattern_and_flags(pat, flags, case, "replace")
+    try:
+        compiled = re.compile(text, flags)
+    except re.error:
+        return
+    compiled.sub(repl, "")
+
+
 # The escapes a replacement template of Python's `re` reads as characters.
 _TEMPLATE_ESCAPES = {
     "\\": "\\",
@@ -162,12 +192,8 @@ def _engine_template(repl):
     i = 0
     while i < len(repl):
         c = repl[i]
-        if c == "$":
-            out.append("$$")
-            i += 1
-            continue
         if c != "\\":
-            out.append(c)
+            out.append(_literal_template(c))
             i += 1
             continue
         if i + 1 == len(repl):
@@ -189,13 +215,13 @@ def _engine_template(repl):
             out.append("${" + digits + "}")
             i += 1 + len(digits)
         elif nxt in _TEMPLATE_ESCAPES:
-            out.append(_TEMPLATE_ESCAPES[nxt])
+            out.append(_literal_template(_TEMPLATE_ESCAPES[nxt]))
             i += 2
         elif nxt.isascii() and nxt.isalpha():
             raise re.error(f"bad escape \\{nxt}", repl, i)
         else:
             # Kept as written, backslash and all.
-            out.append("\\" + ("$$" if nxt == "$" else nxt))
+            out.append(_literal_template("\\" + nxt))
             i += 2
     return "".join(out)
 
@@ -369,7 +395,10 @@ class StringMethods:
             if case:
                 expr = self._values.funcs.contains(lit(pat))
             else:
-                expr = self._values.funcs.regexp_like(lit("(?i)" + _escaped(pat)))
+                # As pandas compares Python strings ignoring case: both in
+                # upper case, by the full case mapping ("ß" contains "ss").
+                upper = self._values.funcs.upper()
+                expr = upper.funcs.contains(lit(pat.upper()))
         return self._boolean(expr, "contains", "", na=na)
 
     def match(self, pat, case=True, flags=0, na=_NO_DEFAULT):
@@ -463,6 +492,7 @@ class StringMethods:
             case = True
         if regex:
             pattern = _engine_regex(pat, flags, case, "replace")
+            _check_groups(pat, flags, case, repl)
             template = _engine_template(repl)
         else:
             # A literal pattern: of the flags, only re.IGNORECASE changes what
@@ -472,7 +502,7 @@ class StringMethods:
             if not ignore_case and n < 0:
                 return self._text(self._values.funcs.replace(lit(pat), lit(repl)))
             pattern = ("(?i)" if ignore_case else "") + _escaped(pat)
-            template = repl.replace("$", "$$")
+            template = _literal_template(repl)
         arguments = [lit(pattern), lit(template)]
         if n < 0:
             arguments.append(lit("g"))
@@ -651,12 +681,18 @@ class StringMethods:
             for piece in pieces[1:]:
                 present = present & piece.is_not_null()
             joined = _choose(present, joined, lit(pa.scalar(None, pa.string())))
+        elif pa.types.is_null(self._type):
+            # Strings, written with na_rep, though this column has none.
+            return self._wrap(joined)
         return self._text(joined)
 
 
 # -- dates and times -----------------------------------------------------------
 
 _UNIT_NANOS = {"s": 10**9, "ms": 10**6, "us": 10**3, "ns": 1}
+
+# The last tick of a timestamp, either way: int64's least is pandas' NaT.
+_MAX_TICKS = 2**63 - 1
 
 _DAY_NAMES = [
     "Monday",
@@ -704,8 +740,42 @@ def _remainder(value, n):
 
 def _quotient(value, n):
     """`value` divided by `n` (a positive number), rounded down, as Python's
-    `//`."""
-    return (value - _remainder(value, n)) / lit(n)
+    `//`: the engine's quotient, rounded toward zero, less one where that
+    leaves a negative remainder, so that nothing past int64 is computed."""
+    truncated = value / lit(n)
+    below = (value - truncated * lit(n)) < lit(0)
+    return truncated - below.cast(pa.int64())
+
+
+def _step(freq, unit):
+    """The fixed frequency `freq` as the number of `unit`s to round to, or 0
+    if it divides the unit (rounding to it changes nothing), as pandas 3
+    reads it.
+
+    A frequency that is neither a multiple of the unit nor divides it is an
+    error (pandas 2 rounds to a whole number of units instead), as is a
+    negative one (pandas rounds the other way for it).
+    """
+    from pandas.tseries.frequencies import to_offset
+
+    offset = to_offset(freq)
+    # A ValueError for a frequency that is not fixed, as in pandas.
+    nanos = offset.nanos
+    per_tick = _UNIT_NANOS[unit]
+    if nanos < 0:
+        raise ValueError(f"freq={offset!r} is negative: rounding needs a positive one")
+    if nanos % per_tick == 0:
+        step = nanos // per_tick
+    elif per_tick % nanos == 0:
+        step = 0
+    else:
+        raise ValueError(
+            f"freq={offset!r} is incompatible with unit={unit}. Use a lower freq "
+            f"or a higher unit instead."
+        )
+    if step > _MAX_TICKS:
+        raise OverflowError(f"Cannot cast {offset!r} to unit={unit} without overflow.")
+    return step
 
 
 def _names(ctx, names, index, present):
@@ -906,9 +976,10 @@ class DatetimeProperties:
 
     @property
     def time(self):
-        """The time of day of the wall time, as Python times."""
-        unit = "ns" if self._type.unit == "ns" else "us"
-        return self._wrap(self._local.cast(pa.time64(unit)))
+        """The time of day of the wall time, as Python times: to the
+        microsecond, as Python's are (pandas drops the nanoseconds too), where
+        a time of nanoseconds would not convert to one."""
+        return self._wrap(self._local.cast(pa.time64("us")))
 
     @property
     def tz(self):
@@ -943,28 +1014,34 @@ class DatetimeProperties:
         multiple of `freq` in units, then localized again, which fails for a
         wall time that is ambiguous or does not exist there, as pandas does
         by default."""
-        from pandas.tseries.frequencies import to_offset
-
         _check_raise(ambiguous, nonexistent)
-        # A ValueError for a frequency that is not fixed, as in pandas.
-        nanos = to_offset(freq).nanos
-        step = nanos // _UNIT_NANOS[self._type.unit]
-        if step <= 0:
-            # A frequency finer than the unit changes nothing.
+        unit = self._type.unit
+        step = _step(freq, unit)
+        if step == 0:
+            # A frequency that divides the unit changes nothing.
             return self._wrap(self._values)
         ticks = self._local.cast(pa.int64())
         remainder = _remainder(ticks, step)
-        floor = ticks - remainder
+        # How far each value moves: from -step to step, where the moved value
+        # can be past int64.
         if mode == "floor":
-            ticks = floor
+            delta = 0 - remainder
         elif mode == "ceil":
-            ticks = floor + lit(step) * (remainder > lit(0)).cast(pa.int64())
+            delta = (lit(step) - remainder) * (remainder > lit(0)).cast(pa.int64())
         else:
-            twice = remainder * lit(2)
-            odd = _remainder(floor / lit(step), 2) == lit(1)
-            up = (twice > lit(step)) | ((twice == lit(step)) & odd)
-            ticks = floor + lit(step) * up.cast(pa.int64())
-        local = ticks.cast(pa.timestamp(self._type.unit))
+            rest = lit(step) - remainder
+            odd = _remainder(_quotient(ticks, step), 2) == lit(1)
+            up = (remainder > rest) | ((remainder == rest) & odd)
+            delta = lit(step) * up.cast(pa.int64()) - remainder
+        # An error past the last timestamp either way, as pandas raises,
+        # where the sum would wrap around to the other end.
+        in_range = (ticks <= lit(_MAX_TICKS) - delta.funcs.greatest(lit(0))) & (
+            ticks >= lit(-_MAX_TICKS) - delta.funcs.least(lit(0))
+        )
+        check = _overflow_check(
+            in_range, f"rounding to {freq} overflowed the timestamps"
+        )
+        local = (ticks + delta + check).cast(pa.timestamp(unit))
         return self._wrap(self._localized(local, self._type.tz))
 
     def _localized(self, local, tz):

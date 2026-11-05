@@ -227,6 +227,15 @@ def test_strip_python_whitespace():
         _compare(method, values=values)
 
 
+def test_case_and_repeats_as_python():
+    # pandas 3's pyarrow-backed strings lower-case a final sigma as any other
+    # and refuse a negative count, where Python does not.
+    values = ["ΟΣ", "ΟΣΑ", "AΣ A", "İ", "ẞ", ""]
+    series = _series(values)
+    assert series.str.lower().to_pandas().tolist() == [v.lower() for v in values]
+    assert series.str.repeat(-1).to_pandas().tolist() == [v * -1 for v in values]
+
+
 def test_count_of_empty_matches():
     # An empty pattern matches before each character and at the end, as in
     # Python's re; pandas 3 counts the bytes of non-ASCII text instead.
@@ -236,7 +245,23 @@ def test_count_of_empty_matches():
 
 
 @pytest.mark.parametrize(
-    "repl", [r"\$", r"\\", r"x\-y", r"\n", "$1", r"\1\1", r"[\g<0>]", r"\10"]
+    "repl",
+    [
+        r"\$",
+        r"\\",
+        r"x\-y",
+        r"\n",
+        "$1",
+        r"\1\1",
+        r"[\g<0>]",
+        r"\10",
+        # A backslash before a digit, and before a group.
+        r"\\1",
+        r"\\10",
+        r"\\\1",
+        r"\\\\1",
+        r"\\\g<1>",
+    ],
 )
 def test_replacement_templates_as_python(repl):
     # As Python's re.sub() reads a template: pandas 3 hands some of these to
@@ -248,11 +273,63 @@ def test_replacement_templates_as_python(repl):
     assert _same(series.to_pandas(), expected), series.to_pandas().tolist()
 
 
+@pytest.mark.parametrize("repl", [r"\1", r"\\2", r"x\\", "$1", r"\g<0>"])
+@pytest.mark.parametrize(("n", "case"), [(-1, True), (1, True), (-1, False)])
+def test_replacements_of_text_as_written(repl, n, case):
+    # Without a regular expression, the replacement is the text itself,
+    # backslashes and all, however the engine replaces it. (pandas reads it
+    # as a template when ignoring case, where it uses re.sub().)
+    values = ["a", None, "bAa", ""]
+    series = _series(values).str.replace("a", repl, n=n, case=case, regex=False)
+    pattern = re.compile("a", 0 if case else re.IGNORECASE)
+    expected = [
+        None if v is None else pattern.sub(lambda m: repl, v, count=max(n, 0))
+        for v in values
+    ]
+    assert _same(series.to_pandas(), expected), series.to_pandas().tolist()
+
+
+@pytest.mark.parametrize("repl", [r"\2", r"\g<2>", r"\g<missing>", r"x\g<1>\3"])
+def test_replacement_groups_the_pattern_lacks(repl):
+    # Python's error, where the engine would replace the group with nothing.
+    # pandas raises too (pyarrow's error in pandas 3, for some of these).
+    series = _series(STRINGS)
+    with pytest.raises((re.error, IndexError)) as python:
+        re.sub("(a)", repl, "a")
+    with pytest.raises(type(python.value), match=re.escape(str(python.value))):
+        series.str.replace("(a)", repl, regex=True)
+    with pytest.raises(Exception):
+        series.to_pandas().str.replace("(a)", repl, regex=True)
+
+
 def test_compiled_patterns():
+    # A compiled pattern's flags hold, as in Python's re (pandas 2.3.2 drops
+    # them for match() and fullmatch()).
+    values = [v for v in STRINGS if v is not None]
+    series = _series(values)
     pattern = re.compile("a", re.IGNORECASE)
-    for method in ("contains", "match", "fullmatch", "count"):
-        _compare(method, pattern)
-    _compare("replace", re.compile("x(.)", re.IGNORECASE), r"<\1>", regex=True)
+    for method, expected in [
+        ("contains", [pattern.search(v) is not None for v in values]),
+        ("match", [pattern.match(v) is not None for v in values]),
+        ("fullmatch", [pattern.fullmatch(v) is not None for v in values]),
+        ("count", [len(pattern.findall(v)) for v in values]),
+    ]:
+        got = getattr(series.str, method)(pattern).to_pandas()
+        assert got.tolist() == expected, (method, got.tolist())
+    pairs = re.compile("x(.)", re.IGNORECASE)
+    got = series.str.replace(pairs, r"<\1>", regex=True).to_pandas()
+    assert got.tolist() == [pairs.sub(r"<\1>", v) for v in values]
+
+
+def test_contains_text_ignoring_case():
+    # As pandas compares Python strings: both in upper case, so "ß" contains
+    # "ss" (pandas 3's pyarrow-backed strings fold one character at a time).
+    values = ["ß", "Straße", "ẞ", "ss", "SS", "İ", "ﬃ", "ΣΑΣ", "σας", "a.b"]
+    series = _series(values)
+    for pat in ["ss", "SS", "ß", "i", "ffi", "σ", "ς", ".", ""]:
+        got = series.str.contains(pat, case=False, regex=False).to_pandas()
+        expected = [pat.upper() in v.upper() for v in values]
+        assert got.tolist() == expected, (pat, got.tolist())
 
 
 def test_slicing_with_brackets():
@@ -289,6 +366,18 @@ def test_cat_with_other_columns():
         gdf["a"].str.cat([gdf["b"], gdf["a"]], sep="/", na_rep="?"),
         frame["a"].str.cat([frame["b"], frame["a"]], sep="/", na_rep="?"),
     )
+
+
+def test_cat_with_a_column_of_missing_values():
+    # Of the null type, on either side: written as na_rep, if given.
+    table = pa.table({"a": pa.array([None, None], pa.null()), "b": ["x", None]})
+    gdf = sgpd.GeoDataFrame(sgpd.default_context().create_data_frame(table))
+    frame = gdf.to_pandas()
+    for left, right in [("a", "b"), ("b", "a")]:
+        for na_rep in (None, "?"):
+            ours = gdf[left].str.cat(gdf[right], sep="-", na_rep=na_rep).to_pandas()
+            theirs = frame[left].str.cat(frame[right], sep="-", na_rep=na_rep)
+            assert _same(ours, theirs), (left, na_rep, ours.tolist(), theirs.tolist())
 
 
 def test_cat_needs_columns_of_this_frame():
