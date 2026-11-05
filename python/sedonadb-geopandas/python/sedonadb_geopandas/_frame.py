@@ -1304,8 +1304,8 @@ class GeoDataFrame:
         """The reduction `func` of each column (of `names`, or of the numeric
         ones), as a pandas Series indexed by name, as pandas reduces a frame:
         each column's as `Series.<func>()` gives it, in one scan (three for
-        skew and kurt). A column the reduction is not for raises, as in
-        pandas."""
+        skew and kurt, and one per column for nunique). A column the
+        reduction is not for raises, as in pandas."""
         import pandas as pd
 
         names, values = self._reductions(func, axis, numeric_only, names, **options)
@@ -1343,24 +1343,26 @@ class GeoDataFrame:
                 values = [math.nan if value is None else value for value in values]
         return names, values
 
-    def sum(self, axis=0, numeric_only=False, min_count=0):
+    def sum(self, *, axis=0, numeric_only=False, min_count=0):
         """The sum of each column, as pandas' `DataFrame.sum()` (see
-        `Series.sum()`); this computes it."""
+        `Series.sum()`); this computes it. As in pandas 3, this and the other
+        reductions take their options by keyword (pandas 2 takes `skipna`
+        second, which these don't take: they skip missing values)."""
         return self._reduced("sum", axis, numeric_only, min_count=min_count)
 
-    def mean(self, axis=0, numeric_only=False):
+    def mean(self, *, axis=0, numeric_only=False):
         return self._reduced("mean", axis, numeric_only)
 
-    def median(self, axis=0, numeric_only=False):
+    def median(self, *, axis=0, numeric_only=False):
         return self._reduced("median", axis, numeric_only)
 
-    def std(self, axis=0, ddof=1, numeric_only=False):
+    def std(self, *, axis=0, ddof=1, numeric_only=False):
         return self._reduced("std", axis, numeric_only, ddof=ddof)
 
-    def var(self, axis=0, ddof=1, numeric_only=False):
+    def var(self, *, axis=0, ddof=1, numeric_only=False):
         return self._reduced("var", axis, numeric_only, ddof=ddof)
 
-    def sem(self, axis=0, ddof=1, numeric_only=False):
+    def sem(self, *, axis=0, ddof=1, numeric_only=False):
         return self._reduced("sem", axis, numeric_only, ddof=ddof)
 
     def skew(self, *args, **kwargs):
@@ -1372,18 +1374,18 @@ class GeoDataFrame:
             return self.geometry.skew(*args, **kwargs)
         return self._skewness(*args, **kwargs)
 
-    def _skewness(self, axis=0, skipna=True, numeric_only=False):
+    def _skewness(self, *, axis=0, skipna=True, numeric_only=False):
         return self._reduced("skew", axis, numeric_only, skipna=skipna)
 
-    def kurt(self, axis=0, skipna=True, numeric_only=False):
+    def kurt(self, *, axis=0, skipna=True, numeric_only=False):
         return self._reduced("kurt", axis, numeric_only, skipna=skipna)
 
     kurtosis = kurt
 
-    def min(self, axis=0, numeric_only=False):
+    def min(self, *, axis=0, numeric_only=False):
         return self._reduced("min", axis, numeric_only)
 
-    def max(self, axis=0, numeric_only=False):
+    def max(self, *, axis=0, numeric_only=False):
         return self._reduced("max", axis, numeric_only)
 
     def count(self, axis=0, numeric_only=False):
@@ -1534,10 +1536,8 @@ class GeoDataFrame:
             # values, not from a Series of them, which would share one.
             results = []
             for name in func:
-                self._by_name(name)
-                names, values = self._reductions(
-                    _REDUCED.get(name, name), axis, **kwargs
-                )
+                arguments, options = self._reduction_arguments(name, axis, kwargs)
+                names, values = self._reductions(*arguments, **options)
                 results.append(dict(zip(names, values)))
             return pd.DataFrame(
                 {column: [result[column] for result in results] for column in names},
@@ -1573,6 +1573,21 @@ class GeoDataFrame:
                 f"'{name}' is not a valid function for '{type(self).__name__}' object"
             )
         return getattr(self, name)
+
+    def _reduction_arguments(self, name, axis, options):
+        """The arguments and options of `_reductions()` for the reduction
+        `name` with `options`, as the frame's method of that name reads them:
+        a TypeError for an option it does not take, as calling it raises."""
+        method = self._skewness if name == "skew" else self._by_name(name)
+        bound = inspect.signature(method).bind(axis=axis, **options)
+        bound.apply_defaults()
+        options = dict(bound.arguments)
+        axis = options.pop("axis")
+        numeric_only = options.pop("numeric_only", False)
+        names = None
+        if "bool_only" in options:
+            names = self._truth_columns(options.pop("bool_only"))
+        return (_REDUCED.get(name, name), axis, numeric_only, names), options
 
     def to_crs(self, crs=None, epsg=None):
         """Reproject the geometry column to `crs` (`ST_Transform`), as

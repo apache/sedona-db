@@ -186,6 +186,15 @@ def test_describe_matches_pandas(kwargs):
     _same_frame(gdf.describe(**kwargs), expected)
 
 
+@pytest.mark.parametrize("include", [None, "all", ["category"]])
+def test_describe_of_a_categorical(include):
+    values = pd.Categorical([1, 1, 2, None, 3], categories=[3, 1, 2])
+    table = TABLE.append_column("c", pa.array(values))
+    gdf = _frame(table)[["i", "c", "s"]]
+    expected = gdf.to_pandas().describe(include=include)
+    _same_frame(gdf.describe(include=include), expected)
+
+
 def test_describe_geometry():
     gdf = _geoframe()
     expected = gdf.to_geopandas().describe(include="all")
@@ -233,3 +242,62 @@ def test_agg():
     assert gdf.aggregate("count").tolist() == gdf.count().tolist()
     with pytest.raises(AttributeError, match="cumsum"):
         gdf.agg("cumsum")
+
+
+@pytest.mark.parametrize(
+    ("names", "options", "columns"),
+    [
+        (["std", "var", "sem"], {"ddof": 0}, NUMERIC),
+        (["skew", "kurt", "kurtosis"], {"skipna": False}, NUMERIC),
+        (["any", "all"], {"skipna": False}, ["i", "f", "b", "s", "d"]),
+        (["sum"], {"min_count": 6}, NUMERIC),
+        (["nunique"], {"dropna": False}, list(TABLE.column_names)),
+    ],
+)
+def test_agg_of_names_with_options(names, options, columns):
+    # As each method of these names takes them.
+    gdf = _frame()[columns]
+    expected = gdf.to_pandas().agg(names, **options)
+    _same_frame(gdf.agg(names, **options), expected)
+
+
+def test_agg_of_names_selecting_columns():
+    # Of the columns the methods of these names select, as each row is the
+    # method's result (pandas hands the option to each column's own method,
+    # which refuses it for a column it would leave out).
+    gdf = _frame()
+    expected = gdf.to_pandas()
+    _same_frame(
+        gdf.agg(["sum", "mean", "max"], numeric_only=True),
+        expected[NUMERIC].agg(["sum", "mean", "max"]),
+    )
+    _same_frame(
+        gdf.agg(["any", "all"], bool_only=True), expected[["b"]].agg(["any", "all"])
+    )
+
+
+def test_agg_of_names_refuses_options_a_method_does_not_take():
+    # As the method itself does, rather than leave them out: these
+    # reductions skip missing values (skipna=False is not supported).
+    gdf = _frame()[NUMERIC]
+    for names, options in [
+        (["sum", "mean"], {"skipna": False}),
+        (["min", "max"], {"skipna": False}),
+        (["mean"], {"min_count": 1}),
+        (["count"], {"ddof": 0}),
+    ]:
+        with pytest.raises(TypeError, match="unexpected keyword"):
+            getattr(gdf, names[0])(**options)
+        with pytest.raises(TypeError, match="unexpected keyword"):
+            gdf.agg(names, **options)
+
+
+def test_reductions_take_options_by_keyword():
+    # As in pandas 3: pandas 2 reads mean(0, False) as skipna=False, which
+    # this would otherwise read as numeric_only=False.
+    gdf = _frame()[NUMERIC]
+    for method in ("sum", "mean", "median", "std", "var", "sem", "kurt", "min", "max"):
+        with pytest.raises(TypeError, match="positional"):
+            getattr(gdf, method)(0, False)
+    with pytest.raises(TypeError, match="positional"):
+        gdf[["i"]].skew(0, False)

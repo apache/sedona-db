@@ -581,6 +581,11 @@ class Series:
         """This expression's Arrow type as stored, encodings included."""
         return pa.schema(self._df.select(self._expr.alias("x")).schema).field("x").type
 
+    def _is_categorical(self):
+        """Whether pandas reads this column as a categorical: whether it is
+        dictionary-encoded."""
+        return pa.types.is_dictionary(self._stored_dtype())
+
     def _key(self):
         """This column as a key that compares as pandas compares values, with
         its type (see `_matching_key`)."""
@@ -1351,6 +1356,9 @@ class Series:
             truth = (self._decoded().cast(pa.int64()) != lit(0)).funcs.coalesce(
                 lit(True)
             )
+        elif pa.types.is_null(dtype):
+            # Nothing but missing values, which pandas reads as None: false.
+            truth = self._decoded().is_not_null()
         else:
             truth = _truthiness(self._decoded(), dtype)
         if truth is None:
@@ -1454,7 +1462,8 @@ class Series:
         """The most frequent value(s), sorted, as a pandas Series, as in pandas.
 
         Values compare as `value_counts()` compares them: NaN is a missing
-        value, which counts with `dropna=False`, and -0.0 is 0.0.
+        value, which counts with `dropna=False`, and -0.0 is 0.0. Of a
+        categorical, a categorical of its categories, in their order.
         """
         import pandas as pd
 
@@ -1465,6 +1474,11 @@ class Series:
         # In value order, a missing value last, as value_counts(sort=False)
         # gives them.
         modes = counts.index[counts == counts.max()]
+        if self._is_categorical():
+            # A categorical's modes are its codes', of its categories: in
+            # their order, a missing value (code -1) first, as pandas has them.
+            modes = pd.Categorical(modes, dtype=self.dtype)
+            modes = modes[modes.codes.argsort(kind="stable")]
         return pd.Series(modes, name=self._name)
 
     def nlargest(self, n=5, keep="first"):
@@ -1569,17 +1583,23 @@ class Series:
 
     def _described_values(self):
         """This column's description as values counted: count, unique, top,
-        freq."""
+        freq. Of a categorical's values as frequent as each other, top is the
+        first category, as pandas counts them in category order."""
         import pandas as pd
 
         counts = self.value_counts()
+        if self._is_categorical() and len(counts):
+            order = {value: j for j, value in enumerate(self.dtype.categories)}
+            counts = counts.sort_index(key=lambda index: index.map(order))
+            counts = counts.sort_values(ascending=False, kind="stable")
         count = int(counts.sum())
-        top, freq = (
-            (counts.index[0], counts.iloc[0]) if len(counts) else (math.nan,) * 2
-        )
         index = ["count", "unique", "top", "freq"]
-        values = [count, len(counts), top, freq]
-        return pd.Series(values, index=index, name=self._name, dtype=object)
+        if not len(counts):
+            values = [count, 0, math.nan, math.nan]
+            return pd.Series(values, index=index, name=self._name, dtype=object)
+        # Of the dtype pandas infers: of numbers for a categorical of them.
+        values = [count, len(counts), counts.index[0], counts.iloc[0]]
+        return pd.Series(values, index=index, name=self._name)
 
     def _described_geometries(self):
         """This column of geometries' description, as GeoPandas' (a pandas
@@ -1713,6 +1733,12 @@ def _shapes(columns, method, skipna):
     exact for nearby values; the third, their central moments about it. Sums
     of powers of the values, in one scan, would lose the moments to rounding
     for values far from 0, such as timestamps or projected coordinates.
+
+    The values less the smallest are divided by their range, which the
+    skewness and kurtosis do not depend on, so that neither their mean nor
+    the powers of their deviations overflow or underflow for values of any
+    magnitude; for a range past float64's (values near its largest either
+    way), halves of the values are. Infinite values give NaN, as in pandas.
     """
     df = columns[0]._df
     values = [column._numeric(method).cast(pa.float64()) for column in columns]
@@ -1725,10 +1751,18 @@ def _shapes(columns, method, skipna):
             column._missing().cast(pa.int64()).funcs.sum().alias(f"x{i}"),
         ]
     bounds = _one_row(df.agg(*first))
-    shifted = [
-        value - lit(float(bounds[f"lo{i}"]) if bounds[f"n{i}"] else 0.0)
-        for i, value in enumerate(values)
-    ]
+    shifted = []
+    for i, value in enumerate(values):
+        lo = float(bounds[f"lo{i}"]) if bounds[f"n{i}"] else 0.0
+        hi = float(bounds[f"hi{i}"]) if bounds[f"n{i}"] else 0.0
+        # Halving is exact, and keeps the range of finite values finite.
+        half = 1.0 if math.isfinite(hi - lo) else 0.5
+        scale = hi * half - lo * half
+        if not (math.isfinite(scale) and scale > 0):
+            # Values all alike, whose result is NaN whatever this is, or
+            # infinite, which make the moments NaN.
+            scale = 1.0
+        shifted.append((value * lit(half) - lit(lo * half)) / lit(scale))
     means = _one_row(
         df.agg(*[value.funcs.avg().alias(f"m{i}") for i, value in enumerate(shifted)])
     )
@@ -1786,7 +1820,10 @@ def _descriptions(columns, percentiles):
     aggregates, measured = [], []
     for i, column in enumerate(columns):
         dtype = column._dtype()
-        if _kind(dtype) == "number" or (
+        if column._is_categorical():
+            # Counted, as pandas describes a categorical, of numbers too.
+            results[i] = column._described_values()
+        elif _kind(dtype) == "number" or (
             pa.types.is_timestamp(dtype) or pa.types.is_duration(dtype)
         ):
             measured.append(i)

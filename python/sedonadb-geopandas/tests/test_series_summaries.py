@@ -110,6 +110,15 @@ def test_truth_of_timestamps_and_geometry():
         points.geometry.all()
 
 
+@pytest.mark.parametrize("skipna", [True, False])
+def test_truth_of_a_column_of_missing_values(skipna):
+    # Of the null type, which pandas reads as Python objects: None is false.
+    series = _series([None, None], pa.null())
+    expected = series.to_pandas()
+    assert series.any(skipna=skipna) == expected.any(skipna=skipna)
+    assert series.all(skipna=skipna) == expected.all(skipna=skipna)
+
+
 def test_negative_zero_is_false():
     series = _series([-0.0, 0.0, 1.0])
     expected = series.to_pandas()
@@ -157,7 +166,10 @@ def _exact_shape(values):
     n = len(xs)
     mean = sum(xs) / n
     m2, m3, m4 = (sum((x - mean) ** k for x in xs) for k in (2, 3, 4))
-    skew = n * (n - 1) ** 0.5 / (n - 2) * float(m3 / m2) / float(m2) ** 0.5
+    # Of ratios that don't depend on the scale, which a float of a moment
+    # would (past float64's range).
+    ratio = float(m3 * m3 / m2**3) ** 0.5
+    skew = n * (n - 1) ** 0.5 / (n - 2) * (ratio if m3 >= 0 else -ratio)
     kurt = float(
         Fraction(n * (n + 1) * (n - 1)) * m4 / ((n - 2) * (n - 3) * m2**2)
         - Fraction(3 * (n - 1) ** 2, (n - 2) * (n - 3))
@@ -173,6 +185,33 @@ def test_shape_of_values_far_from_zero():
     skew, kurt = _exact_shape(values)
     assert math.isclose(series.skew(), skew, rel_tol=1e-12)
     assert math.isclose(series.kurt(), kurt, rel_tol=1e-12)
+
+
+@pytest.mark.parametrize("scale", [1e-160, 1e-100, 1e100, 1e160, 1e300])
+def test_shape_of_values_of_any_magnitude(scale):
+    # Skewness and kurtosis don't depend on the scale of the values, though
+    # the powers of their moments would overflow or underflow (pandas gives
+    # 0 or NaN for these).
+    values = [scale * v for v in (0.5, 1.25, 3.0, 7.5, 1.0, 2.0)]
+    series = _series(values, pa.float64())
+    skew, kurt = _exact_shape(values)
+    assert math.isclose(series.skew(), skew, rel_tol=1e-12)
+    assert math.isclose(series.kurt(), kurt, rel_tol=1e-12)
+
+
+def test_shape_of_values_far_apart_and_infinite():
+    # The largest values either way: their range is past float64's.
+    values = [-1e308, 1e308, 0.0, 5.0, 7.0]
+    series = _series(values, pa.float64())
+    skew, kurt = _exact_shape(values)
+    assert math.isclose(series.skew(), skew, rel_tol=1e-12)
+    assert math.isclose(series.kurt(), kurt, rel_tol=1e-12)
+    # NaN, as in pandas.
+    for infinite in (math.inf, -math.inf):
+        series = _series([1.0, infinite, 2.0, 3.0, 5.0], pa.float64())
+        assert math.isnan(series.skew()) and math.isnan(series.kurt())
+        with np.errstate(invalid="ignore"):
+            assert math.isnan(series.to_pandas().skew())
 
 
 def test_shape_of_constant_values():
@@ -214,6 +253,26 @@ def test_mode_counting_missing_values():
     expected = series.to_pandas().mode(dropna=False)
     assert len(ours) == len(expected) == 1 and math.isnan(ours.iloc[0])
     assert series.mode().tolist() == series.to_pandas().mode().tolist()
+
+
+def _categorical(values, categories, ordered=False):
+    return _series(pa.array(pd.Categorical(values, categories, ordered=ordered)))
+
+
+@pytest.mark.parametrize("ordered", [False, True])
+def test_mode_of_a_categorical(ordered):
+    # A categorical of the column's categories, the modes in their order (a
+    # missing value, counted, first), as pandas has a categorical's.
+    for values, categories in [
+        (["b", "a", "a", "b", "c"], ["b", "a", "c"]),
+        (["b", None, "a", None, "a", "b"], ["b", "a", "c"]),
+        ([1, 1, 2, None, 2], [2, 1, 3]),
+        ([None, None], ["b", "a"]),
+    ]:
+        series = _categorical(values, categories, ordered)
+        for dropna in (True, False):
+            ours = series.mode(dropna=dropna)
+            pd.testing.assert_series_equal(ours, series.to_pandas().mode(dropna=dropna))
 
 
 @pytest.mark.parametrize("keep", ["first", "last", "all"])
@@ -272,6 +331,20 @@ def test_describe_with_percentiles(percentiles):
         series = _frame()[column]
         expected = series.to_pandas().describe(percentiles=percentiles)
         _same_description(series.describe(percentiles=percentiles), expected)
+
+
+@pytest.mark.parametrize("ordered", [False, True])
+def test_describe_of_a_categorical(ordered):
+    # Counted, as pandas describes a categorical, of numbers too; of values
+    # as frequent as each other, top is the first category, as in pandas.
+    for values, categories in [
+        ([1, 1, 2, None], [1, 2, 3]),
+        (["a", "b", "b", "a"], ["b", "a"]),
+        ([2.5, None, 0.5], [0.5, 2.5]),
+        ([None, None], ["b", "a"]),
+    ]:
+        series = _categorical(values, categories, ordered)
+        _same_description(series.describe(), series.to_pandas().describe())
 
 
 def test_describe_of_no_values():
