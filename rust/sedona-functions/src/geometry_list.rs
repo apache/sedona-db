@@ -29,12 +29,23 @@ use sedona_schema::datatypes::SedonaType;
 /// Unwraps item-level CRS inputs and repeats each row's CRS for its members.
 /// Keeping the CRS on each geometry allows list elements to be used by other UDFs.
 pub(crate) struct GeometryListInput {
+    /// Geometry or geography argument type with any item-CRS wrapper removed.
+    /// The single-element array can be passed directly to the geometry executor.
     pub types: [SedonaType; 1],
+    /// Argument for the geometry executor, retaining its scalar or array shape.
+    /// Parent struct nulls are propagated to the unwrapped geometry values.
     pub args: [ColumnarValue; 1],
+    /// CRS values for item-CRS inputs: one per input row, or one for a scalar.
+    /// None indicates an input without an item-CRS wrapper; null entries indicate
+    /// rows with an unspecified CRS.
     crs: Option<StringViewArray>,
 }
 
 impl GeometryListInput {
+    /// Prepare a single geometry or geography argument for list extraction.
+    /// Uses the shared item-CRS helpers to unwrap the input and propagate parent
+    /// nulls, preserving the CRS values for the output members. Inputs without
+    /// an item-CRS wrapper retain their original type and value.
     pub fn new(arg_type: &SedonaType, arg: &ColumnarValue) -> Result<Self> {
         let (item_type, crs_type) = parse_item_crs_arg_type(arg_type)?;
         if crs_type.is_none() {
@@ -64,7 +75,12 @@ impl GeometryListInput {
     }
 
     /// Wrap flattened WKB members with the CRS of their parent input row.
-    /// Offsets refer to the outer list, including empty and null rows.
+    ///
+    /// `values` contains the concatenated output geometries, and `offsets` maps
+    /// each input row to its range in `values`, including empty and null rows.
+    /// `field` describes an output geometry member: the list item for
+    /// ST_Geometries, or the `geom` field within each ST_Dump record.
+    /// Inputs without an item-CRS wrapper return the WKB values directly.
     pub fn finish_values(
         &self,
         values: BinaryArray,
