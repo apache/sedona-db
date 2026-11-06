@@ -253,63 +253,6 @@ def _unused_name(df, name, reserved=()):
     return name
 
 
-def _join_distance(value, method, name):
-    """`value`, the `name` argument of `method`, as a float: only a single
-    number. A Series or expression cannot be one: the join's condition is built
-    against re-aliased copies of both frames, so a column reference would
-    resolve by name inside the join rather than against the frame it was read
-    from."""
-    from sedonadb_geopandas._series import _numeric_value
-
-    if isinstance(value, (Series, Expr)) or not is_scalar(value):
-        raise TypeError(
-            f"{method}() `{name}` must be a number, got {type(value).__name__}"
-        )
-    number = _numeric_value(value)
-    if not isinstance(number, numbers.Real) or isinstance(number, bool):
-        raise TypeError(
-            f"{method}() `{name}` must be a number, got {type(value).__name__}"
-        )
-    return float(number)
-
-
-class _PlannedApart:
-    """A frame's query as a table that is planned on its own, with the settings
-    the frame was made with, whatever settings the query reading it is planned
-    with. (A view's query is planned as part of the query reading it.)"""
-
-    def __init__(self, df):
-        self._df = df
-
-    def __sedonadb_table_provider__(self):
-        return self._df.__sedonadb_table_provider__()
-
-
-def _with_knn_ties(left, right):
-    """`left` and `right`, read into frames of `left`'s context such that a KNN
-    join of the first with the second gives each row every equally near
-    neighbour, as GeoPandas' nearest join does, rather than one of them.
-
-    That is an option of the engine, which a frame copies from its context
-    when it is made and a join takes from its left frame. So the frames are
-    made while the context has the option set, and the option is then put back
-    as it was: other frames of the context, made before or after, keep their
-    own. Each of `left` and `right` is planned apart, with the settings it was
-    made with, so a KNN join within it keeps its rows.
-    """
-    ctx = left._ctx
-    option = "sedona.spatial_join.knn_include_tie_breakers"
-    settings = ctx.sql(
-        f"SELECT value FROM information_schema.df_settings WHERE name = '{option}'"
-    ).to_arrow_table()
-    previous = settings.column("value").to_pylist()[0]
-    ctx.sql(f"SET {option} = true").execute()
-    try:
-        return tuple(ctx.create_data_frame(_PlannedApart(df)) for df in (left, right))
-    finally:
-        ctx.sql(f"SET {option} = {previous}").execute()
-
-
 def _from_geopandas(data, context):
     """A `geopandas.GeoDataFrame` loaded with its active geometry column kept,
     where `from_geopandas()` would take SedonaDB's choice."""
@@ -1409,7 +1352,18 @@ class GeoDataFrame:
         columns must share a CRS (GeoPandas warns and joins anyway, which is
         almost always a mistake). Use `to_crs` on one side first.
         """
-        self._check_join(other, how, "sjoin")
+        if not isinstance(other, GeoDataFrame):
+            raise TypeError(
+                f"sjoin() expects a GeoDataFrame, got {type(other).__name__}"
+            )
+        if self._geometry_name is None or other._geometry_name is None:
+            raise ValueError(
+                "sjoin() requires an active geometry column on both frames"
+            )
+        if how not in ("inner", "left", "right"):
+            raise ValueError(
+                f"sjoin() `how` must be 'inner', 'left', or 'right', got {how!r}"
+            )
         if predicate not in _SJOIN_PREDICATES:
             raise ValueError(
                 f"sjoin() `predicate` must be one of {sorted(_SJOIN_PREDICATES)}, "
@@ -1423,14 +1377,48 @@ class GeoDataFrame:
                 "only for that predicate"
             )
         if distance is not None:
-            distance = _join_distance(distance, "sjoin", "distance")
-        self._check_join_crs(other, "sjoin")
+            # Only a single number. A Series or expression cannot be a distance:
+            # the predicate is built against re-aliased copies of both frames, so
+            # a column reference would resolve by name inside the join rather
+            # than against the frame it was read from.
+            from sedonadb_geopandas._series import _numeric_value
+
+            if isinstance(distance, (Series, Expr)) or not is_scalar(distance):
+                raise TypeError(
+                    f"sjoin() `distance` must be a number, got {type(distance).__name__}"
+                )
+            distance = _numeric_value(distance)
+            if not isinstance(distance, numbers.Real) or isinstance(distance, bool):
+                raise TypeError(
+                    f"sjoin() `distance` must be a number, got {type(distance).__name__}"
+                )
+            distance = float(distance)
+
+        from sedonadb_geopandas._series import _same_crs
+
+        left_crs, right_crs = self.crs, other.crs
+        if (left_crs is None) != (right_crs is None) or (
+            left_crs is not None and not _same_crs(left_crs, right_crs.to_json())
+        ):
+            raise ValueError(
+                f"sjoin() needs both geometry columns in the same CRS, got "
+                f"{left_crs} and {right_crs}; reproject one side with to_crs() first"
+            )
 
         # Both sides are aliased so the predicate and the output projection can
         # name columns unambiguously when both frames use the same names.
         left = self._df.alias("sjoin_left")
         right = other._df.alias("sjoin_right")
-        left_geom, right_geom = self._join_geometries(other, left, right)
+        left_geom = left[self._geometry_name]
+        right_geom = right[other._geometry_name]
+        if left_crs is not None and left_crs.to_json() != right_crs.to_json():
+            # The same CRS can be spelled differently (an EPSG code and the
+            # matching PROJ string), and the engine refuses that as a mismatch.
+            # Only the predicate's operand is restamped; each output column keeps
+            # its own CRS.
+            right_geom = right_geom.funcs.st_setcrs(
+                self._df._ctx.lit(left_crs.to_json())
+            )
         # Always a single spatial predicate: that is what the planner rewrites
         # into an indexed spatial join. A composition (`a OR b`) falls back to a
         # nested-loop join, which is quadratic.
@@ -1439,173 +1427,7 @@ class GeoDataFrame:
         else:
             on = getattr(left_geom.geo, _SJOIN_PREDICATES[predicate])(right_geom)
         joined = left.join(right, on=on, how=how)
-        _, projection = self._join_projection(
-            other, left, right, how, lsuffix, rsuffix, "sjoin"
-        )
-        geometry = self._geometry_name if how != "right" else other._geometry_name
-        return GeoDataFrame(joined.select(*projection), geometry)
 
-    def sjoin_nearest(
-        self,
-        right,
-        how="inner",
-        max_distance=None,
-        lsuffix="left",
-        rsuffix="right",
-        distance_col=None,
-        exclusive=False,
-    ):
-        """Join rows to the nearest rows of the other frame, as in
-        `geopandas.sjoin_nearest`.
-
-        With `how="inner"` or `"left"`, each row of this frame is matched to
-        the rows of `right` whose geometry is nearest its own: all of them,
-        when several are as near. With `how="right"`, each row of `right` is
-        matched to the nearest rows of this frame. As in GeoPandas, a row with
-        an empty or missing geometry has no nearest rows, and `how="left"` and
-        `"right"` keep the rows of their side that are matched to none, with
-        missing values for the other side. Distances are planar, in the units
-        of the CRS.
-
-        Args:
-            right: The right-hand `GeoDataFrame`.
-            how: `"inner"`, `"left"`, or `"right"`.
-            max_distance: Match only rows at most this far apart, a number
-                greater than 0; `None` for no limit.
-            lsuffix: Suffix for left columns whose names also occur on the right;
-                `None` keeps them unsuffixed.
-            rsuffix: Suffix for the corresponding right columns; `None` keeps
-                them unsuffixed.
-            distance_col: The name of a column for each match's distance,
-                missing for a row matched to none. It comes after the other
-                columns, or in place of a column of that name, as in GeoPandas.
-            exclusive: Not supported yet.
-
-        Returns:
-            A `GeoDataFrame` carrying one geometry column: the left frame's for
-            `how="inner"`/`"left"`, the right frame's for `how="right"`, as in
-            GeoPandas.
-
-        Differences from GeoPandas: as for `sjoin()`, there is no
-        `index_left`/`index_right` column, and the two geometry columns must
-        share a CRS. The rows come in no particular order. A `max_distance` of
-        NaN is refused, where GeoPandas sets no limit, and so is a
-        `distance_col` naming the active geometry column, which GeoPandas fills
-        with the distances. `exclusive=True` is not supported, nor is a
-        geography column: the engine has no nearest-neighbour join of
-        geography yet (apache/sedona-db#1086).
-        """
-        self._check_join(right, how, "sjoin_nearest")
-        if max_distance is not None:
-            max_distance = _join_distance(max_distance, "sjoin_nearest", "max_distance")
-            if not max_distance > 0:
-                raise ValueError(
-                    f"sjoin_nearest() `max_distance` must be greater than 0, got "
-                    f"{max_distance}"
-                )
-        if distance_col is not None and not isinstance(distance_col, str):
-            raise TypeError(
-                f"sjoin_nearest() `distance_col` must be a column name, got "
-                f"{type(distance_col).__name__}"
-            )
-        if exclusive:
-            raise NotImplementedError(
-                "sjoin_nearest() does not support exclusive=True yet"
-            )
-        if self.geometry._is_geography() or right.geometry._is_geography():
-            raise NotImplementedError(
-                "sjoin_nearest() does not support geography yet: the engine has no "
-                "nearest-neighbour join of geography (apache/sedona-db#1086)"
-            )
-        self._check_join_crs(right, "sjoin_nearest")
-
-        left, right_df = _with_knn_ties(self._df, right._df)
-        left, right_df = left.alias("sjoin_left"), right_df.alias("sjoin_right")
-        left_geom, right_geom = self._join_geometries(right, left, right_df)
-        # Each row of the query side gets its nearest rows of the other.
-        if how == "right":
-            query, candidates = right_geom, left_geom
-        else:
-            query, candidates = left_geom, right_geom
-        on = query.funcs.st_knn(candidates, 1)
-        distance = query.funcs.st_distance(candidates)
-        if max_distance is not None:
-            # The join checks a condition beside ST_KNN on the nearest rows it
-            # finds, so this keeps them only when they are near enough. A row of
-            # the query side whose nearest rows are farther has none, as in
-            # GeoPandas, which looks for the nearest only within max_distance.
-            on = on & (distance <= lit(max_distance))
-        joined = left.join(right_df, on=on, how=how)
-        names, projection = self._join_projection(
-            right, left, right_df, how, lsuffix, rsuffix, "sjoin_nearest"
-        )
-        geometry = self._geometry_name if how != "right" else right._geometry_name
-        if distance_col is not None:
-            if distance_col == geometry:
-                raise ValueError(
-                    f"sjoin_nearest() `distance_col` {distance_col!r} names the "
-                    f"active geometry column; pass another name"
-                )
-            distance = distance.alias(distance_col)
-            if distance_col in names:
-                projection[names.index(distance_col)] = distance
-            else:
-                projection.append(distance)
-        # The join is planned apart in turn, so that the frame it gives has the
-        # context's settings rather than the ties: a query made of that frame
-        # later, such as a join with another KNN join, is planned with those.
-        joined = self._df._ctx.create_data_frame(
-            _PlannedApart(joined.select(*projection))
-        )
-        return GeoDataFrame(joined, geometry)
-
-    def _check_join(self, other, how, method):
-        """Raises unless `other` and `how` can be joined to this frame by
-        `method`, `sjoin()` or `sjoin_nearest()`."""
-        if not isinstance(other, GeoDataFrame):
-            raise TypeError(
-                f"{method}() expects a GeoDataFrame, got {type(other).__name__}"
-            )
-        if self._geometry_name is None or other._geometry_name is None:
-            raise ValueError(
-                f"{method}() requires an active geometry column on both frames"
-            )
-        if how not in ("inner", "left", "right"):
-            raise ValueError(
-                f"{method}() `how` must be 'inner', 'left', or 'right', got {how!r}"
-            )
-
-    def _check_join_crs(self, other, method):
-        """Raises unless both active geometry columns have one CRS."""
-        left_crs, right_crs = self.crs, other.crs
-        if (left_crs is None) != (right_crs is None) or (
-            left_crs is not None and not _same_crs(left_crs, right_crs.to_json())
-        ):
-            raise ValueError(
-                f"{method}() needs both geometry columns in the same CRS, got "
-                f"{left_crs} and {right_crs}; reproject one side with to_crs() first"
-            )
-
-    def _join_geometries(self, other, left, right):
-        """The active geometry columns of `left` and `right`, aliased copies of
-        this frame and `other`, for the join's condition."""
-        left_geom = left[self._geometry_name]
-        right_geom = right[other._geometry_name]
-        left_crs, right_crs = self.crs, other.crs
-        if left_crs is not None and left_crs.to_json() != right_crs.to_json():
-            # The same CRS can be spelled differently (an EPSG code and the
-            # matching PROJ string), and the engine refuses that as a mismatch.
-            # Only the condition's operand is restamped; each output column keeps
-            # its own CRS.
-            right_geom = right_geom.funcs.st_setcrs(
-                self._df._ctx.lit(left_crs.to_json())
-            )
-        return left_geom, right_geom
-
-    def _join_projection(self, other, left, right, how, lsuffix, rsuffix, method):
-        """The output column names of a spatial join of this frame and `other`
-        (aliased as `left` and `right`), and their expressions, as GeoPandas
-        names them."""
         # One geometry column survives: whichever side GeoPandas keeps.
         keep_left_geom = how != "right"
         geometry = self._geometry_name if keep_left_geom else other._geometry_name
@@ -1649,8 +1471,8 @@ class GeoDataFrame:
         duplicates = sorted({n for n in final_names if final_names.count(n) > 1})
         if duplicates:
             raise ValueError(
-                f"{method}() would produce duplicate column name(s) {duplicates} "
-                f"with lsuffix={lsuffix!r} and rsuffix={rsuffix!r}. Pass different "
+                f"sjoin() would produce duplicate column name(s) {duplicates} with "
+                f"lsuffix={lsuffix!r} and rsuffix={rsuffix!r}. Pass different "
                 f"suffixes, or rename the column first."
             )
 
@@ -1660,7 +1482,7 @@ class GeoDataFrame:
         projection += [
             right[name].alias(out) for name, out in zip(emitted_right, right_out)
         ]
-        return final_names, projection
+        return GeoDataFrame(joined.select(*projection), geometry)
 
     # -- geometry and CRS bookkeeping --------------------------------------
 

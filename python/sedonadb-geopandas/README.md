@@ -197,16 +197,6 @@ supports neither `grid_size` nor a `method` other than `"unary"`, and
 mismatch and joins anyway, which is almost always a mistake, so this raises and
 points at `to_crs()`. `on_attribute` is not supported yet.
 
-`sjoin_nearest()` (of a frame, and `sedonadb_geopandas.sjoin_nearest()`)
-matches rows to the nearest rows of the other frame with the engine's indexed
-nearest-neighbour join, all of them when several are as near, as in GeoPandas,
-and with the same columns as `sjoin()`. It needs the same CRS on both sides.
-`max_distance` must be a number greater than 0 (GeoPandas takes NaN as no
-limit), and `distance_col` can't name the active geometry column, which
-GeoPandas would fill with the distances. `exclusive=True` is not supported, nor
-is geography, which the engine can't join by distance to the nearest yet
-(apache/sedona-db#1086).
-
 Without an index, `drop()` and `rename()` work on columns only, `rename()`
 raises rather than producing duplicate column names, and a sort from
 `sort_values()` holds until an operation that does not preserve row order (a

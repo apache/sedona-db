@@ -719,15 +719,12 @@ impl InternalDataFrame {
     fn __sedonadb_table_provider__<'py>(
         &self,
         py: Python<'py>,
+        ctx: &InternalContext,
     ) -> Result<Bound<'py, PyCapsule>, PySedonaError> {
         let provider = self.inner.clone().into_view();
-        // Use the frame's own session state, as collecting the frame does: its
-        // context's state when the frame was made. The consumer then gets the
-        // frame's rows, planned with the settings the frame was made with, and
-        // object stores, UDFs, and other registrations are available when it
-        // scans the provider.
-        let (session, _) = self.inner.clone().into_parts();
-        let session = Arc::new(session);
+        // Use the actual session state so that object stores, UDFs, and other
+        // registrations are available when the consumer scans the provider.
+        let session = Arc::new(ctx.inner.ctx.state());
         let exported = sedona_extension::table_provider::ExportedTableProvider::new(
             provider,
             session,
