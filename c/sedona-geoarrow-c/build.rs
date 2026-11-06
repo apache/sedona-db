@@ -17,7 +17,11 @@
 
 fn main() {
     println!("cargo:rerun-if-changed=src/geoarrow/double_parse_fast_float.cc");
+    println!("cargo:rerun-if-changed=src/geoarrow/fast_float.h");
     println!("cargo:rerun-if-changed=src/geoarrow/geoarrow.c");
+    println!("cargo:rerun-if-changed=src/geoarrow/geoarrow.h");
+    println!("cargo:rerun-if-changed=src/geoarrow/ryu/d2s.c");
+    println!("cargo:rerun-if-changed=src/geoarrow/ryu/ryu.h");
     println!("cargo:rerun-if-changed=src/nanoarrow/nanoarrow.c");
 
     cc::Build::new()

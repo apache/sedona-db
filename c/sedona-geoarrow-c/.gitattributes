@@ -15,4 +15,5 @@
 # specific language governing permissions and limitations
 # under the License.
 src/geoarrow/* linguist-vendored
+src/geoarrow/fast_float.h linguist-vendored
 src/nanoarrow/* linguist-vendored
