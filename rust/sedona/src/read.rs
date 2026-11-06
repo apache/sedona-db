@@ -157,7 +157,12 @@ pub(crate) fn resolve_read_format(
     }
 
     if let Some(factory) = requested {
-        let requested_extension = factory.get_ext().trim_start_matches('.').to_lowercase();
+        // A factory's registration alias may differ from its files' suffix.
+        let requested_extension = factory
+            .default()
+            .get_ext()
+            .trim_start_matches('.')
+            .to_lowercase();
 
         // A collection's own path does not identify the format of the files it
         // contains. Use the explicitly requested format to keep unrelated files
