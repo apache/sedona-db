@@ -143,6 +143,15 @@ def test_names_dates_and_times(unit, tz):
     _check(series.dt.time, expected.dt.time)
 
 
+def test_names_of_a_time_past_the_engines_dates():
+    # A timestamp of seconds reaches years past the engine's dates: naming
+    # its day or month raises, as its date does, rather than naming another.
+    series = _series(pa.array([2**45, None], pa.timestamp("s")))
+    for name in ["day_name", "month_name"]:
+        with pytest.raises(Exception, match="datetime"):
+            getattr(series.dt, name)().to_pandas()
+
+
 @pytest.mark.parametrize("tz", ZONES)
 def test_times_to_the_microsecond(tz):
     # Python's times have microseconds: the nanoseconds are cut, rounding

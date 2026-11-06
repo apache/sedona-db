@@ -370,8 +370,8 @@ class StringMethods:
     **EXPERIMENTAL.** Each method computes its result in the engine, as a
     Series of the same frame; a missing value stays missing, but for the
     boolean methods, which answer for it as pandas does (with pandas 3,
-    False). Lengths and positions count characters (code points), as Python
-    does.
+    False), and `cat()` with `na_rep`, which writes it. Lengths and
+    positions count characters (code points), as Python does.
 
     Regular expressions are the engine's (Rust's `regex` crate): Python's
     syntax for most patterns, but without lookaround or backreferences, with
@@ -388,7 +388,8 @@ class StringMethods:
         self._series = series
         # A string result has this column's string type; a column of only
         # missing values (Arrow's null type), which pandas reads as Python
-        # objects, keeps its type, though its values are read as strings.
+        # objects, keeps its type, though its values are read as strings
+        # (but for cat() with na_rep, whose result is strings).
         self._type = dtype
         values = series._decoded()
         self._values = values.cast(pa.string()) if pa.types.is_null(dtype) else values
@@ -829,31 +830,6 @@ _UNIT_NANOS = {"s": 10**9, "ms": 10**6, "us": 10**3, "ns": 1}
 # The last tick of a timestamp, either way: int64's least is pandas' NaT.
 _MAX_TICKS = 2**63 - 1
 
-_DAY_NAMES = [
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-    "Sunday",
-]
-
-_MONTH_NAMES = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-]
-
 
 def datetime_properties(series):
     """The `.dt` accessor of `series`: for timestamps or durations."""
@@ -911,15 +887,6 @@ def _step(freq, unit):
     if step > _MAX_TICKS:
         raise OverflowError(f"Cannot cast {offset!r} to unit={unit} without overflow.")
     return step
-
-
-def _names(ctx, names, index, present):
-    """The name at the 0-based `index` (an expression) of `names`, where
-    `present` (never null) is true, and missing elsewhere: the engine's
-    array_element() reads a missing position as the first."""
-    array = ctx.lit(names[0]).funcs.make_array(*[lit(name) for name in names[1:]])
-    name = array.funcs.array_element(index + lit(1))
-    return _choose(present, name, lit(pa.scalar(None, pa.string())))
 
 
 def _check_raise(ambiguous, nonexistent):
@@ -1092,17 +1059,13 @@ class DatetimeProperties:
         """The English name of the day of the week."""
         if locale is not None:
             raise NotImplementedError("day_name() supports the English names only")
-        day = self.day_of_week._expr
-        present = self._values.is_not_null()
-        return self._wrap(_names(self._ctx, _DAY_NAMES, day, present))
+        return self._wrap(self._local.funcs.to_char(lit("%A")))
 
     def month_name(self, locale=None):
         """The English name of the month."""
         if locale is not None:
             raise NotImplementedError("month_name() supports the English names only")
-        month = self._part("month").cast(pa.int64()) - lit(1)
-        present = self._values.is_not_null()
-        return self._wrap(_names(self._ctx, _MONTH_NAMES, month, present))
+        return self._wrap(self._local.funcs.to_char(lit("%B")))
 
     @property
     def date(self):
