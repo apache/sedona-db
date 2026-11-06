@@ -33,6 +33,9 @@ Nested collections are expanded recursively down to their atomic parts, with `pa
 giving each part's position, as in PostGIS. To list only a geometry's direct members,
 use [ST_Geometries](st_geometries.qmd).
 
+For inputs with an item-level CRS, each returned `geom` carries its input row's
+CRS as an `item_crs` struct.
+
 ## Examples
 
 ```sql

@@ -1,0 +1,389 @@
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+use std::sync::Arc;
+
+use arrow_array::{Array, ArrayRef, BinaryArray, StringViewArray, UInt64Array};
+use arrow_buffer::OffsetBuffer;
+use arrow_schema::Field;
+use datafusion_common::{Result, arrow::compute::take, cast::as_string_view_array};
+use datafusion_expr::ColumnarValue;
+use sedona_expr::item_crs::{make_item_crs, parse_item_crs_arg, parse_item_crs_arg_type};
+use sedona_schema::datatypes::SedonaType;
+
+/// Input for functions that return lists containing geometry values.
+/// Unwraps item-level CRS inputs and repeats each row's CRS for its members.
+/// Keeping the CRS on each geometry allows list elements to be used by other UDFs.
+pub(crate) struct GeometryListInput {
+    /// Geometry or geography argument type with any item-CRS wrapper removed.
+    /// The single-element array can be passed directly to the geometry executor.
+    pub types: [SedonaType; 1],
+    /// Argument for the geometry executor, retaining its scalar or array shape.
+    /// Parent struct nulls are propagated to the unwrapped geometry values.
+    pub args: [ColumnarValue; 1],
+    /// CRS values for item-CRS inputs: one per input row, or one for a scalar.
+    /// None indicates an input without an item-CRS wrapper; null entries indicate
+    /// rows with an unspecified CRS.
+    crs: Option<StringViewArray>,
+}
+
+impl GeometryListInput {
+    /// Prepare a single geometry or geography argument for list extraction.
+    /// Uses the shared item-CRS helpers to unwrap the input and propagate parent
+    /// nulls, preserving the CRS values for the output members. Inputs without
+    /// an item-CRS wrapper retain their original type and value.
+    pub fn new(arg_type: &SedonaType, arg: &ColumnarValue) -> Result<Self> {
+        let (item_type, crs_type) = parse_item_crs_arg_type(arg_type)?;
+        if crs_type.is_none() {
+            return Ok(Self {
+                types: [arg_type.clone()],
+                args: [arg.clone()],
+                crs: None,
+            });
+        }
+
+        let num_rows = match arg {
+            ColumnarValue::Array(array) => array.len(),
+            ColumnarValue::Scalar(_) => 1,
+        };
+        let (item, crs) = parse_item_crs_arg(&item_type, &crs_type, arg)?;
+        let crs = crs
+            .map(|crs| {
+                let array = crs.into_array(num_rows)?;
+                as_string_view_array(&array).cloned()
+            })
+            .transpose()?;
+        Ok(Self {
+            types: [item_type],
+            args: [item],
+            crs,
+        })
+    }
+
+    /// Wrap flattened WKB members with the CRS of their parent input row.
+    ///
+    /// `values` contains the concatenated output geometries, and `offsets` maps
+    /// each input row to its range in `values`, including empty and null rows.
+    /// `field` describes an output geometry member: the list item for
+    /// ST_Geometries, or the `geom` field within each ST_Dump record.
+    /// CRS payload buffers are shared with the input; when each row contributes
+    /// one member, the CRS views and validity buffers are also reused.
+    /// Inputs without an item-CRS wrapper return the WKB values directly.
+    pub fn finish_values(
+        &self,
+        values: BinaryArray,
+        offsets: &OffsetBuffer<i32>,
+        field: &Field,
+    ) -> Result<ArrayRef> {
+        let Some(crs) = &self.crs else {
+            return Ok(Arc::new(values));
+        };
+        let (item_type, _) = parse_item_crs_arg_type(&SedonaType::from_storage_field(field)?)?;
+        let member_crs: ArrayRef = if offsets
+            .windows(2)
+            .all(|offsets| offsets[1] - offsets[0] == 1)
+        {
+            // One member per row: share the views and validity as well as the payload.
+            Arc::new(crs.clone())
+        } else {
+            let rows = UInt64Array::from_iter_values(offsets.windows(2).enumerate().flat_map(
+                |(row, offsets)| {
+                    std::iter::repeat_n(row as u64, (offsets[1] - offsets[0]) as usize)
+                },
+            ));
+            // Arrow's take repeats string views while sharing the input payload buffers.
+            take(crs, &rows, None)?
+        };
+        let num_values = values.len();
+        make_item_crs(
+            &item_type,
+            ColumnarValue::Array(Arc::new(values)),
+            &ColumnarValue::Array(member_crs),
+            None,
+        )?
+        .into_array(num_values)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use arrow_array::{Array, ArrayRef, ListArray, StructArray, UInt32Array};
+    use arrow_buffer::NullBuffer;
+    use datafusion_common::{
+        ScalarValue,
+        cast::{as_string_view_array, as_struct_array},
+    };
+    use rstest::rstest;
+    use sedona_schema::datatypes::{
+        SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY, WKB_LARGE_GEOGRAPHY, WKB_LARGE_GEOMETRY,
+        WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY,
+    };
+    use sedona_testing::{
+        compare::assert_array_equal, create::create_array_item_crs, testers::ScalarUdfTester,
+    };
+
+    use crate::{st_dump::st_dump_udf, st_geometries::st_geometries_udf};
+
+    #[rstest]
+    fn item_crs_members(
+        #[values(false, true)] dump: bool,
+        #[values(
+            WKB_GEOMETRY,
+            WKB_GEOGRAPHY,
+            WKB_LARGE_GEOMETRY,
+            WKB_LARGE_GEOGRAPHY,
+            WKB_VIEW_GEOMETRY,
+            WKB_VIEW_GEOGRAPHY
+        )]
+        input_type: SedonaType,
+    ) {
+        let udf = if dump {
+            st_dump_udf()
+        } else {
+            st_geometries_udf()
+        };
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![SedonaType::new_item_crs(&input_type).unwrap()],
+        );
+        let output_type = match &input_type {
+            SedonaType::Wkb(edges, _)
+            | SedonaType::WkbLarge(edges, _)
+            | SedonaType::WkbView(edges, _) => SedonaType::Wkb(*edges, None),
+            _ => unreachable!(),
+        };
+        let wkts = [
+            Some("MULTIPOINT (1 2, 3 4)"),
+            None,
+            Some("GEOMETRYCOLLECTION EMPTY"),
+            Some("GEOMETRYCOLLECTION (POINT (5 6), MULTIPOINT (7 8, 9 10))"),
+            Some("POINT EMPTY"),
+            Some("POINT (11 12)"),
+        ];
+        let crses = [
+            Some("EPSG:4326"),
+            Some("EPSG:3857"),
+            Some("EPSG:3857"),
+            Some("OGC:CRS84"),
+            None,
+            Some("urn:ogc:def:crs:EPSG::4326"),
+        ];
+        let input = create_array_item_crs(&wkts, crses, &input_type);
+        let expected: Vec<Vec<&str>> = vec![
+            vec!["POINT (1 2)", "POINT (3 4)"],
+            vec![],
+            vec![],
+            if dump {
+                vec!["POINT (5 6)", "POINT (7 8)", "POINT (9 10)"]
+            } else {
+                vec!["POINT (5 6)", "MULTIPOINT (7 8, 9 10)"]
+            },
+            vec!["POINT EMPTY"],
+            vec!["POINT (11 12)"],
+        ];
+        let paths: Vec<Vec<Vec<u32>>> = vec![
+            vec![vec![1], vec![2]],
+            vec![],
+            vec![],
+            vec![vec![1], vec![2, 1], vec![2, 2]],
+            vec![vec![]],
+            vec![vec![]],
+        ];
+
+        // Check arrays (including nonzero input offsets) and the scalar path.
+        for start in [0, 1] {
+            let result = tester
+                .invoke_array(input.slice(start, input.len() - start))
+                .unwrap();
+            assert_eq!(
+                result.data_type(),
+                tester.return_type().unwrap().storage_type()
+            );
+            let result = result.as_any().downcast_ref::<ListArray>().unwrap();
+            for row in start..input.len() {
+                assert_row(
+                    result,
+                    row - start,
+                    wkts[row].is_none(),
+                    &expected[row],
+                    &paths[row],
+                    crses[row],
+                    &output_type,
+                    dump,
+                );
+            }
+        }
+        for row in 0..input.len() {
+            let result = tester
+                .invoke_scalar(ScalarValue::try_from_array(&input, row).unwrap())
+                .unwrap()
+                .to_array()
+                .unwrap();
+            let result = result.as_any().downcast_ref::<ListArray>().unwrap();
+            assert_row(
+                result,
+                0,
+                wkts[row].is_none(),
+                &expected[row],
+                &paths[row],
+                crses[row],
+                &output_type,
+                dump,
+            );
+        }
+
+        // An empty batch must retain the nested geometry metadata.
+        let result = tester.invoke_array(input.slice(0, 0)).unwrap();
+        assert_eq!(result.len(), 0);
+        assert_eq!(
+            result.data_type(),
+            tester.return_type().unwrap().storage_type()
+        );
+
+        // Parent validity can mask a non-null child geometry.
+        let parent_null = as_struct_array(&input).unwrap();
+        let parent_null: ArrayRef = Arc::new(StructArray::new(
+            parent_null.fields().clone(),
+            parent_null.columns().to_vec(),
+            Some(NullBuffer::from(vec![false; input.len()])),
+        ));
+        let result = tester.invoke_array(parent_null.clone()).unwrap();
+        assert_eq!(result.null_count(), input.len());
+        let result = tester
+            .invoke_scalar(ScalarValue::try_from_array(&parent_null, 0).unwrap())
+            .unwrap();
+        assert!(result.is_null());
+    }
+
+    #[rstest]
+    fn item_crs_reuses_buffers(
+        #[values(false, true)] dump: bool,
+        #[values("POINT (1 2)", "MULTIPOINT (1 2, 3 4)")] wkt: &str,
+    ) {
+        let long_crs = "urn:ogc:def:crs:EPSG::4326";
+        let input = create_array_item_crs(
+            &[Some(wkt); 5],
+            [
+                Some(long_crs),
+                Some(long_crs),
+                None,
+                Some("EPSG:3857"),
+                Some(long_crs),
+            ],
+            &WKB_GEOMETRY,
+        )
+        .slice(1, 4);
+        let input_crs = as_string_view_array(as_struct_array(&input).unwrap().column(1)).unwrap();
+        let udf = if dump {
+            st_dump_udf()
+        } else {
+            st_geometries_udf()
+        };
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![SedonaType::new_item_crs(&WKB_GEOMETRY).unwrap()],
+        );
+        let result = tester.invoke_array(input.clone()).unwrap();
+        let list = result.as_any().downcast_ref::<ListArray>().unwrap();
+        let geometries = if dump {
+            as_struct_array(list.values()).unwrap().column(1)
+        } else {
+            list.values()
+        };
+        let output_crs =
+            as_string_view_array(as_struct_array(geometries).unwrap().column(1)).unwrap();
+        let count = if wkt.starts_with("MULTIPOINT") { 2 } else { 1 };
+        assert_eq!(
+            output_crs.iter().collect::<Vec<_>>(),
+            input_crs
+                .iter()
+                .flat_map(|crs| std::iter::repeat_n(crs, count))
+                .collect::<Vec<_>>()
+        );
+        assert!(!input_crs.data_buffers().is_empty());
+        assert_eq!(
+            output_crs.data_buffers().len(),
+            input_crs.data_buffers().len()
+        );
+        for (output, input) in output_crs
+            .data_buffers()
+            .iter()
+            .zip(input_crs.data_buffers())
+        {
+            assert_eq!(output.as_ptr(), input.as_ptr());
+            assert_eq!(output.len(), input.len());
+        }
+        if count == 1 {
+            assert_eq!(output_crs.views().as_ptr(), input_crs.views().as_ptr());
+            assert_eq!(
+                output_crs.nulls().unwrap().buffer().as_ptr(),
+                input_crs.nulls().unwrap().buffer().as_ptr()
+            );
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn assert_row(
+        result: &ListArray,
+        row: usize,
+        is_null: bool,
+        wkts: &[&str],
+        paths: &[Vec<u32>],
+        crs: Option<&str>,
+        output_type: &SedonaType,
+        dump: bool,
+    ) {
+        assert_eq!(result.is_null(row), is_null);
+        if is_null {
+            return;
+        }
+        let values = result.value(row);
+        let (geometries, field) = if dump {
+            let values = as_struct_array(&values).unwrap();
+            let path_lists = values
+                .column(0)
+                .as_any()
+                .downcast_ref::<ListArray>()
+                .unwrap();
+            for (i, path) in paths.iter().enumerate() {
+                let path_value = path_lists.value(i);
+                let path_value = path_value.as_any().downcast_ref::<UInt32Array>().unwrap();
+                assert_eq!(path_value.values().as_ref(), path);
+            }
+            (values.column(1).clone(), values.fields()[1].clone())
+        } else {
+            let arrow_schema::DataType::List(field) = result.data_type() else {
+                unreachable!()
+            };
+            (values, field.clone())
+        };
+        assert_eq!(
+            SedonaType::from_storage_field(&field).unwrap(),
+            SedonaType::new_item_crs(output_type).unwrap()
+        );
+        assert_array_equal(
+            &geometries,
+            &create_array_item_crs(
+                &wkts.iter().map(|wkt| Some(*wkt)).collect::<Vec<_>>(),
+                std::iter::repeat_n(crs, wkts.len()),
+                output_type,
+            ),
+        );
+    }
+}

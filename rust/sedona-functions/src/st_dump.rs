@@ -29,20 +29,34 @@ use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
 use sedona_schema::{
-    datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY},
+    datatypes::{
+        SedonaType, WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS,
+    },
     matchers::ArgMatcher,
 };
 use std::{io::Write, sync::Arc};
 
-use crate::executor::WkbExecutor;
+use crate::{executor::WkbExecutor, geometry_list::GeometryListInput};
 
 /// ST_Dump() scalar UDF
 ///
-/// Native implementation to get all the points of a geometry as MULTIPOINT
+/// Recursively lists atomic geometry parts with their paths.
 pub fn st_dump_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_dump",
         vec![
+            Arc::new(STDump {
+                matcher: ArgMatcher::new(
+                    vec![ArgMatcher::is_item_crs_of(ArgMatcher::is_geometry())],
+                    WKB_GEOMETRY_ITEM_CRS.clone(),
+                ),
+            }),
+            Arc::new(STDump {
+                matcher: ArgMatcher::new(
+                    vec![ArgMatcher::is_item_crs_of(ArgMatcher::is_geography())],
+                    WKB_GEOGRAPHY_ITEM_CRS.clone(),
+                ),
+            }),
             Arc::new(STDump {
                 matcher: ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY),
             }),
@@ -178,7 +192,7 @@ impl STDumpBuilder {
         self.null_builder.append(false);
     }
 
-    fn finish(mut self) -> Result<ListArray> {
+    fn finish(mut self, input: &GeometryListInput) -> Result<ListArray> {
         let path_array = Arc::new(self.path_array_builder.finish());
         let path_offsets = self.path_array_offsets_builder.finish();
         let geom_array = self.geom_builder.finish();
@@ -194,14 +208,11 @@ impl STDumpBuilder {
             return sedona_internal_err!("Unexpected return type");
         };
 
-        let struct_array = StructArray::try_new(
-            fields.clone(),
-            vec![Arc::new(path_list), Arc::new(geom_array)],
-            None,
-        )
-        .unwrap();
-
         let struct_offsets = self.struct_offsets_builder.finish();
+        let geom_array = input.finish_values(geom_array, &struct_offsets, &fields[1])?;
+        let struct_array =
+            StructArray::try_new(fields.clone(), vec![Arc::new(path_list), geom_array], None)?;
+
         let nulls = self.null_builder.finish();
         Ok(ListArray::new(
             return_list_field,
@@ -228,7 +239,8 @@ impl SedonaScalarKernel for STDump {
         _num_rows: usize,
         _config_options: Option<&ConfigOptions>,
     ) -> Result<ColumnarValue> {
-        let executor = WkbExecutor::new(arg_types, args);
+        let input = GeometryListInput::new(&arg_types[0], &args[0])?;
+        let executor = WkbExecutor::new(&input.types, &input.args);
 
         let mut builder = STDumpBuilder::new(executor.num_iterations(), return_type.clone());
         executor.execute_wkb_void(|maybe_wkb| {
@@ -241,7 +253,7 @@ impl SedonaScalarKernel for STDump {
             Ok(())
         })?;
 
-        executor.finish(Arc::new(builder.finish()?))
+        executor.finish(Arc::new(builder.finish(&input)?))
     }
 
     fn invoke_batch(

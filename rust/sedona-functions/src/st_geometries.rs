@@ -29,12 +29,14 @@ use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
 use sedona_geometry::wkb_factory::WKB_MIN_PROBABLE_BYTES;
 use sedona_schema::{
-    datatypes::{SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY},
+    datatypes::{
+        SedonaType, WKB_GEOGRAPHY, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS,
+    },
     matchers::ArgMatcher,
 };
 use std::sync::Arc;
 
-use crate::executor::WkbExecutor;
+use crate::{executor::WkbExecutor, geometry_list::GeometryListInput};
 
 /// ST_Geometries() scalar UDF
 ///
@@ -46,6 +48,18 @@ pub fn st_geometries_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "st_geometries",
         vec![
+            Arc::new(STGeometries {
+                matcher: ArgMatcher::new(
+                    vec![ArgMatcher::is_item_crs_of(ArgMatcher::is_geometry())],
+                    WKB_GEOMETRY_ITEM_CRS.clone(),
+                ),
+            }),
+            Arc::new(STGeometries {
+                matcher: ArgMatcher::new(
+                    vec![ArgMatcher::is_item_crs_of(ArgMatcher::is_geography())],
+                    WKB_GEOGRAPHY_ITEM_CRS.clone(),
+                ),
+            }),
             Arc::new(STGeometries {
                 matcher: ArgMatcher::new(vec![ArgMatcher::is_geometry()], WKB_GEOMETRY),
             }),
@@ -125,13 +139,15 @@ impl STGeometriesBuilder {
         self.null_builder.append(false);
     }
 
-    fn finish(mut self) -> ListArray {
-        ListArray::new(
+    fn finish(mut self, input: &GeometryListInput) -> Result<ListArray> {
+        let offsets = self.offsets_builder.finish();
+        let values = input.finish_values(self.geom_builder.finish(), &offsets, &self.item_field)?;
+        Ok(ListArray::new(
             self.item_field,
-            self.offsets_builder.finish(),
-            Arc::new(self.geom_builder.finish()),
+            offsets,
+            values,
             self.null_builder.finish(),
-        )
+        ))
     }
 }
 
@@ -155,7 +171,8 @@ impl SedonaScalarKernel for STGeometries {
         _num_rows: usize,
         _config_options: Option<&ConfigOptions>,
     ) -> Result<ColumnarValue> {
-        let executor = WkbExecutor::new(arg_types, args);
+        let input = GeometryListInput::new(&arg_types[0], &args[0])?;
+        let executor = WkbExecutor::new(&input.types, &input.args);
         let num_iter = executor.num_iterations();
 
         // The members are slices of the input's WKB, so the input's size is a
@@ -177,7 +194,7 @@ impl SedonaScalarKernel for STGeometries {
             Ok(())
         })?;
 
-        executor.finish(Arc::new(builder.finish()))
+        executor.finish(Arc::new(builder.finish(&input)?))
     }
 
     fn invoke_batch(
