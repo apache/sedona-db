@@ -23,7 +23,6 @@ mod geos_to_wkb;
 mod overlay;
 pub mod register;
 mod st_area;
-mod st_boundary;
 mod st_buffer;
 mod st_buildarea;
 mod st_centroid;
