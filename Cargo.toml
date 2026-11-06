@@ -71,7 +71,7 @@ description = "Apache SedonaDB Rust API"
 readme = "README.md"
 edition = "2021"
 
-rust-version = "1.88.0"
+rust-version = "1.94.0"
 keywords = ["geospatial", "gis", "spatial", "datafusion", "arrow"]
 categories = ["science::geo", "database"]
 

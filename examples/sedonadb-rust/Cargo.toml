@@ -25,7 +25,7 @@ repository = "https://github.com/apache/sedona-db"
 description = "Apache SedonaDB Rust API Example"
 readme = "README.md"
 edition = "2021"
-rust-version = "1.88.0"
+rust-version = "1.94.0"
 
 [workspace]
 
