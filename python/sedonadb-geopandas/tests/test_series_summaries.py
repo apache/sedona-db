@@ -291,6 +291,24 @@ def test_mode_of_a_categorical_of_large_integers(categories):
     assert series.describe().tolist() == theirs.describe().tolist()
 
 
+def test_mode_of_a_categorical_computes_its_categories_once(monkeypatch):
+    from sedonadb_geopandas import _series
+
+    computed = []
+
+    def counted(df):
+        computed.append(df)
+        return dtypes(df)
+
+    dtypes = _series._pandas_dtypes
+    monkeypatch.setattr(_series, "_pandas_dtypes", counted)
+    series = _categorical(["b", None, "a", "a"], ["b", "a", "c"])
+    for dropna in (True, False):
+        computed.clear()
+        series.mode(dropna=dropna)
+        assert len(computed) == 1
+
+
 @pytest.mark.parametrize("keep", ["first", "last", "all"])
 @pytest.mark.parametrize("method", ["nlargest", "nsmallest"])
 @pytest.mark.parametrize("column", ["i64", "f", "fm", "b", "t", "d"])

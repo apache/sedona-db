@@ -1496,13 +1496,15 @@ class Series:
         counts = values.group_by("x").agg(values._ctx.lit(1).funcs.count().alias("n"))
         counts = counts.to_arrow_table()
         keys, n = counts["x"], counts["n"].to_numpy()
+        # Its categories, which computing the dtype computes the column for.
+        dtype = self.dtype
         present = pc.is_valid(keys)
         codes = np.full(len(keys), -1)
-        codes[present.to_numpy()] = self.dtype.categories.get_indexer(
+        codes[present.to_numpy()] = dtype.categories.get_indexer(
             pc.filter(keys, present).to_pandas()
         )
         modes = np.sort(codes[n == n.max()]) if len(n) else codes
-        categorical = pd.Categorical.from_codes(modes, dtype=self.dtype)
+        categorical = pd.Categorical.from_codes(modes, dtype=dtype)
         return pd.Series(categorical, name=self._name)
 
     def nlargest(self, n=5, keep="first"):
