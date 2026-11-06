@@ -16,6 +16,7 @@
 # under the License.
 """The `.str` accessor, compared against pandas."""
 
+import random
 import re
 import warnings
 
@@ -300,6 +301,108 @@ def test_replacement_groups_the_pattern_lacks(repl):
         series.str.replace("(a)", repl, regex=True)
     with pytest.raises(Exception):
         series.to_pandas().str.replace("(a)", repl, regex=True)
+
+
+# Patterns of the engine's syntax, the number of groups the engine reads in
+# each, and a value every group takes part in matching: some Python can't
+# read, and some it reads with other groups.
+ENGINE_GROUPS = [
+    (r"(\p{L})(\d)", 2, "a1"),
+    (r"(?<w>\p{L})(\pN)", 2, "a1"),
+    (r"\x{41}(a)\u{42}(b)", 2, "AaBb"),
+    (r"[a--b](c)", 1, "ac"),
+    (r"[\p{Greek}--\p{Lu}](c)", 1, "αc"),
+    # A nested class, which Python reads as a class and then a group.
+    (r"[[](a)]](b)", 1, "ab"),
+    (r"[[:alpha:]](\w)", 1, "ab"),
+    (r"[a--[](b)]](c)", 1, "ac"),
+    (r"[]()](a)", 1, "(a"),
+    (r"[^]()](a)", 1, "ba"),
+    (r"[-]()](a)", 2, "-]a"),
+    (r"[!-[](a)", 1, "!a"),
+    # Verbose mode skips a comment in a class, where Python reads `#`.
+    ("(?x)[#]\n(a)](b)", 1, "ab"),
+    ("(?x)[a#]\n(b)](c)", 1, "ac"),
+    ("(?x)[ ]()](b)", 1, "(b"),
+    ("(?x)( ?:a)(b)", 1, "ab"),
+    ("(?x) (a) # (b)\n (c)", 2, "ac"),
+    # Verbose until the end of the group that sets it.
+    ("((?x) a # )\n)(b)", 2, "ab"),
+    ("(?x:( a ) # (b)\n)#(c)", 2, "a#c"),
+    (r"(?x)(?-x:#(a))( b)", 2, "#ab"),
+    # `\x1c` is not whitespace there, though Python's isspace() says it is.
+    ("(?x)(\x1c?:a)", 1, ":a"),
+]
+
+
+@pytest.mark.parametrize(("pattern", "groups", "value"), ENGINE_GROUPS)
+def test_replacement_groups_of_the_engine_syntax(pattern, groups, value):
+    # The groups the engine reads in the pattern (its regexp_match() gives
+    # each one's match) can be referred to; others raise Python's error, as
+    # for a pattern Python reads.
+    from sedonadb.expr import lit
+
+    from sedonadb_geopandas._accessors import _engine_groups
+
+    assert len(_engine_groups(pattern)) == groups
+    df = sgpd.default_context().create_data_frame(pa.table({"s": [value]}))
+    matched = df.select(df["s"].funcs.regexp_match(lit(pattern)).alias("m"))
+    captured = list(matched.to_pandas()["m"][0])
+    assert len(captured) == groups
+    series = _series([value])
+    every = "".join(f"<\\{k}>" for k in range(1, groups + 1))
+    got = series.str.replace(pattern, every, regex=True).to_pandas().tolist()
+    assert got == ["".join(f"<{text}>" for text in captured)]
+    with pytest.raises(re.error, match=f"invalid group reference {groups + 1} "):
+        series.str.replace(pattern, f"\\{groups + 1}", regex=True)
+    with pytest.raises(IndexError, match="unknown group name 'missing'"):
+        series.str.replace(pattern, r"\g<missing>", regex=True)
+
+
+def test_replacement_group_names_of_the_engine_syntax():
+    series = _series(["a1"])
+    got = series.str.replace(r"(?<w>\p{L})(?P<d>\d)", r"\g<d>\g<w>\g<1>", regex=True)
+    assert got.to_pandas().tolist() == ["1aa"]
+    # A name Python can't read, as it reads templates, is refused.
+    with pytest.raises(re.error, match="bad character in group name"):
+        series.str.replace(r"(?<w.x>\p{L})", r"\g<w.x>", regex=True)
+
+
+def test_engine_groups_as_python_reads_shared_syntax():
+    # Of patterns both read alike (no nested classes, nor classes in verbose
+    # mode), the groups and names are Python's.
+    from sedonadb_geopandas._accessors import _engine_groups
+
+    rng = random.Random(0)
+    atoms = r"a . \( \) \[ \] \\ \w [(] [)] []a] [^]a] [-a] [\]] [\[(] x* z{2} ^ |"
+    atoms = atoms.split() + [" ", "#"]
+
+    def generated(depth, names):
+        out = []
+        for _ in range(rng.randint(0, 4)):
+            if depth < 4 and rng.random() < 0.35:
+                kind = rng.choice(["(", "(?:", "(?P<>", "(?i:", "(?-x:"])
+                if kind == "(?P<>":
+                    names.append(f"n{len(names)}")
+                    kind = f"(?P<{names[-1]}>"
+                out.append(kind + generated(depth + 1, names) + ")")
+            else:
+                out.append(rng.choice(atoms))
+        return "".join(out)
+
+    checked = 0
+    for _ in range(3000):
+        pattern = generated(0, [])
+        flags = re.VERBOSE if rng.random() < 0.3 and "[" not in pattern else 0
+        try:
+            compiled = re.compile(pattern, flags)
+        except re.error:
+            continue
+        groups = _engine_groups(("(?x)" if flags else "") + pattern)
+        names = {name: k + 1 for k, name in enumerate(groups) if name}
+        assert (len(groups), names) == (compiled.groups, compiled.groupindex)
+        checked += 1
+    assert checked > 1000
 
 
 def test_compiled_patterns():

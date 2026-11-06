@@ -151,19 +151,154 @@ def _literal_template(text):
     return text.replace("$", "$$").replace("\\", "\\${}")
 
 
-def _check_groups(pat, flags, case, repl):
-    """Python's error for a replacement template `repl` that refers to a
-    group `pat` does not have, as `re.sub()` (and pandas) raises: the engine
-    would replace it with nothing.
+def _engine_groups(pattern):
+    """The capture groups of `pattern`, of the engine's syntax, in order:
+    each one's name, or None for a group without one; None for a pattern the
+    engine refuses (unbalanced, or with lookaround).
 
-    Python reads the whole template before it looks for a match. A pattern
-    Python cannot read (in the engine's own syntax, such as `\\p{L}`) is
-    not checked.
+    This reads the pattern as the engine does (Rust's `regex-syntax`), as far
+    as groups go: escapes, character classes (nested ones, and a `]` first in
+    one, included), and in verbose mode, which the `x` flag sets until the
+    end of its group, whitespace and comments, which it skips in classes too.
     """
-    text, flags = _pattern_and_flags(pat, flags, case, "replace")
+    verbose = [False]  # of each open group
+    groups = []
+
+    def skipped(i):
+        # Past the whitespace (Unicode's: Python's but for the information
+        # separators) and comments verbose mode skips.
+        while verbose[-1] and i < len(pattern):
+            if pattern[i] == "#":
+                end = pattern.find("\n", i)
+                i = len(pattern) if end < 0 else end + 1
+            elif pattern[i].isspace() and pattern[i] not in "\x1c\x1d\x1e\x1f":
+                i += 1
+            else:
+                break
+        return i
+
+    def item(i):
+        # Past a character or an escape (what follows one, such as `{L}` of
+        # `\\p{L}`, can't open or close a group or class).
+        return i + 2 if pattern[i] == "\\" else i + 1
+
+    def klass(i):
+        # Past the class opening at i, or None if it is not closed.
+        depth = 0
+        opening = True
+        while True:
+            if opening:
+                depth += 1
+                i = skipped(i + 1)
+                if pattern.startswith("^", i):
+                    i = skipped(i + 1)
+                literal_bracket = True
+                while pattern.startswith("-", i):
+                    i = skipped(i + 1)
+                    literal_bracket = False
+                if literal_bracket and pattern.startswith("]", i):
+                    i += 1
+                opening = False
+            i = skipped(i)
+            if i >= len(pattern):
+                return None
+            if pattern[i] == "[":
+                # A nested class (or one such as `[:alpha:]`, alike here).
+                opening = True
+            elif pattern[i] == "]":
+                depth -= 1
+                i += 1
+                if depth == 0:
+                    return i
+            elif pattern.startswith(("&&", "--", "~~"), i):
+                i += 2
+            else:
+                i = item(i)
+                # A range, whose end can be any character, `[` included.
+                dash = skipped(i)
+                if pattern.startswith("-", dash):
+                    after = skipped(dash + 1)
+                    if after < len(pattern) and pattern[after] not in "]-":
+                        i = item(after)
+
+    i = 0
+    while True:
+        i = skipped(i)
+        if i >= len(pattern):
+            break
+        c = pattern[i]
+        if c == "\\":
+            i = item(i)
+        elif c == "[":
+            i = klass(i)
+            if i is None:
+                return None
+        elif c == "(":
+            i = skipped(i + 1)
+            if pattern.startswith(("?=", "?!", "?<=", "?<!"), i):
+                return None
+            prefix = next((p for p in ("?P<", "?<") if pattern.startswith(p, i)), None)
+            if prefix is not None:
+                end = pattern.find(">", i)
+                if end < 0:
+                    return None
+                groups.append(pattern[i + len(prefix) : end])
+                verbose.append(verbose[-1])
+                i = end + 1
+            elif pattern.startswith("?", i):
+                # Flags, until the end of this group or of a new one.
+                end = i + 1
+                on, negated = verbose[-1], False
+                while end < len(pattern) and pattern[end] not in ":)":
+                    if pattern[end] == "-":
+                        negated = True
+                    elif pattern[end] == "x":
+                        on = not negated
+                    end += 1
+                if end == len(pattern):
+                    return None
+                if pattern[end] == ":":
+                    verbose.append(on)
+                else:
+                    verbose[-1] = on
+                i = end + 1
+            else:
+                groups.append(None)
+                verbose.append(verbose[-1])
+        elif c == ")":
+            if len(verbose) == 1:
+                return None
+            verbose.pop()
+            i += 1
+        else:
+            i += 1
+    return groups if len(verbose) == 1 else None
+
+
+def _check_groups(pattern, repl):
+    """Python's error for a replacement template `repl` that refers to a
+    group `pattern` (of the engine's syntax) does not have, as `re.sub()`
+    (and pandas) raises: the engine would replace it with nothing.
+
+    The groups are the engine's, which Python can't always read (`\\p{L}`)
+    or reads differently (`[[]()]]` is a nested class there); Python checks
+    the template, which it reads whole before looking for a match, against a
+    pattern of the same groups.
+    """
+    groups = _engine_groups(pattern)
+    if groups is None:
+        # The engine refuses the pattern itself.
+        return
+    # A name Python can't have (the engine's can hold `.`, `[` and `]`) is
+    # one no template can refer to, as Python reads templates.
+    alike = "".join(
+        f"(?P<{name}>)" if name is not None and name.isidentifier() else "()"
+        for name in groups
+    )
     try:
-        compiled = re.compile(text, flags)
+        compiled = re.compile(alike)
     except re.error:
+        # A name used twice, which the engine refuses too.
         return
     compiled.sub(repl, "")
 
@@ -492,7 +627,7 @@ class StringMethods:
             case = True
         if regex:
             pattern = _engine_regex(pat, flags, case, "replace")
-            _check_groups(pat, flags, case, repl)
+            _check_groups(pattern, repl)
             template = _engine_template(repl)
         else:
             # A literal pattern: of the flags, only re.IGNORECASE changes what
