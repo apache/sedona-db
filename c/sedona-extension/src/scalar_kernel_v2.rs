@@ -427,7 +427,7 @@ mod tests {
             config: Option<&ConfigOptions>,
         ) -> Result<ColumnarValue> {
             Ok(ColumnarValue::Scalar(ScalarValue::UInt64(
-                config.map(|c| c.execution.batch_size as u64),
+                config.map(|c| c.execution.batch_size.get() as u64),
             )))
         }
     }
@@ -437,14 +437,16 @@ mod tests {
         let original =
             SedonaScalarUDF::new("batch_size", vec![Arc::new(BatchSize)], Volatility::Stable);
         let mut defaults = ConfigOptions::new();
-        defaults.execution.batch_size = 17;
+        defaults
+            .set("datafusion.execution.batch_size", "17")
+            .unwrap();
         let raw = ExportedScalarKernelV2::from_udf(&original, Arc::new(defaults))
             .pop()
             .unwrap();
         let imported = SedonaScalarUDF::try_from(raw).unwrap();
         let kernel = &imported.kernels()[0];
         let mut caller = ConfigOptions::new();
-        caller.execution.batch_size = 23;
+        caller.set("datafusion.execution.batch_size", "23").unwrap();
         for config in [None, Some(&caller)] {
             let value = kernel
                 .invoke_batch_from_args(&[], &[], &SedonaType::Arrow(DataType::UInt64), 1, config)

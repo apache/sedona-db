@@ -1023,12 +1023,7 @@ impl SedonaDataFrame for DataFrame {
         // SQL COPY ... TO registers it while planning the statement
         // (create_plan_from_sql); this plan is built directly, so the store is
         // registered here, the same way.
-        register_object_store_and_config_extensions(
-            ctx,
-            &path.to_string(),
-            &options.storage_options,
-        )
-        .await?;
+        register_object_store_and_config_extensions(ctx, &[path], &options.storage_options).await?;
 
         let format = if let Some(parquet_opts) = writer_options {
             Arc::new(GeoParquetFormatFactory::new_with_options(parquet_opts))
