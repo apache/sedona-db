@@ -110,12 +110,23 @@ impl AggregateUdfTester {
     /// in batches of one. This has the effect of testing all the pieces of
     /// an aggregator in a somewhat configurable/predictable way.
     pub fn aggregate(&self, batches: &Vec<ArrayRef>) -> Result<ScalarValue> {
+        let batches = batches
+            .iter()
+            .map(|batch| vec![batch.clone()])
+            .collect::<Vec<_>>();
+        self.aggregate_columns(&batches)
+    }
+
+    /// Perform a simple aggregation of a multi-argument aggregate
+    ///
+    /// As [Self::aggregate], but each batch holds one array per argument.
+    pub fn aggregate_columns(&self, batches: &[Vec<ArrayRef>]) -> Result<ScalarValue> {
         let state_schema = Arc::new(Schema::new(self.state_fields()?));
         let mut state_accumulator = self.new_accumulator()?;
 
         for batch in batches {
             let mut batch_accumulator = self.new_accumulator()?;
-            batch_accumulator.update_batch(std::slice::from_ref(batch))?;
+            batch_accumulator.update_batch(batch)?;
             let state_batch_of_one = RecordBatch::try_new(
                 state_schema.clone(),
                 batch_accumulator

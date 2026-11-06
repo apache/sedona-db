@@ -202,8 +202,16 @@ where
         boundary_count: &mut usize,
     ) {
         let num_coords = self.num_coords();
-        if num_coords < 2 {
-            debug_assert!(false, "invalid line string with less than 2 coords");
+        if num_coords == 0 {
+            // an empty line string contains nothing
+            return;
+        }
+
+        if num_coords == 1 {
+            // a line string with one coord is handled as a point (georust/geo#1483)
+            if unsafe { self.geo_coord_unchecked(0) } == *coord {
+                *is_inside = true;
+            }
             return;
         }
 
@@ -265,9 +273,12 @@ where
             .to_lines()
             .map(|l| {
                 let orientation = T::Ker::orient2d(l.start, l.end, *coord);
+                // A coordinate on one of the triangle's vertices is the `end` of one side and
+                // the `start` of the next: count it once, on the side it starts
+                // (georust/geo#1475)
                 if orientation == Orientation::Collinear
                     && point_in_rect(*coord, l.start, l.end)
-                    && coord.x != l.end.x
+                    && *coord != l.end
                 {
                     *boundary_count += 1;
                 }
@@ -749,6 +760,18 @@ mod test {
             line_string.coordinate_position(&start),
             CoordPos::OnBoundary
         );
+
+        // An empty line string contains nothing, and one of a single coordinate is handled as a
+        // point (georust/geo#1483)
+        let line_string: LineString<f64> = line_string![];
+        assert_eq!(line_string.coordinate_position(&start), CoordPos::Outside);
+
+        let line_string = line_string![(x: 0.0, y: 0.0)];
+        assert_eq!(line_string.coordinate_position(&start), CoordPos::Inside);
+        assert_eq!(
+            line_string.coordinate_position(&coord! { x: 1.0, y: 0.0 }),
+            CoordPos::Outside
+        );
     }
 
     #[test]
@@ -848,6 +871,25 @@ mod test {
         assert_eq!(
             triangle.coordinate_position(&coord! { x: 2.49, y: 5.0 }),
             CoordPos::Outside
+        );
+        assert_eq!(
+            triangle.coordinate_position(&coord! { x: 5.0, y: 10.0 }),
+            CoordPos::OnBoundary
+        );
+    }
+
+    #[test]
+    fn test_right_triangle() {
+        // A coordinate on a vertical side, or on the vertex that ends one, is on the boundary
+        // (georust/geo#1475)
+        let triangle = Triangle::new((0.0, 0.0).into(), (10.0, 0.0).into(), (10.0, 10.0).into());
+        assert_eq!(
+            triangle.coordinate_position(&coord! { x: 0.0, y: 0.0 }),
+            CoordPos::OnBoundary
+        );
+        assert_eq!(
+            triangle.coordinate_position(&coord! { x: 10.0, y: 5.0 }),
+            CoordPos::OnBoundary
         );
     }
 

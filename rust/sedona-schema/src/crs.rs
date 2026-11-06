@@ -132,20 +132,25 @@ impl CachedCrsToSRIDMapping {
         }
     }
 
-    /// Get the SRID for a given CRS string, using the cache to avoid expensive deserialization where possible.
-    /// Returns 0 for missing CRS or CRS that don't have an SRID. Errors if the CRS string is invalid or if the
-    /// CRS can't be deserialized.
+    /// Get the SRID for a given CRS string, using the cache to avoid expensive
+    /// deserialization where possible.
+    ///
+    /// Returns `0` for a missing CRS (`None`, `""`, or `"0"`) and the integer
+    /// SRID for a CRS that resolves to an authority code. A valid CRS that
+    /// carries no authority code (e.g. a custom polar-stereographic WKT from
+    /// CF/rioxarray with no top-level `AUTHORITY`/`ID`) is still fully usable
+    /// but has no integer to give, so it also returns `0`: SRID is the lossy
+    /// integer view of a CRS, and `ST_Crs` / `RS_CRS` carry the definition.
+    /// Only a genuinely malformed / undeserializable CRS string errors,
+    /// propagated from [`deserialize_crs`].
     pub fn get_srid(&mut self, maybe_crs: Option<&str>) -> Result<u32> {
         if let Some(crs_str) = maybe_crs {
             if let Some(srid) = self.cache.get(crs_str) {
                 Ok(*srid)
             } else if let Some(crs) = deserialize_crs(crs_str)? {
-                if let Some(srid) = crs.srid()? {
-                    self.cache.insert(crs_str.to_string(), srid);
-                    Ok(srid)
-                } else {
-                    exec_err!("Can't extract SRID from item-level CRS '{crs_str}'")
-                }
+                let srid = crs.srid()?.unwrap_or(0);
+                self.cache.insert(crs_str.to_string(), srid);
+                Ok(srid)
             } else {
                 Ok(0)
             }
@@ -240,6 +245,28 @@ pub type Crs = Option<Arc<dyn CoordinateReferenceSystem + Send + Sync>>;
 /// Returned by `Crs::as_deref()` and used in function signatures that only
 /// need to inspect a CRS without taking ownership.
 pub type CrsRef<'a> = Option<&'a (dyn CoordinateReferenceSystem + Send + Sync)>;
+
+/// Return a clone of the first CRS when every value is equal under [`PartialEq`]
+/// (i.e. [`CoordinateReferenceSystem::crs_equals`]), including lon/lat aliases.
+///
+/// Returns `None` when `crses` is empty or any pair disagrees (including a mix of
+/// `None` and `Some`). Callers that only care about a present CRS can check the
+/// result with [`Option::is_some`] / [`Option::as_ref`].
+///
+/// This matches how argument CRS reconciliation works in
+/// [`crate::matchers::ArgMatcher::match_args`]: require agreement, then keep the
+/// first representation rather than normalizing to an authority:code form.
+pub fn first_if_all_equal<'a, I>(crses: I) -> Option<Crs>
+where
+    I: IntoIterator<Item = &'a Crs>,
+{
+    let mut iter = crses.into_iter();
+    let first = iter.next()?.clone();
+    if iter.any(|crs| crs != &first) {
+        return None;
+    }
+    Some(first)
+}
 
 impl Display for dyn CoordinateReferenceSystem + Send + Sync {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -1319,6 +1346,46 @@ mod test {
         assert_eq!(crs3857.to_crs_string(), "EPSG:3857");
         assert_eq!(crs3857.to_json(), r#""EPSG:3857""#);
     }
+
+    #[test]
+    fn cached_crs_to_srid_mapping() {
+        // A custom Lambert Conformal WKT with no top-level AUTHORITY/ID: a valid,
+        // usable CRS that simply has no SRID (the shape CF/rioxarray emit for
+        // polar-stereographic and other custom grids).
+        const WKT_LCC_NO_AUTHORITY: &str = r#"PROJCS["Custom LCC",GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]]],PROJECTION["Lambert_Conformal_Conic_2SP"],PARAMETER["standard_parallel_1",33],PARAMETER["standard_parallel_2",45],UNIT["metre",1]]"#;
+
+        let mut mapping = CachedCrsToSRIDMapping::new();
+
+        // A missing CRS resolves to SRID 0 (the "unknown SRID" sentinel),
+        // matching PostGIS's ST_SRID of an unset geometry.
+        assert_eq!(mapping.get_srid(None).unwrap(), 0);
+        assert_eq!(mapping.get_srid(Some("")).unwrap(), 0);
+        assert_eq!(mapping.get_srid(Some("0")).unwrap(), 0);
+
+        // An authority-coded CRS resolves to its integer SRID (served from the
+        // cache on the second call).
+        assert_eq!(mapping.get_srid(Some("EPSG:3857")).unwrap(), 3857);
+        assert_eq!(mapping.get_srid(Some("EPSG:3857")).unwrap(), 3857);
+        assert_eq!(mapping.get_srid(Some("OGC:CRS84")).unwrap(), 4326);
+
+        // A valid CRS with no authority code (WKT or PROJJSON lacking a
+        // top-level AUTHORITY/id) is usable but has no integer SRID: 0, the
+        // same value as a missing CRS, not an error. The second call is served
+        // from the cache like any other resolved value.
+        assert_eq!(mapping.get_srid(Some(WKT_LCC_NO_AUTHORITY)).unwrap(), 0);
+        assert_eq!(mapping.get_srid(Some(WKT_LCC_NO_AUTHORITY)).unwrap(), 0);
+        assert_eq!(
+            mapping
+                .get_srid(Some(r#"{"type":"GeographicCRS","name":"No authority id"}"#))
+                .unwrap(),
+            0
+        );
+
+        // A genuinely malformed CRS string (valid JSON, but not a PROJJSON
+        // object) can't be deserialized at all, so it still errors; that is
+        // distinct from a valid CRS that merely lacks an authority SRID.
+        assert!(mapping.get_srid(Some("[1,2,3]")).is_err());
+    }
 }
 
 #[cfg(test)]
@@ -1545,5 +1612,22 @@ mod wkt_tests {
             bare.to_json(),
             Value::String(WKT_NO_AUTHORITY.to_string()).to_string()
         );
+    }
+
+    #[test]
+    fn first_if_all_equal_keeps_first_representation() {
+        let proj = deserialize_crs(OGC_CRS84_PROJJSON).unwrap();
+        let auth = deserialize_crs("OGC:CRS84").unwrap();
+        assert_eq!(proj, auth);
+
+        let out = first_if_all_equal([&proj, &auth]).unwrap();
+        assert_eq!(
+            out.as_ref().unwrap().to_json(),
+            proj.as_ref().unwrap().to_json()
+        );
+
+        assert!(first_if_all_equal([&proj, &deserialize_crs("EPSG:3857").unwrap()]).is_none());
+        assert!(first_if_all_equal([&None, &auth]).is_none());
+        assert_eq!(first_if_all_equal([&None, &None]), Some(None));
     }
 }

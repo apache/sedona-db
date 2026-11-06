@@ -30,6 +30,7 @@ use crate::dataset::Dataset;
 use crate::errors::{GdalError, Result};
 use crate::gdal_api::{call_gdal_api, GdalApi};
 use crate::gdal_dyn_bindgen::{CE_Failure, CE_None};
+use crate::global::free_gdal_object;
 use crate::raster::types::ResampleAlg;
 use crate::spatial_ref::SpatialRef;
 use sedona_raster::geo_transform::GeoTransform;
@@ -101,7 +102,9 @@ unsafe impl Send for GenImgProjTransformer {}
 impl Drop for GenImgProjTransformer {
     fn drop(&mut self) {
         if !self.handle.is_null() {
-            unsafe { call_gdal_api!(self.api, GDALDestroyGenImgProjTransformer, self.handle) };
+            free_gdal_object(|| unsafe {
+                call_gdal_api!(self.api, GDALDestroyGenImgProjTransformer, self.handle)
+            });
         }
     }
 }

@@ -18,7 +18,7 @@
 use std::{mem, sync::Arc};
 
 use arrow_schema::SchemaRef;
-use datafusion_common::Result;
+use datafusion_common::{JoinSide, Result, not_impl_err};
 use datafusion_common_runtime::JoinSet;
 use datafusion_execution::{
     SendableRecordBatchStream, TaskContext,
@@ -136,6 +136,31 @@ impl SpatialJoinComponentsBuilder {
             compute_memory_plan(build_partitions.iter().map(PartitionMemorySummary::from))?;
         log::debug!("Computed memory plan for spatial join:\n{:#?}", memory_plan);
         let num_partitions = self.num_spatial_partitions(&memory_plan);
+
+        // A partitioned KNN join merges each query row's nearest neighbours across the
+        // spatial partitions after each partition has been joined. That merge can keep the
+        // query side's unmatched rows, but not the object side's (that needs to know which
+        // objects are among some query row's k nearest after the merge, #1541), nor semi,
+        // anti or mark joins. Refuse those instead of returning wrong rows or panicking.
+        if let (true, SpatialPredicate::KNearestNeighbors(knn)) =
+            (num_partitions > 1, &self.spatial_predicate)
+        {
+            let supported = matches!(
+                (self.join_type, knn.probe_side),
+                (JoinType::Inner, _)
+                    | (JoinType::Left, JoinSide::Left)
+                    | (JoinType::Right, JoinSide::Right)
+            );
+            if !supported {
+                return not_impl_err!(
+                    "KNN {} joins with the query side on the {} are not supported when the \
+                     object side is split into several spatial partitions ({num_partitions}), \
+                     as when it does not fit in memory (apache/sedona-db#1541)",
+                    self.join_type,
+                    knn.probe_side
+                );
+            }
+        }
 
         if num_partitions == 1 {
             log::debug!("Running single-partitioned in-memory spatial join");

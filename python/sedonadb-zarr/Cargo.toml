@@ -29,7 +29,6 @@ doc = false
 
 [dependencies]
 arrow-array = { workspace = true, features = ["ffi"] }
-arrow-buffer = { workspace = true }
 object_store = { workspace = true, features = ["aws", "http"] }
 pyo3 = { workspace = true }
 sedona-raster = { workspace = true }

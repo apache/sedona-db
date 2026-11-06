@@ -41,6 +41,22 @@ pub const DEFAULT_MIN_POINTS_FOR_BUILD_PREPARATION: usize = 50;
 /// configured: 512 MiB.
 pub const DEFAULT_RASTER_CACHE_MAX_BYTES: usize = 512 * 1024 * 1024;
 
+/// Default `sedona.raster.io_concurrency`: blocking raster file operations
+/// (`RS_FromPath` header opens and GDAL pixel reads together) in flight at
+/// once across a session.
+///
+/// Chosen on 640 public 1113 × 1113 uint8 COGs read unsigned from S3 over a
+/// home connection (Apple M-series, 12 cores), all in one batch. A query that
+/// only opens the files (`RS_Width(RS_FromPath(p))`) took 10.4 s at 16,
+/// 9.1-9.4 s at 32 and 9.6 s at 64. One that opens and then reads every file
+/// (`RS_SummaryStats(RS_FromPath(p), 'mean', 1)`) took 24.4-24.7 s at 16,
+/// 19.8-21.3 s at 32, 18.3-20.0 s at 64 and 22.0-24.4 s at 128. 64 is as
+/// many files as the two separate budgets of 32 this one replaced could
+/// have in flight together. Each file in flight holds a thread and an open
+/// dataset; memory in flight does not grow with the budget, since
+/// `RS_EnsureLoaded` already bounds the bytes of a batch.
+pub const DEFAULT_RASTER_IO_CONCURRENCY: usize = 64;
+
 config_namespace! {
     /// Configuration options for Sedona.
     pub struct SedonaOptions {
@@ -114,6 +130,21 @@ config_namespace! {
         /// life of the session. After rewriting a store that a query already
         /// read, set this to 0 and back to drop the stale entries.
         pub cache_max_bytes: usize, default = DEFAULT_RASTER_CACHE_MAX_BYTES
+
+        /// Most blocking raster file operations in flight at once, across
+        /// every query and partition of the session. Opening a file for
+        /// `RS_FromPath` and reading an OutDb file's pixels through GDAL
+        /// (`RS_EnsureLoaded`) each take one slot for as long as the file is
+        /// open; both draw on this one budget. On object storage each file
+        /// is a chain of round trips, so files are worked on concurrently up
+        /// to this limit. Each file in flight holds a thread and an open
+        /// dataset. Values below 1 are treated as 1. Takes effect on the next
+        /// `RS_FromPath` or `RS_EnsureLoaded` call; operations already in
+        /// flight finish before a lower limit is enforced.
+        ///
+        /// Zarr stores are read with async object-store requests rather than
+        /// blocking file operations, and have their own limit.
+        pub io_concurrency: usize, default = DEFAULT_RASTER_IO_CONCURRENCY
     }
 }
 

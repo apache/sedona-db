@@ -162,14 +162,12 @@ def _sedonadb_band_nodata(con, path, *, band=1):
 )
 def test_two_reads_sharing_a_raster_column_over_a_scan(con, tmp_path, source):
     """Two RS_Value calls on one raster column of a table, and a read over a
-    subquery that already called RS_EnsureLoaded, used to fail with
-    'async functions should not be called directly'. The planner wraps each
-    call's raster in an async RS_EnsureLoaded; once DataFusion had turned that
-    wrap into a plain column (common-subexpression elimination hoists the
-    shared loader into a projection below; the user's subquery is such a
-    projection already) the next optimizer pass wrapped the column again,
-    nesting async calls the physical planner cannot hoist. Both reads are
-    cross-checked against rasterio."""
+    subquery that already called RS_EnsureLoaded. The planner wraps each
+    call's raster in RS_EnsureLoaded; once DataFusion has turned that wrap
+    into a plain column (common-subexpression elimination hoists the shared
+    loader into a projection below; the user's subquery is such a projection
+    already) the next optimizer pass must not wrap the column again, which
+    would load it twice. Both reads are cross-checked against rasterio."""
     path = _write_fixture(tmp_path, "int32", nodata=BAND_NODATA["int32"])
     con.create_data_frame(
         con.sql("SELECT RS_FromPath($1) AS r", params=(str(path),)).to_arrow_table()

@@ -57,4 +57,5 @@ mod st_simplify;
 mod st_simplifypreservetopology;
 mod st_snap;
 mod st_unaryunion;
+mod st_union_agg;
 pub mod wkb_to_geos;

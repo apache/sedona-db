@@ -1,0 +1,48 @@
+---
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+
+title: ST_Geometries
+description: Returns the direct members of a geometry as a list, without recursing into nested collections.
+kernels:
+  - returns: list<geometry>
+    args: [geometry]
+  - returns: list<geography>
+    args: [geography]
+---
+
+## Description
+
+Returns `ST_GeometryN(geom, n)` for each `n` from 1 to the number of members: the
+parts of a multi-geometry or the members of a geometry collection, one level deep,
+so a collection nested inside a collection is returned whole. A geometry that is not
+a collection is its own single member, even when it is empty, and an empty
+multi-geometry or collection returns an empty list. The members keep the input's
+spatial type and CRS, and NULL returns NULL.
+
+Unlike [ST_Dump](st_dump.qmd), which recurses into nested collections down to their
+atomic parts, `ST_Geometries` returns only a geometry's direct members. See also
+[ST_GeometryN](st_geometryn.qmd).
+
+## Examples
+
+```sql
+SELECT ST_Geometries(ST_GeomFromText('MULTIPOINT ((10 40), (40 30), (20 20))'));
+```
+
+```sql
+SELECT ST_Geometries(ST_GeomFromText('GEOMETRYCOLLECTION (POINT (1 2), GEOMETRYCOLLECTION (POINT (3 4), LINESTRING (0 0, 1 1)))'));
+```

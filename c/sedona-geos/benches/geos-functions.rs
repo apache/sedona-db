@@ -376,5 +376,19 @@ fn criterion_benchmark(c: &mut Criterion) {
     );
 }
 
+fn criterion_benchmark_aggr(c: &mut Criterion) {
+    let mut f = FunctionSet::new();
+    for udf in sedona_geos::register::aggregate_udfs() {
+        f.add_aggregate_udf(udf).unwrap();
+    }
+
+    benchmark::aggregate(c, &f, "geos", "st_union_agg", Polygon(10));
+}
+
 criterion_group!(benches, criterion_benchmark);
-criterion_main!(benches);
+criterion_group! {
+    name = benches_aggr;
+    config = Criterion::default().sample_size(10);
+    targets = criterion_benchmark_aggr
+}
+criterion_main!(benches, benches_aggr);

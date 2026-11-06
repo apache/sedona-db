@@ -777,4 +777,56 @@ mod tests {
         // The query processed all 4 probe points
         assert_eq!(next_idx, 4);
     }
+
+    #[tokio::test]
+    async fn test_query_batch_mixed_geometry_probe_and_build() {
+        if !gpu_available() {
+            return;
+        }
+
+        // Build side: L-shaped polygon whose MBR is [0, 0, 10, 10] but [2, 2, 10, 10] is empty
+        let build_geoms = &[
+            Some("POLYGON ((0 0, 10 0, 10 2, 2 2, 2 10, 0 10, 0 0))"),
+            Some("POLYGON ((20 20, 30 20, 30 30, 20 30, 20 20))"),
+        ];
+        let options = GpuOptions {
+            enable: true,
+            ..Default::default()
+        };
+        let index = setup_index_for_batch_test(build_geoms, options).await;
+
+        // Probe side mixes points and polygons in the same column (upcast to GeometryCollection).
+        // Row 0: Point (5, 5) is inside build Row 0's MBR [0,0,10,10], but outside the L-shape!
+        // Row 1: Point (1, 1) is inside build Row 0's L-shape.
+        // Row 2: Polygon [4,4,9,9] is inside build Row 0's MBR, but outside the L-shape.
+        // Row 3: Polygon [21,21,25,25] intersects build Row 1.
+        let probe_geoms = &[
+            Some("POINT (5 5)"),
+            Some("POINT (1 1)"),
+            Some("POLYGON ((4 4, 9 4, 9 9, 4 9, 4 4))"),
+            Some("POLYGON ((21 21, 25 21, 25 25, 21 25, 21 21))"),
+        ];
+        let probe_batch = create_probe_batch(probe_geoms);
+
+        let mut build_batch_positions = Vec::new();
+        let mut probe_indices = Vec::new();
+        let (metrics, next_idx) = index
+            .query_batch(
+                &probe_batch,
+                0..4,
+                usize::MAX,
+                &mut build_batch_positions,
+                &mut probe_indices,
+            )
+            .await
+            .unwrap();
+
+        // All 4 probe geometries hit build MBRs, so candidate_count == 4,
+        // but only probe rows 1 and 3 actually intersect!
+        assert_eq!(metrics.candidate_count, 4);
+        assert_eq!(metrics.count, 2);
+        assert_eq!(build_batch_positions, vec![(0, 0), (0, 1)]);
+        assert_eq!(probe_indices, vec![1, 3]);
+        assert_eq!(next_idx, 4);
+    }
 }

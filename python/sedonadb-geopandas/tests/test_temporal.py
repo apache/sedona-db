@@ -98,9 +98,9 @@ def test_normalize_temporal_scalar_units(value, expected):
 
 
 def test_normalize_temporal_scalar_zone_aware():
-    stamp = pd.Timestamp("2026-01-01 00:00:00.000000001", tz="US/Pacific")
+    stamp = pd.Timestamp("2026-01-01 00:00:00.000000001", tz="America/Los_Angeles")
     got = normalize_temporal_scalar(stamp)
-    assert got.type == pa.timestamp("ns", "US/Pacific")
+    assert got.type == pa.timestamp("ns", "America/Los_Angeles")
     assert got.as_py() == stamp
 
 

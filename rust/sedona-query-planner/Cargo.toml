@@ -51,5 +51,5 @@ sedona-schema = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
 
 [[bench]]
-name = "raster_batch_budget"
+name = "raster_materialization"
 harness = false

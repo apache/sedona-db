@@ -34,10 +34,13 @@ use pyo3::{
     Bound, PyAny, Python,
 };
 use sedona::record_batch_reader_provider::RecordBatchReaderProvider;
-use sedona_expr::scalar_udf::ScalarKernelRef;
+use sedona_expr::scalar_udf::{ScalarKernelRef, SedonaScalarUDF};
 use sedona_extension::{
     catalog::ImportedCatalogProviderList,
-    extension::{SedonaCCatalogProviderList, SedonaCScalarKernel, SedonaCTableProvider},
+    extension::{
+        SedonaCCatalogProviderList, SedonaCScalarKernel, SedonaCScalarKernelV2,
+        SedonaCTableProvider,
+    },
     runtime::RuntimeHandle,
     scalar_kernel::ImportedScalarKernel,
     table_provider::ImportedTableProvider,
@@ -124,13 +127,25 @@ pub fn import_sedona_ffi_table_provider(
     Ok((Arc::new(provider), table_reference))
 }
 
+/// Import a V2 capsule as a complete UDF declaration, keeping function-level
+/// metadata and volatility separate from the executable kernel.
+pub fn import_sedona_ffi_scalar_udf(obj: &Bound<PyAny>) -> Result<SedonaScalarUDF, PySedonaError> {
+    let contents = check_pycapsule(obj, "sedonadb_scalar_kernel_v2")? as *mut SedonaCScalarKernelV2;
+    let raw = unsafe {
+        let raw = std::ptr::read(contents);
+        std::ptr::write_bytes(contents, 0, 1);
+        raw
+    };
+    Ok(SedonaScalarUDF::try_from(raw)?)
+}
+
 /// Import a natively-compiled scalar kernel from a `PyCapsule` wrapping a
 /// [`SedonaCScalarKernel`] -- the same Arrow-C-Data-Interface-style ABI
 /// (opaque pointer + function-pointer vtable + explicit release) already
 /// used by `sedona-extension` to statically link in kernels at build time
 /// (see `c/sedona-s2geography`); this is the runtime counterpart, letting an
 /// out-of-tree plugin hand in a real `SedonaScalarKernel` -- no Python
-/// callback per invocation -- via `__sedonadb_scalar_udf__`.
+/// callback per invocation -- via the legacy `__sedonadb_scalar_udf__` protocol.
 ///
 /// Returns the kernel's own declared name (read from the capsule via
 /// [`ImportedScalarKernel::function_name`], not supplied by the caller) so
@@ -228,23 +243,28 @@ pub fn import_arg_matcher(
     obj: &Bound<PyAny>,
 ) -> Result<Arc<dyn TypeMatcher + Send + Sync>, PySedonaError> {
     if let Ok(string_value) = obj.extract::<String>() {
-        match string_value.as_str() {
-            "geometry" => return Ok(ArgMatcher::is_geometry()),
-            "geography" => return Ok(ArgMatcher::is_geography()),
-            "numeric" => return Ok(ArgMatcher::is_numeric()),
-            "string" => return Ok(ArgMatcher::is_string()),
-            "binary" => return Ok(ArgMatcher::is_binary()),
-            "boolean" => return Ok(ArgMatcher::is_boolean()),
-            v => {
-                return Err(PySedonaError::SedonaPython(format!(
-                    "Can't interpret literal string '{v}' as ArgMatcher"
-                )))
-            }
-        }
+        return arg_matcher_from_name(&string_value);
     }
 
     let sedona_type = import_sedona_type(obj)?;
     Ok(ArgMatcher::is_exact(sedona_type))
+}
+
+pub(crate) fn arg_matcher_from_name(
+    name: &str,
+) -> Result<Arc<dyn TypeMatcher + Send + Sync>, PySedonaError> {
+    match name {
+        "geometry" => Ok(ArgMatcher::is_geometry()),
+        "geography" => Ok(ArgMatcher::is_geography()),
+        "raster" => Ok(ArgMatcher::is_raster()),
+        "numeric" => Ok(ArgMatcher::is_numeric()),
+        "string" => Ok(ArgMatcher::is_string()),
+        "binary" => Ok(ArgMatcher::is_binary()),
+        "boolean" => Ok(ArgMatcher::is_boolean()),
+        _ => Err(PySedonaError::SedonaPython(format!(
+            "Can't interpret literal string '{name}' as ArgMatcher"
+        ))),
+    }
 }
 
 pub fn import_sedona_type(obj: &Bound<PyAny>) -> Result<SedonaType, PySedonaError> {
@@ -253,19 +273,23 @@ pub fn import_sedona_type(obj: &Bound<PyAny>) -> Result<SedonaType, PySedonaErro
 }
 
 pub fn import_arrow_field(obj: &Bound<PyAny>) -> Result<Field, PySedonaError> {
-    let capsule = obj.getattr("__arrow_c_schema__")?.call0()?;
-    let schema =
-        unsafe { FFI_ArrowSchema::from_raw(check_pycapsule(&capsule, "arrow_schema")? as _) };
-
+    let schema = import_arrow_ffi_schema(obj)?;
     Ok(Field::try_from(&schema)?)
 }
 
 pub fn import_arrow_schema(obj: &Bound<PyAny>) -> Result<Schema, PySedonaError> {
-    let capsule = obj.getattr("__arrow_c_schema__")?.call0()?;
-    let schema =
-        unsafe { FFI_ArrowSchema::from_raw(check_pycapsule(&capsule, "arrow_schema")? as _) };
-
+    let schema = import_arrow_ffi_schema(obj)?;
     Ok(Schema::try_from(&schema)?)
+}
+
+/// Consume an Arrow schema capsule, either directly or via the export protocol.
+fn import_arrow_ffi_schema(obj: &Bound<PyAny>) -> Result<FFI_ArrowSchema, PySedonaError> {
+    let capsule = if obj.is_instance_of::<PyCapsule>() {
+        obj.clone()
+    } else {
+        obj.getattr("__arrow_c_schema__")?.call0()?
+    };
+    Ok(unsafe { FFI_ArrowSchema::from_raw(check_pycapsule(&capsule, "arrow_schema")? as _) })
 }
 
 pub fn check_pycapsule(obj: &Bound<PyAny>, name: &str) -> Result<*mut c_void, PySedonaError> {

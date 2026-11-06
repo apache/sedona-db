@@ -117,6 +117,16 @@ fn object_store_table_options(
     Ok(table_options)
 }
 
+/// Whether an option key configures an object store rather than a file format
+///
+/// These are the keys `ensure_object_store_registered_with_options()` applies
+/// to an S3, Google Cloud Storage, or Azure store.
+pub fn is_object_store_option(key: &str) -> bool {
+    ["aws.", "gcp.", "azure."]
+        .iter()
+        .any(|prefix| key.starts_with(prefix))
+}
+
 // Backward compatibility wrapper
 pub async fn ensure_object_store_registered(state: &mut SessionState, name: &str) -> Result<()> {
     ensure_object_store_registered_with_options(state, name, None).await

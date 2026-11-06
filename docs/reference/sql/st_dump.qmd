@@ -29,6 +29,10 @@ kernels:
 
 If the geometry is simple it returns the geometry itself, if the geometry is collection or multi it returns record for each of collection components.
 
+Nested collections are expanded recursively down to their atomic parts, with `path`
+giving each part's position, as in PostGIS. To list only a geometry's direct members,
+use [ST_Geometries](st_geometries.qmd).
+
 ## Examples
 
 ```sql

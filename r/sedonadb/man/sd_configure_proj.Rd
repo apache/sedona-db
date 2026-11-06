@@ -14,6 +14,7 @@ sd_configure_proj(
 \arguments{
 \item{preset}{One of:
 \itemize{
+\item \code{"conda"}: Look for PROJ in \code{CONDA_PREFIX}.
 \item \code{"homebrew"}: Look for PROJ installed by Homebrew. This is the easiest
 option on MacOS.
 \item \code{"system"}: Look for PROJ in the platform library load path (e.g.,

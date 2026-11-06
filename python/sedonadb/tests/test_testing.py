@@ -25,7 +25,13 @@ import pyarrow as pa
 import pyproj
 import pytest
 import shapely
-from sedonadb.testing import DuckDB, PostGIS, SedonaDB, _row_level_crs
+from sedonadb.testing import (
+    DuckDB,
+    PostGIS,
+    SedonaDB,
+    _row_level_crs,
+    _unique_srid_from_ewkb,
+)
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS, DuckDB])
@@ -272,8 +278,8 @@ def test_table_parquet(eng):
             )
 
 
-def _ewkb_point(x, y, srid):
-    """A little-endian EWKB point carrying `srid` (0 for no SRID).
+def _ewkb_point(x, y, srid, byte_order=1):
+    """An EWKB point carrying `srid` (0 for no SRID).
 
     Written with shapely, like the ST_AsEWKB tests in
     `tests/functions/test_wkb.py`, rather than packing the bytes by hand.
@@ -283,8 +289,67 @@ def _ewkb_point(x, y, srid):
     if srid:
         point = shapely.set_srid(point, srid)
     return shapely.to_wkb(
-        point, byte_order=1, flavor="extended", include_srid=bool(srid)
+        point, byte_order=byte_order, flavor="extended", include_srid=bool(srid)
     )
+
+
+@pytest.mark.parametrize("byte_order", [0, 1])
+@pytest.mark.parametrize(
+    "srids, expected",
+    [
+        ([], None),
+        ([None, None], None),
+        ([0, 0], None),
+        ([None, 0], None),
+        ([None, 3857, 3857], 3857),
+    ],
+)
+def test_unique_srid_from_ewkb(srids, expected, byte_order):
+    values = [
+        None if srid is None else _ewkb_point(1, 2, srid, byte_order) for srid in srids
+    ]
+    # A leading null and later geometries may arrive in separate batches.
+    column = pa.chunked_array(
+        [pa.array(values[:1], pa.binary()), pa.array(values[1:], pa.binary())]
+    )
+    assert _unique_srid_from_ewkb(column) == expected
+
+
+@pytest.mark.parametrize("byte_order", [0, 1])
+@pytest.mark.parametrize("srids", [[3857, 0], [0, 3857], [None, 3857, 0], [3857, 4326]])
+def test_unique_srid_from_ewkb_rejects_mixed_srids(srids, byte_order):
+    values = [
+        None if srid is None else _ewkb_point(1, 2, srid, byte_order) for srid in srids
+    ]
+    column = pa.chunked_array(
+        [pa.array(values[:1], pa.binary()), pa.array(values[1:], pa.binary())]
+    )
+    with pytest.raises(ValueError, match="multiple SRIDs"):
+        _unique_srid_from_ewkb(column)
+
+
+@pytest.mark.parametrize("byte_order", [0, 1])
+def test_unique_srid_from_ewkb_rejects_explicit_zero_srid(byte_order):
+    endian = "<" if byte_order else ">"
+    zero_srid = struct.pack(endian + "BIIdd", byte_order, 0x20000001, 0, 1, 2)
+    column = pa.array([zero_srid, _ewkb_point(1, 2, 3857, byte_order)], pa.binary())
+    with pytest.raises(ValueError, match=r"multiple SRIDs: \[0, 3857\]"):
+        _unique_srid_from_ewkb(column)
+
+
+def test_postgis_result_to_table_rejects_known_and_unset_srids():
+    with PostGIS.create_or_skip() as eng:
+        result = eng.execute_and_collect(
+            """
+            SELECT geom FROM (VALUES
+                (1, NULL::geometry),
+                (2, ST_GeomFromText('POINT (1 2)', 3857)),
+                (3, ST_GeomFromText('POINT (3 4)', 0))
+            ) AS points(id, geom) ORDER BY id
+            """
+        )
+        with pytest.raises(ValueError, match=r"multiple SRIDs: \[0, 3857\]"):
+            eng.result_to_table(result)
 
 
 def test_row_level_crs_is_distinct_from_column_crs():

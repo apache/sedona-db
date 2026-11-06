@@ -32,6 +32,7 @@ use futures::TryStreamExt;
 use pyo3::prelude::*;
 use pyo3::types::{PyCapsule, PyDict, PyList};
 use sedona::context::{SedonaDataFrame, SedonaWriteOptions};
+use sedona::is_object_store_option;
 use sedona::projected_reader::simplify_record_batch_reader;
 use sedona::show::{DisplayMode, DisplayTableOptions};
 use sedona_extension::runtime::RuntimeHandle;
@@ -547,15 +548,22 @@ impl InternalDataFrame {
             })
             .collect::<Vec<_>>();
 
-        let write_options = SedonaWriteOptions::new()
-            .with_partition_by(partition_by)
-            .with_sort_by(sort_by_expr)
-            .with_single_file_output(single_file_output);
-
         let options_map = options
             .iter()
             .map(|(k, v)| Ok((k.extract::<String>()?, v.extract::<String>()?)))
             .collect::<Result<HashMap<_, _>, PySedonaError>>()?;
+
+        // Object store options (e.g., aws.region) configure where a remote path
+        // is written; the rest configure the Parquet writer.
+        let (storage_options, options_map): (HashMap<_, _>, HashMap<_, _>) = options_map
+            .into_iter()
+            .partition(|(k, _)| is_object_store_option(k));
+
+        let write_options = SedonaWriteOptions::new()
+            .with_partition_by(partition_by)
+            .with_sort_by(sort_by_expr)
+            .with_single_file_output(single_file_output)
+            .with_storage_options(storage_options);
 
         // Create GeoParquet options
         let mut writer_options = TableGeoParquetOptions::default();
@@ -711,12 +719,15 @@ impl InternalDataFrame {
     fn __sedonadb_table_provider__<'py>(
         &self,
         py: Python<'py>,
-        ctx: &InternalContext,
     ) -> Result<Bound<'py, PyCapsule>, PySedonaError> {
         let provider = self.inner.clone().into_view();
-        // Use the actual session state so that object stores, UDFs, and other
-        // registrations are available when the consumer scans the provider.
-        let session = Arc::new(ctx.inner.ctx.state());
+        // Use the frame's own session state, as collecting the frame does: its
+        // context's state when the frame was made. The consumer then gets the
+        // frame's rows, planned with the settings the frame was made with, and
+        // object stores, UDFs, and other registrations are available when it
+        // scans the provider.
+        let (session, _) = self.inner.clone().into_parts();
+        let session = Arc::new(session);
         let exported = sedona_extension::table_provider::ExportedTableProvider::new(
             provider,
             session,

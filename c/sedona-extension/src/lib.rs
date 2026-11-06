@@ -24,6 +24,7 @@ pub mod import_sendable_record_batch_stream;
 pub mod metrics;
 pub mod runtime;
 pub mod scalar_kernel;
+pub mod scalar_kernel_v2;
 pub mod streaming;
 pub mod table_provider;
 pub mod utils;

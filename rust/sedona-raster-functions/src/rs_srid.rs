@@ -168,25 +168,33 @@ mod tests {
         let result = tester.invoke_array(Arc::new(rasters)).unwrap();
         let expected: Arc<dyn arrow_array::Array> = Arc::new(UInt32Array::from(vec![Some(0)]));
         assert_array_equal(&result, &expected);
+
+        // A raster with an authority-coded CRS resolves to its integer SRID.
+        let mut builder = RasterBuilder::new(1);
+        append_1x1_raster_with_crs(&mut builder, Some("EPSG:3031"));
+        let rasters = builder.finish().unwrap();
+
+        let result = tester.invoke_array(Arc::new(rasters)).unwrap();
+        let expected: Arc<dyn arrow_array::Array> = Arc::new(UInt32Array::from(vec![Some(3031)]));
+        assert_array_equal(&result, &expected);
     }
 
     #[test]
-    fn udf_srid_missing_srid_returns_error() {
+    fn udf_srid_authorityless_crs_is_zero() {
         let udf: ScalarUDF = rs_srid_udf().into();
         let tester = ScalarUdfTester::new(udf, vec![RASTER]);
 
-        // A PROJJSON CRS without an authority identifier should error.
+        // A valid CRS with no authority identifier (here a PROJJSON GeographicCRS
+        // with no `id`, the shape CF/rioxarray emit) is usable but has no integer
+        // SRID, so RS_SRID yields 0, like a missing CRS, rather than erroring.
         let projjson_crs = "{\"type\":\"GeographicCRS\",\"name\":\"No authority id\"}";
         let mut builder = RasterBuilder::new(1);
         append_1x1_raster_with_crs(&mut builder, Some(projjson_crs));
         let rasters = builder.finish().unwrap();
 
-        let err = tester.invoke_array(Arc::new(rasters)).unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("Can't extract SRID from item-level CRS"),
-            "unexpected error: {err}"
-        );
+        let result = tester.invoke_array(Arc::new(rasters)).unwrap();
+        let expected: Arc<dyn arrow_array::Array> = Arc::new(UInt32Array::from(vec![Some(0)]));
+        assert_array_equal(&result, &expected);
     }
 
     #[test]

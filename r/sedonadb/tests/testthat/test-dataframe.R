@@ -367,6 +367,34 @@ test_that("sd_write_parquet accepts compression parameter", {
   )
 })
 
+test_that("sd_write_parquet passes object store options to the store", {
+  df <- sd_sql("SELECT 1 as one")
+
+  # A store option configures the output's object store, which rejects an
+  # invalid one without any network access, rather than the Parquet writer
+  expect_error(
+    sd_write_parquet(
+      df,
+      "s3://bucket/out.parquet",
+      options = list("aws.not_an_option" = "true")
+    ),
+    "AwsOptions"
+  )
+
+  # ...and does not affect a local write
+  tmp_parquet_file <- tempfile(fileext = ".parquet")
+  on.exit(unlink(tmp_parquet_file))
+  sd_write_parquet(
+    df,
+    tmp_parquet_file,
+    options = list("aws.region" = "us-west-2")
+  )
+  expect_identical(
+    sd_collect(sd_read_parquet(tmp_parquet_file)),
+    data.frame(one = 1)
+  )
+})
+
 test_that("sd_write_parquet accepts options parameter", {
   tmp_parquet_file <- tempfile(fileext = ".parquet")
   tmp_parquet_file_uncompressed <- tempfile(fileext = ".parquet")

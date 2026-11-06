@@ -57,11 +57,8 @@ rapids_cmake_build_type(Release)
 # =============================================================================
 include(FetchContent)
 
-rapids_cpm_init()
+rapids_cpm_init(OVERRIDE "${CMAKE_CURRENT_SOURCE_DIR}/cmake/versions_override.json")
 if(GPUSPATIAL_BUILD_TESTS)
-  set(NANOARROW_IPC ON)
-  set(NANOARROW_IPC_WITH_ZSTD ON)
-
   # These wil be installed with vcpkg.json under "test" folder
   find_package(GTest CONFIG REQUIRED)
   find_package(GEOS CONFIG REQUIRED)
@@ -137,6 +134,12 @@ add_library(gpuspatial
             src/rt/rt_engine.cpp
             src/memory_manager.cc
             src/relate_engine.cu
+            src/relate/relate_bvh.cu
+            src/relate/relate_rt.cu
+            src/relate/relate_point.cu
+            src/relate/relate_linestring.cu
+            src/relate/relate_polygon.cu
+            src/relate/relate_geometry_collection.cu
             src/rt_spatial_index.cu
             src/rt_spatial_refiner.cu
             ${PTX_FILES})

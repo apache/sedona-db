@@ -242,13 +242,15 @@ def test_st_srid_from_wkt(con):
     assert result["srid"][0].as_py() == 3857
 
 
-def test_st_srid_from_authorityless_wkt_errors(con):
-    """A WKT with no authority code anywhere has no SRID to extract."""
-    with pytest.raises(Exception, match="SRID"):
-        con.sql(
-            "SELECT ST_SRID(ST_SetCrs(ST_GeomFromText('POINT (0 1)'), $1))",
-            params=(WKT_LCC_NO_AUTHORITY,),
-        ).to_arrow_table()
+def test_st_srid_from_authorityless_wkt_is_zero(con):
+    """A WKT with no authority code anywhere is a valid, usable CRS but has no
+    integer SRID, so ST_SRID yields 0 (the same value as a missing CRS) rather
+    than erroring. ST_CRS still carries the full definition."""
+    result = con.sql(
+        "SELECT ST_SRID(ST_SetCrs(ST_GeomFromText('POINT (0 1)'), $1)) AS srid",
+        params=(WKT_LCC_NO_AUTHORITY,),
+    ).to_arrow_table()
+    assert result["srid"][0].as_py() == 0
 
 
 def test_st_transform_from_wkt_crs(con):

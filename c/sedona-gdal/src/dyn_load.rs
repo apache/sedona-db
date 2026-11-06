@@ -264,8 +264,7 @@ fn current_process_library() -> Result<Library, GdalInitLibraryError> {
 
 #[cfg(windows)]
 fn current_process_library() -> Result<Library, GdalInitLibraryError> {
-    // Safety: loading symbols from the current process is safe.
-    Ok(unsafe { libloading::os::windows::Library::this() }
+    Ok(libloading::os::windows::Library::this()
         .map_err(|e| {
             GdalInitLibraryError::LibraryError(format!(
                 "Failed to open current process handle: {}",

@@ -16,3 +16,4 @@
 # under the License.
 
 rm -f src/Makevars.win
+rm -rf inst/gdal inst/proj

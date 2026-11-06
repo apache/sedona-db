@@ -97,7 +97,7 @@ def _rasterio_pixel_as_point(path, col, row):
     import rasterio
 
     with rasterio.open(str(path)) as src:
-        x, y = src.transform * (col - 1, row - 1)
+        x, y = src.transform @ (col - 1, row - 1)
         return (x, y)
 
 
@@ -105,7 +105,7 @@ def _rasterio_pixel_as_centroid(path, col, row):
     import rasterio
 
     with rasterio.open(str(path)) as src:
-        x, y = src.transform * (col - 0.5, row - 0.5)
+        x, y = src.transform @ (col - 0.5, row - 0.5)
         return (x, y)
 
 
@@ -120,7 +120,7 @@ def _rasterio_pixel_as_polygon(path, col, row):
             (col, row),
             (col - 1, row),
         ]
-        return shapely.Polygon([src.transform * corner for corner in corners])
+        return shapely.Polygon([src.transform @ corner for corner in corners])
 
 
 @pytest.mark.parametrize(("col", "row"), PIXELS)

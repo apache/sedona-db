@@ -16,6 +16,7 @@
 # under the License.
 
 import io
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Literal, Optional, Union
 
@@ -1465,7 +1466,7 @@ class DataFrame:
         return DataFrame(self._ctx, self._impl.to_memtable(self._ctx._impl))
 
     def __sedonadb_table_provider__(self):
-        return self._impl.__sedonadb_table_provider__(self._ctx._impl)
+        return self._impl.__sedonadb_table_provider__()
 
     def to_arrow_table(self, schema: Any = None) -> "pa.Table":
         """Execute and collect results as a PyArrow Table
@@ -1541,6 +1542,7 @@ class DataFrame:
         single_file_output: Optional[bool] = None,
         geoparquet_version: Literal["1.0", "1.1", "2.0", "none", None] = None,
         overwrite_bbox_columns: Optional[bool] = None,
+        write_bbox_columns: Optional[bool] = None,
         max_row_group_size: Optional[int] = None,
         compression: Optional[str] = None,
     ):
@@ -1552,12 +1554,16 @@ class DataFrame:
         subset of the file is needed for a given query.
 
         Args:
-            path: A filename or directory to which parquet file(s) should be written.
+            path: A filename, directory, or URL (e.g., `s3://bucket/path.parquet`) to
+                which parquet file(s) should be written.
             options: Key/value options to be used when constructing a parquet writer.
                 Common options are exposed as other arguments to `to_parquet()`; however,
                 this argument allows setting any DataFusion Parquet writer option. If
                 an option is specified here and by an argument to this function, the
-                value specified as a keyword argument takes precedence.
+                value specified as a keyword argument takes precedence. Options for
+                the object store a remote `path` is written to are passed here too,
+                as for `read_parquet()` (e.g., `{"aws.region": "us-west-2"}`); their
+                keys start with `aws.`, `gcp.`, or `azure.`.
             partition_by: A vector of column names to partition by. If non-empty,
                 applies hive-style partitioning to the output.
             sort_by: A vector of column names to sort by. Currently only ascending
@@ -1585,6 +1591,12 @@ class DataFrame:
                 that already exist in the input. This is useful in a read -> modify
                 -> write scenario to ensure these columns are up-to-date. If `False`
                 (the default), an error will be raised if a bbox column already exists.
+            write_bbox_columns: Use `True` or `False` to explicitly request or omit
+                bounding box (covering) columns, independent of `geoparquet_version`.
+                By default, these columns are written only for GeoParquet 1.1. Bounding
+                box columns can be requested for GeoParquet 1.1 or 2.0 (GeoParquet 1.0
+                cannot declare them, so requesting them with 1.0 or "none" raises an
+                error).
             max_row_group_size: Target maximum number of rows in each row group. Defaults
                 to the global configuration value (1M rows).
             compression: Sets the Parquet compression codec. Valid values are: uncompressed,
@@ -1601,7 +1613,8 @@ class DataFrame:
 
         """
 
-        path = Path(path)
+        # A str, not a Path: Path() collapses the `//` of a URL like s3://...
+        path = os.fspath(path)
 
         if options is not None:
             options = {k: str(v) for k, v in options.items()}
@@ -1619,6 +1632,9 @@ class DataFrame:
 
         if overwrite_bbox_columns is not None:
             options["overwrite_bbox_columns"] = str(overwrite_bbox_columns)
+
+        if write_bbox_columns is not None:
+            options["write_bbox_columns"] = str(write_bbox_columns)
 
         if single_file_output is None:
             single_file_output = partition_by is None and str(path).endswith(".parquet")

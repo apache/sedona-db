@@ -533,7 +533,7 @@ class DuckDB(DBEngine):
         needs_geoarrow_registration = self.con.sql(
             "SELECT count(*) > 0 FROM duckdb_functions() "
             "WHERE function_name = 'register_geoarrow_extensions'"
-        ).fetchone()[0]
+        ).fetchall()[0][0]
 
         if needs_geoarrow_registration:
             self.con.sql("CALL register_geoarrow_extensions()")
@@ -575,7 +575,9 @@ class DuckDB(DBEngine):
         return self
 
     def execute_and_collect(self, query) -> pa.Table:
-        return self.con.execute(query).arrow().read_all()
+        # A relation's to_arrow_table() works across DuckDB versions; DuckDB
+        # 2.0 removed arrow() from an execute() result.
+        return self.con.sql(query).to_arrow_table()
 
 
 class DuckDBSingleThread(DuckDB):
@@ -1279,15 +1281,17 @@ def _ewkb_srid(wkb):
 
 
 def _unique_srid_from_ewkb(obj):
-    """The single SRID shared by every row, or `None` if no row carries one.
+    """The single SRID shared by non-null rows, or `None` if all are unset.
 
     Each blob is read in its own byte order, so a column of mixed endianness
-    needs no special handling.
+    needs no special handling. Null geometries do not constrain the CRS, but
+    a non-null geometry with an unset SRID (0) cannot share a column-level CRS
+    with a geometry carrying a known SRID.
     """
-    srids = {_ewkb_srid(wkb) for wkb in obj.to_pylist()} - {None}
+    srids = {_ewkb_srid(wkb) or 0 for wkb in obj.to_pylist() if wkb is not None}
     if len(srids) > 1:
         raise ValueError(
             f"Can't infer column-level CRS from output with multiple SRIDs: {sorted(srids)}"
         )
 
-    return srids.pop() if srids else None
+    return (srids.pop() or None) if srids else None
