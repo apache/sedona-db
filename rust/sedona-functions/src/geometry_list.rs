@@ -17,10 +17,10 @@
 
 use std::sync::Arc;
 
-use arrow_array::{Array, ArrayRef, BinaryArray, StringViewArray, builder::StringViewBuilder};
+use arrow_array::{Array, ArrayRef, BinaryArray, StringViewArray, UInt64Array};
 use arrow_buffer::OffsetBuffer;
 use arrow_schema::Field;
-use datafusion_common::{Result, cast::as_string_view_array};
+use datafusion_common::{Result, arrow::compute::take, cast::as_string_view_array};
 use datafusion_expr::ColumnarValue;
 use sedona_expr::item_crs::{make_item_crs, parse_item_crs_arg, parse_item_crs_arg_type};
 use sedona_schema::datatypes::SedonaType;
@@ -80,6 +80,8 @@ impl GeometryListInput {
     /// each input row to its range in `values`, including empty and null rows.
     /// `field` describes an output geometry member: the list item for
     /// ST_Geometries, or the `geom` field within each ST_Dump record.
+    /// CRS payload buffers are shared with the input; when each row contributes
+    /// one member, the CRS views and validity buffers are also reused.
     /// Inputs without an item-CRS wrapper return the WKB values directly.
     pub fn finish_values(
         &self,
@@ -91,23 +93,26 @@ impl GeometryListInput {
             return Ok(Arc::new(values));
         };
         let (item_type, _) = parse_item_crs_arg_type(&SedonaType::from_storage_field(field)?)?;
-        let mut crs_builder = StringViewBuilder::with_capacity(values.len());
-        for (crs, offsets) in crs.iter().zip(offsets.windows(2)) {
-            let count = (offsets[1] - offsets[0]) as usize;
-            if let Some(crs) = crs {
-                // Reuse the string view for every member, including long CRS definitions.
-                crs_builder.try_append_value_n(crs, count)?;
-            } else {
-                for _ in 0..count {
-                    crs_builder.append_null();
-                }
-            }
-        }
+        let member_crs: ArrayRef = if offsets
+            .windows(2)
+            .all(|offsets| offsets[1] - offsets[0] == 1)
+        {
+            // One member per row: share the views and validity as well as the payload.
+            Arc::new(crs.clone())
+        } else {
+            let rows = UInt64Array::from_iter_values(offsets.windows(2).enumerate().flat_map(
+                |(row, offsets)| {
+                    std::iter::repeat_n(row as u64, (offsets[1] - offsets[0]) as usize)
+                },
+            ));
+            // Arrow's take repeats string views while sharing the input payload buffers.
+            take(crs, &rows, None)?
+        };
         let num_values = values.len();
         make_item_crs(
             &item_type,
             ColumnarValue::Array(Arc::new(values)),
-            &ColumnarValue::Array(Arc::new(crs_builder.finish())),
+            &ColumnarValue::Array(member_crs),
             None,
         )?
         .into_array(num_values)
@@ -120,7 +125,10 @@ mod tests {
 
     use arrow_array::{Array, ArrayRef, ListArray, StructArray, UInt32Array};
     use arrow_buffer::NullBuffer;
-    use datafusion_common::{ScalarValue, cast::as_struct_array};
+    use datafusion_common::{
+        ScalarValue,
+        cast::{as_string_view_array, as_struct_array},
+    };
     use rstest::rstest;
     use sedona_schema::datatypes::{
         SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY, WKB_LARGE_GEOGRAPHY, WKB_LARGE_GEOMETRY,
@@ -261,6 +269,73 @@ mod tests {
             .invoke_scalar(ScalarValue::try_from_array(&parent_null, 0).unwrap())
             .unwrap();
         assert!(result.is_null());
+    }
+
+    #[rstest]
+    fn item_crs_reuses_buffers(
+        #[values(false, true)] dump: bool,
+        #[values("POINT (1 2)", "MULTIPOINT (1 2, 3 4)")] wkt: &str,
+    ) {
+        let long_crs = "urn:ogc:def:crs:EPSG::4326";
+        let input = create_array_item_crs(
+            &[Some(wkt); 5],
+            [
+                Some(long_crs),
+                Some(long_crs),
+                None,
+                Some("EPSG:3857"),
+                Some(long_crs),
+            ],
+            &WKB_GEOMETRY,
+        )
+        .slice(1, 4);
+        let input_crs = as_string_view_array(as_struct_array(&input).unwrap().column(1)).unwrap();
+        let udf = if dump {
+            st_dump_udf()
+        } else {
+            st_geometries_udf()
+        };
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![SedonaType::new_item_crs(&WKB_GEOMETRY).unwrap()],
+        );
+        let result = tester.invoke_array(input.clone()).unwrap();
+        let list = result.as_any().downcast_ref::<ListArray>().unwrap();
+        let geometries = if dump {
+            as_struct_array(list.values()).unwrap().column(1)
+        } else {
+            list.values()
+        };
+        let output_crs =
+            as_string_view_array(as_struct_array(geometries).unwrap().column(1)).unwrap();
+        let count = if wkt.starts_with("MULTIPOINT") { 2 } else { 1 };
+        assert_eq!(
+            output_crs.iter().collect::<Vec<_>>(),
+            input_crs
+                .iter()
+                .flat_map(|crs| std::iter::repeat_n(crs, count))
+                .collect::<Vec<_>>()
+        );
+        assert!(!input_crs.data_buffers().is_empty());
+        assert_eq!(
+            output_crs.data_buffers().len(),
+            input_crs.data_buffers().len()
+        );
+        for (output, input) in output_crs
+            .data_buffers()
+            .iter()
+            .zip(input_crs.data_buffers())
+        {
+            assert_eq!(output.as_ptr(), input.as_ptr());
+            assert_eq!(output.len(), input.len());
+        }
+        if count == 1 {
+            assert_eq!(output_crs.views().as_ptr(), input_crs.views().as_ptr());
+            assert_eq!(
+                output_crs.nulls().unwrap().buffer().as_ptr(),
+                input_crs.nulls().unwrap().buffer().as_ptr()
+            );
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
