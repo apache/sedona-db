@@ -243,10 +243,11 @@ the options of each method of those names, which selects the columns as it does
 or NaN for values near float64's limits); `any()` and `all()` refuse
 timestamps, as pandas 3 does. Quantiles, and the percentiles of `describe()`,
 are interpolated as pandas interpolates them, not with the engine's
-`percentile_cont()`, which rounds its interpolation to millionths. `unique()`, `value_counts()` and `mode()` cannot
-follow the order of first appearance, since a lazy frame has no row order:
-`value_counts()` breaks ties by value, and so does the top value of
-`describe()`; `nlargest()` and `nsmallest()` keep any of tied values. Geometries
+`percentile_cont()`, which rounds its interpolation to millionths. `unique()`,
+`value_counts()` and `mode()` cannot follow the order of first appearance, since
+a lazy frame has no row order: `value_counts()` breaks ties by value, and so
+does the top value of `describe()` (of a categorical, by category, as in
+pandas); `nlargest()` and `nsmallest()` keep any of tied values. Geometries
 count as distinct by their WKB, as in GeoPandas, but `nunique(dropna=False)`
 counts a missing one, as pandas does (GeoPandas' `unique()` drops it). A frame's
 `skew()` is GeoPandas' (an affine transformation of the active geometry) when it

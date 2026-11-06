@@ -275,6 +275,22 @@ def test_mode_of_a_categorical(ordered):
             pd.testing.assert_series_equal(ours, series.to_pandas().mode(dropna=dropna))
 
 
+@pytest.mark.parametrize(
+    "categories",
+    [[2**63 + 1, 2**63 + 2, 2**63 + 3], [2**53 + 3, 2**53 + 4, 2**53 + 5]],
+)
+def test_mode_of_a_categorical_of_large_integers(categories):
+    # Each value counted is its own category, past where floats (of integers
+    # with a missing value) tell integers apart.
+    series = _series(pa.array(pd.Categorical.from_codes([0, 0, 1, -1], categories)))
+    theirs = series.to_pandas()
+    for dropna in (True, False):
+        ours = series.mode(dropna=dropna)
+        pd.testing.assert_series_equal(ours, theirs.mode(dropna=dropna))
+        assert ours.tolist() == [categories[0]]
+    assert series.describe().tolist() == theirs.describe().tolist()
+
+
 @pytest.mark.parametrize("keep", ["first", "last", "all"])
 @pytest.mark.parametrize("method", ["nlargest", "nsmallest"])
 @pytest.mark.parametrize("column", ["i64", "f", "fm", "b", "t", "d"])

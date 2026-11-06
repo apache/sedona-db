@@ -1467,6 +1467,8 @@ class Series:
         """
         import pandas as pd
 
+        if self._is_categorical():
+            return self._categorical_mode(dropna)
         counts = self.value_counts(sort=False, dropna=dropna)
         if not len(counts):
             # No values: an empty Series of this column's dtype.
@@ -1474,12 +1476,34 @@ class Series:
         # In value order, a missing value last, as value_counts(sort=False)
         # gives them.
         modes = counts.index[counts == counts.max()]
-        if self._is_categorical():
-            # A categorical's modes are its codes', of its categories: in
-            # their order, a missing value (code -1) first, as pandas has them.
-            modes = pd.Categorical(modes, dtype=self.dtype)
-            modes = modes[modes.codes.argsort(kind="stable")]
         return pd.Series(modes, name=self._name)
+
+    def _categorical_mode(self, dropna):
+        """mode() of a categorical: its codes', of its categories, in their
+        order, a missing value (code -1) first, as pandas has them.
+
+        Each value counted is matched to its category as it is: value_counts()
+        holds integers counted with a missing value as floats, which can't
+        tell 2**63 + 1 from 2**63 + 2.
+        """
+        import numpy as np
+        import pandas as pd
+        import pyarrow.compute as pc
+
+        values = self._distinct_values("mode")
+        if dropna:
+            values = values.filter(values["x"].is_not_null())
+        counts = values.group_by("x").agg(values._ctx.lit(1).funcs.count().alias("n"))
+        counts = counts.to_arrow_table()
+        keys, n = counts["x"], counts["n"].to_numpy()
+        present = pc.is_valid(keys)
+        codes = np.full(len(keys), -1)
+        codes[present.to_numpy()] = self.dtype.categories.get_indexer(
+            pc.filter(keys, present).to_pandas()
+        )
+        modes = np.sort(codes[n == n.max()]) if len(n) else codes
+        categorical = pd.Categorical.from_codes(modes, dtype=self.dtype)
+        return pd.Series(categorical, name=self._name)
 
     def nlargest(self, n=5, keep="first"):
         """The `n` largest values, largest first, as a Series of a new frame,
