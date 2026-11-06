@@ -64,15 +64,22 @@ test_that("unrecognized options result in a warning", {
 
 test_that("sd_read_parquet() works", {
   path <- system.file("files/natural-earth_cities_geo.parquet", package = "sedonadb")
+  path_copy <- file.path(withr::local_tempdir(), "cities-copy.parquet")
+  expect_true(file.copy(path, path_copy))
   expect_identical(sd_count(sd_read_parquet(path)), 243)
 
-  expect_identical(sd_count(sd_read_parquet(c(path, path))), 243 * 2)
+  expect_identical(sd_count(sd_read_parquet(c(path, path_copy))), 243 * 2)
 })
 
 test_that("sd_read() resolves registered formats and options", {
   parquet <- system.file("files/natural-earth_cities_geo.parquet", package = "sedonadb")
+  parquet_copy <- file.path(withr::local_tempdir(), "cities-copy.parquet")
+  expect_true(file.copy(parquet, parquet_copy))
   expect_identical(sd_count(sd_read(parquet)), 243)
-  expect_identical(sd_count(sd_read(c(parquet, parquet), format = "parquet")), 486)
+  expect_identical(
+    sd_count(sd_read(c(parquet, parquet_copy), format = "parquet")),
+    486
+  )
 
   csv <- tempfile(fileext = ".csv")
   writeLines(c("x;y", "1;a", "2;b"), csv)

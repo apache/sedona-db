@@ -423,7 +423,6 @@ impl GroupsAccumulator for CollectionGroupsAccumulator {
         &mut self,
         values: &[ArrayRef],
         group_indices: &[usize],
-        opt_filter: Option<&BooleanArray>,
         total_num_groups: usize,
     ) -> Result<()> {
         if values.len() != 3 {
@@ -438,9 +437,6 @@ impl GroupsAccumulator for CollectionGroupsAccumulator {
         let counts = as_int64_array(&values[1])?;
         let items = as_binary_array(&values[2])?;
         for (i, &group_index) in group_indices.iter().enumerate() {
-            if !is_selected(opt_filter, i) {
-                continue;
-            }
             if bits.is_null(i) || counts.is_null(i) || items.is_null(i) {
                 return sedona_internal_err!("unexpected nulls in st_collect() serialized state");
             }
@@ -494,10 +490,6 @@ impl GroupsAccumulator for CollectionGroupsAccumulator {
             Arc::new(Int64Array::from(counts)),
             Arc::new(builder.finish()),
         ])
-    }
-
-    fn supports_convert_to_state(&self) -> bool {
-        true
     }
 
     fn size(&self) -> usize {
@@ -688,10 +680,9 @@ mod test {
         );
 
         let converter = CollectionGroupsAccumulator::new(sedona_type.clone());
-        assert!(converter.supports_convert_to_state());
         let state = converter.convert_to_state(&values, Some(&filter)).unwrap();
         let mut merged = CollectionGroupsAccumulator::new(sedona_type.clone());
-        merged.merge_batch(&state, &group_indices, None, 2).unwrap();
+        merged.merge_batch(&state, &group_indices, 2).unwrap();
         assert_array_equal(&merged.evaluate(EmitTo::All).unwrap(), &expected);
 
         let mut updated = CollectionGroupsAccumulator::new(sedona_type);
@@ -728,7 +719,7 @@ mod test {
         let converter = CollectionGroupsAccumulator::new(sedona_type.clone());
         let state = converter.convert_to_state(&values, Some(&filter)).unwrap();
         let mut merged = CollectionGroupsAccumulator::new(sedona_type);
-        merged.merge_batch(&state, &group_indices, None, 1).unwrap();
+        merged.merge_batch(&state, &group_indices, 1).unwrap();
         assert_array_equal(&merged.evaluate(EmitTo::All).unwrap(), &expected);
     }
 
@@ -756,7 +747,7 @@ mod test {
             .map(|s| s.to_array().unwrap())
             .collect();
         let mut groups = CollectionGroupsAccumulator::new(WKB_GEOMETRY);
-        groups.merge_batch(&state, &[0], None, 1).unwrap();
+        groups.merge_batch(&state, &[0], 1).unwrap();
         assert_array_equal(
             &groups.evaluate(EmitTo::All).unwrap(),
             &create_array(&[Some("MULTIPOINT (0 1, 2 3)")], &WKB_GEOMETRY),

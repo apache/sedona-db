@@ -194,7 +194,6 @@ impl AggregateUdfTester {
             state_accumulator.merge_batch(
                 state_batch.columns(),
                 &(0..total_num_groups).collect::<Vec<_>>(),
-                None,
                 total_num_groups,
             )?;
         }

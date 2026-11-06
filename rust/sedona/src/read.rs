@@ -97,8 +97,7 @@ pub(crate) async fn read_provider(
 
     let session_config = context.copied_config();
     let mut listing_options = ListingOptions::new(file_format)
-        .with_file_extension(format.listing_extension.unwrap_or_default())
-        .with_session_config_options(&session_config);
+        .with_file_extension(format.listing_extension.unwrap_or_default());
 
     if let Some(partitioning) = partitioning {
         listing_options = listing_options.with_table_partition_cols(partitioning);
