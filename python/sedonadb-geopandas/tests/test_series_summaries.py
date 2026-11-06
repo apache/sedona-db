@@ -406,6 +406,40 @@ def test_hasnans_and_is_unique(column):
     assert unique.is_unique == unique.to_pandas().is_unique
 
 
+@pytest.mark.parametrize(
+    "values, type",
+    [
+        # Alike as pandas compares values: -0.0 and 0.0, NaN and a missing
+        # value, two missing values, and a categorical's repeated category.
+        ([0.0, -0.0], None),
+        ([float("nan"), None], None),
+        ([1.0, float("nan")], None),
+        (["a", None, None], None),
+        (["a", "b", "a"], pa.dictionary(pa.int32(), pa.string())),
+        (["a", "b", None], pa.dictionary(pa.int32(), pa.string())),
+    ],
+)
+def test_is_unique_as_pandas_compares(values, type):
+    series = _series(values, type)
+    assert series.is_unique == series.to_pandas().is_unique
+
+
+@pytest.mark.parametrize(
+    "xs, unique", [("(0.0), (1.0), (0.0)", False), ("(0.0), (1.0), (NULL)", True)]
+)
+def test_is_unique_of_geometry(xs, unique):
+    # Geometries are alike if their WKB is, as GeoPandas tells them apart; a
+    # missing one is a value of its own, as pandas counts it (GeoPandas'
+    # unique() drops it, so GeoPandas finds the second not unique).
+    gdf = sgpd.GeoDataFrame(
+        sgpd.default_context().sql(
+            f"SELECT ST_Point(x, x) AS geometry FROM (VALUES {xs}) AS v(x)"
+        )
+    )
+    assert gdf.geometry.is_unique == unique
+    assert gdf.geometry.nunique(dropna=False) == 3 - (not unique)
+
+
 def test_agg_by_name():
     series = _frame()["fm"]
     expected = series.to_pandas()

@@ -1450,9 +1450,11 @@ class GeoDataFrame:
     ):
         """A summary of the frame, written as pandas' `info()` writes it, to
         `buf` (by default, standard output): its rows, and each column's
-        values that are not missing and dtype, as `to_pandas()` would give
-        them. This computes those counts. There is no memory usage to tell,
-        as the frame is lazy: `memory_usage` changes nothing.
+        values that are not missing and dtype, as `dtypes` gives it (so an
+        integer or boolean column with a missing value has the dtype
+        `to_pandas()` gives it with none, not floats or Python objects). This
+        computes those counts. There is no memory usage to tell, as the frame
+        is lazy: `memory_usage` changes nothing.
         """
         import sys
 

@@ -251,8 +251,9 @@ pandas); `nlargest()` and `nsmallest()` keep any of tied values. Geometries
 count as distinct by their WKB, as in GeoPandas, but `nunique(dropna=False)`
 counts a missing one, as pandas does (GeoPandas' `unique()` drops it). A frame's
 `skew()` is GeoPandas' (an affine transformation of the active geometry) when it
-has an active geometry column, and pandas' otherwise; `info()` writes no memory
-usage, which a lazy frame doesn't know.
+has an active geometry column, and pandas' otherwise; `info()` writes the dtypes
+of `dtypes` (int64 for integers with a missing value, which `to_pandas()` makes
+floats) and no memory usage, which a lazy frame doesn't know.
 
 `where()`, `mask()`, and `clip()` keep a column to one kind of value: a
 replacement or bound of another kind (text in a number column, say) raises,

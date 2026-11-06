@@ -1558,11 +1558,14 @@ class Series:
 
         For numbers: count, mean, std, min, percentiles and max; for
         durations the same, for timestamps the same without std; for
-        booleans, strings and geometries (alike if their WKB is): count,
-        unique, top (the most frequent value) and freq. Of values as
-        frequent as each other, top is the smallest, as there is no order of
-        first appearance to break the tie by. Which percentiles are reported
-        is as pandas has it, and they are interpolated as pandas does.
+        booleans, strings, categoricals (of numbers too, as pandas describes
+        them) and geometries (alike if their WKB is): count, unique, top (the
+        most frequent value) and freq. Of values as frequent as each other,
+        top is the smallest (of geometries, the one of the smallest WKB), as
+        there is no order of first appearance to break the tie by; of a
+        categorical's, the first category, as in pandas. Which percentiles
+        are reported is as pandas has it, and they are interpolated as pandas
+        does.
         """
         return _descriptions([self], percentiles)[0]
 
@@ -1663,7 +1666,10 @@ class Series:
     def is_unique(self):
         """Whether no two values are alike, as pandas tells (two missing values
         are alike); this computes it."""
-        return self.nunique(dropna=False) == len(self)
+        from sedonadb_geopandas._relational import _unique
+
+        key, _ = self._key()
+        return _unique(self._df.select(key.alias("x")), ["x"])
 
     def agg(self, func=None, *args, **kwargs):
         """This column reduced by the reduction named `func`, or by each of a
