@@ -49,6 +49,7 @@ mod st_iscollection;
 mod st_isempty;
 mod st_ispolygoncw;
 mod st_knn;
+mod st_line_interpolate_point;
 mod st_linesubstring;
 mod st_longest_line;
 mod st_makeenvelope;

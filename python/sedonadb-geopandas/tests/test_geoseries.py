@@ -858,8 +858,7 @@ def test_interpolate_matches_geopandas(normalized):
         distances = [0.0, 0.25, 1.0, -0.25, -1.0, 1.5, -1.5]
     for distance in distances:
         got = gdf.geometry.interpolate(distance, normalized=normalized)
-        # The engine's point on a 3D line is 2D.
-        expected = gs.interpolate(distance, normalized=normalized).force_2d()
+        expected = gs.interpolate(distance, normalized=normalized)
         _assert_same_geometries(got, expected)
 
 
