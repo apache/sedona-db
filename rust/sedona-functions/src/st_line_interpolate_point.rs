@@ -21,30 +21,33 @@ use arrow_schema::DataType;
 use datafusion_common::{
     DataFusionError, cast::as_float64_array, error::Result, exec_datafusion_err,
 };
-use datafusion_expr::ColumnarValue;
-use geo_traits::{CoordTrait, GeometryTrait, LineStringTrait};
+use datafusion_expr::{ColumnarValue, Volatility};
+use geo_traits::{CoordTrait, GeometryTrait, GeometryType, LineStringTrait};
 use sedona_expr::{
     item_crs::ItemCrsKernel,
-    scalar_udf::{ScalarKernelRef, SedonaScalarKernel},
+    scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
 };
-use sedona_functions::executor::WkbExecutor;
-use sedona_geometry::{
-    error::SedonaGeometryError,
-    wkb_factory::{write_wkb_coord_trait, write_wkb_point_header},
-};
+use sedona_geometry::wkb_factory::write_wkb_point_header;
 use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOMETRY},
     matchers::ArgMatcher,
 };
-use wkb::reader::Wkb;
 
-/// ST_LineInterpolatePoint() implementation
-pub fn st_line_interpolate_point_impl() -> Vec<ScalarKernelRef> {
-    ItemCrsKernel::wrap_impl(STLineInterpolatePoint {})
+use crate::executor::WkbExecutor;
+
+/// ST_LineInterpolatePoint() scalar UDF implementation
+///
+/// Native implementation of ST_LineInterpolatePoint for geometry
+pub fn st_line_interpolate_point_udf() -> SedonaScalarUDF {
+    SedonaScalarUDF::new(
+        "st_lineinterpolatepoint",
+        ItemCrsKernel::wrap_impl(vec![Arc::new(STLineInterpolatePoint)]),
+        Volatility::Immutable,
+    )
 }
 
 #[derive(Debug)]
-struct STLineInterpolatePoint {}
+struct STLineInterpolatePoint;
 
 impl SedonaScalarKernel for STLineInterpolatePoint {
     fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
@@ -69,13 +72,28 @@ impl SedonaScalarKernel for STLineInterpolatePoint {
             .cast_to(&DataType::Float64, None)?
             .to_array(executor.num_iterations())?;
         let arg1_float = as_float64_array(&arg1_array)?;
-
         let mut arg1_iter = arg1_float.into_iter();
+
+        // Reused for every line to avoid allocating per row
+        let mut coords = Vec::new();
+        let mut cumulative_lengths = Vec::new();
+
         executor.execute_wkb_void(|maybe_wkb| {
-            let maybe_ratio = arg1_iter.next().unwrap();
-            match (maybe_wkb, maybe_ratio) {
-                (Some(wkb), Some(ratio)) => {
-                    invoke_scalar(wkb, ratio, &mut builder)?;
+            let maybe_fraction = arg1_iter.next().unwrap();
+            match (maybe_wkb, maybe_fraction) {
+                (Some(wkb), Some(fraction)) => {
+                    let GeometryType::LineString(line) = wkb.as_type() else {
+                        return Err(exec_datafusion_err!(
+                            "Input to STLineInterpolatePoint must be linestring"
+                        ));
+                    };
+                    invoke_scalar(
+                        line,
+                        fraction,
+                        &mut coords,
+                        &mut cumulative_lengths,
+                        &mut builder,
+                    )?;
                     builder.append_value([]);
                 }
                 _ => builder.append_null(),
@@ -88,89 +106,86 @@ impl SedonaScalarKernel for STLineInterpolatePoint {
     }
 }
 
-/// Writes the point at `ratio` of the line's 2D length as a WKB point
+/// Writes the point at `fraction` of the line's 2D length as a WKB point
 ///
-/// The point has the dimensions of the input line: its Z and M values are
-/// interpolated between the two vertices on either side of it. A ratio below
-/// 0 or above 1 gives the first or last vertex of the line.
-fn invoke_scalar(geom: &Wkb, ratio: f64, writer: &mut impl Write) -> Result<()> {
-    let geo_traits::GeometryType::LineString(line) = geom.as_type() else {
-        return Err(exec_datafusion_err!(
-            "Input to STLineInterpolatePoint must be linestring"
-        ));
-    };
+/// The point has the dimensions of the line: its Z and M values are
+/// interpolated between the two vertices on either side of it. A fraction at
+/// or below 0 gives the first vertex of the line, and a fraction at or above 1
+/// gives the last one.
+fn invoke_scalar(
+    line: &impl LineStringTrait<T = f64>,
+    fraction: f64,
+    coords: &mut Vec<[f64; 4]>,
+    cumulative_lengths: &mut Vec<f64>,
+    writer: &mut impl Write,
+) -> Result<()> {
+    let dim = line.dim();
+    let num_dims = dim.size();
 
-    let (Some(first), Some(last)) = (line.coords().next(), line.coords().next_back()) else {
+    coords.clear();
+    coords.extend(line.coords().map(|coord| {
+        let mut values = [0.0; 4];
+        for (n, value) in values.iter_mut().enumerate().take(num_dims) {
+            *value = coord.nth_or_panic(n);
+        }
+        values
+    }));
+
+    let (Some(&first), Some(&last)) = (coords.first(), coords.last()) else {
         return Err(exec_datafusion_err!("Failed to interpolate point"));
     };
 
-    let segments = || line.coords().zip(line.coords().skip(1));
-    let length = segments().fold(0.0, |total, (start, end)| total + distance_2d(&start, &end));
-    let distance = ratio * length;
-
-    let result = if distance <= 0.0 {
-        write_wkb_point_from_coord(writer, &first)
+    let point = if fraction >= 1.0 {
+        last
     } else {
-        let mut distance_remaining = distance;
-        let mut segment = None;
-        for (start, end) in segments() {
-            let segment_length = distance_2d(&start, &end);
-            if segment_length < distance_remaining {
-                distance_remaining -= segment_length;
-            } else {
-                segment = Some((start, end, segment_length));
-                break;
-            }
+        cumulative_lengths.clear();
+        cumulative_lengths.push(0.0);
+        let mut length = 0.0;
+        for pair in coords.windows(2) {
+            length += (pair[1][0] - pair[0][0]).hypot(pair[1][1] - pair[0][1]);
+            cumulative_lengths.push(length);
         }
 
-        match segment {
-            Some((start, end, segment_length)) => {
-                write_wkb_point_between(writer, &start, &end, distance_remaining, segment_length)
+        let distance = fraction * length;
+        if distance <= 0.0 {
+            first
+        } else {
+            // The segment that starts at or before the distance and ends after it
+            let segment = cumulative_lengths
+                .partition_point(|&d| d <= distance)
+                .saturating_sub(1)
+                .min(coords.len() - 2);
+            let (start, end) = (coords[segment], coords[segment + 1]);
+            let segment_length = (end[0] - start[0]).hypot(end[1] - start[1]);
+
+            // Dividing before multiplying keeps the result finite for large coordinates
+            let segment_fraction = if segment_length > 0.0 {
+                ((distance - cumulative_lengths[segment]) / segment_length).min(1.0)
+            } else {
+                0.0
+            };
+
+            let mut values = [0.0; 4];
+            for n in 0..num_dims {
+                values[n] = start[n] + (end[n] - start[n]) * segment_fraction;
             }
-            // The distance is at least the length of the line
-            None => write_wkb_point_from_coord(writer, &last),
+            values
         }
     };
 
-    result.map_err(|e| DataFusionError::External(Box::new(e)))
-}
-
-fn distance_2d(start: &impl CoordTrait<T = f64>, end: &impl CoordTrait<T = f64>) -> f64 {
-    (end.x() - start.x()).hypot(end.y() - start.y())
-}
-
-fn write_wkb_point_from_coord(
-    writer: &mut impl Write,
-    coord: &impl CoordTrait<T = f64>,
-) -> std::result::Result<(), SedonaGeometryError> {
-    write_wkb_point_header(writer, coord.dim())?;
-    write_wkb_coord_trait(writer, coord)
-}
-
-/// Writes the point `distance` along the segment from `start` to `end`,
-/// interpolating every dimension of the coordinates
-fn write_wkb_point_between(
-    writer: &mut impl Write,
-    start: &impl CoordTrait<T = f64>,
-    end: &impl CoordTrait<T = f64>,
-    distance: f64,
-    segment_length: f64,
-) -> std::result::Result<(), SedonaGeometryError> {
-    let dim = start.dim();
-    write_wkb_point_header(writer, dim)?;
-    for n in 0..dim.size() {
-        let (start_n, end_n) = (start.nth_or_panic(n), end.nth_or_panic(n));
-        let value = start_n + (end_n - start_n) * distance / segment_length;
+    write_wkb_point_header(writer, dim).map_err(|e| DataFusionError::External(Box::new(e)))?;
+    for value in &point[..num_dims] {
         writer.write_all(&value.to_le_bytes())?;
     }
+
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use arrow_array::{ArrayRef, Float64Array};
+    use datafusion_expr::ScalarUDF;
     use rstest::rstest;
-    use sedona_expr::scalar_udf::SedonaScalarUDF;
     use sedona_schema::datatypes::{WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS, WKB_VIEW_GEOMETRY};
     use sedona_testing::{
         compare::{assert_array_equal, assert_scalar_equal_wkb_geometry},
@@ -180,31 +195,52 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn udf_metadata() {
+        let udf: ScalarUDF = st_line_interpolate_point_udf().into();
+        assert_eq!(udf.name(), "st_lineinterpolatepoint");
+    }
+
     #[rstest]
     fn udf(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let udf =
-            SedonaScalarUDF::from_impl("st_lineinterpolatepoint", st_line_interpolate_point_impl());
         let tester = ScalarUdfTester::new(
-            udf.into(),
+            st_line_interpolate_point_udf().into(),
             vec![sedona_type, SedonaType::Arrow(DataType::Float64)],
         );
 
         assert_eq!(tester.return_type().unwrap(), WKB_GEOMETRY);
 
-        assert_scalar_equal_wkb_geometry(
-            &tester
-                .invoke_scalar_scalar("LINESTRING (0 0, 1 0)", 0.5)
-                .unwrap(),
-            Some("POINT (0.5 0)"),
-        );
+        let cases = [
+            ("LINESTRING (0 0, 1 0)", 0.5, "POINT (0.5 0)"),
+            ("LINESTRING (0 0, 1 0, 1 2)", 0.25, "POINT (0.75 0)"),
+            ("LINESTRING (0 0, 1 0, 1 2)", 0.5, "POINT (1 0.5)"),
+            // A fraction that lands on a vertex gives that vertex
+            ("LINESTRING (0 0, 1 0, 1 3)", 0.25, "POINT (1 0)"),
+            // A zero-length segment is skipped
+            ("LINESTRING (0 0, 1 0, 1 0, 1 2)", 0.5, "POINT (1 0.5)"),
+            // The ends of the line, and fractions past them, give its first or last vertex
+            ("LINESTRING (0 0, 1 0)", 0.0, "POINT (0 0)"),
+            ("LINESTRING (0 0, 1 0)", -0.5, "POINT (0 0)"),
+            ("LINESTRING (0 0, 1 0)", 1.5, "POINT (1 0)"),
+            // A fraction of 1 gives the last vertex exactly, not a point computed along the
+            // last segment that rounds away from it
+            ("LINESTRING (5.7 8, 0.6 1.2)", 1.0, "POINT (0.6 1.2)"),
+            // A line without length gives its first vertex
+            ("LINESTRING (1 1, 1 1)", 0.5, "POINT (1 1)"),
+            ("LINESTRING (1 1)", 0.5, "POINT (1 1)"),
+        ];
+        for (line, fraction, expected) in cases {
+            assert_scalar_equal_wkb_geometry(
+                &tester.invoke_scalar_scalar(line, fraction).unwrap(),
+                Some(expected),
+            );
+        }
     }
 
     #[rstest]
     fn udf_invoke_item_crs(#[values(WKB_GEOMETRY_ITEM_CRS.clone())] sedona_type: SedonaType) {
-        let udf =
-            SedonaScalarUDF::from_impl("st_lineinterpolatepoint", st_line_interpolate_point_impl());
         let tester = ScalarUdfTester::new(
-            udf.into(),
+            st_line_interpolate_point_udf().into(),
             vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
         );
         tester.assert_return_type(sedona_type);
@@ -217,10 +253,8 @@ mod tests {
 
     #[rstest]
     fn udf_zm(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
-        let udf =
-            SedonaScalarUDF::from_impl("st_lineinterpolatepoint", st_line_interpolate_point_impl());
         let tester = ScalarUdfTester::new(
-            udf.into(),
+            st_line_interpolate_point_udf().into(),
             vec![sedona_type.clone(), SedonaType::Arrow(DataType::Float64)],
         );
 
@@ -237,11 +271,17 @@ mod tests {
                 0.75,
                 "POINT ZM (0 1.5 11.5 21.5)",
             ),
-            // The ends of the line, and fractions past them, return its first or last vertex
+            // The ends of the line, and fractions past them, give its first or last vertex
             ("LINESTRING Z (0 0 10, 0 2 12)", 0.0, "POINT Z (0 0 10)"),
             ("LINESTRING Z (0 0 10, 0 2 12)", 1.0, "POINT Z (0 2 12)"),
             ("LINESTRING Z (0 0 10, 0 2 12)", -0.5, "POINT Z (0 0 10)"),
             ("LINESTRING Z (0 0 10, 0 2 12)", 1.5, "POINT Z (0 2 12)"),
+            // Large Z values stay finite
+            (
+                "LINESTRING Z (0 0 0, 1e150 0 1e200)",
+                0.5,
+                "POINT Z (5e149 0 5e199)",
+            ),
         ];
         for (line, fraction, expected) in cases {
             assert_scalar_equal_wkb_geometry(
@@ -256,6 +296,7 @@ mod tests {
                 Some("LINESTRING M (0 0 10, 0 2 12)"),
                 None,
                 Some("LINESTRING ZM (0 0 10 20, 0 1 11 21, 0 2 12 22)"),
+                Some("LINESTRING (0 0, 4 0)"),
             ],
             &sedona_type,
         );
@@ -264,6 +305,7 @@ mod tests {
             Some(0.25),
             Some(0.5),
             None,
+            Some(0.75),
         ]));
         let expected = create_array(
             &[
@@ -271,6 +313,7 @@ mod tests {
                 Some("POINT M (0 0.5 10.5)"),
                 None,
                 None,
+                Some("POINT (3 0)"),
             ],
             &WKB_GEOMETRY,
         );
@@ -282,10 +325,8 @@ mod tests {
 
     #[test]
     fn udf_errors() {
-        let udf =
-            SedonaScalarUDF::from_impl("st_lineinterpolatepoint", st_line_interpolate_point_impl());
         let tester = ScalarUdfTester::new(
-            udf.into(),
+            st_line_interpolate_point_udf().into(),
             vec![WKB_GEOMETRY, SedonaType::Arrow(DataType::Float64)],
         );
 
