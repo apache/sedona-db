@@ -236,6 +236,8 @@ def test_time_zones():
         naive.to_pandas().dt.tz_localize("Asia/Tokyo"),
     )
     _check(naive.dt.tz_localize("UTC"), naive.to_pandas().dt.tz_localize("UTC"))
+    # A name as pandas reads it: "utc" is UTC.
+    _check(naive.dt.tz_localize("utc"), naive.to_pandas().dt.tz_localize("utc"))
     _check(naive.dt.tz_localize(None), naive.to_pandas().dt.tz_localize(None))
     _check(aware.dt.tz_localize(None), aware.to_pandas().dt.tz_localize(None))
     _check(aware.dt.tz_convert("UTC"), aware.to_pandas().dt.tz_convert("UTC"))

@@ -635,7 +635,10 @@ class StringMethods:
             # one matches, as in pandas.
             pat, flags = _pattern_and_flags(pat, flags, case, "replace")
             ignore_case = bool(flags & re.IGNORECASE)
-            if not ignore_case and n < 0:
+            # The engine's replace() leaves a value as it is for an empty
+            # pattern, as PostgreSQL does; Python's puts `repl` around every
+            # character, as the regular expression does.
+            if not ignore_case and n < 0 and pat:
                 return self._text(self._values.funcs.replace(lit(pat), lit(repl)))
             pattern = ("(?i)" if ignore_case else "") + _escaped(pat)
             template = _literal_template(repl)
@@ -712,7 +715,9 @@ class StringMethods:
             raise TypeError("fillchar must be a character, not str")
         if side not in ("left", "right", "both"):
             raise ValueError("Invalid side")
-        width = int(width)
+        # A negative width pads nothing, as in Python; the engine's lpad() and
+        # rpad() panic at a negative length (a missing value's, here).
+        width = max(int(width), 0)
         length = self._length()
         # The engine's lpad()/rpad() cut a longer value down to the width.
         full = length.funcs.greatest(lit(width))
@@ -898,11 +903,11 @@ def _check_raise(ambiguous, nonexistent):
 
 def _time_zone(tz):
     """`tz`, a name or a tzinfo, as the name an Arrow timestamp type holds,
-    checked as pandas checks it."""
-    if isinstance(tz, str):
-        pa.lib.string_to_tzinfo(tz)
-        return tz
-    return pa.lib.tzinfo_to_string(tz)
+    read as pandas reads it ("utc" is UTC), with pandas' error for a zone it
+    doesn't know (pyarrow's, without pytz, names no zone)."""
+    import pandas as pd
+
+    return pa.lib.tzinfo_to_string(pd.DatetimeTZDtype("ns", tz).tz)
 
 
 class DatetimeProperties:
