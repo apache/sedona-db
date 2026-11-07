@@ -807,11 +807,9 @@ class StringMethods:
             if not isinstance(na_rep, str):
                 raise TypeError(f"na_rep must be a string, not {type(na_rep).__name__}")
             pieces = [piece.funcs.coalesce(lit(na_rep)) for piece in pieces]
-        joined = pieces[0]
-        for piece in pieces[1:]:
-            joined = joined.funcs.concat(lit(sep), piece)
+        joined = self._ctx.lit(sep).funcs.concat_ws(*pieces)
         if na_rep is None:
-            # The engine's concat() skips a missing piece; pandas makes the
+            # The engine's concat_ws() skips a missing piece; pandas makes the
             # result missing.
             present = pieces[0].is_not_null()
             for piece in pieces[1:]:
