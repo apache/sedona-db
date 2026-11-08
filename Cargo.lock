@@ -3085,7 +3085,7 @@ dependencies = [
  "rstar 0.10.0",
  "rstar 0.11.0",
  "rstar 0.12.2",
- "rstar 0.13.0",
+ "rstar 0.13.1",
  "rstar 0.8.4",
  "rstar 0.9.3",
  "serde",
@@ -3357,6 +3357,16 @@ name = "heapless"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0bfb9eb618601c89945a70e254898da93b13be0388091d42117462b265bb3fad"
+dependencies = [
+ "hash32 0.3.1",
+ "stable_deref_trait",
+]
+
+[[package]]
+name = "heapless"
+version = "0.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "25ba4bd83f9415b58b4ed8dc5714c76e626a105be4646c02630ad730ad3b5aa4"
 dependencies = [
  "hash32 0.3.1",
  "stable_deref_trait",
@@ -4586,6 +4596,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
+name = "ordered-float"
+version = "5.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f59006ce1e204c30956638535b74d317bca99477b9356dfaec54c37f6f600ab"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "outref"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4927,7 +4946,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9120690fafc389a67ba3803df527d0ec9cbbc9cc45e4cc20b332996dfb672425"
 dependencies = [
  "anyhow",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -5438,13 +5457,25 @@ dependencies = [
 
 [[package]]
 name = "rstar"
-version = "0.13.0"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5912b862fa5ffb462607bfd1e35036c458c537921f508c8235a83d5f3987edfe"
+checksum = "90e7279515baf3838062fa9c495a408bc2f3abbf9cd2ac8c2d4108b90fa29b89"
 dependencies = [
  "heapless 0.8.0",
  "num-traits",
  "serde",
+ "smallvec",
+]
+
+[[package]]
+name = "rstar"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d95c33d01e9acee7be3363f99e9ef88b1a587186e81e03843fbe39d77d9a0c1f"
+dependencies = [
+ "heapless 0.9.3",
+ "num-traits",
+ "ordered-float",
  "smallvec",
 ]
 
@@ -5977,7 +6008,7 @@ dependencies = [
  "rand 0.10.1",
  "rand_distr",
  "robust",
- "rstar 0.13.0",
+ "rstar 0.14.0",
  "sedona-geo-traits-ext",
  "sedona-testing",
  "wkb",
