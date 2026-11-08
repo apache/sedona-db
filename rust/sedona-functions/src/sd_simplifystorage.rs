@@ -17,9 +17,14 @@
 
 use std::sync::Arc;
 
-use arrow_array::ArrayRef;
+use arrow_array::{
+    Array, ArrayRef, GenericBinaryArray, OffsetSizeTrait, builder::GenericBinaryBuilder,
+    cast::AsArray,
+};
 use arrow_schema::{DataType, FieldRef, UnionFields};
-use datafusion_common::{Result, ScalarValue, config::ConfigOptions, datatype::DataTypeExt};
+use datafusion_common::{
+    Result, ScalarValue, config::ConfigOptions, datatype::DataTypeExt, exec_datafusion_err,
+};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_common::sedona_internal_err;
 use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
@@ -31,6 +36,11 @@ use sedona_schema::datatypes::SedonaType;
 /// types from storage if needed (or return the input otherwise). This is to support
 /// integration with other libraries like GDAL that haven't yet supported these
 /// storage encodings.
+///
+/// For geometry and geography columns, items encoded as EWKB (i.e., with
+/// PostGIS-style Z, M, or SRID flags in the geometry type code) are also rewritten
+/// as ISO WKB. Some consumers (e.g., GDAL when writing via pyogrio) silently write
+/// NULL geometries when given EWKB with an embedded SRID.
 pub fn sd_simplifystorage_udf() -> SedonaScalarUDF {
     SedonaScalarUDF::new(
         "sd_simplifystorage",
@@ -59,11 +69,13 @@ impl SedonaScalarKernel for SDSimplifyStorage {
     ) -> Result<ColumnarValue> {
         let target = Arc::new(return_type.to_storage_field("", true)?);
         match &args[0] {
-            ColumnarValue::Array(array) => {
-                Ok(ColumnarValue::Array(simplify_array(array, &target)?))
-            }
+            ColumnarValue::Array(array) => Ok(ColumnarValue::Array(simplify_array(
+                array,
+                &target,
+                return_type,
+            )?)),
             ColumnarValue::Scalar(scalar_value) => {
-                let array = simplify_array(&scalar_value.to_array()?, &target)?;
+                let array = simplify_array(&scalar_value.to_array()?, &target, return_type)?;
                 Ok(ColumnarValue::Scalar(ScalarValue::try_from_array(
                     &array, 0,
                 )?))
@@ -137,20 +149,89 @@ fn simplify_field(field: FieldRef) -> Result<FieldRef> {
         .into())
 }
 
-fn simplify_array(array: &ArrayRef, target: &FieldRef) -> Result<ArrayRef> {
-    Ok(datafusion_common::arrow::compute::cast(
-        array,
-        target.data_type(),
-    )?)
+fn simplify_array(
+    array: &ArrayRef,
+    target: &FieldRef,
+    return_type: &SedonaType,
+) -> Result<ArrayRef> {
+    let array = datafusion_common::arrow::compute::cast(array, target.data_type())?;
+    if !matches!(
+        return_type,
+        SedonaType::Wkb(_, _) | SedonaType::WkbLarge(_, _)
+    ) {
+        return Ok(array);
+    }
+
+    let normalized = match array.data_type() {
+        DataType::Binary => normalize_ewkb(array.as_binary::<i32>())?,
+        DataType::LargeBinary => normalize_ewkb(array.as_binary::<i64>())?,
+        _ => None,
+    };
+
+    Ok(normalized.unwrap_or(array))
+}
+
+/// EWKB flags in the geometry type code (Z, M, and SRID)
+const EWKB_FLAGS: u32 = 0x80000000 | 0x40000000 | 0x20000000;
+
+/// Check whether the type code of a WKB item contains EWKB flags
+fn has_ewkb_flags(buf: &[u8]) -> bool {
+    let Some(code_bytes) = buf.get(1..5) else {
+        return false;
+    };
+    let code_bytes: [u8; 4] = code_bytes.try_into().unwrap();
+    let code = match buf[0] {
+        0x00 => u32::from_be_bytes(code_bytes),
+        0x01 => u32::from_le_bytes(code_bytes),
+        _ => return false,
+    };
+
+    code & EWKB_FLAGS != 0
+}
+
+/// Rewrite any EWKB items as ISO WKB, returning None if no item needed rewriting
+fn normalize_ewkb<O: OffsetSizeTrait>(array: &GenericBinaryArray<O>) -> Result<Option<ArrayRef>> {
+    if !array.iter().flatten().any(has_ewkb_flags) {
+        return Ok(None);
+    }
+
+    let mut builder =
+        GenericBinaryBuilder::<O>::with_capacity(array.len(), array.value_data().len());
+    for item in array.iter() {
+        match item {
+            Some(buf) if has_ewkb_flags(buf) => {
+                let geom = wkb::reader::read_wkb(buf).map_err(|e| exec_datafusion_err!("{e}"))?;
+                wkb::writer::write_geometry(&mut builder, &geom, &Default::default())
+                    .map_err(|e| exec_datafusion_err!("{e}"))?;
+                builder.append_value([]);
+            }
+            Some(buf) => builder.append_value(buf),
+            None => builder.append_null(),
+        }
+    }
+
+    Ok(Some(Arc::new(builder.finish())))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arrow_array::BinaryArray;
     use arrow_schema::{DataType, Field};
     use datafusion_expr::ScalarUDF;
-    use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY, WKB_VIEW_GEOMETRY};
-    use sedona_testing::testers::ScalarUdfTester;
+    use rstest::rstest;
+    use sedona_schema::datatypes::{
+        SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY, WKB_LARGE_GEOMETRY, WKB_VIEW_GEOGRAPHY,
+        WKB_VIEW_GEOMETRY,
+    };
+    use sedona_testing::{
+        compare::assert_array_equal,
+        create::create_array,
+        fixtures::{
+            MULTIPOINT_WITH_SRID_4326_EWKB, POINT_WITH_SRID_4326_EWKB, POINT_ZM_WITH_SRID_4326_EWKB,
+        },
+        testers::ScalarUdfTester,
+    };
 
     #[test]
     fn udf_metadata() {
@@ -303,5 +384,84 @@ mod tests {
                 assert_eq!(&array_result, &expected_array);
             }
         }
+    }
+
+    #[rstest]
+    #[case(WKB_GEOMETRY, WKB_GEOMETRY)]
+    #[case(WKB_LARGE_GEOMETRY, WKB_LARGE_GEOMETRY)]
+    #[case(WKB_VIEW_GEOMETRY, WKB_GEOMETRY)]
+    #[case(WKB_GEOGRAPHY, WKB_GEOGRAPHY)]
+    #[case(WKB_VIEW_GEOGRAPHY, WKB_GEOGRAPHY)]
+    fn simplify_ewkb_to_iso_wkb(
+        #[case] initial_type: SedonaType,
+        #[case] simplified_type: SedonaType,
+    ) {
+        let udf = sd_simplifystorage_udf();
+        let tester = ScalarUdfTester::new(udf.into(), vec![initial_type.clone()]);
+        tester.assert_return_type(simplified_type.clone());
+
+        let iso_point = create_array(&[Some("POINT (1 2)")], &WKB_GEOMETRY);
+        let iso_point = iso_point.as_binary::<i32>().value(0).to_vec();
+        let ewkb: BinaryArray = [
+            Some(iso_point),
+            None,
+            Some(POINT_WITH_SRID_4326_EWKB.to_vec()),
+            Some(POINT_ZM_WITH_SRID_4326_EWKB.to_vec()),
+            Some(MULTIPOINT_WITH_SRID_4326_EWKB.to_vec()),
+        ]
+        .iter()
+        .collect();
+        let initial_array =
+            datafusion_common::arrow::compute::cast(&ewkb, initial_type.storage_type()).unwrap();
+
+        let expected = create_array(
+            &[
+                Some("POINT (1 2)"),
+                None,
+                Some("POINT (1 2)"),
+                Some("POINT ZM (1 2 3 4)"),
+                Some("MULTIPOINT ((1 2), (3 4))"),
+            ],
+            &simplified_type,
+        );
+
+        let result = tester.invoke_array(initial_array).unwrap();
+        assert_array_equal(&result, &expected);
+
+        // assert_array_equal() may compare geometries rather than bytes, so also check
+        // that the bytes are identical to the ISO WKB
+        let as_bytes = |array: &ArrayRef| {
+            let array = datafusion_common::arrow::compute::cast(array, &DataType::Binary).unwrap();
+            array
+                .as_binary::<i32>()
+                .iter()
+                .map(|item| item.map(|item| item.to_vec()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(as_bytes(&result), as_bytes(&expected));
+    }
+
+    #[test]
+    fn simplify_ewkb_non_geometry_unchanged() {
+        let udf = sd_simplifystorage_udf();
+        let tester =
+            ScalarUdfTester::new(udf.into(), vec![SedonaType::Arrow(DataType::BinaryView)]);
+
+        let binary: BinaryArray = [Some(POINT_WITH_SRID_4326_EWKB.to_vec())].iter().collect();
+        let initial_array =
+            datafusion_common::arrow::compute::cast(&binary, &DataType::BinaryView).unwrap();
+        let result = tester.invoke_array(initial_array).unwrap();
+        assert_eq!(&result, &(Arc::new(binary) as ArrayRef));
+    }
+
+    #[test]
+    fn ewkb_flags() {
+        assert!(!has_ewkb_flags(&[]));
+        assert!(!has_ewkb_flags(&[0x01, 0x01, 0x00]));
+        assert!(!has_ewkb_flags(&[0x01, 0xe9, 0x03, 0x00, 0x00]));
+        assert!(!has_ewkb_flags(&[0x00, 0x00, 0x00, 0x03, 0xe9]));
+        assert!(has_ewkb_flags(&POINT_WITH_SRID_4326_EWKB));
+        assert!(has_ewkb_flags(&[0x01, 0x01, 0x00, 0x00, 0x80]));
+        assert!(has_ewkb_flags(&[0x00, 0x20, 0x00, 0x00, 0x01]));
     }
 }
