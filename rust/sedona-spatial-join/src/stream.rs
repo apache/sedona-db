@@ -438,7 +438,8 @@ impl SpatialJoinStream {
         {
             self.knn_results_merger = Some(Box::new(KNNResultsMerger::try_new(
                 knn.k as usize,
-                self.options.knn_include_tie_breakers,
+                knn.include_tie_breakers
+                    .unwrap_or(self.options.knn_include_tie_breakers),
                 self.target_output_batch_size,
                 Arc::clone(&self.runtime_env),
                 self.spill_compression,
@@ -1253,7 +1254,9 @@ impl SpatialJoinBatchIterator {
                 // For KNN, call query_knn only once per probe geometry (not per rect)
                 let k = knn_predicate.k;
                 let use_spheroid = knn_predicate.use_spheroid;
-                let include_tie_breakers = self.options.knn_include_tie_breakers;
+                let include_tie_breakers = knn_predicate
+                    .include_tie_breakers
+                    .unwrap_or(self.options.knn_include_tie_breakers);
 
                 let join_result_metrics = self.spatial_index.query_knn(
                     wkb,

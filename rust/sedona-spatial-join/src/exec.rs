@@ -734,6 +734,7 @@ mod exec_transform_tests {
             k: 3,
             use_spheroid: false,
             probe_side: JoinSide::Right,
+            include_tie_breakers: None,
         });
 
         let exec = Arc::new(SpatialJoinExec::try_new_internal(
@@ -847,6 +848,7 @@ mod exec_transform_tests {
             k: 3,
             use_spheroid: false,
             probe_side: JoinSide::Right,
+            include_tie_breakers: None,
         });
         let exec =
             SpatialJoinExec::try_new_internal(left, right, on, None, &JoinType::Inner, None, 0)?;

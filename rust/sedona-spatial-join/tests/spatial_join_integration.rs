@@ -1987,8 +1987,10 @@ async fn test_knn_join_include_tie_breakers(
     // Spacing by 10 keeps other probes' candidates far enough away that they never interfere.
     //
     // With k=1:
-    // - knn_include_tie_breakers=false should return exactly 1 match per probe row.
-    // - knn_include_tie_breakers=true should return 2 matches per probe row (both ties).
+    // - no tie-breakers should return exactly 1 match per probe row.
+    // - tie-breakers should return 2 matches per probe row (both ties).
+    // ST_KNN's fifth argument asks for tie-breakers or not; without it, the
+    // knn_include_tie_breakers option does.
     //
     // The exact choice of which tied row is returned when tie-breakers are disabled is not
     // asserted (it is allowed to be either tied candidate).
@@ -2071,12 +2073,6 @@ async fn test_knn_join_include_tie_breakers(
     let left_partitions = vec![left_batches];
     let right_partitions = vec![right_batches];
 
-    let sql = format!(
-        "SELECT L.id AS l_id, R.id AS r_id \
-            FROM L JOIN R \
-            ON ST_KNN(ST_GeomFromWKT(L.wkt), ST_GeomFromWKT(R.wkt), {k}, false)"
-    );
-
     let base_options = SpatialJoinOptions {
         debug: SpatialJoinDebugOptions {
             num_spatial_partitions: NumSpatialPartitionsConfig::Fixed(num_partitions),
@@ -2085,100 +2081,79 @@ async fn test_knn_join_include_tie_breakers(
         ..Default::default()
     };
 
-    // Without tie-breakers: exactly 1 match per probe row.
-    let out_no_ties = run_spatial_join_query(
-        &schema,
-        &schema,
-        left_partitions.clone(),
-        right_partitions.clone(),
-        Some(SpatialJoinOptions {
-            knn_include_tie_breakers: false,
-            ..base_options.clone()
-        }),
-        max_batch_size,
-        &sql,
-    )
-    .await?;
-    let combined = arrow::compute::concat_batches(&out_no_ties.schema(), &[out_no_ties])?;
+    // ST_KNN's fifth argument decides over the session's option; without it, the option does.
+    for option in [false, true] {
+        for argument in [None, Some(false), Some(true)] {
+            let tie_argument = argument.map(|a| format!(", {a}")).unwrap_or_default();
+            let sql = format!(
+                "SELECT L.id AS l_id, R.id AS r_id \
+                    FROM L JOIN R \
+                    ON ST_KNN(ST_GeomFromWKT(L.wkt), ST_GeomFromWKT(R.wkt), {k}, false{tie_argument})"
+            );
+            let out = run_spatial_join_query(
+                &schema,
+                &schema,
+                left_partitions.clone(),
+                right_partitions.clone(),
+                Some(SpatialJoinOptions {
+                    knn_include_tie_breakers: option,
+                    ..base_options.clone()
+                }),
+                max_batch_size,
+                &sql,
+            )
+            .await?;
+            let combined = arrow::compute::concat_batches(&out.schema(), &[out])?;
+            let l_ids = combined
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow_array::Int32Array>()
+                .unwrap();
+            let r_ids = combined
+                .column(1)
+                .as_any()
+                .downcast_ref::<arrow_array::Int32Array>()
+                .unwrap();
 
-    let l_ids = combined
-        .column(0)
-        .as_any()
-        .downcast_ref::<arrow_array::Int32Array>()
-        .unwrap();
-    let r_ids = combined
-        .column(1)
-        .as_any()
-        .downcast_ref::<arrow_array::Int32Array>()
-        .unwrap();
+            let mut per_left: std::collections::HashMap<i32, Vec<i32>> =
+                std::collections::HashMap::new();
+            for i in 0..combined.num_rows() {
+                per_left
+                    .entry(l_ids.value(i))
+                    .or_default()
+                    .push(r_ids.value(i));
+            }
+            assert_eq!(per_left.len() as i32, num_probe_rows);
 
-    let mut per_left: std::collections::HashMap<i32, Vec<i32>> = std::collections::HashMap::new();
-    for i in 0..combined.num_rows() {
-        per_left
-            .entry(l_ids.value(i))
-            .or_default()
-            .push(r_ids.value(i));
-    }
-
-    assert_eq!(per_left.len() as i32, num_probe_rows);
-    for l_id in 0..num_probe_rows {
-        let r_list = per_left.get(&l_id).unwrap();
-        assert_eq!(
-            r_list.len(),
-            1,
-            "expected exactly 1 match for l_id={l_id} when tie-breakers are disabled"
-        );
-        let base = l_id * 10;
-        let r_id = r_list[0];
-        assert!(
-            r_id == base + 1 || r_id == base + 2,
-            "expected a tied nearest neighbor for l_id={l_id}, got r_id={r_id}"
-        );
-    }
-
-    // With tie-breakers: exactly 2 matches per probe row (both tied candidates).
-    let out_with_ties = run_spatial_join_query(
-        &schema,
-        &schema,
-        left_partitions.clone(),
-        right_partitions.clone(),
-        Some(SpatialJoinOptions {
-            knn_include_tie_breakers: true,
-            ..base_options
-        }),
-        max_batch_size,
-        &sql,
-    )
-    .await?;
-    let combined = arrow::compute::concat_batches(&out_with_ties.schema(), &[out_with_ties])?;
-    let l_ids = combined
-        .column(0)
-        .as_any()
-        .downcast_ref::<arrow_array::Int32Array>()
-        .unwrap();
-    let r_ids = combined
-        .column(1)
-        .as_any()
-        .downcast_ref::<arrow_array::Int32Array>()
-        .unwrap();
-
-    let mut per_left: std::collections::HashMap<i32, Vec<i32>> = std::collections::HashMap::new();
-    for i in 0..combined.num_rows() {
-        per_left
-            .entry(l_ids.value(i))
-            .or_default()
-            .push(r_ids.value(i));
-    }
-    assert_eq!(per_left.len() as i32, num_probe_rows);
-    for l_id in 0..num_probe_rows {
-        let mut r_list = per_left.get(&l_id).unwrap().clone();
-        r_list.sort();
-        let base = l_id * 10;
-        assert_eq!(
-            r_list,
-            vec![base + 1, base + 2],
-            "expected both tied nearest neighbors for l_id={l_id}"
-        );
+            let include_tie_breakers = argument.unwrap_or(option);
+            for l_id in 0..num_probe_rows {
+                let mut r_list = per_left.get(&l_id).unwrap().clone();
+                r_list.sort();
+                let base = l_id * 10;
+                if include_tie_breakers {
+                    // Exactly 2 matches per probe row (both tied candidates).
+                    assert_eq!(
+                        r_list,
+                        vec![base + 1, base + 2],
+                        "expected both tied nearest neighbors for l_id={l_id} \
+                         (option={option}, argument={argument:?})"
+                    );
+                } else {
+                    // Exactly 1 match per probe row.
+                    assert_eq!(
+                        r_list.len(),
+                        1,
+                        "expected exactly 1 match for l_id={l_id} \
+                         (option={option}, argument={argument:?})"
+                    );
+                    let r_id = r_list[0];
+                    assert!(
+                        r_id == base + 1 || r_id == base + 2,
+                        "expected a tied nearest neighbor for l_id={l_id}, got r_id={r_id}"
+                    );
+                }
+            }
+        }
     }
 
     Ok(())
