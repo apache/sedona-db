@@ -65,6 +65,20 @@ fn criterion_benchmark(c: &mut Criterion) {
         "st_lineinterpolatepoint",
         BenchmarkArgs::ArrayScalar(LineString(500), Float64(0.0, 1.0)),
     );
+    benchmark::scalar(
+        c,
+        &f,
+        "native",
+        "st_lineinterpolatepoint",
+        BenchmarkArgs::ScalarArray(LineString(10), Float64(0.0, 1.0)),
+    );
+    benchmark::scalar(
+        c,
+        &f,
+        "native",
+        "st_lineinterpolatepoint",
+        BenchmarkArgs::ScalarArray(LineString(500), Float64(0.0, 1.0)),
+    );
 
     benchmark::scalar(c, &f, "native", "st_geometrytype", Point);
     benchmark::scalar(c, &f, "native", "st_geometrytype", LineString(10));

@@ -22,12 +22,12 @@ use datafusion_common::{
     DataFusionError, cast::as_float64_array, error::Result, exec_datafusion_err,
 };
 use datafusion_expr::{ColumnarValue, Volatility};
-use geo_traits::{CoordTrait, GeometryTrait, GeometryType, LineStringTrait};
+use geo_traits::{CoordTrait, Dimensions, GeometryTrait, GeometryType, LineStringTrait};
 use sedona_expr::{
     item_crs::ItemCrsKernel,
     scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
 };
-use sedona_geometry::wkb_factory::write_wkb_point_header;
+use sedona_geometry::wkb_factory::{write_wkb_empty_point, write_wkb_point_header};
 use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOMETRY},
     matchers::ArgMatcher,
@@ -74,9 +74,10 @@ impl SedonaScalarKernel for STLineInterpolatePoint {
         let arg1_float = as_float64_array(&arg1_array)?;
         let mut arg1_iter = arg1_float.into_iter();
 
-        // Reused for every line to avoid allocating per row
-        let mut coords = Vec::new();
-        let mut cumulative_lengths = Vec::new();
+        // Reused for every line to avoid allocating per row. A scalar geometry is
+        // the same line in every row, so it is only filled in once.
+        let geometry_is_scalar = matches!(args[0], ColumnarValue::Scalar(_));
+        let mut prepared = PreparedLine::default();
 
         executor.execute_wkb_void(|maybe_wkb| {
             let maybe_fraction = arg1_iter.next().unwrap();
@@ -87,13 +88,10 @@ impl SedonaScalarKernel for STLineInterpolatePoint {
                             "Input to STLineInterpolatePoint must be linestring"
                         ));
                     };
-                    invoke_scalar(
-                        line,
-                        fraction,
-                        &mut coords,
-                        &mut cumulative_lengths,
-                        &mut builder,
-                    )?;
+                    if !geometry_is_scalar || prepared.coords.is_empty() {
+                        prepared.fill(line);
+                    }
+                    prepared.write_point(fraction, line.dim(), &mut builder)?;
                     builder.append_value([]);
                 }
                 _ => builder.append_null(),
@@ -106,79 +104,97 @@ impl SedonaScalarKernel for STLineInterpolatePoint {
     }
 }
 
-/// Writes the point at `fraction` of the line's 2D length as a WKB point
-///
-/// The point has the dimensions of the line: its Z and M values are
-/// interpolated between the two vertices on either side of it. A fraction at
-/// or below 0 gives the first vertex of the line, and a fraction at or above 1
-/// gives the last one.
-fn invoke_scalar(
-    line: &impl LineStringTrait<T = f64>,
-    fraction: f64,
-    coords: &mut Vec<[f64; 4]>,
-    cumulative_lengths: &mut Vec<f64>,
-    writer: &mut impl Write,
-) -> Result<()> {
-    let dim = line.dim();
-    let num_dims = dim.size();
+/// The vertices of a line, and how far along the line each of them is in 2D
+#[derive(Default)]
+struct PreparedLine {
+    coords: Vec<[f64; 4]>,
+    cumulative_lengths: Vec<f64>,
+}
 
-    coords.clear();
-    coords.extend(line.coords().map(|coord| {
-        let mut values = [0.0; 4];
-        for (n, value) in values.iter_mut().enumerate().take(num_dims) {
-            *value = coord.nth_or_panic(n);
-        }
-        values
-    }));
+impl PreparedLine {
+    /// Replaces the contents with the vertices of `line`
+    fn fill(&mut self, line: &impl LineStringTrait<T = f64>) {
+        let num_dims = line.dim().size();
 
-    let (Some(&first), Some(&last)) = (coords.first(), coords.last()) else {
-        return Err(exec_datafusion_err!("Failed to interpolate point"));
-    };
-
-    let point = if fraction >= 1.0 {
-        last
-    } else {
-        cumulative_lengths.clear();
-        cumulative_lengths.push(0.0);
-        let mut length = 0.0;
-        for pair in coords.windows(2) {
-            length += (pair[1][0] - pair[0][0]).hypot(pair[1][1] - pair[0][1]);
-            cumulative_lengths.push(length);
-        }
-
-        let distance = fraction * length;
-        if distance <= 0.0 {
-            first
-        } else {
-            // The segment that starts at or before the distance and ends after it
-            let segment = cumulative_lengths
-                .partition_point(|&d| d <= distance)
-                .saturating_sub(1)
-                .min(coords.len() - 2);
-            let (start, end) = (coords[segment], coords[segment + 1]);
-            let segment_length = (end[0] - start[0]).hypot(end[1] - start[1]);
-
-            // Dividing before multiplying keeps the result finite for large coordinates
-            let segment_fraction = if segment_length > 0.0 {
-                ((distance - cumulative_lengths[segment]) / segment_length).min(1.0)
-            } else {
-                0.0
-            };
-
+        self.coords.clear();
+        self.coords.extend(line.coords().map(|coord| {
             let mut values = [0.0; 4];
-            for n in 0..num_dims {
-                values[n] = start[n] + (end[n] - start[n]) * segment_fraction;
+            for (n, value) in values.iter_mut().enumerate().take(num_dims) {
+                *value = coord.nth_or_panic(n);
             }
             values
-        }
-    };
+        }));
 
-    write_wkb_point_header(writer, dim).map_err(|e| DataFusionError::External(Box::new(e)))?;
-    for value in &point[..num_dims] {
-        writer.write_all(&value.to_le_bytes())?;
+        self.cumulative_lengths.clear();
+        self.cumulative_lengths.push(0.0);
+        let mut length = 0.0;
+        for pair in self.coords.windows(2) {
+            length += (pair[1][0] - pair[0][0]).hypot(pair[1][1] - pair[0][1]);
+            self.cumulative_lengths.push(length);
+        }
     }
 
-    Ok(())
+    /// Writes the point at `fraction` of the line's 2D length as a WKB point
+    ///
+    /// The point has the dimensions of the line: its Z and M values are
+    /// interpolated between the two vertices on either side of it. A fraction at
+    /// or below 0 gives the first vertex of the line, and a fraction at or above 1
+    /// gives the last one. A line with a single vertex gives that vertex for any
+    /// fraction. Otherwise, a NaN fraction gives an empty point.
+    fn write_point(&self, fraction: f64, dim: Dimensions, writer: &mut impl Write) -> Result<()> {
+        let (Some(&first), Some(&last)) = (self.coords.first(), self.coords.last()) else {
+            return Err(exec_datafusion_err!("Failed to interpolate point"));
+        };
+
+        let point = if self.coords.len() == 1 {
+            first
+        } else if fraction.is_nan() {
+            return write_wkb_empty_point(writer, dim)
+                .map_err(|e| DataFusionError::External(Box::new(e)));
+        } else if fraction >= 1.0 {
+            last
+        } else {
+            self.point_before_end(fraction, first, dim.size())
+        };
+
+        write_wkb_point_header(writer, dim).map_err(|e| DataFusionError::External(Box::new(e)))?;
+        for value in &point[..dim.size()] {
+            writer.write_all(&value.to_le_bytes())?;
+        }
+
+        Ok(())
+    }
+
+    /// The point at a `fraction` below 1 of a line with at least two vertices
+    fn point_before_end(&self, fraction: f64, first: [f64; 4], num_dims: usize) -> [f64; 4] {
+        let length = self.cumulative_lengths[self.cumulative_lengths.len() - 1];
+        let distance = fraction * length;
+        if distance <= 0.0 {
+            return first;
+        }
+
+        // The segment that starts at or before the distance and ends after it
+        let segment = self
+            .cumulative_lengths
+            .partition_point(|&d| d <= distance)
+            .saturating_sub(1)
+            .min(self.coords.len() - 2);
+        let (start, end) = (self.coords[segment], self.coords[segment + 1]);
+        let segment_length = (end[0] - start[0]).hypot(end[1] - start[1]);
+
+        // Dividing before multiplying keeps the result finite for large coordinates
+        let segment_fraction = if segment_length > 0.0 {
+            ((distance - self.cumulative_lengths[segment]) / segment_length).min(1.0)
+        } else {
+            0.0
+        };
+
+        let mut values = [0.0; 4];
+        for n in 0..num_dims {
+            values[n] = start[n] + (end[n] - start[n]) * segment_fraction;
+        }
+        values
+    }
 }
 
 #[cfg(test)]
@@ -228,6 +244,11 @@ mod tests {
             // A line without length gives its first vertex
             ("LINESTRING (1 1, 1 1)", 0.5, "POINT (1 1)"),
             ("LINESTRING (1 1)", 0.5, "POINT (1 1)"),
+            // A line with a single vertex gives that vertex for any fraction
+            ("LINESTRING (1 1)", f64::NAN, "POINT (1 1)"),
+            ("LINESTRING (1 1)", f64::NEG_INFINITY, "POINT (1 1)"),
+            // A NaN fraction has no position on the line
+            ("LINESTRING (0 0, 1 0)", f64::NAN, "POINT EMPTY"),
         ];
         for (line, fraction, expected) in cases {
             assert_scalar_equal_wkb_geometry(
@@ -276,6 +297,7 @@ mod tests {
             ("LINESTRING Z (0 0 10, 0 2 12)", 1.0, "POINT Z (0 2 12)"),
             ("LINESTRING Z (0 0 10, 0 2 12)", -0.5, "POINT Z (0 0 10)"),
             ("LINESTRING Z (0 0 10, 0 2 12)", 1.5, "POINT Z (0 2 12)"),
+            ("LINESTRING Z (0 0 10, 0 2 12)", f64::NAN, "POINT Z EMPTY"),
             // Large Z values stay finite
             (
                 "LINESTRING Z (0 0 0, 1e150 0 1e200)",
@@ -319,6 +341,40 @@ mod tests {
         );
         assert_array_equal(
             &tester.invoke_arrays(vec![lines, fractions]).unwrap(),
+            &expected,
+        );
+    }
+
+    #[rstest]
+    fn udf_scalar_line(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] sedona_type: SedonaType) {
+        let tester = ScalarUdfTester::new(
+            st_line_interpolate_point_udf().into(),
+            vec![sedona_type, SedonaType::Arrow(DataType::Float64)],
+        );
+
+        let fractions: ArrayRef = Arc::new(Float64Array::from(vec![
+            Some(0.75),
+            None,
+            Some(0.0),
+            Some(f64::NAN),
+            Some(0.25),
+            Some(1.0),
+        ]));
+        let expected = create_array(
+            &[
+                Some("POINT Z (1 1.25 12.875)"),
+                None,
+                Some("POINT Z (0 0 10)"),
+                Some("POINT Z EMPTY"),
+                Some("POINT Z (0.75 0 10.75)"),
+                Some("POINT Z (1 2 14)"),
+            ],
+            &WKB_GEOMETRY,
+        );
+        assert_array_equal(
+            &tester
+                .invoke_scalar_array("LINESTRING Z (0 0 10, 1 0 11, 1 2 14)", fractions)
+                .unwrap(),
             &expected,
         );
     }
