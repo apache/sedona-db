@@ -33,6 +33,19 @@ kernels:
     - name: use_spheroid
       type: boolean
       description: true to use spherical distance, false for Euclidean. Defaults to false.
+    - name: include_tie_breakers
+      type: boolean
+      description: true to also return the candidates as near as the kth nearest one, false to return at most k. Defaults to the sedona.spatial_join.knn_include_tie_breakers option (false unless set).
+  - returns: boolean
+    args:
+    - name: geomA
+      type: geometry
+    - name: geomB
+      type: geometry
+    - name: k
+      type: integer
+    - name: use_spheroid
+      type: boolean
   - returns: boolean
     args:
     - name: geomA
