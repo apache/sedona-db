@@ -591,7 +591,9 @@ pub fn parse_item_crs_arg_type_strip_crs(
 }
 
 /// Separate an argument into the item and its crs (if applicable). This
-/// operates on the result of parse_item_crs_arg_type().
+/// operates on the result of parse_item_crs_arg_type(). Parent struct nulls are
+/// propagated to the item so that consumers can safely operate on it alone.
+/// CRS values are retained even for null items, as for type-level CRS inputs.
 pub fn parse_item_crs_arg(
     item_type: &SedonaType,
     crs_type: &Option<SedonaType>,
@@ -601,14 +603,16 @@ pub fn parse_item_crs_arg(
         return match arg {
             ColumnarValue::Array(array) => {
                 let struct_array = as_struct_array(array)?;
+                let (_, columns) = struct_array.flatten();
                 Ok((
-                    ColumnarValue::Array(struct_array.column(0).clone()),
+                    ColumnarValue::Array(columns[0].clone()),
                     Some(ColumnarValue::Array(struct_array.column(1).clone())),
                 ))
             }
             ColumnarValue::Scalar(scalar_value) => {
                 if let ScalarValue::Struct(struct_array) = scalar_value {
-                    let item_scalar = ScalarValue::try_from_array(struct_array.column(0), 0)?;
+                    let (_, columns) = struct_array.flatten();
+                    let item_scalar = ScalarValue::try_from_array(&columns[0], 0)?;
                     let crs_scalar = ScalarValue::try_from_array(struct_array.column(1), 0)?;
                     Ok((
                         ColumnarValue::Scalar(item_scalar),
@@ -699,12 +703,91 @@ mod test {
         datatypes::{SedonaType, WKB_GEOMETRY, WKB_GEOMETRY_ITEM_CRS},
     };
     use sedona_testing::{
-        create::create_array_item_crs, create::create_scalar_item_crs, testers::ScalarUdfTester,
+        compare::assert_array_equal,
+        create::{create_array, create_array_item_crs, create_scalar_item_crs},
+        testers::ScalarUdfTester,
     };
 
     use crate::scalar_udf::{SedonaScalarUDF, SimpleSedonaScalarKernel};
 
     use super::*;
+
+    #[rstest]
+    fn parse_item_crs_arg_parent_nulls(
+        #[values(
+            sedona_schema::datatypes::WKB_GEOMETRY,
+            sedona_schema::datatypes::WKB_GEOGRAPHY,
+            sedona_schema::datatypes::WKB_LARGE_GEOMETRY,
+            sedona_schema::datatypes::WKB_LARGE_GEOGRAPHY,
+            sedona_schema::datatypes::WKB_VIEW_GEOMETRY,
+            sedona_schema::datatypes::WKB_VIEW_GEOGRAPHY
+        )]
+        item_type: SedonaType,
+    ) {
+        let input = create_array_item_crs(
+            &[
+                Some("POINT (0 1)"),
+                Some("POINT (2 3)"),
+                None,
+                Some("POINT (4 5)"),
+            ],
+            [
+                Some("EPSG:4326"),
+                Some("EPSG:3857"),
+                None,
+                Some("urn:ogc:def:crs:EPSG::4326"),
+            ],
+            &item_type,
+        );
+        let input = as_struct_array(&input).unwrap();
+        // Cover parent-only nulls and child-only nulls in the same input.
+        let input = StructArray::new(
+            input.fields().clone(),
+            input.columns().to_vec(),
+            Some(NullBuffer::from(vec![true, false, true, false])),
+        );
+        let expected = create_array(&[Some("POINT (0 1)"), None, None, None], &item_type);
+        let (parsed_type, crs_type) =
+            parse_item_crs_arg_type(&SedonaType::new_item_crs(&item_type).unwrap()).unwrap();
+        assert_eq!(parsed_type, item_type);
+
+        for start in [0, 1] {
+            let sliced = input.slice(start, input.len() - start);
+            let (item, crs) = parse_item_crs_arg(
+                &parsed_type,
+                &crs_type,
+                &ColumnarValue::Array(Arc::new(sliced.clone())),
+            )
+            .unwrap();
+            assert!(matches!(item, ColumnarValue::Array(_)));
+            assert_array_equal(
+                &item.into_array(sliced.len()).unwrap(),
+                &expected.slice(start, sliced.len()),
+            );
+            assert_array_equal(
+                &crs.unwrap().into_array(sliced.len()).unwrap(),
+                sliced.column(1),
+            );
+        }
+
+        for row in 0..input.len() {
+            // Construct the scalar directly so a null parent still has its
+            // original, non-null children when passed to the parser.
+            let scalar = ScalarValue::Struct(Arc::new(input.slice(row, 1)));
+            let (item, crs) = parse_item_crs_arg(&parsed_type, &crs_type, &scalar.into()).unwrap();
+            let ColumnarValue::Scalar(item) = item else {
+                panic!("expected scalar item")
+            };
+            let Some(ColumnarValue::Scalar(crs)) = crs else {
+                panic!("expected scalar CRS")
+            };
+            assert_eq!(item, ScalarValue::try_from_array(&expected, row).unwrap());
+            assert_eq!(
+                crs,
+                ScalarValue::try_from_array(input.column(1), row).unwrap()
+            );
+        }
+    }
 
     // A test function of something + geometry -> out_type
     fn test_udf(out_type: SedonaType) -> ScalarUDF {
