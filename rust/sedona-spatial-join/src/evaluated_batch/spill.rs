@@ -22,7 +22,7 @@ use arrow_array::{Array, ArrayRef, FixedSizeListArray, Float32Array, RecordBatch
 use arrow_schema::{DataType, Field, Fields, Schema, SchemaRef};
 use datafusion::config::SpillCompression;
 use datafusion_common::{Result, ScalarValue};
-use datafusion_execution::{disk_manager::RefCountedTempFile, runtime_env::RuntimeEnv};
+use datafusion_execution::runtime_env::RuntimeEnv;
 use datafusion_expr::ColumnarValue;
 use datafusion_physical_plan::metrics::SpillMetrics;
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
@@ -36,6 +36,8 @@ use crate::{
         spill::{RecordBatchSpillReader, RecordBatchSpillWriter},
     },
 };
+
+pub use crate::utils::spill::SpillArtifact;
 
 /// Writer for spilling evaluated batches to disk
 pub struct EvaluatedBatchSpillWriter {
@@ -108,7 +110,7 @@ impl EvaluatedBatchSpillWriter {
     }
 
     /// Finish writing and return the temporary file
-    pub fn finish(self) -> Result<RefCountedTempFile> {
+    pub fn finish(self) -> Result<SpillArtifact> {
         self.inner.finish()
     }
 
@@ -178,7 +180,7 @@ pub struct EvaluatedBatchSpillReader {
 }
 impl EvaluatedBatchSpillReader {
     /// Create a new SpillReader
-    pub fn try_new(temp_file: &RefCountedTempFile) -> Result<Self> {
+    pub fn try_new(temp_file: &SpillArtifact) -> Result<Self> {
         Ok(Self {
             inner: RecordBatchSpillReader::try_new(temp_file)?,
         })
@@ -190,14 +192,15 @@ impl EvaluatedBatchSpillReader {
     }
 
     /// Read the next EvaluatedBatch from the spill file
-    pub fn next_batch(&mut self) -> Option<Result<EvaluatedBatch>> {
+    pub async fn next_batch(&mut self) -> Option<Result<EvaluatedBatch>> {
         self.next_raw_batch()
+            .await
             .map(|record_batch| record_batch.and_then(spilled_batch_to_evaluated_batch))
     }
 
     /// Read the next raw RecordBatch from the spill file
-    pub fn next_raw_batch(&mut self) -> Option<Result<RecordBatch>> {
-        self.inner.next_batch()
+    pub async fn next_raw_batch(&mut self) -> Option<Result<RecordBatch>> {
+        self.inner.next_batch().await
     }
 }
 
@@ -440,8 +443,8 @@ mod tests {
         Ok(EvaluatedBatch { batch, geom_array })
     }
 
-    #[test]
-    fn test_spill_writer_creation() -> Result<()> {
+    #[tokio::test]
+    async fn test_spill_writer_creation() -> Result<()> {
         let env = create_test_runtime_env()?;
         let schema = create_test_schema();
         let sedona_type = WKB_GEOMETRY;
@@ -480,8 +483,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_spill_write_and_read_basic() -> Result<()> {
+    #[tokio::test]
+    async fn test_spill_write_and_read_basic() -> Result<()> {
         let env = create_test_runtime_env()?;
         let schema = create_test_schema();
         let sedona_type = WKB_GEOMETRY;
@@ -506,7 +509,7 @@ mod tests {
 
         // Read back the spilled data
         let mut reader = EvaluatedBatchSpillReader::try_new(&temp_file)?;
-        let read_batch_result = reader.next_batch();
+        let read_batch_result = reader.next_batch().await;
 
         assert!(read_batch_result.is_some());
         let read_batch = read_batch_result.unwrap()?;
@@ -516,13 +519,13 @@ mod tests {
         assert_eq!(read_batch.batch.num_columns(), 2); // id and name columns
 
         // Verify that there are no more batches
-        assert!(reader.next_batch().is_none());
+        assert!(reader.next_batch().await.is_none());
 
         Ok(())
     }
 
-    #[test]
-    fn test_spill_write_and_read_with_array_distance() -> Result<()> {
+    #[tokio::test]
+    async fn test_spill_write_and_read_with_array_distance() -> Result<()> {
         let env = create_test_runtime_env()?;
         let schema = create_test_schema();
         let sedona_type = WKB_GEOMETRY;
@@ -545,7 +548,7 @@ mod tests {
 
         // Read back the spilled data
         let mut reader = EvaluatedBatchSpillReader::try_new(&temp_file)?;
-        let read_batch = reader.next_batch().unwrap()?;
+        let read_batch = reader.next_batch().await.unwrap()?;
 
         // Verify distance is read back as array
         match read_batch.geom_array.distance() {
@@ -562,8 +565,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_spill_write_and_read_with_nulls() -> Result<()> {
+    #[tokio::test]
+    async fn test_spill_write_and_read_with_nulls() -> Result<()> {
         let env = create_test_runtime_env()?;
         let schema = create_test_schema();
         let sedona_type = WKB_GEOMETRY;
@@ -586,7 +589,7 @@ mod tests {
 
         // Read back the spilled data
         let mut reader = EvaluatedBatchSpillReader::try_new(&temp_file)?;
-        let read_batch = reader.next_batch().unwrap()?;
+        let read_batch = reader.next_batch().await.unwrap()?;
 
         // Verify nulls are preserved
         assert_eq!(read_batch.num_rows(), 3);
@@ -606,8 +609,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_spill_multiple_batches() -> Result<()> {
+    #[tokio::test]
+    async fn test_spill_multiple_batches() -> Result<()> {
         let env = create_test_runtime_env()?;
         let schema = create_test_schema();
         let sedona_type = WKB_GEOMETRY;
@@ -637,23 +640,23 @@ mod tests {
         // Read back all batches
         let mut reader = EvaluatedBatchSpillReader::try_new(&temp_file)?;
 
-        let read_batch1 = reader.next_batch().unwrap()?;
+        let read_batch1 = reader.next_batch().await.unwrap()?;
         assert_eq!(read_batch1.num_rows(), 3);
 
-        let read_batch2 = reader.next_batch().unwrap()?;
+        let read_batch2 = reader.next_batch().await.unwrap()?;
         assert_eq!(read_batch2.num_rows(), 3);
 
-        let read_batch3 = reader.next_batch().unwrap()?;
+        let read_batch3 = reader.next_batch().await.unwrap()?;
         assert_eq!(read_batch3.num_rows(), 3);
 
         // Verify no more batches
-        assert!(reader.next_batch().is_none());
+        assert!(reader.next_batch().await.is_none());
 
         Ok(())
     }
 
-    #[test]
-    fn test_spill_metrics_updated() -> Result<()> {
+    #[tokio::test]
+    async fn test_spill_metrics_updated() -> Result<()> {
         let env = create_test_runtime_env()?;
         let schema = create_test_schema();
         let sedona_type = WKB_GEOMETRY;
@@ -684,8 +687,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_spill_rect_preservation() -> Result<()> {
+    #[tokio::test]
+    async fn test_spill_rect_preservation() -> Result<()> {
         let env = create_test_runtime_env()?;
         let schema = create_test_schema();
         let sedona_type = WKB_GEOMETRY;
@@ -710,14 +713,14 @@ mod tests {
 
         // Read back and verify rects
         let mut reader = EvaluatedBatchSpillReader::try_new(&temp_file)?;
-        let read_batch = reader.next_batch().unwrap()?;
+        let read_batch = reader.next_batch().await.unwrap()?;
 
         assert_eq!(read_batch.geom_array.rects(), original_rects);
         Ok(())
     }
 
-    #[test]
-    fn test_spill_scalar_distance_preserved() -> Result<()> {
+    #[tokio::test]
+    async fn test_spill_scalar_distance_preserved() -> Result<()> {
         let env = create_test_runtime_env()?;
         let schema = create_test_schema();
         let sedona_type = WKB_GEOMETRY;
@@ -740,7 +743,7 @@ mod tests {
 
         // Read back and verify scalar distance is preserved
         let mut reader = EvaluatedBatchSpillReader::try_new(&temp_file)?;
-        let read_batch = reader.next_batch().unwrap()?;
+        let read_batch = reader.next_batch().await.unwrap()?;
 
         match read_batch.geom_array.distance() {
             Some(ColumnarValue::Scalar(ScalarValue::Float64(Some(val)))) => {
@@ -752,8 +755,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_spill_empty_batch() -> Result<()> {
+    #[tokio::test]
+    async fn test_spill_empty_batch() -> Result<()> {
         let env = create_test_runtime_env()?;
         let schema = create_test_schema();
         let sedona_type = WKB_GEOMETRY;
@@ -789,14 +792,14 @@ mod tests {
 
         // Read back and verify
         let mut reader = EvaluatedBatchSpillReader::try_new(&temp_file)?;
-        let read_batch = reader.next_batch().unwrap()?;
+        let read_batch = reader.next_batch().await.unwrap()?;
         assert_eq!(read_batch.num_rows(), 0);
 
         Ok(())
     }
 
-    #[test]
-    fn test_spill_batch_splitting() -> Result<()> {
+    #[tokio::test]
+    async fn test_spill_batch_splitting() -> Result<()> {
         let env = create_test_runtime_env()?;
         let schema = create_test_schema();
         let sedona_type = WKB_GEOMETRY;
@@ -829,7 +832,7 @@ mod tests {
         // We expect multiple batches
         let mut num_batches = 0;
         let mut total_rows = 0;
-        while let Some(batch_result) = reader.next_batch() {
+        while let Some(batch_result) = reader.next_batch().await {
             let batch = batch_result?;
             num_batches += 1;
             total_rows += batch.num_rows();

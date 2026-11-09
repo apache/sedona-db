@@ -46,14 +46,14 @@ use crate::las::{
 #[derive(Debug)]
 pub struct LasFileReaderFactory {
     store: Arc<dyn ObjectStore>,
-    metadata_cache: Option<Arc<dyn FileMetadataCache>>,
+    metadata_cache: Option<Arc<FileMetadataCache>>,
 }
 
 impl LasFileReaderFactory {
     /// Create a new `LasFileReaderFactory`.
     pub fn new(
         store: Arc<dyn ObjectStore>,
-        metadata_cache: Option<Arc<dyn FileMetadataCache>>,
+        metadata_cache: Option<Arc<FileMetadataCache>>,
     ) -> Self {
         Self {
             store,
@@ -79,7 +79,7 @@ impl LasFileReaderFactory {
 pub struct LasFileReader {
     partitioned_file: PartitionedFile,
     store: Arc<dyn ObjectStore>,
-    metadata_cache: Option<Arc<dyn FileMetadataCache>>,
+    metadata_cache: Option<Arc<FileMetadataCache>>,
     pub options: LasOptions,
 }
 

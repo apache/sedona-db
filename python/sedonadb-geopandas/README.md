@@ -197,13 +197,36 @@ supports neither `grid_size` nor a `method` other than `"unary"`, and
 mismatch and joins anyway, which is almost always a mistake, so this raises and
 points at `to_crs()`. `on_attribute` is not supported yet.
 
+`sjoin_nearest()` (of a frame, and `sedonadb_geopandas.sjoin_nearest()`)
+matches rows to the nearest rows of the other frame with the engine's indexed
+nearest-neighbour join, all of them when several are as near, as in GeoPandas,
+and with the same columns as `sjoin()`. It needs the same CRS on both sides.
+`max_distance` must be a number greater than 0 (GeoPandas takes NaN as no
+limit), and `distance_col` can't name the active geometry column, which
+GeoPandas would fill with the distances. `exclusive=True` is not supported, nor
+is geography, which the engine can't join by distance to the nearest yet
+(apache/sedona-db#1086).
+
 Without an index, `drop()` and `rename()` work on columns only, `rename()`
 raises rather than producing duplicate column names, and a sort from
 `sort_values()` holds until an operation that does not preserve row order (a
 join or an aggregation). `astype()` to a string keeps missing values missing,
 like pandas' `"string"` dtype rather than `str`, and formats floats the way
 Arrow does (`"1"`, `"NaN"`); `astype(object)` leaves the values as they are,
-since an Arrow-backed column has no object type.
+since an Arrow-backed column has no object type. A geometry column cast to a
+string is its WKT, as in GeoPandas (with the spacing of `to_wkt()`). A frame's
+`astype()` takes `errors="raise"` only, since which values fail is known only
+when the result is computed.
+
+`dtypes` and a column's `dtype` are what `to_pandas()` gives for each column's
+type when no value is missing: whether one is isn't known before computing, so
+an integer column with a missing value reports an integer dtype, where pandas
+makes its values floats. A categorical column's categories are those of its
+values, so its dtype computes the column. `len()`, `shape`, `size` and `empty`
+compute the number of rows (or whether there is one). `tail()` gives the last
+rows of a sorted frame or column, computing the number of rows; like `head()`,
+it takes no negative count. A column's `name` is a string, and `rename()` of a
+column only names it, as there is no index to relabel.
 
 Reductions (`sum()`, `mean()`, `min()`, `max()`, `count()`, `median()`,
 `std()`, `var()`, `quantile()`, `nunique()`) compute their result, skipping
@@ -217,10 +240,26 @@ value.
 replacement or bound of another kind (text in a number column, say) raises,
 where pandas would turn the column into Python objects. `round()` rounds half to
 even as pandas (NumPy) does, and raises for a non-numeric column, as pandas 2
-does (pandas 3 returns it unchanged). `dropna()` and `head()` on a column return
-a column of a new frame, which, like any column of another frame, can't be
-combined with the original's; `head()` takes no negative count, since there is
-no row order to count back from.
+does (pandas 3 returns it unchanged); a frame's `round()` leaves a column of no
+numbers as it is, as pandas does. A frame's `where()` and `mask()` take a
+condition per row, a boolean column of the frame (pandas' `axis=0`): a frame of
+conditions would need row alignment. `dropna()`, `head()`, `tail()`,
+`sort_values()` and `drop_duplicates()` on a column return a column of a new
+frame, which, like any column of another frame, can't be combined with the
+original's; `head()` takes no negative count, since there is no row order to
+count back from.
+
+`replace()` takes values, lists and dicts as pandas does, but no regular
+expressions, and replaces a value with one of its column's kind, raising for
+another kind where pandas would turn the column into Python objects. A value
+replaced in every column of a frame is replaced in those that hold its kind, but
+a missing value only in those that hold its replacement's kind, as `fillna()`
+fills them. A replacement of a wider type (a float in an integer column) widens
+the column whether or not a value matches, as the result's types can't depend on
+its rows. A frame's `isin()` takes a list or a dict of lists, as pandas does,
+but no Series or frame (a pandas one included), alone or in the dict, which
+would need row alignment; a value that is not a geometry matches no geometry, as
+in GeoPandas.
 
 `merge()` joins on columns as pandas does, including in matching a missing key
 (NaN or None) with a missing key, unlike SQL; without an index, its rows don't

@@ -643,52 +643,28 @@ fn normalize_field_for_geoparquet(
                 field.as_ref().clone().with_metadata(HashMap::new()),
             )),
             // For GeoParquet 2.0 and None, ensure we have projjson CRS output
-            // With an upgrade to DataFusion 55 / >= Arrow 58.1, preserving an unknown CRS
-            // happens automatically. Until then, force unknown CRS output.
             GeoParquetVersion::V2_0 | GeoParquetVersion::Omitted => {
-                let preserve_unknown_crs = crs.is_none();
                 let normalized_crs_value =
                     normalize_crs_for_geoparquet(field.name(), &crs, sedona_runtime)?;
-                let normalized_crs =
-                    deserialize_crs_from_obj(&normalized_crs_value.unwrap_or(Value::Null))?;
-                Ok(serialize_edges_and_crs_with_parquet_bug(
-                    field,
-                    &normalized_crs,
-                    edges,
-                    preserve_unknown_crs,
-                ))
+                let normalized_crs = match normalized_crs_value {
+                    Some(value) => deserialize_crs_from_obj(&value)?,
+                    None => crs,
+                };
+                Ok(serialize_edges_and_crs(field, &normalized_crs, edges))
             }
         },
         _ => exec_err!("Unsupported geometry output to Parquet: {sedona_type}"),
     }
 }
 
-// Due to a bug in the parquet type conversion, we need to serialize invalid metadata for geography
-// fields. The conversion logic expects "algorithm" but the valid GeoArrow metadata we serialize
-// by default is "edges".
-// https://github.com/apache/arrow-rs/blob/f725bc9b955f23772a6a6d8a38c99a8b3f359116/parquet-geospatial/src/types.rs#L64-L66
-// https://github.com/apache/arrow-rs/issues/9929
-fn serialize_edges_and_crs_with_parquet_bug(
-    original_field: &FieldRef,
-    crs: &Crs,
-    edges: Edges,
-    preserve_unknown_crs: bool,
-) -> FieldRef {
+fn serialize_edges_and_crs(original_field: &FieldRef, crs: &Crs, edges: Edges) -> FieldRef {
     let crs_component = crs
         .as_ref()
-        .map(|crs| format!(r#""crs":{}"#, crs.to_json()))
-        // A missing CRS in the native Parquet logical type means CRS84. Until
-        // Arrow can write a native unknown CRS directly, use its supported
-        // `srid:0` spelling when there is no GeoParquet metadata to carry the
-        // distinction. Arrow 58 JSON-encodes string CRSes in the logical type;
-        // the read path handles that representation.
-        .or_else(|| preserve_unknown_crs.then(|| r#""crs":"srid:0""#.to_string()));
+        .map(|crs| format!(r#""crs":{}"#, crs.to_json()));
 
     let edges_component = match edges {
         Edges::Planar => None,
-        // This is where we apply the workaround relative to our usual
-        // serialize_edges_and_crs().
-        other => Some(format!(r#""algorithm":"{other}""#)),
+        other => Some(format!(r#""edges":"{other}""#)),
     };
 
     let serialized = match (crs_component, edges_component) {
@@ -1028,9 +1004,7 @@ mod test {
 
         assert_eq!(
             read_parquet_logical_types(&path)["geometry"],
-            Some(LogicalType::Geometry {
-                crs: Some(r#""srid:0""#.to_string())
-            })
+            Some(LogicalType::geometry(Some("srid:0".to_string())))
         );
         let read_back = ctx
             .table(path.to_string_lossy().into_owned())
@@ -1164,7 +1138,7 @@ mod test {
         // Geometry is still written as Parquet native geometry
         assert!(matches!(
             logical_types.get("geometry").unwrap(),
-            Some(LogicalType::Geometry { .. })
+            Some(LogicalType::Geometry(_))
         ));
 
         // ...and the bbox column is declared as the covering
@@ -1441,10 +1415,8 @@ mod test {
         let logical_types = test_dataframe_roundtrip(&ctx, df, options).await;
         let logical_type = logical_types.get("geometry").unwrap().clone().unwrap();
         match logical_type {
-            LogicalType::Geometry { crs } => {
-                // Arrow 58 JSON-encodes string-valued CRSes when converting
-                // GeoArrow metadata to the native Parquet logical type.
-                assert_eq!(crs.as_deref(), Some(r#""srid:0""#));
+            LogicalType::Geometry(geometry) => {
+                assert_eq!(geometry.crs.as_deref(), Some("srid:0"));
             }
             unknown => panic!("Unexpected logical type {unknown:?}"),
         }
@@ -1464,11 +1436,14 @@ mod test {
         let logical_types = test_dataframe_roundtrip(&ctx, df, options).await;
         let logical_type = logical_types.get("geometry").unwrap().clone().unwrap();
         match logical_type {
-            LogicalType::Geography { crs, algorithm } => {
-                assert!(crs.is_none());
+            LogicalType::Geography(geography) => {
+                assert!(geography.crs.is_none());
                 assert!(
-                    algorithm.is_none()
-                        || matches!(algorithm.unwrap(), EdgeInterpolationAlgorithm::SPHERICAL)
+                    geography.algorithm.is_none()
+                        || matches!(
+                            geography.algorithm.unwrap(),
+                            EdgeInterpolationAlgorithm::SPHERICAL
+                        )
                 );
             }
             unknown => panic!("Unexpected logical type {unknown:?}"),
@@ -1489,9 +1464,9 @@ mod test {
         let logical_types = test_dataframe_roundtrip(&ctx, df, options).await;
         let logical_type = logical_types.get("geometry").unwrap().clone().unwrap();
         match logical_type {
-            LogicalType::Geometry { crs } => {
-                assert!(crs.as_ref().unwrap().starts_with("{"));
-                let parsed = deserialize_crs(crs.as_ref().unwrap()).unwrap();
+            LogicalType::Geometry(geometry) => {
+                assert!(geometry.crs.as_ref().unwrap().starts_with("{"));
+                let parsed = deserialize_crs(geometry.crs.as_ref().unwrap()).unwrap();
                 assert_eq!(
                     parsed.unwrap().to_authority_code().unwrap(),
                     Some("EPSG:32618".to_string())
@@ -1553,8 +1528,8 @@ mod test {
             .unwrap();
         let logical_type = logical_types.get("geometry").unwrap().clone().unwrap();
         match logical_type {
-            LogicalType::Geometry { crs } => {
-                assert!(crs.is_none());
+            LogicalType::Geometry(geometry) => {
+                assert!(geometry.crs.is_none());
             }
             unknown => panic!("Unexpected logical type {unknown:?}"),
         }

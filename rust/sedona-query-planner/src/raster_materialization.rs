@@ -805,6 +805,14 @@ impl DisplayAs for RasterBatchSplitExec {
 }
 
 impl ExecutionPlan for RasterBatchSplitExec {
+    fn apply_expressions(
+        &self,
+        _f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> Result<TreeNodeRecursion>,
+    ) -> Result<TreeNodeRecursion> {
+        // Sizing reads input columns directly; expressions are evaluated by the input.
+        Ok(TreeNodeRecursion::Continue)
+    }
+
     fn name(&self) -> &str {
         "RasterBatchSplitExec"
     }

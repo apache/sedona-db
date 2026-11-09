@@ -25,29 +25,24 @@ use std::{
 
 use arrow_array::RecordBatch;
 use arrow_schema::{Schema, SchemaRef};
-use datafusion_common::{DataFusionError, Result};
-use datafusion_common_runtime::SpawnedTask;
-use datafusion_execution::{
-    RecordBatchStream, SendableRecordBatchStream, disk_manager::RefCountedTempFile,
-};
+use datafusion_common::Result;
+use datafusion_execution::{RecordBatchStream, SendableRecordBatchStream};
 use datafusion_physical_plan::stream::RecordBatchReceiverStreamBuilder;
-use futures::{FutureExt, StreamExt};
+use futures::StreamExt;
 use pin_project_lite::pin_project;
 use sedona_common::sedona_internal_err;
 
 use crate::evaluated_batch::{
     EvaluatedBatch,
     evaluated_batch_stream::EvaluatedBatchStream,
-    spill::{
-        EvaluatedBatchSpillReader, spilled_batch_to_evaluated_batch,
-        spilled_schema_to_evaluated_schema,
-    },
+    spill::{spilled_batch_to_evaluated_batch, spilled_schema_to_evaluated_schema},
 };
+use crate::utils::spill::SpillArtifact;
 
 const RECORD_BATCH_CHANNEL_CAPACITY: usize = 2;
 
 pin_project! {
-    /// Streams [`EvaluatedBatch`] values read back from on-disk spill files.
+    /// Streams [`EvaluatedBatch`] values read back from spill storage.
     ///
     /// This stream is intended for the “spilled” path where batches have been written to disk and
     /// must be read back into memory. It wraps an [`ExternalRecordBatchStream`] and uses
@@ -60,16 +55,9 @@ pin_project! {
     }
 }
 
-enum State {
-    AwaitingFile,
-    Opening(SpawnedTask<Result<EvaluatedBatchSpillReader>>),
-    Reading(SpawnedTask<(EvaluatedBatchSpillReader, Option<Result<RecordBatch>>)>),
-    Finished,
-}
-
 impl ExternalEvaluatedBatchStream {
     /// Creates an external stream from a single spill file.
-    pub fn try_from_spill_file(spill_file: Arc<RefCountedTempFile>) -> Result<Self> {
+    pub fn try_from_spill_file(spill_file: SpillArtifact) -> Result<Self> {
         let record_stream =
             ExternalRecordBatchStream::try_from_spill_files(iter::once(spill_file))?;
         let evaluated_stream =
@@ -87,7 +75,7 @@ impl ExternalEvaluatedBatchStream {
     /// stream is empty (returns `None` immediately) and no schema validation is performed.
     pub fn try_from_spill_files<I>(schema: SchemaRef, spill_files: I) -> Result<Self>
     where
-        I: IntoIterator<Item = Arc<RefCountedTempFile>>,
+        I: IntoIterator<Item = SpillArtifact>,
     {
         let record_stream = ExternalRecordBatchStream::try_from_spill_files(spill_files)?;
         if !record_stream.is_empty() {
@@ -152,9 +140,9 @@ impl RecordBatchToEvaluatedStream {
     /// Buffers `record_stream` by forwarding it through a bounded channel.
     ///
     /// This is primarily useful for [`ExternalRecordBatchStream`], where producing the next batch
-    /// may involve disk I/O and `spawn_blocking` work. By polling the source stream in a spawned
-    /// task, we can overlap “load next batch” with “process current batch”, while still applying
-    /// backpressure via [`RECORD_BATCH_CHANNEL_CAPACITY`].
+    /// may involve asynchronous backend I/O. By polling the source stream in a spawned task, we can
+    /// overlap “load next batch” with “process current batch”, while still applying backpressure via
+    /// [`RECORD_BATCH_CHANNEL_CAPACITY`].
     ///
     /// The forwarding task stops when the receiver is dropped or when the source stream yields its
     /// first error.
@@ -202,9 +190,9 @@ impl futures::Stream for RecordBatchToEvaluatedStream {
     }
 }
 
-/// Streams raw [`RecordBatch`] values directly from spill files.
+/// Streams raw [`RecordBatch`] values directly from spill storage.
 ///
-/// This is the lowest-level “read from disk” stream: it opens each spill file, reads the stored
+/// This is the lowest-level spill stream: it opens each backend spill object, reads the stored
 /// record batches sequentially, and yields them without decoding into [`EvaluatedBatch`].
 ///
 /// Schema handling:
@@ -212,8 +200,8 @@ impl futures::Stream for RecordBatchToEvaluatedStream {
 /// - If no files are provided, the schema is empty and the stream terminates immediately.
 pub(crate) struct ExternalRecordBatchStream {
     schema: SchemaRef,
-    state: State,
-    spill_files: VecDeque<Arc<RefCountedTempFile>>,
+    current_stream: Option<SendableRecordBatchStream>,
+    spill_files: VecDeque<SpillArtifact>,
     is_empty: bool,
 }
 
@@ -223,19 +211,16 @@ impl ExternalRecordBatchStream {
     /// This function assumes all spill files were written with a compatible schema.
     pub fn try_from_spill_files<I>(spill_files: I) -> Result<Self>
     where
-        I: IntoIterator<Item = Arc<RefCountedTempFile>>,
+        I: IntoIterator<Item = SpillArtifact>,
     {
         let spill_files = spill_files.into_iter().collect::<VecDeque<_>>();
         let (schema, is_empty) = match spill_files.front() {
-            Some(file) => {
-                let reader = EvaluatedBatchSpillReader::try_new(file)?;
-                (reader.schema(), false)
-            }
+            Some(file) => (file.schema(), false),
             None => (Arc::new(Schema::empty()), true),
         };
         Ok(Self {
             schema,
-            state: State::AwaitingFile,
+            current_stream: None,
             spill_files,
             is_empty,
         })
@@ -256,64 +241,21 @@ impl futures::Stream for ExternalRecordBatchStream {
     type Item = Result<RecordBatch>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let self_mut = self.get_mut();
+        let this = self.get_mut();
 
         loop {
-            match &mut self_mut.state {
-                State::AwaitingFile => match self_mut.spill_files.pop_front() {
-                    Some(spill_file) => {
-                        let task = SpawnedTask::spawn_blocking(move || {
-                            EvaluatedBatchSpillReader::try_new(&spill_file)
-                        });
-                        self_mut.state = State::Opening(task);
-                    }
-                    None => {
-                        self_mut.state = State::Finished;
-                        return Poll::Ready(None);
-                    }
-                },
-                State::Opening(task) => match futures::ready!(task.poll_unpin(cx)) {
-                    Err(e) => {
-                        self_mut.state = State::Finished;
-                        return Poll::Ready(Some(Err(DataFusionError::External(Box::new(e)))));
-                    }
-                    Ok(Err(e)) => {
-                        self_mut.state = State::Finished;
-                        return Poll::Ready(Some(Err(e)));
-                    }
-                    Ok(Ok(mut spill_reader)) => {
-                        let task = SpawnedTask::spawn_blocking(move || {
-                            let next_batch = spill_reader.next_raw_batch();
-                            (spill_reader, next_batch)
-                        });
-                        self_mut.state = State::Reading(task);
-                    }
-                },
-                State::Reading(task) => match futures::ready!(task.poll_unpin(cx)) {
-                    Err(e) => {
-                        self_mut.state = State::Finished;
-                        return Poll::Ready(Some(Err(DataFusionError::External(Box::new(e)))));
-                    }
-                    Ok((_, None)) => {
-                        self_mut.state = State::AwaitingFile;
-                        continue;
-                    }
-                    Ok((_, Some(Err(e)))) => {
-                        self_mut.state = State::Finished;
-                        return Poll::Ready(Some(Err(e)));
-                    }
-                    Ok((mut spill_reader, Some(Ok(batch)))) => {
-                        let task = SpawnedTask::spawn_blocking(move || {
-                            let next_batch = spill_reader.next_raw_batch();
-                            (spill_reader, next_batch)
-                        });
-                        self_mut.state = State::Reading(task);
-                        return Poll::Ready(Some(Ok(batch)));
-                    }
-                },
-                State::Finished => {
-                    return Poll::Ready(None);
+            if let Some(stream) = this.current_stream.as_mut() {
+                match stream.poll_next_unpin(cx) {
+                    Poll::Ready(None) => this.current_stream = None,
+                    other => return other,
                 }
+            } else if let Some(spill_file) = this.spill_files.pop_front() {
+                match spill_file.read_stream() {
+                    Ok(stream) => this.current_stream = Some(stream),
+                    Err(error) => return Poll::Ready(Some(Err(error))),
+                }
+            } else {
+                return Poll::Ready(None);
             }
         }
     }
@@ -384,7 +326,7 @@ mod tests {
         Ok(EvaluatedBatch { batch, geom_array })
     }
 
-    async fn create_spill_file_with_batches(num_batches: usize) -> Result<RefCountedTempFile> {
+    async fn create_spill_file_with_batches(num_batches: usize) -> Result<SpillArtifact> {
         let env = create_test_runtime_env()?;
         let schema = create_test_schema();
         let sedona_type = WKB_GEOMETRY;
@@ -412,7 +354,7 @@ mod tests {
     #[tokio::test]
     async fn test_external_stream_creation() -> Result<()> {
         let spill_file = create_spill_file_with_batches(1).await?;
-        let stream = ExternalEvaluatedBatchStream::try_from_spill_file(Arc::new(spill_file))?;
+        let stream = ExternalEvaluatedBatchStream::try_from_spill_file(spill_file)?;
 
         assert!(stream.is_external());
         assert_eq!(stream.schema(), create_test_schema());
@@ -423,7 +365,7 @@ mod tests {
     #[tokio::test]
     async fn test_external_stream_single_batch() -> Result<()> {
         let spill_file = create_spill_file_with_batches(1).await?;
-        let mut stream = ExternalEvaluatedBatchStream::try_from_spill_file(Arc::new(spill_file))?;
+        let mut stream = ExternalEvaluatedBatchStream::try_from_spill_file(spill_file)?;
 
         let batch = stream.next().await.unwrap()?;
         assert_eq!(batch.num_rows(), 3);
@@ -439,7 +381,7 @@ mod tests {
     async fn test_external_stream_large_number_of_batches() -> Result<()> {
         let num_batches = 100;
         let spill_file = create_spill_file_with_batches(num_batches).await?;
-        let mut stream = ExternalEvaluatedBatchStream::try_from_spill_file(Arc::new(spill_file))?;
+        let mut stream = ExternalEvaluatedBatchStream::try_from_spill_file(spill_file)?;
 
         let mut count = 0;
         while let Some(batch_result) = stream.next().await {
@@ -456,7 +398,7 @@ mod tests {
     #[tokio::test]
     async fn test_external_stream_is_external_flag() -> Result<()> {
         let spill_file = create_spill_file_with_batches(1).await?;
-        let stream = ExternalEvaluatedBatchStream::try_from_spill_file(Arc::new(spill_file))?;
+        let stream = ExternalEvaluatedBatchStream::try_from_spill_file(spill_file)?;
 
         // Verify the is_external flag returns true
         assert!(stream.is_external());
@@ -470,8 +412,8 @@ mod tests {
         let file1 = create_spill_file_with_batches(2).await?;
         let file2 = create_spill_file_with_batches(3).await?;
 
-        let mut stream1 = ExternalEvaluatedBatchStream::try_from_spill_file(Arc::new(file1))?;
-        let mut stream2 = ExternalEvaluatedBatchStream::try_from_spill_file(Arc::new(file2))?;
+        let mut stream1 = ExternalEvaluatedBatchStream::try_from_spill_file(file1)?;
+        let mut stream2 = ExternalEvaluatedBatchStream::try_from_spill_file(file2)?;
 
         // Read from both streams
         let batch1_1 = stream1.next().await.unwrap()?;
@@ -503,7 +445,7 @@ mod tests {
         let schema = create_test_schema();
         let mut stream = ExternalEvaluatedBatchStream::try_from_spill_files(
             Arc::clone(&schema),
-            vec![Arc::new(file1), Arc::new(file2)],
+            vec![file1, file2],
         )?;
 
         assert_eq!(stream.schema(), schema);
@@ -523,7 +465,7 @@ mod tests {
     #[tokio::test]
     async fn test_external_stream_empty_file() -> Result<()> {
         let spill_file = create_spill_file_with_batches(0).await?;
-        let mut stream = ExternalEvaluatedBatchStream::try_from_spill_file(Arc::new(spill_file))?;
+        let mut stream = ExternalEvaluatedBatchStream::try_from_spill_file(spill_file)?;
 
         // Should immediately return None
         let batch = stream.next().await;
@@ -537,7 +479,7 @@ mod tests {
         let schema = create_test_schema();
         let stream = ExternalEvaluatedBatchStream::try_from_spill_files(
             Arc::clone(&schema),
-            Vec::<Arc<RefCountedTempFile>>::new(),
+            Vec::<SpillArtifact>::new(),
         )?;
 
         assert_eq!(stream.schema(), schema);
@@ -548,7 +490,7 @@ mod tests {
     #[tokio::test]
     async fn test_external_stream_preserves_data() -> Result<()> {
         let spill_file = create_spill_file_with_batches(1).await?;
-        let mut stream = ExternalEvaluatedBatchStream::try_from_spill_file(Arc::new(spill_file))?;
+        let mut stream = ExternalEvaluatedBatchStream::try_from_spill_file(spill_file)?;
 
         let batch = stream.next().await.unwrap()?;
 
@@ -591,7 +533,7 @@ mod tests {
     async fn test_external_stream_multiple_batches() -> Result<()> {
         let num_batches = 5;
         let spill_file = create_spill_file_with_batches(num_batches).await?;
-        let mut stream = ExternalEvaluatedBatchStream::try_from_spill_file(Arc::new(spill_file))?;
+        let mut stream = ExternalEvaluatedBatchStream::try_from_spill_file(spill_file)?;
 
         let mut batches_read = 0;
         while let Some(batch_result) = stream.next().await {
@@ -619,7 +561,7 @@ mod tests {
     #[tokio::test]
     async fn test_external_stream_poll_after_completion() -> Result<()> {
         let spill_file = create_spill_file_with_batches(1).await?;
-        let mut stream = ExternalEvaluatedBatchStream::try_from_spill_file(Arc::new(spill_file))?;
+        let mut stream = ExternalEvaluatedBatchStream::try_from_spill_file(spill_file)?;
 
         // Read the batch
         let _ = stream.next().await.unwrap()?;

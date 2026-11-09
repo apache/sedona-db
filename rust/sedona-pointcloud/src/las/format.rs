@@ -189,7 +189,13 @@ impl FileFormat for LasFormat {
             })
             .boxed() // Workaround https://github.com/rust-lang/rust/issues/64552
             // fetch schemas concurrently, if requested (note that this is not parallel)
-            .buffered(state.config_options().execution.meta_fetch_concurrency)
+            .buffered(
+                state
+                    .config_options()
+                    .execution
+                    .meta_fetch_concurrency
+                    .get(),
+            )
             .try_collect()
             .await?;
 

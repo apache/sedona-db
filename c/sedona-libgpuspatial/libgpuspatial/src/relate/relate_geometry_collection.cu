@@ -56,6 +56,7 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateGeometryCollection(
   auto ps_rings = gc_array.get_prefix_sum_num_rings();
   auto ps_points = gc_array.get_prefix_sum_num_points();
   auto feature_types = gc_array.get_feature_types();
+  auto vertices = gc_array.get_vertices();
   auto mbrs = gc_array.get_mbrs();
 
   rmm::device_uvector<INDEX_T> counts(ids_size, stream);
@@ -191,8 +192,47 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateGeometryCollection(
     append_results(sub_gc_ids, sub_other_ids);
   }
 
-  // 2. MultiPoint and LineString sub-arrays (indexed by ring_idx)
   using box_t = typename GeometryCollectionArrayView<POINT_T, INDEX_T>::box_t;
+
+  // Helper to compute exact bounding box for a range of vertices [pt_begin, pt_end)
+  auto compute_range_mbr = [=] __device__(INDEX_T pt_begin, INDEX_T pt_end) -> box_t {
+    box_t b;
+    b.set_empty();
+    if (pt_begin >= pt_end) {
+      return b;
+    }
+    using geom_scalar_t = typename POINT_T::scalar_t;
+    constexpr int n_dim = POINT_T::n_dim;
+    geom_scalar_t min_coords[n_dim];
+    geom_scalar_t max_coords[n_dim];
+#pragma unroll
+    for (int dim = 0; dim < n_dim; ++dim) {
+      min_coords[dim] = vertices[pt_begin].get_coordinate(dim);
+      max_coords[dim] = vertices[pt_begin].get_coordinate(dim);
+    }
+    for (INDEX_T p = pt_begin + 1; p < pt_end; ++p) {
+#pragma unroll
+      for (int dim = 0; dim < n_dim; ++dim) {
+        auto val = vertices[p].get_coordinate(dim);
+        min_coords[dim] = std::min(min_coords[dim], val);
+        max_coords[dim] = std::max(max_coords[dim], val);
+      }
+    }
+    Point<float, n_dim> min_corner, max_corner;
+#pragma unroll
+    for (int dim = 0; dim < n_dim; ++dim) {
+      if constexpr (std::is_same_v<geom_scalar_t, double>) {
+        min_corner[dim] = next_float_from_double(min_coords[dim], -1, 2);
+        max_corner[dim] = next_float_from_double(max_coords[dim], 1, 2);
+      } else {
+        min_corner[dim] = min_coords[dim];
+        max_corner[dim] = max_coords[dim];
+      }
+    }
+    return box_t{min_corner, max_corner};
+  };
+
+  // 2. MultiPoint and LineString sub-arrays (indexed by ring_idx)
   rmm::device_uvector<box_t> ring_mbrs(0, stream);
   auto get_ring_mbrs = [&]() -> ArrayView<box_t> {
     size_t num_rings = ps_points.empty() ? 0 : ps_points.size() - 1;
@@ -202,7 +242,9 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateGeometryCollection(
                         thrust::make_counting_iterator<INDEX_T>(0),
                         thrust::make_counting_iterator<INDEX_T>(num_rings),
                         ring_mbrs.begin(), [=] __device__(INDEX_T ring_idx) {
-                          return mbrs[gc_array.locate_ring(ring_idx)];
+                          auto pt_begin = ps_points[ring_idx];
+                          auto pt_end = ps_points[ring_idx + 1];
+                          return compute_range_mbr(pt_begin, pt_end);
                         });
     }
     return ArrayView<box_t>(ring_mbrs);
@@ -250,7 +292,11 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateGeometryCollection(
                         thrust::make_counting_iterator<INDEX_T>(0),
                         thrust::make_counting_iterator<INDEX_T>(num_parts),
                         part_mbrs.begin(), [=] __device__(INDEX_T part_idx) {
-                          return mbrs[gc_array.locate_part(part_idx)];
+                          auto ring_begin = ps_rings[part_idx];
+                          auto ring_end = ps_rings[part_idx + 1];
+                          auto pt_begin = ring_begin < ring_end ? ps_points[ring_begin] : 0;
+                          auto pt_end = ring_begin < ring_end ? ps_points[ring_end] : 0;
+                          return compute_range_mbr(pt_begin, pt_end);
                         });
     }
     return ArrayView<box_t>(part_mbrs);
@@ -297,7 +343,20 @@ void RelateEngine<POINT_T, INDEX_T>::EvaluateGeometryCollection(
                         thrust::make_counting_iterator<INDEX_T>(0),
                         thrust::make_counting_iterator<INDEX_T>(num_geoms),
                         geom_mbrs.begin(), [=] __device__(INDEX_T geom_idx) {
-                          return mbrs[gc_array.locate_geom(geom_idx)];
+                          auto part_begin = ps_parts[geom_idx];
+                          auto part_end = ps_parts[geom_idx + 1];
+                          if (part_begin < part_end) {
+                            auto ring_begin = ps_rings[part_begin];
+                            auto ring_end = ps_rings[part_end];
+                            if (ring_begin < ring_end) {
+                              auto pt_begin = ps_points[ring_begin];
+                              auto pt_end = ps_points[ring_end];
+                              return compute_range_mbr(pt_begin, pt_end);
+                            }
+                          }
+                          box_t b;
+                          b.set_empty();
+                          return b;
                         });
     }
     return ArrayView<box_t>(geom_mbrs);

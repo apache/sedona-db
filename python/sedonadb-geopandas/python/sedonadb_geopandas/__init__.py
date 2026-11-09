@@ -47,6 +47,7 @@ __all__ = [
     "read_parquet",
     "show_versions",
     "sjoin",
+    "sjoin_nearest",
 ]
 
 
@@ -108,6 +109,37 @@ def sjoin(
         rsuffix=rsuffix,
         distance=distance,
         on_attribute=on_attribute,
+    )
+
+
+def sjoin_nearest(
+    left_df,
+    right_df,
+    how="inner",
+    max_distance=None,
+    lsuffix="left",
+    rsuffix="right",
+    distance_col=None,
+    exclusive=False,
+):
+    """Join two frames by the distance between their geometries, as
+    `geopandas.sjoin_nearest` does.
+
+    **EXPERIMENTAL.** Equivalent to `left_df.sjoin_nearest(right_df, ...)`; see
+    `GeoDataFrame.sjoin_nearest`.
+    """
+    if not isinstance(left_df, GeoDataFrame):
+        raise TypeError(
+            f"sjoin_nearest() expects a GeoDataFrame, got {type(left_df).__name__}"
+        )
+    return left_df.sjoin_nearest(
+        right_df,
+        how=how,
+        max_distance=max_distance,
+        lsuffix=lsuffix,
+        rsuffix=rsuffix,
+        distance_col=distance_col,
+        exclusive=exclusive,
     )
 
 

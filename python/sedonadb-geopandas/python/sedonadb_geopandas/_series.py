@@ -358,6 +358,61 @@ def _operand(df, other):
     return normalize_scalar(other)
 
 
+# Default for `replace()`'s `value`, telling "not given" from None, a value.
+_NO_VALUE = object()
+
+
+def _column_name(value):
+    """`value`, a name for a column: a string."""
+    if not isinstance(value, str):
+        raise TypeError(f"A column name is a string, not a {type(value).__name__}")
+    return value
+
+
+def _replacement_pairs(to_replace, value):
+    """The `(old, new)` pairs of values `replace()` takes as pandas does: a
+    value and its replacement, a list of values and one replacement or a list
+    of as many, or a dict of values to their replacements."""
+    if isinstance(to_replace, dict):
+        if value is not _NO_VALUE:
+            raise TypeError(
+                "replace() takes a dict of values to their replacements without a value"
+            )
+        pairs = list(to_replace.items())
+    elif value is _NO_VALUE:
+        raise TypeError(
+            "replace() needs a value to replace with, or a dict of values to "
+            "their replacements"
+        )
+    elif is_scalar(to_replace):
+        if not is_scalar(value):
+            raise TypeError(
+                f"replace() replaces a single value with a single value, not a "
+                f"{type(value).__name__}"
+            )
+        pairs = [(to_replace, value)]
+    else:
+        olds = list(to_replace)
+        if is_scalar(value):
+            pairs = [(old, value) for old in olds]
+        else:
+            news = list(value)
+            if len(news) != len(olds):
+                raise ValueError(
+                    f"Replacement lists must match in length. Expecting "
+                    f"{len(olds)} got {len(news)}"
+                )
+            pairs = list(zip(olds, news))
+    for pair in pairs:
+        for item in pair:
+            if isinstance(item, Series) or not is_scalar(item):
+                raise TypeError(
+                    f"replace() replaces values with values, not a "
+                    f"{type(item).__name__}"
+                )
+    return pairs
+
+
 class Series:
     """A single column of a lazy SedonaDB frame, in the shape of a pandas Series.
 
@@ -619,8 +674,53 @@ class Series:
             )
         return self._replace(~self._missing(), value, "fillna")
 
+    def replace(self, to_replace=None, value=_NO_VALUE, *, regex=False):
+        """Replace values, as pandas' `Series.replace()` does without regular
+        expressions.
+
+        `to_replace` is a value, replaced by `value`; a list of values, each
+        replaced by `value` or by the value at its place in a list `value`; or
+        a dict of values to their replacements, without `value`. A missing
+        value (None or NaN) matches the missing values. Values are replaced
+        all at once (`{1: 2, 2: 3}` makes a 1 a 2, not a 3), and match as
+        pandas compares them: 1 matches 1.0 but not True, and 0.0 matches
+        -0.0. A value of another kind than this column holds matches nothing;
+        a replacement of another kind raises, a column holding one kind of
+        value, where pandas makes it a column of Python objects.
+        """
+        if regex:
+            raise NotImplementedError("replace() does not support regex")
+        return self._replaced(_replacement_pairs(to_replace, value))
+
+    def _replaced(self, pairs):
+        """This column with the `(old, new)` value `pairs` replaced, all at
+        once."""
+        result = self
+        # Each pair is put where its old value is in this column as it was,
+        # so that a replacement is not replaced again; where pairs share an
+        # old value, the last replaces it, as in pandas.
+        for old, new in pairs:
+            if self._holds(old):
+                result = result._replace(~self._equals(old), new, "replace")
+        return result
+
+    def _equals(self, value):
+        """Where this column holds `value` (never null). A missing `value`
+        matches the missing values, and an integer beyond int64 as `isin()`
+        matches it: exactly, as a value of this column's type."""
+        from sedonadb_geopandas._frame import _is_missing
+
+        if _is_missing(normalize_scalar(value)):
+            return self._missing()
+        if _beyond_int64(value):
+            return self.isin([value])._expr
+        return self._compare(value, operator.eq)._expr
+
     def _holds(self, value):
         """Whether a scalar `value` is the kind of value this column holds."""
+        if _beyond_int64(value):
+            # A number, though no literal holds it without a type.
+            return _kind(self._dtype()) == "number"
         try:
             self._replacement(value, "fillna")
         except TypeError:
@@ -661,7 +761,7 @@ class Series:
             else:
                 present.append(normalized)
         dtype = self._dtype()
-        present = _comparable(dtype, present)
+        present = self._members(dtype, present)
         # False, as an expression over this column: a bare literal is not an
         # expression, so `~`, `isna()` or `astype()` on the result would fail.
         expr = self._expr.is_null() & lit(False)
@@ -681,6 +781,11 @@ class Series:
             if matches_nan:
                 expr = expr | self._decoded().funcs.isnan().funcs.coalesce(lit(False))
         return Series(self._df, expr, self._name)
+
+    def _members(self, dtype, values):
+        """The `values`, none missing, that `isin()` can match in this column
+        of `dtype`, in its terms (see `_comparable`)."""
+        return _comparable(dtype, values)
 
     def astype(self, dtype):
         """Cast to `dtype` (a NumPy/pandas dtype name, Python type, or Arrow type).
@@ -952,6 +1057,121 @@ class Series:
                 f"frame has no row order to count back from)"
             )
         return type(self)(self._df.limit(n), self._expr, self._name)
+
+    def tail(self, n=5):
+        """The last `n` values of this column, as a Series of a new frame.
+
+        Last in the order of a sorted column (see `sort_values()`), as in
+        pandas; otherwise which values come back isn't guaranteed, as for
+        `head()`. This computes the number of rows.
+        """
+        from sedonadb_geopandas._frame import _tail_offset
+
+        offset = _tail_offset(self._df, n)
+        return type(self)(self._df.limit(n, offset=offset), self._expr, self._name)
+
+    def sort_values(
+        self, *, ascending=True, na_position="last", ignore_index=False, key=None
+    ):
+        """This column sorted, as a Series of a new frame, as in pandas.
+
+        As in pandas, NaN in a float column sorts as missing, placed by
+        `na_position`. There is no index, so `ignore_index` changes nothing,
+        and `key` is not supported. As for `DataFrame.sort_values()`, an
+        operation that does not keep the order (a join, an aggregation) may
+        not keep it.
+        """
+        if key is not None:
+            raise NotImplementedError("sort_values() does not support key")
+        if not isinstance(ascending, bool):
+            raise TypeError(f"ascending must be a bool, got {ascending!r}")
+        frame = self._frame().sort_values(
+            self._name, ascending=ascending, na_position=na_position
+        )
+        return type(self)(frame._df, frame._df[self._name], self._name)
+
+    def drop_duplicates(self, *, keep="first", ignore_index=False):
+        """This column without duplicate values, as a Series of a new frame,
+        as in pandas.
+
+        Values compare as `DataFrame.drop_duplicates()` compares them: NaN and
+        a missing value are one value, as are -0.0 and 0.0, and geometries
+        compare by their WKB. Without a row order, `keep="first"` and
+        `keep="last"` keep one of each duplicate value; `keep=False` drops
+        every value that has a duplicate. There is no index, so `ignore_index`
+        changes nothing.
+        """
+        frame = self._frame().drop_duplicates(keep=keep)
+        return type(self)(frame._df, frame._df[self._name], self._name)
+
+    def _frame(self):
+        """This column alone, as a frame."""
+        from sedonadb_geopandas._frame import GeoDataFrame
+
+        return GeoDataFrame(self._df.select(self._expr.alias(self._name)), None)
+
+    # -- name, type, and size ----------------------------------------------
+    @property
+    def name(self):
+        """The name of this column."""
+        return self._name
+
+    @name.setter
+    def name(self, value):
+        self._name = _column_name(value)
+
+    def rename(self, index=None, *, inplace=False):
+        """This column under the name `index`, as pandas' `Series.rename()`
+        names a Series.
+
+        A mapping or a function would relabel the index, which there is none
+        of. A name is a string: a column of a frame has one.
+        """
+        if callable(index) or hasattr(index, "keys"):
+            raise NotImplementedError(
+                "rename() names this column: there is no index to relabel"
+            )
+        name = _column_name(index)
+        if inplace:
+            self._name = name
+            return None
+        return type(self)(self._df, self._expr, name)
+
+    @property
+    def dtype(self):
+        """The pandas dtype of this column, as `to_pandas()` gives it when no
+        value is missing.
+
+        Whether a value is missing isn't known before the column is
+        computed, so an integer column with a missing value has an integer
+        dtype here, where pandas makes its values floats. A categorical
+        column's categories are those of its values, so its dtype computes
+        it.
+        """
+        df = self._df.select(self._expr.alias(self._name))
+        return _pandas_dtypes(df)[self._name]
+
+    def __len__(self):
+        return self._df.count()
+
+    @property
+    def shape(self):
+        """The number of values, as a tuple (this computes it)."""
+        return (len(self),)
+
+    @property
+    def size(self):
+        """The number of values (this computes it)."""
+        return len(self)
+
+    @property
+    def empty(self):
+        """Whether this column has no values (this computes whether it has one)."""
+        return self._df.limit(1).count() == 0
+
+    @property
+    def ndim(self):
+        return 1
 
     # -- reductions (computed) ---------------------------------------------
     def _valued(self):
@@ -1252,6 +1472,30 @@ def _is_temporal(arrow_type):
     )
 
 
+def _beyond_int64(value):
+    """Whether `value` is a plain integer no int64 holds."""
+    return isinstance(value, int) and not -(2**63) <= value < 2**63
+
+
+def _pandas_dtypes(df):
+    """The pandas dtype `df.to_pandas()` gives each column, as a pandas
+    Series: from a query of no rows, except a categorical column's, whose
+    categories are those of its values (unused ones too), so that column is
+    computed."""
+    import pandas as pd
+
+    dtypes = df.limit(0).to_pandas().dtypes
+    categorical = [
+        name for name, dtype in dtypes.items() if isinstance(dtype, pd.CategoricalDtype)
+    ]
+    if categorical:
+        computed = df.select(*categorical).to_pandas().dtypes
+        dtypes = dtypes.copy()
+        for name in categorical:
+            dtypes[name] = computed[name]
+    return dtypes
+
+
 def _comparable(dtype, values):
     """The `values` an `isin` on a column of `dtype` can match, in its terms.
 
@@ -1516,8 +1760,10 @@ def _half_even(value, dtype):
     odd = (floor / number(2.0)).funcs.floor() * number(2.0) != floor
     up = (fraction > number(0.5)) | ((fraction == number(0.5)) & odd)
     rounded = floor + up.cast(dtype)
-    # The engine orders -0.0 (and a negative NaN) below 0.0.
-    negative = value < number(0.0)
+    # The sign bit, -0.0's too, which compares equal to 0.0 in DataFusion 55
+    # (earlier versions order it below). atan2(±0.0, -1.0) is ±pi, and atan2
+    # with -1.0 is never zero, so its sign compares the same in either.
+    negative = value.funcs.atan2(number(-1.0)) < number(0.0)
     return rounded * (number(1.0) - number(2.0) * negative.cast(dtype))
 
 
@@ -3042,6 +3288,26 @@ class GeoSeries(Series):
         return self._geo(self._expr.geo.snap(self._other(other), tolerance))
 
     # -- serialization and CRS --------------------------------------------
+
+    def _members(self, dtype, values):
+        # A value that is not a geometry matches none, as in GeoPandas, where
+        # the engine would refuse to compare it with a geometry. (Which
+        # missing values match is read from all the values, which GeoPandas
+        # answers from.)
+        return [value for value in values if self._holds(value)]
+
+    def astype(self, dtype):
+        """This column as `dtype`, as GeoPandas casts geometries: to a string
+        type, each geometry's WKT (see `to_wkt()`), and to `object` or
+        `"geometry"`, the geometries as they are. A geometry is no other type.
+        """
+        if _is_object_dtype(dtype) or str(dtype) == "geometry":
+            return self.copy()
+        if dtype in (str, "str", "string") or (
+            isinstance(dtype, pa.DataType) and _kind(dtype) == "string"
+        ):
+            return self.to_wkt()
+        raise TypeError(f"astype() can't make a geometry column {dtype!r}")
 
     def to_wkt(self):
         """Each geometry as WKT text (`ST_AsText`).

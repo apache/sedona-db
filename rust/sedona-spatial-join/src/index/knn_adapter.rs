@@ -18,7 +18,7 @@
 use once_cell::sync::OnceCell;
 
 use geo::{Centroid, Distance, Euclidean, Haversine};
-use geo_types::{Geometry, Point};
+use geo_types::{Geometry, Point, Polygon};
 use sedona_expr::statistics::GeoStatistics;
 use sedona_geo::to_geo::item_to_geometry;
 
@@ -144,6 +144,69 @@ impl<'a> SedonaKnnAdapter<'a> {
             Some(Euclidean.distance(probe, item))
         }
     }
+
+    /// [`Self::distance`] to an item whose index box is `item_bbox`
+    ///
+    /// The box must contain the whole item, which holds unless the index splits items
+    /// at the antimeridian. A point probe outside the box can't be inside the item, so
+    /// its planar distance skips the point-in-polygon test.
+    pub fn distance_to_indexed_item(
+        &self,
+        probe: &Geometry<f64>,
+        item_index: usize,
+        item_bbox: [f32; 4],
+        use_spheroid: bool,
+    ) -> Option<f64> {
+        if !use_spheroid
+            && let Geometry::Point(p) = probe
+            && is_outside_box(*p, item_bbox)
+        {
+            let item = self.get_geometry(item_index)?;
+            return Some(euclidean_distance_outside_bbox(*p, item));
+        }
+        self.distance(probe, item_index, use_spheroid)
+    }
+}
+
+/// Whether `p` is outside `bbox` (`[min_x, min_y, max_x, max_y]`). A NaN coordinate
+/// isn't outside.
+pub(crate) fn is_outside_box(p: Point<f64>, bbox: [f32; 4]) -> bool {
+    let [min_x, min_y, max_x, max_y] = bbox.map(f64::from);
+    p.x() < min_x || p.x() > max_x || p.y() < min_y || p.y() > max_y
+}
+
+/// `Euclidean.distance` from `p` to `geom`, where `p` is outside the bounding box of `geom`
+///
+/// The point can't be in a polygon, so the distance to a polygon is the distance to its
+/// rings, without the point-in-polygon test that `Euclidean.distance` starts with. Every
+/// other geometry gets `Euclidean.distance`, which doesn't test containment.
+pub(crate) fn euclidean_distance_outside_bbox(p: Point<f64>, geom: &Geometry<f64>) -> f64 {
+    match geom {
+        Geometry::Polygon(polygon) => point_to_polygon_rings_distance(p, polygon),
+        Geometry::MultiPolygon(multi_polygon) => {
+            multi_polygon.iter().fold(f64::MAX, |accum, polygon| {
+                accum.min(point_to_polygon_rings_distance(p, polygon))
+            })
+        }
+        _ => Euclidean.distance(&Geometry::Point(p), geom),
+    }
+}
+
+/// `Euclidean.distance` from a point outside `polygon` to `polygon`, computed as geo does
+/// once its point-in-polygon test has found the point outside
+fn point_to_polygon_rings_distance(p: Point<f64>, polygon: &Polygon<f64>) -> f64 {
+    if polygon.exterior().0.is_empty() {
+        return 0.0;
+    }
+    polygon
+        .interiors()
+        .iter()
+        .fold(f64::MAX, |accum, ring| {
+            accum.min(Euclidean.distance(&p, ring))
+        })
+        .min(polygon.exterior().lines().fold(f64::MAX, |accum, line| {
+            accum.min(Euclidean.distance(&p, &line))
+        }))
 }
 
 /// Euclidean distance from a point to an axis-aligned box. This is the exact distance and
@@ -280,6 +343,109 @@ mod tests {
             lon0.max(lon1),
             lat0.max(lat1),
         ]
+    }
+
+    /// A star-shaped ring of `n` points around `center`, at radii between `min_r` and
+    /// `max_r`
+    fn random_ring(
+        rng: &mut fastrand::Rng,
+        center: (f64, f64),
+        n: usize,
+        min_r: f64,
+        max_r: f64,
+    ) -> geo::LineString<f64> {
+        let mut coords: Vec<geo::Coord<f64>> = (0..n)
+            .map(|i| {
+                let angle = std::f64::consts::TAU * (i as f64 + rng.f64() * 0.5) / n as f64;
+                let r = min_r + rng.f64() * (max_r - min_r);
+                geo::coord! { x: center.0 + r * angle.cos(), y: center.1 + r * angle.sin() }
+            })
+            .collect();
+        coords.push(coords[0]);
+        geo::LineString::new(coords)
+    }
+
+    /// A polygon with a hole half of the time
+    fn random_polygon(rng: &mut fastrand::Rng) -> geo::Polygon<f64> {
+        let center = (rng.f64() * 100.0 - 50.0, rng.f64() * 100.0 - 50.0);
+        let n = rng.usize(6..40);
+        let exterior = random_ring(rng, center, n, 2.0, 10.0);
+        let interiors = if rng.bool() {
+            let n = rng.usize(3..10);
+            vec![random_ring(rng, center, n, 0.2, 0.8)]
+        } else {
+            vec![]
+        };
+        geo::Polygon::new(exterior, interiors)
+    }
+
+    /// A polygon, or a third of the time a multipolygon of up to three of them
+    fn random_polygonal(rng: &mut fastrand::Rng) -> Geometry<f64> {
+        if rng.usize(0..3) == 0 {
+            let n = rng.usize(1..4);
+            let polygons = (0..n).map(|_| random_polygon(rng)).collect();
+            Geometry::MultiPolygon(geo::MultiPolygon::new(polygons))
+        } else {
+            Geometry::Polygon(random_polygon(rng))
+        }
+    }
+
+    #[test]
+    fn euclidean_distance_outside_bbox_matches_geo() {
+        use geo::BoundingRect;
+
+        let mut rng = fastrand::Rng::with_seed(11);
+        let others = [
+            "POINT (1 2)",
+            "MULTIPOINT ((1 2), (3 4))",
+            "LINESTRING (0 0, 1 1, 2 0)",
+            "MULTILINESTRING ((0 0, 1 1), (2 2, 3 1))",
+            "GEOMETRYCOLLECTION (POINT (1 2), POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0)))",
+        ]
+        .map(|wkt| wkt::TryFromWkt::try_from_wkt_str(wkt).unwrap());
+        let geoms: Vec<Geometry<f64>> = (0..500)
+            .map(|_| random_polygonal(&mut rng))
+            .chain(others)
+            .collect();
+
+        for geom in geoms {
+            let rect = geom.bounding_rect().unwrap();
+            for _ in 0..20 {
+                // A point beyond one or two sides of the box
+                let (min, max) = (rect.min(), rect.max());
+                let x = match rng.usize(0..3) {
+                    0 => min.x - rng.f64() * 20.0 - 1e-9,
+                    1 => max.x + rng.f64() * 20.0 + 1e-9,
+                    _ => min.x + rng.f64() * (max.x - min.x),
+                };
+                let y = if x < min.x || x > max.x {
+                    min.y - 20.0 + rng.f64() * (max.y - min.y + 40.0)
+                } else if rng.bool() {
+                    min.y - rng.f64() * 20.0 - 1e-9
+                } else {
+                    max.y + rng.f64() * 20.0 + 1e-9
+                };
+                let p = Point::new(x, y);
+                assert_eq!(
+                    euclidean_distance_outside_bbox(p, &geom),
+                    Euclidean.distance(&Geometry::Point(p), &geom),
+                    "{p:?} {geom:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn point_outside_box() {
+        let bbox = [0.0f32, 1.0, 2.0, 3.0];
+        assert!(!is_outside_box(Point::new(1.0, 2.0), bbox));
+        assert!(!is_outside_box(Point::new(0.0, 1.0), bbox));
+        assert!(!is_outside_box(Point::new(2.0, 3.0), bbox));
+        assert!(!is_outside_box(Point::new(f64::NAN, 2.0), bbox));
+        assert!(is_outside_box(Point::new(-0.1, 2.0), bbox));
+        assert!(is_outside_box(Point::new(2.1, 2.0), bbox));
+        assert!(is_outside_box(Point::new(1.0, 0.9), bbox));
+        assert!(is_outside_box(Point::new(1.0, 3.1), bbox));
     }
 
     #[test]

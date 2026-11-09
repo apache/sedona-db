@@ -726,7 +726,14 @@ impl<T: GeoFloat> CentroidOperation<T> {
     where
         LS: LineStringTraitExt<T = T>,
     {
-        debug_assert!(ring.is_closed());
+        // A ring with NaN or infinite coords can't be closed (NaN != NaN): let it through, and the
+        // arithmetic gives a non-finite centroid (georust/geo#1552)
+        debug_assert!(
+            ring.is_closed()
+                || ring
+                    .coord_iter()
+                    .any(|c| !c.x.is_finite() || !c.y.is_finite())
+        );
 
         let area = get_linestring_area(ring);
         if area == T::zero() {
@@ -1234,5 +1241,57 @@ mod test {
             .0
             .push(Rect::new(c(10., 10.), c(11., 11.)).into());
         assert_eq!(collection.centroid().unwrap(), point!(x: 10.5, y: 10.5));
+    }
+
+    #[test]
+    fn polygon_with_nan_centroid_propagates_nan() {
+        // A ring of non-finite coordinates can't be closed (NaN != NaN): its centroid is NaN
+        // (georust/geo#1552)
+        let nan_ring = Polygon::new(LineString::from(vec![(f64::NAN, f64::NAN)]), vec![]);
+        let centroid = nan_ring.centroid().unwrap();
+        assert!(centroid.x().is_nan() && centroid.y().is_nan());
+    }
+
+    #[test]
+    fn polygon_with_nan_in_closed_ring_centroid_propagates_nan() {
+        let nan_ring = Polygon::new(
+            LineString::from(vec![(0.0, 0.0), (1.0, 0.0), (1.0, f64::NAN), (0.0, 0.0)]),
+            vec![],
+        );
+        assert!(nan_ring.centroid().unwrap().x().is_nan());
+    }
+
+    #[test]
+    fn polygon_with_nan_in_interior_ring_centroid_propagates_nan() {
+        let poly = Polygon::new(
+            LineString::from(vec![
+                (0.0, 0.0),
+                (10.0, 0.0),
+                (10.0, 10.0),
+                (0.0, 10.0),
+                (0.0, 0.0),
+            ]),
+            vec![LineString::from(vec![
+                (2.0, 2.0),
+                (8.0, 2.0),
+                (8.0, f64::NAN),
+                (2.0, 2.0),
+            ])],
+        );
+        assert!(poly.centroid().unwrap().x().is_nan());
+    }
+
+    #[test]
+    fn linestring_with_nan_centroid_propagates_nan() {
+        let ls = LineString::from(vec![(f64::NAN, 1.0), (2.0, 3.0)]);
+        assert!(ls.centroid().unwrap().x().is_nan());
+    }
+
+    #[test]
+    fn multipoint_with_nan_centroid_propagates_nan() {
+        let mp = MultiPoint::from(vec![(f64::NAN, 1.0), (2.0, 3.0)]);
+        let centroid = mp.centroid().unwrap();
+        assert!(centroid.x().is_nan());
+        assert_eq!(centroid.y(), 2.0);
     }
 }
