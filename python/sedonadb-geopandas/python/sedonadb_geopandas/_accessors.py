@@ -833,6 +833,13 @@ _UNIT_NANOS = {"s": 10**9, "ms": 10**6, "us": 10**3, "ns": 1}
 # The last tick of a timestamp, either way: int64's least is pandas' NaT.
 _MAX_TICKS = 2**63 - 1
 
+# The first and last second the engine reads a date of, from 1970:
+# -262143-01-01 00:00:00 and 262142-12-31 23:59:59. Seconds, milliseconds and
+# microseconds reach past them; nanoseconds don't.
+_FIRST_SECOND = -8_334_601_228_800
+_LAST_SECOND = 8_210_266_876_799
+_PAST_DATES = "a timestamp is past the dates the engine reads (years -262143 to 262142)"
+
 
 def datetime_properties(series):
     """The `.dt` accessor of `series`: for timestamps or durations."""
@@ -917,18 +924,40 @@ class DatetimeProperties:
     **EXPERIMENTAL.** Each is computed in the engine, as a Series of the same
     frame. For timestamps with a time zone, properties and rounding are of
     the wall time there, as in pandas; a missing timestamp gives a missing
-    value, but for the `is_*` tests, which answer False for it.
+    value, but for the `is_*` tests, which answer False for it. A timestamp
+    past the years the engine reads dates of, -262143 to 262142, raises for
+    its fields, names, date and time, and for its wall time where it has a
+    time zone; a naive one can still be rounded.
     """
 
     def __init__(self, series):
         self._series = series
         self._type = series._dtype()
         self._values = series._decoded()
-        # The wall time: naive timestamps already are.
+        # The wall time: naive timestamps already are. `_dated` is the wall
+        # time for what reads its date, which would be missing past the
+        # engine's dates; rounding takes `_local`, whose many uses would each
+        # repeat the check.
+        dated = self._within_dates(self._values)
         if self._type.tz is None:
             self._local = self._values
+            self._dated = dated
         else:
             self._local = self._values.funcs.to_local_time()
+            self._dated = dated.funcs.to_local_time()
+
+    def _within_dates(self, values):
+        """`values`, raising for one past the dates the engine reads."""
+        per_second = 10**9 // _UNIT_NANOS[self._type.unit]
+        first = _FIRST_SECOND * per_second
+        last = (_LAST_SECOND + 1) * per_second - 1
+        if first < -_MAX_TICKS and last > _MAX_TICKS:
+            return values
+        # Within a day of either end, a time zone can still move the wall
+        # time past it, which fails with the engine's own error.
+        ticks = values.cast(pa.int64())
+        in_range = (ticks >= lit(first)) & (ticks <= lit(last))
+        return (ticks + _overflow_check(in_range, _PAST_DATES)).cast(self._type)
 
     @property
     def _ctx(self):
@@ -939,7 +968,7 @@ class DatetimeProperties:
 
     def _part(self, part):
         """A field of the wall time, as the engine's date_part() reads it."""
-        return self._ctx.lit(part).funcs.date_part(self._local)
+        return self._ctx.lit(part).funcs.date_part(self._dated)
 
     def _boolean(self, expr, name):
         answer = _missing_answer(self._type, "dt", name)
@@ -1062,25 +1091,25 @@ class DatetimeProperties:
         """The English name of the day of the week."""
         if locale is not None:
             raise NotImplementedError("day_name() supports the English names only")
-        return self._wrap(self._local.funcs.to_char(lit("%A")))
+        return self._wrap(self._dated.funcs.to_char(lit("%A")))
 
     def month_name(self, locale=None):
         """The English name of the month."""
         if locale is not None:
             raise NotImplementedError("month_name() supports the English names only")
-        return self._wrap(self._local.funcs.to_char(lit("%B")))
+        return self._wrap(self._dated.funcs.to_char(lit("%B")))
 
     @property
     def date(self):
         """The date of the wall time, as Python dates."""
-        return self._wrap(self._local.cast(pa.date32()))
+        return self._wrap(self._dated.cast(pa.date32()))
 
     @property
     def time(self):
         """The time of day of the wall time, as Python times: to the
         microsecond, as Python's are (pandas drops the nanoseconds too), where
         a time of nanoseconds would not convert to one."""
-        return self._wrap(self._local.cast(pa.time64("us")))
+        return self._wrap(self._dated.cast(pa.time64("us")))
 
     @property
     def tz(self):
@@ -1164,7 +1193,7 @@ class DatetimeProperties:
             return self._wrap(self._local)
         if self._type.tz is not None:
             raise TypeError("Already tz-aware, use tz_convert to convert.")
-        return self._wrap(self._localized(self._values, _time_zone(tz)))
+        return self._wrap(self._localized(self._dated, _time_zone(tz)))
 
     def tz_convert(self, tz):
         """These timestamps in the time zone `tz` (or, with `tz=None`, in UTC

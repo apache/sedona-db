@@ -52,6 +52,11 @@ DURATIONS = [
 UNITS = ["s", "ms", "us", "ns"]
 ZONES = [None, "UTC", "America/New_York", "Asia/Kolkata"]
 
+# The first and last second the engine has a date for, from 1970:
+# -262143-01-01 00:00:00 and 262142-12-31 23:59:59.
+FIRST_SECOND = -8_334_601_228_800
+LAST_SECOND = 8_210_266_876_799
+
 
 def _times(unit="ns", tz=None, values=TIMES):
     index = pd.to_datetime(values, format="ISO8601").as_unit(unit)
@@ -143,13 +148,56 @@ def test_names_dates_and_times(unit, tz):
     _check(series.dt.time, expected.dt.time)
 
 
-def test_names_of_a_time_past_the_engines_dates():
-    # A timestamp of seconds reaches years past the engine's dates: naming
-    # its day or month raises, as its date does, rather than naming another.
-    series = _series(pa.array([2**45, None], pa.timestamp("s")))
-    for name in ["day_name", "month_name"]:
-        with pytest.raises(Exception, match="datetime"):
-            getattr(series.dt, name)().to_pandas()
+PER_SECOND = {"s": 1, "ms": 10**3, "us": 10**6}
+
+
+@pytest.mark.parametrize("tz", ZONES)
+@pytest.mark.parametrize("unit", PER_SECOND)
+def test_times_past_the_engines_dates(unit, tz):
+    # Seconds, milliseconds and microseconds reach years the engine has no
+    # dates for: what needs a date raises, rather than being missing or
+    # failing with an error that names neither.
+    per_second = PER_SECOND[unit]
+    for ticks in [FIRST_SECOND * per_second - 1, (LAST_SECOND + 1) * per_second]:
+        series = _series(pa.array([0, ticks, None], pa.timestamp(unit, tz)))
+        dt = series.dt
+        results = [getattr(dt, name) for name in [*PROPERTIES, "date", "time"]]
+        results += [dt.day_name(), dt.month_name()]
+        if tz is None:
+            results.append(dt.tz_localize("UTC"))
+        for result in results:
+            with pytest.raises(Exception, match="past the dates the engine reads"):
+                result.to_pandas()
+        if tz is not None:
+            # A wall time to round fails too, with the engine's error.
+            for result in [dt.floor("h"), dt.normalize(), dt.tz_localize(None)]:
+                with pytest.raises(Exception):
+                    result.to_pandas()
+
+
+@pytest.mark.parametrize("tz", [None, "UTC"])
+@pytest.mark.parametrize("unit", PER_SECOND)
+def test_times_at_the_ends_of_the_engines_dates(unit, tz):
+    per_second = PER_SECOND[unit]
+    first = FIRST_SECOND * per_second
+    last = (LAST_SECOND + 1) * per_second - 1
+    series = _series(pa.array([first, last, None], pa.timestamp(unit, tz)))
+    expected = series.to_pandas()
+    for name in PROPERTIES:
+        _check(getattr(series.dt, name), getattr(expected.dt, name))
+    _check(series.dt.day_name(), expected.dt.day_name())
+    _check(series.dt.month_name(), expected.dt.month_name())
+    _check(series.dt.time, expected.dt.time)
+
+
+def test_rounding_naive_times_past_the_engines_dates():
+    # Rounding a naive timestamp needs no date: it works past them, as in
+    # pandas.
+    series = _series(pa.array([2**45, -(2**45), None], pa.timestamp("s")))
+    expected = series.to_pandas()
+    _check(series.dt.floor("h"), expected.dt.floor("h"))
+    _check(series.dt.round("D"), expected.dt.round("D"))
+    _check(series.dt.normalize(), expected.dt.normalize())
 
 
 @pytest.mark.parametrize("tz", ZONES)

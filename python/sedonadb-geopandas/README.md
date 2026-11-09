@@ -281,7 +281,10 @@ units), and a wall time that is ambiguous or does not exist after rounding or
 localizing fails, as in pandas by default (`ambiguous` and `nonexistent` take
 `"raise"` only). `day_name()` and `month_name()` are in English, `date` and
 `time` give a missing value as None rather than NaT, and `time` is to the
-microsecond, as Python's times are.
+microsecond, as Python's times are. A timestamp past the years the engine
+reads dates of, -262143 to 262142 (which seconds, milliseconds and microseconds
+reach), raises an error for its fields, names, date and time, where pandas
+gives most of them.
 
 `merge()` joins on columns as pandas does, including in matching a missing key
 (NaN or None) with a missing key, unlike SQL; without an index, its rows don't
