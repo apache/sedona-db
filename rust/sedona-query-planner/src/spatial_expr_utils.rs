@@ -322,9 +322,10 @@ fn match_distance_predicate(
     }
 }
 
-/// Match the scalar function expression to a KNN predicate such as ST_KNN(geom1, geom2, k, use_spheroid).
+/// Match the scalar function expression to a KNN predicate such as
+/// ST_KNN(geom1, geom2, k, use_spheroid, include_tie_breakers).
 /// The geometry input arguments of the ST_KNN function should reference columns from different sides.
-/// The k and use_spheroid arguments must be literal values.
+/// The k, use_spheroid and include_tie_breakers arguments must be literal values.
 fn match_knn_predicate(
     scalar_fn: &ScalarFunctionExpr,
     column_indices: &[ColumnIndex],
@@ -343,25 +344,31 @@ fn match_knn_predicate(
     let queries_geom = &args[0];
     let objects_geom = &args[1];
 
-    let (k, use_spheroid) = match args.len() {
+    let (k, use_spheroid, include_tie_breakers) = match args.len() {
         2 => {
             // Apply default k (1) and use_spheroid (false)
-            (1, false)
+            (1, false, None)
         }
         3 => {
             // Extract literal values for k and apply default use_spheroid (false)
             let k_expr = &args[2];
             let k = extract_literal_u32(k_expr)?;
-            (k, false)
+            (k, false, None)
         }
-        4 => {
+        4 | 5 => {
             // Extract literal values for k and use_spheroid
             let k_expr = &args[2];
             let k = extract_literal_u32(k_expr)?;
 
             let use_spheroid_expr = &args[3];
             let use_spheroid = extract_literal_bool(use_spheroid_expr)?;
-            (k, use_spheroid)
+
+            // Without include_tie_breakers, the session's option applies
+            let include_tie_breakers = match args.get(4) {
+                Some(expr) => Some(extract_literal_bool(expr)?),
+                None => None,
+            };
+            (k, use_spheroid, include_tie_breakers)
         }
         _ => return None,
     };
@@ -381,23 +388,29 @@ fn match_knn_predicate(
 
     match (queries_side, objects_side) {
         (JoinSide::Left, JoinSide::Right) => {
-            Some(KNNPredicate::new(
-                queries_reprojected,
-                objects_reprojected,
-                k,
-                use_spheroid,
-                JoinSide::Left, // Probe side is left plan
-            ))
+            Some(
+                KNNPredicate::new(
+                    queries_reprojected,
+                    objects_reprojected,
+                    k,
+                    use_spheroid,
+                    JoinSide::Left, // Probe side is left plan
+                )
+                .with_include_tie_breakers(include_tie_breakers),
+            )
         }
         (JoinSide::Right, JoinSide::Left) => {
             // Preserve the original query semantics: first argument is always probe, second is always build
-            Some(KNNPredicate::new(
-                queries_reprojected, // First argument (probe side)
-                objects_reprojected, // Second argument (build side)
-                k,
-                use_spheroid,
-                JoinSide::Right, // Probe side is right plan (since queries_side=Right)
-            ))
+            Some(
+                KNNPredicate::new(
+                    queries_reprojected, // First argument (probe side)
+                    objects_reprojected, // Second argument (build side)
+                    k,
+                    use_spheroid,
+                    JoinSide::Right, // Probe side is right plan (since queries_side=Right)
+                )
+                .with_include_tie_breakers(include_tie_breakers),
+            )
         }
         _ => None,
     }
@@ -1571,6 +1584,42 @@ mod tests {
 
         // Verify use_spheroid is literal value true
         assert!(pred.use_spheroid);
+
+        // Without a fifth argument, the session's option decides on tie-breakers
+        assert_eq!(pred.include_tie_breakers, None);
+    }
+
+    #[test]
+    fn test_match_knn_predicate_include_tie_breakers() {
+        let column_indices = create_test_column_indices();
+
+        for include_tie_breakers in [false, true] {
+            // Create ST_KNN(left_geom, right_geom, 5, false, include_tie_breakers)
+            let left_geom = Arc::new(Column::new("left_geom", 1)) as Arc<dyn PhysicalExpr>;
+            let right_geom = Arc::new(Column::new("right_geom", 2)) as Arc<dyn PhysicalExpr>;
+            let k_literal =
+                Arc::new(Literal::new(ScalarValue::Int32(Some(5)))) as Arc<dyn PhysicalExpr>;
+            let use_spheroid_literal =
+                Arc::new(Literal::new(ScalarValue::Boolean(Some(false)))) as Arc<dyn PhysicalExpr>;
+            let tie_breakers_literal = Arc::new(Literal::new(ScalarValue::Boolean(Some(
+                include_tie_breakers,
+            )))) as Arc<dyn PhysicalExpr>;
+
+            let st_knn_udf = create_dummy_st_knn_udf();
+            let args = vec![
+                left_geom,
+                right_geom,
+                k_literal,
+                use_spheroid_literal,
+                tie_breakers_literal,
+            ];
+            let st_knn = create_spatial_function_expr(st_knn_udf, args);
+
+            let pred = match_knn_predicate(&st_knn, &column_indices).unwrap();
+            assert_eq!(pred.k, 5);
+            assert!(!pred.use_spheroid);
+            assert_eq!(pred.include_tie_breakers, Some(include_tie_breakers));
+        }
     }
 
     #[test]
@@ -1912,6 +1961,37 @@ mod tests {
 
         let predicate = match_knn_predicate(&st_knn, &column_indices);
         assert!(predicate.is_none()); // Should fail - complex use_spheroid expressions are no longer supported
+    }
+
+    #[test]
+    fn test_match_knn_predicate_complex_tie_breakers_expressions() {
+        let column_indices = create_test_column_indices();
+
+        // Create ST_KNN with complex include_tie_breakers expression (column comparison)
+        let left_geom = Arc::new(Column::new("left_geom", 1)) as Arc<dyn PhysicalExpr>;
+        let right_geom = Arc::new(Column::new("right_geom", 2)) as Arc<dyn PhysicalExpr>;
+        let k_literal =
+            Arc::new(Literal::new(ScalarValue::Int32(Some(5)))) as Arc<dyn PhysicalExpr>;
+        let use_spheroid_literal =
+            Arc::new(Literal::new(ScalarValue::Boolean(Some(false)))) as Arc<dyn PhysicalExpr>;
+        let left_id = Arc::new(Column::new("left_id", 0)) as Arc<dyn PhysicalExpr>;
+        let literal_one =
+            Arc::new(Literal::new(ScalarValue::Int32(Some(1)))) as Arc<dyn PhysicalExpr>;
+        let tie_breakers_expr =
+            Arc::new(BinaryExpr::new(left_id, Operator::Gt, literal_one)) as Arc<dyn PhysicalExpr>;
+
+        let st_knn_udf = create_dummy_st_knn_udf();
+        let args = vec![
+            left_geom,
+            right_geom,
+            k_literal,
+            use_spheroid_literal,
+            tie_breakers_expr,
+        ];
+        let st_knn = create_spatial_function_expr(st_knn_udf, args);
+
+        let predicate = match_knn_predicate(&st_knn, &column_indices);
+        assert!(predicate.is_none()); // include_tie_breakers must be a literal value
     }
 
     #[test]

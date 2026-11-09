@@ -294,6 +294,10 @@ pub struct KNNPredicate {
     /// Which execution plan side (Left or Right) the probe expression belongs to.
     /// This is used to correctly assign build/probe plans in execution.
     pub probe_side: JoinSide,
+    /// Whether to also find the objects as near as the k-th nearest one (literal
+    /// value), or `None` to follow the `knn_include_tie_breakers` option of the
+    /// session that runs the join.
+    pub include_tie_breakers: Option<bool>,
 }
 
 impl KNNPredicate {
@@ -319,7 +323,15 @@ impl KNNPredicate {
             k,
             use_spheroid,
             probe_side,
+            include_tie_breakers: None,
         }
+    }
+
+    /// Sets whether to also find the objects as near as the k-th nearest one
+    /// (`None` follows the session's `knn_include_tie_breakers` option).
+    pub fn with_include_tie_breakers(mut self, include_tie_breakers: Option<bool>) -> Self {
+        self.include_tie_breakers = include_tie_breakers;
+        self
     }
 }
 
@@ -327,9 +339,13 @@ impl std::fmt::Display for KNNPredicate {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "ST_KNN({}, {}, {}, {})",
+            "ST_KNN({}, {}, {}, {}",
             self.left, self.right, self.k, self.use_spheroid
-        )
+        )?;
+        if let Some(include_tie_breakers) = self.include_tie_breakers {
+            write!(f, ", {include_tie_breakers}")?;
+        }
+        write!(f, ")")
     }
 }
 
@@ -474,6 +490,7 @@ impl SpatialPredicateTrait for KNNPredicate {
             k: self.k,
             use_spheroid: self.use_spheroid,
             probe_side: self.probe_side.negate(),
+            include_tie_breakers: self.include_tie_breakers,
         }
     }
 
@@ -503,6 +520,7 @@ impl SpatialPredicateTrait for KNNPredicate {
             k: self.k,
             use_spheroid: self.use_spheroid,
             probe_side: self.probe_side,
+            include_tie_breakers: self.include_tie_breakers,
         }))
     }
 }
@@ -693,6 +711,7 @@ mod tests {
             k: 10,
             use_spheroid: false,
             probe_side: JoinSide::Left,
+            include_tie_breakers: None,
         });
 
         let left_exprs = vec![proj_expr(proj_col("probe", 1), "probe_out")];
@@ -714,6 +733,7 @@ mod tests {
             k: 10,
             use_spheroid: false,
             probe_side: JoinSide::Right,
+            include_tie_breakers: Some(true),
         });
 
         // For probe_side=Right: predicate.left (probe) is rewritten using right projections,
@@ -729,8 +749,40 @@ mod tests {
         assert_is_column(&updated.left, "probe_out_r", 0);
         assert_is_column(&updated.right, "build_out_l", 0);
         assert_eq!(updated.probe_side, JoinSide::Right);
+        assert_eq!(updated.include_tie_breakers, Some(true));
 
         Ok(())
+    }
+
+    #[test]
+    fn knn_tie_breakers_kept_when_children_swap() {
+        for include_tie_breakers in [None, Some(false), Some(true)] {
+            let knn = KNNPredicate::new(
+                proj_col("probe", 0),
+                proj_col("build", 1),
+                3,
+                false,
+                JoinSide::Left,
+            )
+            .with_include_tie_breakers(include_tie_breakers);
+            let swapped = knn.swap_for_swapped_children();
+            assert_eq!(swapped.probe_side, JoinSide::Right);
+            assert_eq!(swapped.include_tie_breakers, include_tie_breakers);
+        }
+    }
+
+    #[test]
+    fn knn_display_shows_tie_breakers_only_when_set() {
+        let knn = KNNPredicate::new(
+            proj_col("probe", 0),
+            proj_col("build", 1),
+            3,
+            false,
+            JoinSide::Left,
+        );
+        assert_eq!(knn.to_string(), "ST_KNN(probe@0, build@1, 3, false)");
+        let knn = knn.with_include_tie_breakers(Some(true));
+        assert_eq!(knn.to_string(), "ST_KNN(probe@0, build@1, 3, false, true)");
     }
 
     #[test]
@@ -741,6 +793,7 @@ mod tests {
             k: 10,
             use_spheroid: false,
             probe_side: JoinSide::None,
+            include_tie_breakers: None,
         });
 
         let left_exprs = vec![proj_expr(proj_col("probe", 0), "probe_out")];
