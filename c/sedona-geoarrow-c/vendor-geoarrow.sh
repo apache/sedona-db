@@ -19,8 +19,8 @@
 
 main() {
   local -r repo_url="https://github.com/geoarrow/geoarrow-c"
-  # Check releases page: https://github.com/geoarrow/geoarrow-c/releases/
-  local -r commit_sha=6f3824e1e07bafd1dedf7938fcde36662eebe777
+  # Writer options and geometry-view APIs: https://github.com/geoarrow/geoarrow-c/pull/198
+  local -r commit_sha=86e78d87d7960d11b7078188ff7fe6ab7d64807d
 
   echo "Fetching $commit_sha from $repo_url"
   SCRATCH=$(mktemp -d)

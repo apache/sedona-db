@@ -89,7 +89,46 @@ pub struct GeoArrowArrayWriter {
     pub private_data: *mut c_void,
 }
 
+#[repr(C)]
+pub struct GeoArrowWKBReader {
+    pub private_data: *mut c_void,
+}
+
+#[repr(C)]
+pub struct GeoArrowBufferView {
+    pub data: *const u8,
+    pub size_bytes: i64,
+}
+
+#[repr(C)]
+pub struct GeoArrowGeometryNode {
+    _private: [u8; 0],
+}
+
+#[repr(C)]
+pub struct GeoArrowGeometryView {
+    pub root: *const GeoArrowGeometryNode,
+    pub size_nodes: i64,
+}
+
 unsafe extern "C" {
+    pub fn SedonaDBGeoArrowWKBReaderInit(reader: *mut GeoArrowWKBReader) -> GeoArrowErrorCode;
+    pub fn SedonaDBGeoArrowWKBReaderReset(reader: *mut GeoArrowWKBReader);
+    pub fn SedonaDBGeoArrowWKBReaderRead(
+        reader: *mut GeoArrowWKBReader,
+        src: GeoArrowBufferView,
+        out: *mut GeoArrowGeometryView,
+        error: *mut GeoArrowError,
+    ) -> GeoArrowErrorCode;
+    pub fn SedonaDBGeoArrowArrayWriterAppend(
+        writer: *mut GeoArrowArrayWriter,
+        geom: GeoArrowGeometryView,
+        error: *mut GeoArrowError,
+    ) -> GeoArrowErrorCode;
+    pub fn SedonaDBGeoArrowArrayWriterAppendNull(
+        writer: *mut GeoArrowArrayWriter,
+    ) -> GeoArrowErrorCode;
+
     pub fn SedonaDBGeoArrowVersion() -> *const c_char;
 
     pub fn SedonaDBGeoArrowVisitorInitVoid(v: *mut GeoArrowVisitor);
