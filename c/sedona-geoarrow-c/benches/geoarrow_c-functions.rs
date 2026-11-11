@@ -127,5 +127,45 @@ fn criterion_benchmark(c: &mut Criterion) {
     );
 }
 
-criterion_group!(benches, criterion_benchmark);
+/// Compare the default Rust WKT kernels used before geoarrow-c registration
+/// with the replacement kernels. Both implementations receive the same data;
+/// text input is generated once with the previous writer, outside the timings.
+fn non_precision_benchmark(c: &mut Criterion) {
+    let previous = sedona_functions::register::default_function_set();
+    let mut current = sedona_functions::register::default_function_set();
+    for (name, kernels) in sedona_geoarrow_c::register::scalar_kernels() {
+        current.add_scalar_udf_impl(name, kernels).unwrap();
+    }
+    let previous_writer: ScalarUDF = previous.scalar_udf("st_astext").unwrap().clone().into();
+    let mut group = c.benchmark_group("wkt_non_precision");
+    // One standard-size batch keeps larger geometries practical for repeated runs.
+    group.throughput(criterion::Throughput::Elements(8192));
+    for geometry in [Point, LineString(10), LineString(100), Polygon(100)] {
+        for (operation, function, input) in [
+            ("write", "st_astext", geometry.clone()),
+            (
+                "read",
+                "st_geomfromwkt",
+                Transformed(geometry.clone().into(), previous_writer.clone()),
+            ),
+        ] {
+            let data = BenchmarkArgs::Array(input).build_data(1, 8192).unwrap();
+            for (implementation, functions) in
+                [("previous_rust", &previous), ("geoarrow_c", &current)]
+            {
+                let udf: ScalarUDF = functions.scalar_udf(function).unwrap().clone().into();
+                let id = criterion::BenchmarkId::new(
+                    format!("{operation}/{geometry:?}"),
+                    implementation,
+                );
+                group.bench_with_input(id, &udf, |b, udf| {
+                    b.iter(|| data.invoke_scalar(udf).unwrap());
+                });
+            }
+        }
+    }
+    group.finish();
+}
+
+criterion_group!(benches, criterion_benchmark, non_precision_benchmark);
 criterion_main!(benches);
