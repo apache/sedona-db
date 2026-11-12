@@ -1346,8 +1346,12 @@ class DataFrame:
             got = "none" if table.num_rows == 0 else "more than one"
             raise ValueError(f"item() requires exactly one row, got {got}")
 
-        value = table.column(0)[0].as_py()
-        if value is not None and self._impl.geometry_columns():
+        scalar = table.column(0)[0]
+        if not scalar.is_valid:
+            return None
+
+        value = scalar.as_py()
+        if self._impl.geometry_columns():
             import shapely
 
             return shapely.from_wkb(value)

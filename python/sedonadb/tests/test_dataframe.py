@@ -323,6 +323,9 @@ def test_item_spatial(con):
     # Rasters come back as the Python raster object
     raster = con.sql("SELECT RS_Example() AS rast").item()
     assert type(raster).__name__ == "Raster"
+    assert (
+        con.sql("SELECT RS_FromGDALRaster(CAST(NULL AS BYTEA)) AS rast").item() is None
+    )
 
 
 @pytest.mark.parametrize(
