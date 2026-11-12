@@ -16,6 +16,7 @@
 // under the License.
 #pragma once
 #include "gpuspatial/geom/box.hpp"
+#include "gpuspatial/geom/geometry_collection.hpp"
 #include "gpuspatial/geom/geometry_type.hpp"
 #include "gpuspatial/geom/multi_line_string.hpp"
 #include "gpuspatial/geom/multi_point.hpp"
@@ -86,6 +87,15 @@ struct DeviceGeometries {
               ArrayView<INDEX_T>(offsets_.multi_polygon_offsets.ps_num_rings),
               ArrayView<INDEX_T>(offsets_.multi_polygon_offsets.ps_num_points),
               ArrayView<POINT_T>(points_), ArrayView<box_t>(mbrs_)};
+    } else if constexpr (std::is_same_v<GeometryArrayView_T,
+                                        GeometryCollectionArrayView<point_t, INDEX_T>>) {
+      return {ArrayView<GeometryType>(offsets_.geom_collection_offsets.feature_types),
+              ArrayView<INDEX_T>(offsets_.geom_collection_offsets.ps_num_geoms),
+              ArrayView<INDEX_T>(offsets_.geom_collection_offsets.ps_num_parts),
+              ArrayView<INDEX_T>(offsets_.geom_collection_offsets.ps_num_rings),
+              ArrayView<INDEX_T>(offsets_.geom_collection_offsets.ps_num_points),
+              ArrayView<POINT_T>(points_),
+              ArrayView<box_t>(mbrs_)};
     } else if constexpr (std::is_same_v<GeometryArrayView_T,
                                         BoxArrayView<point_t, INDEX_T>>) {
       return {ArrayView<box_t>(mbrs_)};

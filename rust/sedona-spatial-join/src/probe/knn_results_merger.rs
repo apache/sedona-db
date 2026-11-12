@@ -29,13 +29,12 @@ use arrow_array::ArrayRef;
 use arrow_schema::Fields;
 use datafusion::config::SpillCompression;
 use datafusion_common::Result;
-use datafusion_execution::disk_manager::RefCountedTempFile;
 use datafusion_execution::runtime_env::RuntimeEnv;
 use datafusion_physical_plan::metrics::SpillMetrics;
 use sedona_common::sedona_internal_err;
 
 use crate::index::spatial_index::DISTANCE_TOLERANCE;
-use crate::utils::spill::{RecordBatchSpillReader, RecordBatchSpillWriter};
+use crate::utils::spill::{RecordBatchSpillReader, RecordBatchSpillWriter, SpillArtifact};
 
 /// [UnprocessedKNNResultBatch] represents the KNN results produced by probing the spatial index.
 /// An [UnprocessedKNNResultBatch] may include KNN results for multiple probe rows.
@@ -134,6 +133,10 @@ struct UnprocessedKNNResultBatch {
     distances: Vec<f64>,
     unfiltered_probe_indices: Vec<usize>,
     unfiltered_distances: Vec<f64>,
+    /// Probe indices that produced zero raw KNN candidates (e.g. all-NULL build
+    /// geometries or k=0). Kept separate from unfiltered_* because those arrays
+    /// are parallel to candidate distances and cannot represent empty probes.
+    empty_raw_probe_indices: Vec<usize>,
 }
 
 impl UnprocessedKNNResultBatch {
@@ -143,6 +146,7 @@ impl UnprocessedKNNResultBatch {
         distances: Vec<f64>,
         unfiltered_probe_indices: Vec<usize>,
         unfiltered_distances: Vec<f64>,
+        empty_raw_probe_indices: Vec<usize>,
     ) -> Self {
         Self {
             row_array,
@@ -150,6 +154,7 @@ impl UnprocessedKNNResultBatch {
             distances,
             unfiltered_probe_indices,
             unfiltered_distances,
+            empty_raw_probe_indices,
         }
     }
 
@@ -165,6 +170,12 @@ impl UnprocessedKNNResultBatch {
         let distances = tail.distances.to_vec();
         let unfiltered_probe_indices = vec![index; num_unfiltered_rows];
         let unfiltered_distances = tail.unfiltered_distances.to_vec();
+        // Zero-raw probes leave no unfiltered distances; preserve them explicitly.
+        let empty_raw_probe_indices = if num_rows == 0 && num_unfiltered_rows == 0 {
+            vec![index]
+        } else {
+            Vec::new()
+        };
 
         Self {
             row_array: sliced_row_array,
@@ -172,6 +183,7 @@ impl UnprocessedKNNResultBatch {
             distances,
             unfiltered_probe_indices,
             unfiltered_distances,
+            empty_raw_probe_indices,
         }
     }
 
@@ -187,6 +199,8 @@ impl UnprocessedKNNResultBatch {
         unfiltered_probe_indices.extend(other.unfiltered_probe_indices);
         let mut unfiltered_distances = self.unfiltered_distances;
         unfiltered_distances.extend(other.unfiltered_distances);
+        let mut empty_raw_probe_indices = self.empty_raw_probe_indices;
+        empty_raw_probe_indices.extend(other.empty_raw_probe_indices);
 
         Ok(Self {
             row_array: concat_array.as_struct().clone(),
@@ -194,6 +208,7 @@ impl UnprocessedKNNResultBatch {
             distances,
             unfiltered_probe_indices,
             unfiltered_distances,
+            empty_raw_probe_indices,
         })
     }
 }
@@ -219,6 +234,9 @@ struct KNNResultArray {
     /// Offsets to split the unfiltered distances into groups per probe row. It is always of length
     /// `unfiltered_indices.len() + 1`.
     unfiltered_offsets: Vec<usize>,
+    /// Probe indices with zero raw candidates; strictly increasing and disjoint from
+    /// `unfiltered_indices`.
+    empty_raw_indices: Vec<usize>,
 }
 
 impl KNNResultArray {
@@ -229,7 +247,7 @@ impl KNNResultArray {
             distances,
             unfiltered_probe_indices,
             unfiltered_distances,
-            ..
+            empty_raw_probe_indices,
         } = unprocessed_batch;
 
         assert_eq!(row_array.len(), probe_indices.len());
@@ -240,6 +258,24 @@ impl KNNResultArray {
         let (offsets, indices) = compute_range_encoding(probe_indices);
         let (unfiltered_offsets, unfiltered_indices) =
             compute_range_encoding(unfiltered_probe_indices);
+
+        let mut empty_raw_indices = empty_raw_probe_indices;
+        empty_raw_indices.sort_unstable();
+        empty_raw_indices.dedup();
+        debug_assert!({
+            let mut j = 0;
+            let mut ok = true;
+            for &e in &empty_raw_indices {
+                while j < unfiltered_indices.len() && unfiltered_indices[j] < e {
+                    j += 1;
+                }
+                if j < unfiltered_indices.len() && unfiltered_indices[j] == e {
+                    ok = false;
+                    break;
+                }
+            }
+            ok
+        });
 
         // The iterator implementation relies on `indices` being an in-order subsequence
         // of `unfiltered_indices`.
@@ -265,6 +301,7 @@ impl KNNResultArray {
             unfiltered_indices,
             unfiltered_distances,
             unfiltered_offsets,
+            empty_raw_indices,
         }
     }
 }
@@ -348,6 +385,7 @@ struct KNNProbeResultIterator<'a> {
     array: &'a KNNResultArray,
     unfiltered_pos: usize,
     pos: usize,
+    empty_raw_pos: usize,
 }
 
 impl KNNProbeResultIterator<'_> {
@@ -356,6 +394,7 @@ impl KNNProbeResultIterator<'_> {
             array,
             unfiltered_pos: 0,
             pos: 0,
+            empty_raw_pos: 0,
         }
     }
 }
@@ -363,12 +402,31 @@ impl KNNProbeResultIterator<'_> {
 impl<'a> Iterator for KNNProbeResultIterator<'a> {
     type Item = KNNProbeResult<'a>;
 
-    /// This iterator yields KNNProbeResult for each probe row in the [KNNResultArray].
-    /// Given that the [KNNResultArray::indices] is strictly increasing,
-    /// The [KNNProbeResult] it yields has strictly increasing [KNNProbeResult::probe_row_index].
+    /// Yields KNNProbeResult for each probe row in index order, interleaving
+    /// zero-raw probes with probes that have (possibly filtered) candidates.
     fn next(&mut self) -> Option<Self::Item> {
-        if self.unfiltered_pos >= self.array.unfiltered_indices.len() {
-            return None;
+        let next_unfiltered = self
+            .array
+            .unfiltered_indices
+            .get(self.unfiltered_pos)
+            .copied();
+        let next_empty = self
+            .array
+            .empty_raw_indices
+            .get(self.empty_raw_pos)
+            .copied();
+
+        let emit_empty = match (next_unfiltered, next_empty) {
+            (None, None) => return None,
+            (None, Some(_)) => true,
+            (Some(_), None) => false,
+            (Some(u), Some(e)) => e < u,
+        };
+
+        if emit_empty {
+            let e = self.array.empty_raw_indices[self.empty_raw_pos];
+            self.empty_raw_pos += 1;
+            return Some(KNNProbeResult::new(e, 0..0, &[], &[]));
         }
 
         let unfiltered_start = self.array.unfiltered_offsets[self.unfiltered_pos];
@@ -570,7 +628,7 @@ pub struct KNNResultsMerger {
 
 struct MergerState {
     /// File containing results from previous (0..N-1) partitions
-    previous_file: Option<RefCountedTempFile>,
+    previous_file: Option<SpillArtifact>,
     /// Reader for previous file
     previous_reader: Option<RecordBatchSpillReader>,
     /// Spill writer for current (0..N) partitions
@@ -581,6 +639,10 @@ struct MergerState {
     batch_builder: KNNResultBatchBuilder,
     /// Unprocessed tail KNN results from the last ingested batch
     unprocessed_tail: Option<UnprocessedKNNResultBatch>,
+    /// Probe indices that survived final merge with zero filtered rows.
+    /// Populated only when producing final result batches (not while spilling).
+    /// The stream layer emits LEFT/RIGHT outer unmatched rows for these indices.
+    pending_unmatched_probe_indices: Vec<usize>,
 }
 
 impl KNNResultsMerger {
@@ -619,6 +681,7 @@ impl KNNResultsMerger {
                 spilled_batches: Vec::new(),
                 batch_builder,
                 unprocessed_tail: None,
+                pending_unmatched_probe_indices: Vec::new(),
             },
         })
     }
@@ -653,13 +716,14 @@ impl KNNResultsMerger {
         Ok(())
     }
 
-    pub fn ingest(
+    pub async fn ingest(
         &mut self,
         batch: RecordBatch,
         probe_indices: Vec<usize>,
         distances: Vec<f64>,
         unfiltered_probe_indices: Vec<usize>,
         unfiltered_distances: Vec<f64>,
+        empty_raw_probe_indices: Vec<usize>,
     ) -> Result<Option<RecordBatch>> {
         let row_array = StructArray::from(batch);
         let ingested_batch = UnprocessedKNNResultBatch::new(
@@ -668,6 +732,7 @@ impl KNNResultsMerger {
             distances,
             unfiltered_probe_indices,
             unfiltered_distances,
+            empty_raw_probe_indices,
         );
         let unprocessed_batch = if let Some(tail) = self.state.unprocessed_tail.take() {
             tail.merge(ingested_batch)?
@@ -682,7 +747,7 @@ impl KNNResultsMerger {
         for result in knn_query_result_iterator {
             // Only the previous result is guaranteed to be complete.
             if let Some(result) = prev_result_opt {
-                self.merge_and_append_result(&result)?;
+                self.merge_and_append_result(&result).await?;
             }
 
             prev_result_opt = Some(result);
@@ -710,7 +775,7 @@ impl KNNResultsMerger {
     /// Returns `Ok(Some(batch))` at most once per pending buffered index; if there is nothing
     /// pending (or results are being spilled to disk for non-final indexed partitions), returns
     /// `Ok(None)`.
-    pub fn produce_batch_until(
+    pub async fn produce_batch_until(
         &mut self,
         end_index_exclusive: usize,
     ) -> Result<Option<RecordBatch>> {
@@ -719,7 +784,7 @@ impl KNNResultsMerger {
             let knn_result_array = KNNResultArray::new(tail);
             let knn_query_result_iterator = KNNProbeResultIterator::new(&knn_result_array);
             for result in knn_query_result_iterator {
-                self.merge_and_append_result(&result)?;
+                self.merge_and_append_result(&result).await?;
             }
             self.flush_merged_batch(Some(&knn_result_array))?
         } else {
@@ -731,7 +796,9 @@ impl KNNResultsMerger {
             let end_target_idx = end_index_exclusive - 1;
             // `end_target_idx` might have already been loaded before, but that's fine. The following operation
             // will be a no-op in that case.
-            if let Some((batch_idx, row_idx)) = self.load_spilled_batches_up_to(end_target_idx)? {
+            if let Some((batch_idx, row_idx)) =
+                self.load_spilled_batches_up_to(end_target_idx).await?
+            {
                 let loaded_range = row_idx..(row_idx + 1);
                 self.append_spilled_results_in_range(batch_idx, &loaded_range);
             }
@@ -751,9 +818,26 @@ impl KNNResultsMerger {
         }
     }
 
-    fn merge_and_append_result(&mut self, result: &KNNProbeResult<'_>) -> Result<()> {
-        if let Some((spilled_batch_idx, row_idx)) =
-            self.load_spilled_batches_up_to(result.probe_row_index)?
+    /// Drain probe indices that finished final merge with no filtered neighbors.
+    ///
+    /// Used by the join stream to emit outer-join unmatched probe rows after
+    /// partitioned KNN merging (see apache/sedona-db#1515 / #1519).
+    pub fn take_pending_unmatched_probe_indices(&mut self) -> Vec<usize> {
+        std::mem::take(&mut self.state.pending_unmatched_probe_indices)
+    }
+
+    /// True once intermediate partition spills are done and the merger emits
+    /// final result batches (after `rotate(true)` for the last build partition).
+    /// Empty-raw probe tracking must only run in this mode; recording zero-hit
+    /// probes into intermediate spills breaks cross-partition top-k merging.
+    pub fn is_producing_final(&self) -> bool {
+        self.state.current_writer.is_none()
+    }
+
+    async fn merge_and_append_result(&mut self, result: &KNNProbeResult<'_>) -> Result<()> {
+        if let Some((spilled_batch_idx, row_idx)) = self
+            .load_spilled_batches_up_to(result.probe_row_index)
+            .await?
         {
             let spilled_batch_array = &self.state.spilled_batches[spilled_batch_idx];
             let spilled_result = spilled_batch_array.get_probe_result(row_idx);
@@ -776,7 +860,10 @@ impl KNNResultsMerger {
     /// Load spilled batches until we find the target index, or exhaust all spilled batches.
     /// Returns the (batch_idx, row_idx) of the found target index within the spilled batches,
     /// or None if the target index is not found in any spilled batch.
-    fn load_spilled_batches_up_to(&mut self, target_idx: usize) -> Result<Option<(usize, usize)>> {
+    async fn load_spilled_batches_up_to(
+        &mut self,
+        target_idx: usize,
+    ) -> Result<Option<(usize, usize)>> {
         loop {
             if !self.state.spilled_batches.is_empty() {
                 let batch_idx = self.state.spilled_batches.len() - 1;
@@ -810,7 +897,7 @@ impl KNNResultsMerger {
             let Some(prev_reader) = self.state.previous_reader.as_mut() else {
                 return Ok(None);
             };
-            let Some(batch) = prev_reader.next_batch() else {
+            let Some(batch) = prev_reader.next_batch().await else {
                 return Ok(None);
             };
             let batch = batch?;
@@ -847,7 +934,8 @@ impl KNNResultsMerger {
         let ingested_array = knn_result_array.map(|a| &a.array);
         let batch_opt = match &mut self.state.current_writer {
             Some(writer) => {
-                // Write to spill file
+                // Write to spill file (empty-filtered probes stay as empty lists;
+                // unmatched emission waits until final merge).
                 if let Some(spilled_batch) = self
                     .state
                     .batch_builder
@@ -858,10 +946,16 @@ impl KNNResultsMerger {
                 None
             }
             None => {
-                // Produce output batch
-                self.state
+                // Produce output batch; also collect probes with no filtered rows
+                // so the stream can emit outer-join unmatched rows.
+                let (batch, empty_probes) = self
+                    .state
                     .batch_builder
-                    .build_result_batch(ingested_array, &spilled_batches)?
+                    .build_result_batch(ingested_array, &spilled_batches)?;
+                self.state
+                    .pending_unmatched_probe_indices
+                    .extend(empty_probes);
+                batch
             }
         };
 
@@ -886,6 +980,8 @@ struct KNNResultBatchBuilder {
     dist_array_builder: PrimitiveBuilder<Float64Type>,
     row_array_offsets_builder: OffsetBufferBuilder<i32>,
     rows_selector: Vec<RowSelector>,
+    /// Probe indices appended with zero filtered rows in this builder flush.
+    empty_probe_indices: Vec<usize>,
     /// Scratch space for merging top-k distances
     top_k_distances: Vec<f64>,
     /// Scratch space for sorting row selectors by distance when merging KNN results
@@ -932,6 +1028,7 @@ impl KNNResultBatchBuilder {
             dist_array_builder,
             row_array_offsets_builder,
             rows_selector: Vec::with_capacity(capacity),
+            empty_probe_indices: Vec::new(),
             top_k_distances: Vec::new(),
             row_selector_with_distance: Vec::new(),
         }
@@ -946,6 +1043,10 @@ impl KNNResultBatchBuilder {
             self.rows_selector
                 .push(row_selector_template.with_row_idx(row_idx));
             self.dist_array_builder.append_value(*dist);
+        }
+
+        if results.row_range.is_empty() {
+            self.empty_probe_indices.push(results.probe_row_index);
         }
 
         self.row_array_offsets_builder
@@ -985,6 +1086,11 @@ impl KNNResultBatchBuilder {
             k,
             include_tie_breaker,
         );
+
+        if num_kept_rows == 0 {
+            self.empty_probe_indices
+                .push(spilled_results.probe_row_index);
+        }
 
         self.row_array_offsets_builder.push_length(num_kept_rows);
         self.unfiltered_dist_array_builder
@@ -1046,6 +1152,10 @@ impl KNNResultBatchBuilder {
         ingested_results: Option<&StructArray>,
         spilled_results: &[&StructArray],
     ) -> Result<Option<RecordBatch>> {
+        // Intermediate spill: empty-filtered probes are stored as empty lists.
+        // Do not surface them as unmatched yet.
+        self.empty_probe_indices.clear();
+
         if self.index_array_builder.is_empty() {
             return Ok(None);
         }
@@ -1112,9 +1222,11 @@ impl KNNResultBatchBuilder {
         &mut self,
         ingested_results: Option<&StructArray>,
         spilled_results: &[&StructArray],
-    ) -> Result<Option<RecordBatch>> {
+    ) -> Result<(Option<RecordBatch>, Vec<usize>)> {
+        let empty_probe_indices = std::mem::take(&mut self.empty_probe_indices);
+
         if self.index_array_builder.is_empty() {
-            return Ok(None);
+            return Ok((None, empty_probe_indices));
         }
 
         // Reset builders for building columns required by spilled batches. Building these columns seems to be wasted work
@@ -1127,7 +1239,7 @@ impl KNNResultBatchBuilder {
 
         // Build rows StructArray based on rows_selector
         if self.rows_selector.is_empty() {
-            return Ok(None);
+            return Ok((None, empty_probe_indices));
         }
         let rows_array = interleave_spill_and_ingested_rows(
             ingested_results,
@@ -1138,7 +1250,10 @@ impl KNNResultBatchBuilder {
 
         let struct_array = rows_array.as_struct();
 
-        Ok(Some(RecordBatch::from(struct_array.clone())))
+        Ok((
+            Some(RecordBatch::from(struct_array.clone())),
+            empty_probe_indices,
+        ))
     }
 }
 
@@ -1310,6 +1425,7 @@ mod test {
                 1000, 1000, 1000, 1001, 1001, 1001, 1002, 1002, 1002, 1004, 1004, 1004,
             ],
             vec![1.0, 2.0, 3.0, 3.0, 4.0, 5.0, 7.0, 8.0, 9.0, 6.0, 7.0, 8.0],
+            vec![],
         ));
 
         let mut iter = KNNProbeResultIterator::new(&array);
@@ -1349,9 +1465,39 @@ mod test {
             vec![],
             vec![],
             vec![],
+            vec![],
         ));
 
         let mut iter = KNNProbeResultIterator::new(&array);
+        assert!(iter.next().is_none());
+    }
+
+    #[test]
+    fn test_knn_results_array_iterator_empty_raw_interleaved() {
+        // Probes 1 and 3 have zero raw candidates; 0 and 2 have filtered rows.
+        let array = KNNResultArray::new(UnprocessedKNNResultBatch::new(
+            StructArray::new_empty_fields(3, None),
+            vec![0, 0, 2],
+            vec![1.0, 2.0, 3.0],
+            vec![0, 0, 2],
+            vec![1.0, 2.0, 3.0],
+            vec![1, 3],
+        ));
+
+        let mut iter = KNNProbeResultIterator::new(&array);
+        let r0 = iter.next().unwrap();
+        assert_eq!(r0.probe_row_index, 0);
+        assert_eq!(r0.row_range, 0..2);
+        let r1 = iter.next().unwrap();
+        assert_eq!(r1.probe_row_index, 1);
+        assert!(r1.row_range.is_empty());
+        assert!(r1.unfiltered_distances.is_empty());
+        let r2 = iter.next().unwrap();
+        assert_eq!(r2.probe_row_index, 2);
+        assert_eq!(r2.row_range, 2..3);
+        let r3 = iter.next().unwrap();
+        assert_eq!(r3.probe_row_index, 3);
+        assert!(r3.row_range.is_empty());
         assert!(iter.next().is_none());
     }
 
@@ -1363,6 +1509,7 @@ mod test {
             vec![],
             vec![0, 0, 0, 3, 3],
             vec![1.0, 2.0, 3.0, 4.0, 5.0],
+            vec![],
         ));
 
         let mut iter = KNNProbeResultIterator::new(&array);
@@ -1390,6 +1537,7 @@ mod test {
             vec![1.0, 2.0, 3.0, 4.0, 5.0],
             vec![0, 0, 0, 3, 3],
             vec![1.0, 2.0, 3.0, 4.0, 5.0],
+            vec![],
         ));
 
         let mut iter = KNNProbeResultIterator::new(&array);
@@ -1416,6 +1564,7 @@ mod test {
             vec![0.0, 1.0, 3.0, 4.0, 6.0],
             vec![0, 1, 2, 3, 4, 5, 6],
             vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            vec![],
         ));
 
         let mut iter = KNNProbeResultIterator::new(&array);
@@ -1844,7 +1993,7 @@ mod test {
         expected_results == partitioned_results
     }
 
-    fn ingest_partitioned_fuzz_test_data(
+    async fn ingest_partitioned_fuzz_test_data(
         knn_result_spiller: &mut KNNResultsMerger,
         partitioned_test_data: &[Vec<FuzzTestKNNResult>],
         query_group_size: usize,
@@ -1864,19 +2013,20 @@ mod test {
                     partition_chunk,
                     start_offset,
                     batch_size,
-                )?;
+                )
+                .await?;
                 merged_record_batches.extend(res_batches);
                 start_offset += partition_chunk.len();
             }
 
-            if let Some(batch) = knn_result_spiller.produce_batch_until(start_offset)? {
+            if let Some(batch) = knn_result_spiller.produce_batch_until(start_offset).await? {
                 merged_record_batches.push(batch);
             }
         }
         Ok(merged_record_batches)
     }
 
-    fn ingest_fuzz_test_data_segment(
+    async fn ingest_fuzz_test_data_segment(
         knn_result_spiller: &mut KNNResultsMerger,
         test_data: &[FuzzTestKNNResult],
         start_offset: usize,
@@ -1935,13 +2085,16 @@ mod test {
                 .map(|&i| unfiltered_indices[i])
                 .collect::<Vec<usize>>();
 
-            let res = knn_result_spiller.ingest(
-                batch,
-                filtered_indices,
-                filtered_distances,
-                unfiltered_indices,
-                unfiltered_distances,
-            )?;
+            let res = knn_result_spiller
+                .ingest(
+                    batch,
+                    filtered_indices,
+                    filtered_distances,
+                    unfiltered_indices,
+                    unfiltered_distances,
+                    vec![],
+                )
+                .await?;
             if let Some(res_batch) = res {
                 merged_record_batches.push(res_batch);
             }
@@ -1988,7 +2141,7 @@ mod test {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn fuzz_test_knn_results_merger(
+    async fn fuzz_test_knn_results_merger(
         rng: &mut StdRng,
         num_rows: usize,
         num_partitions: usize,
@@ -2017,13 +2170,14 @@ mod test {
                 include_tie_breaker,
                 query_group_size,
                 target_batch_size,
-            )?;
+            )
+            .await?;
         }
 
         Ok(())
     }
 
-    fn fuzz_test_knn_results_merger_using_partitioned_data(
+    async fn fuzz_test_knn_results_merger_using_partitioned_data(
         partitioned_test_data: &[Vec<FuzzTestKNNResult>],
         k: usize,
         include_tie_breaker: bool,
@@ -2049,14 +2203,16 @@ mod test {
             partitioned_test_data,
             query_group_size,
             target_batch_size,
-        )?;
+        )
+        .await?;
         let batch = concat_batches(&test_data_schema, batches.iter())?;
         assert_merged_knn_result_is_correct(&batch, partitioned_test_data, k, include_tie_breaker);
         Ok(())
     }
 
     #[rstest]
-    fn test_knn_results_merger(
+    #[tokio::test]
+    async fn test_knn_results_merger(
         #[values(1, 10, 13, 50, 51, 1000)] target_batch_size: usize,
         #[values(false, true)] include_tie_breaker: bool,
     ) {
@@ -2071,23 +2227,30 @@ mod test {
             30,
             target_batch_size,
         )
+        .await
         .unwrap();
     }
 
     #[rstest]
-    fn test_knn_results_merger_empty_query_side(#[values(1, 2, 3)] random_seed: u64) {
+    #[tokio::test]
+    async fn test_knn_results_merger_empty_query_side(#[values(1, 2, 3)] random_seed: u64) {
         let mut rng = StdRng::seed_from_u64(random_seed);
-        fuzz_test_knn_results_merger(&mut rng, 0, 3, 1.0, 10, false, 100, 33).unwrap();
+        fuzz_test_knn_results_merger(&mut rng, 0, 3, 1.0, 10, false, 100, 33)
+            .await
+            .unwrap();
     }
 
     #[rstest]
-    fn test_knn_results_merger_all_filtered(#[values(1, 2, 3)] random_seed: u64) {
+    #[tokio::test]
+    async fn test_knn_results_merger_all_filtered(#[values(1, 2, 3)] random_seed: u64) {
         let mut rng = StdRng::seed_from_u64(random_seed);
-        fuzz_test_knn_results_merger(&mut rng, 100, 3, 0.0, 10, false, 50, 33).unwrap();
+        fuzz_test_knn_results_merger(&mut rng, 100, 3, 0.0, 10, false, 50, 33)
+            .await
+            .unwrap();
     }
 
-    #[test]
-    fn test_knn_results_merger_no_knn_results() {
+    #[tokio::test]
+    async fn test_knn_results_merger_no_knn_results() {
         let empty_test_data = (0..100)
             .map(|query_id| FuzzTestKNNResult {
                 query_id,
@@ -2102,11 +2265,12 @@ mod test {
             50,
             33,
         )
+        .await
         .unwrap();
     }
 
-    #[test]
-    fn test_knn_results_merger_k_is_zero() {
+    #[tokio::test]
+    async fn test_knn_results_merger_k_is_zero() {
         let empty_test_data = (0..100)
             .map(|query_id| FuzzTestKNNResult {
                 query_id,
@@ -2121,11 +2285,13 @@ mod test {
             50,
             33,
         )
+        .await
         .unwrap();
     }
 
     #[rstest]
-    fn test_knn_result_merger_with_empty_partitions(#[values(1, 2, 3)] random_seed: u64) {
+    #[tokio::test]
+    async fn test_knn_result_merger_with_empty_partitions(#[values(1, 2, 3)] random_seed: u64) {
         let k = 5;
         let include_tie_breaker = false;
         let num_rows = 100;
@@ -2164,12 +2330,14 @@ mod test {
                 query_group_size,
                 target_batch_size,
             )
+            .await
             .unwrap();
         }
     }
 
     #[rstest]
-    fn test_knn_results_merger_with_missing_probe_rows(
+    #[tokio::test]
+    async fn test_knn_results_merger_with_missing_probe_rows(
         #[values(1, 10, 13, 50, 51, 1000)] target_batch_size: usize,
     ) {
         let k = 5;
@@ -2215,6 +2383,7 @@ mod test {
             query_group_size,
             target_batch_size,
         )
+        .await
         .unwrap();
     }
 }

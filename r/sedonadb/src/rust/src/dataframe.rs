@@ -27,13 +27,14 @@ use datafusion_expr::JoinType;
 use datafusion_expr::{select_expr::SelectExpr, Expr, SortExpr};
 use savvy::{savvy, savvy_err, sexp, IntoExtPtrSexp, Result};
 use sedona::context::{SedonaDataFrame, SedonaWriteOptions};
+use sedona::is_object_store_option;
 use sedona::show::{DisplayMode, DisplayTableOptions};
 use sedona_extension::runtime::RuntimeHandle;
 use sedona_extension::streaming::StreamingRecordBatchReader;
 use sedona_extension::table_provider::ExportedTableProvider;
 use sedona_geoparquet::options::TableGeoParquetOptions;
 use sedona_schema::schema::SedonaSchema;
-use std::{iter::zip, ptr::swap_nonoverlapping, sync::Arc};
+use std::{collections::HashMap, iter::zip, ptr::swap_nonoverlapping, sync::Arc};
 
 use crate::context::InternalContext;
 use crate::expression::SedonaDBExprFactory;
@@ -264,10 +265,19 @@ impl InternalDataFrame {
             })
             .collect::<Vec<_>>();
 
+        // Object store options (e.g., aws.region) configure where a remote path
+        // is written; the rest configure the Parquet writer.
+        let (storage_options, writer_option_pairs): (Vec<_>, Vec<_>) = option_keys_strsxp
+            .iter()
+            .zip(option_values_strsxp.iter())
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .partition(|(k, _)| is_object_store_option(k));
+
         let write_options = SedonaWriteOptions::new()
             .with_partition_by(partition_by_vec)
             .with_sort_by(sort_by_expr)
-            .with_single_file_output(single_file_output);
+            .with_single_file_output(single_file_output)
+            .with_storage_options(storage_options.into_iter().collect::<HashMap<_, _>>());
 
         let mut writer_options = TableGeoParquetOptions::default();
 
@@ -284,7 +294,7 @@ impl InternalDataFrame {
         writer_options.inner.global = global_parquet_options;
 
         // Apply user-specified options
-        for (k, v) in option_keys_strsxp.iter().zip(option_values_strsxp.iter()) {
+        for (k, v) in &writer_option_pairs {
             writer_options
                 .set(k, v)
                 .map_err(|e| savvy::Error::new(format!("{e}")))?;

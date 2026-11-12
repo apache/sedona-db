@@ -117,6 +117,16 @@ fn object_store_table_options(
     Ok(table_options)
 }
 
+/// Whether an option key configures an object store rather than a file format
+///
+/// These are the keys `ensure_object_store_registered_with_options()` applies
+/// to an S3, Google Cloud Storage, or Azure store.
+pub fn is_object_store_option(key: &str) -> bool {
+    ["aws.", "gcp.", "azure."]
+        .iter()
+        .any(|prefix| key.starts_with(prefix))
+}
+
 // Backward compatibility wrapper
 pub async fn ensure_object_store_registered(state: &mut SessionState, name: &str) -> Result<()> {
     ensure_object_store_registered_with_options(state, name, None).await
@@ -773,26 +783,28 @@ pub(crate) fn register_table_options_extension_from_scheme(ctx: &SessionContext,
 
 pub(crate) async fn register_object_store_and_config_extensions(
     ctx: &SedonaContext,
-    location: &String,
+    locations: &[&str],
     options: &HashMap<String, String>,
 ) -> Result<()> {
     // Parse the location URL to extract the scheme and other components
-    let table_path = ListingTableUrl::parse(location)?;
+    for location in locations {
+        let table_path = ListingTableUrl::parse(location)?;
 
-    // Extract the scheme (e.g., "s3", "gcs") from the parsed URL
-    let scheme = table_path.scheme();
+        // Extract the scheme (e.g., "s3", "gcs") from the parsed URL
+        let scheme = table_path.scheme();
 
-    // Obtain a reference to the URL
-    let url = table_path.as_ref();
+        // Obtain a reference to the URL
+        let url = table_path.as_ref();
 
-    register_table_options_extension_from_scheme(&ctx.ctx, scheme);
-    let table_options = object_store_table_options(&ctx.ctx.state(), scheme, Some(options))?;
+        register_table_options_extension_from_scheme(&ctx.ctx, scheme);
+        let table_options = object_store_table_options(&ctx.ctx.state(), scheme, Some(options))?;
 
-    // Retrieve the appropriate object store based on the scheme, URL, and modified table options
-    let store = get_object_store(&ctx.ctx.state(), scheme, url, &table_options).await?;
+        // Retrieve the appropriate object store based on the scheme, URL, and modified table options
+        let store = get_object_store(&ctx.ctx.state(), scheme, url, &table_options).await?;
 
-    // Register the retrieved object store in the session context's runtime environment
-    ctx.ctx.register_object_store(url, store);
+        // Register the retrieved object store in the session context's runtime environment
+        ctx.ctx.register_object_store(url, store);
+    }
 
     Ok(())
 }

@@ -25,6 +25,11 @@ kernels:
     args: [geography]
 ---
 
+## Description
+
+Returns true if the geometry has a Z dimension. A geometry collection has
+one when any of its members does, at any depth, an empty member included.
+
 ## Examples
 
 ```sql

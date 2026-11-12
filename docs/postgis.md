@@ -33,7 +33,7 @@ Two approaches are covered:
 This notebook assumes:
 
 - A running PostgreSQL instance with PostGIS enabled
-- Python 3.9+
+- Python 3.10+
 - The following Python packages available:
   - `geopandas`
   - `sqlalchemy`

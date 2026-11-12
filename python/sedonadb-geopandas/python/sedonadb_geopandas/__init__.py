@@ -23,18 +23,29 @@ intentional differences (laziness, no row index, immutability). The API may
 change without notice.
 """
 
+from sedonadb_geopandas._arrow import read_feather
 from sedonadb_geopandas._context import default_context
 from sedonadb_geopandas._frame import GeoDataFrame
-from sedonadb_geopandas._io import read_file, read_parquet
+from sedonadb_geopandas._io import list_layers, read_file, read_parquet
+from sedonadb_geopandas._relational import concat, merge
 from sedonadb_geopandas._series import GeoSeries, Series
+from sedonadb_geopandas._versions import show_versions
 
 __all__ = [
     "GeoDataFrame",
     "GeoSeries",
     "Series",
+    "clip",
+    "concat",
     "from_geopandas",
+    "list_layers",
+    "merge",
+    "overlay",
+    "points_from_xy",
+    "read_feather",
     "read_file",
     "read_parquet",
+    "show_versions",
     "sjoin",
 ]
 
@@ -63,6 +74,15 @@ def from_geopandas(data, *, context=None, geometry=None):
     return GeoDataFrame(df, geometry=geometry)
 
 
+def points_from_xy(x, y, z=None, crs=None):
+    """Points from x and y (and z) coordinates, as `geopandas.points_from_xy`.
+
+    A lazy `GeoSeries` in the frame of the coordinate columns, where
+    GeoPandas gives a geometry array; see `GeoSeries.from_xy`.
+    """
+    return GeoSeries.from_xy(x, y, z, crs=crs)
+
+
 def sjoin(
     left_df,
     right_df,
@@ -89,3 +109,25 @@ def sjoin(
         distance=distance,
         on_attribute=on_attribute,
     )
+
+
+def clip(gdf, mask, keep_geom_type=False, sort=False):
+    """Clip a frame or series to a mask, as `geopandas.clip` does.
+
+    **EXPERIMENTAL.** Equivalent to `gdf.clip(mask, ...)`; see
+    `GeoDataFrame.clip`.
+    """
+    if not isinstance(gdf, (GeoDataFrame, GeoSeries)):
+        raise TypeError(f"'gdf' should be GeoDataFrame or GeoSeries, got {type(gdf)}")
+    return gdf.clip(mask, keep_geom_type=keep_geom_type, sort=sort)
+
+
+def overlay(df1, df2, how="intersection", keep_geom_type=None, make_valid=True):
+    """Overlay two frames, as `geopandas.overlay` does.
+
+    **EXPERIMENTAL.** Equivalent to `df1.overlay(df2, ...)`; see
+    `GeoDataFrame.overlay`.
+    """
+    from sedonadb_geopandas._overlay import overlay
+
+    return overlay(df1, df2, how, keep_geom_type, make_valid)

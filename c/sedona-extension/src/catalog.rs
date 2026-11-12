@@ -134,7 +134,7 @@ unsafe extern "C" fn get_property_schema(
         "name" | "list_identifiers" => write_utf8_property_schema(out, err),
         property => {
             set_ffi_error!(err, "Unknown catalog property: {}", property);
-            libc::EINVAL
+            libc::ENOTSUP
         }
     }
 }
@@ -163,7 +163,7 @@ unsafe extern "C" fn get_property(
         }
         property => {
             set_ffi_error!(err, "Unknown catalog property: {}", property);
-            libc::EINVAL
+            libc::ENOTSUP
         }
     }
 }
@@ -490,10 +490,11 @@ mod tests {
     use super::*;
     use arrow_schema::Schema;
     use datafusion::{datasource::empty::EmptyTable, prelude::SessionContext};
+    use datafusion_common::tree_node::TreeNodeRecursion;
     use datafusion_execution::TaskContext;
     use datafusion_physical_plan::{
         empty::EmptyExec, placeholder_row::PlaceholderRowExec, DisplayAs, DisplayFormatType,
-        PlanProperties, SendableRecordBatchStream,
+        PhysicalExpr, PlanProperties, SendableRecordBatchStream,
     };
     use sedona_catalog::{CatalogObjectType, CreateMode};
     use std::sync::{
@@ -534,6 +535,13 @@ mod tests {
     }
 
     impl ExecutionPlan for MutationExec {
+        fn apply_expressions(
+            &self,
+            f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> Result<TreeNodeRecursion>,
+        ) -> Result<TreeNodeRecursion> {
+            self.inner.apply_expressions(f)
+        }
+
         fn name(&self) -> &str {
             "MutationExec"
         }
@@ -866,7 +874,7 @@ mod tests {
         let code = unsafe {
             raw.get_property_schema.unwrap()(&raw, c"unknown".as_ptr(), &mut schema, &mut err)
         };
-        assert_eq!(code, libc::EINVAL);
+        assert_eq!(code, libc::ENOTSUP);
         assert!(err
             .to_string()
             .contains("Unknown catalog property: unknown"));
@@ -881,7 +889,7 @@ mod tests {
                 &mut err,
             )
         };
-        assert_eq!(code, libc::EINVAL);
+        assert_eq!(code, libc::ENOTSUP);
         assert!(err
             .to_string()
             .contains("Unknown catalog property: unknown"));

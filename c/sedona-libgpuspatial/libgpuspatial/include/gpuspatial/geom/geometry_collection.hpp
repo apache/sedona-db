@@ -120,6 +120,7 @@ class GeometryCollection {
     assert(feature_types_[geometry_idx] == GeometryType::kMultiPolygon);
     auto part_begin = ps_num_parts_[geometry_idx];
     auto part_end = ps_num_parts_[geometry_idx + 1];
+    if (part_begin == part_end) return {};
     ArrayView<INDEX_T> ps_num_rings(
         const_cast<INDEX_T*>(ps_num_rings_.data()) + part_begin,
         part_end - part_begin + 1);
@@ -198,6 +199,10 @@ class GeometryCollectionArrayView {
             ps_num_points_, vertices_,    mbrs_[i]};
   }
 
+  DEV_HOST_INLINE ArrayView<GeometryType> get_feature_types() const {
+    return feature_types_;
+  }
+
   DEV_HOST_INLINE ArrayView<INDEX_T> get_prefix_sum_num_geoms() const {
     return ps_num_geoms_;
   }
@@ -216,6 +221,66 @@ class GeometryCollectionArrayView {
   DEV_HOST_INLINE ArrayView<point_t> get_vertices() const { return vertices_; }
 
   DEV_HOST_INLINE ArrayView<box_t> get_mbrs() const { return mbrs_; }
+
+  DEV_HOST_INLINE PointArrayView<point_t, INDEX_T> get_point_array_view() const {
+    return {vertices_};
+  }
+
+  DEV_HOST_INLINE MultiPointArrayView<point_t, INDEX_T> get_multi_point_array_view(
+      const ArrayView<box_t>& ring_mbrs) const {
+    return {ps_num_points_, vertices_, ring_mbrs};
+  }
+
+  DEV_HOST_INLINE LineStringArrayView<point_t, INDEX_T> get_line_string_array_view(
+      const ArrayView<box_t>& ring_mbrs) const {
+    return {ps_num_points_, vertices_, ring_mbrs};
+  }
+
+  DEV_HOST_INLINE MultiLineStringArrayView<point_t, INDEX_T>
+  get_multi_line_string_array_view(const ArrayView<box_t>& part_mbrs) const {
+    return {ps_num_rings_, ps_num_points_, vertices_, part_mbrs};
+  }
+
+  DEV_HOST_INLINE PolygonArrayView<point_t, INDEX_T> get_polygon_array_view(
+      const ArrayView<box_t>& part_mbrs) const {
+    return {ps_num_rings_, ps_num_points_, vertices_, part_mbrs};
+  }
+
+  DEV_HOST_INLINE MultiPolygonArrayView<point_t, INDEX_T> get_multi_polygon_array_view(
+      const ArrayView<box_t>& geom_mbrs) const {
+    return {ps_num_parts_, ps_num_rings_, ps_num_points_, vertices_, geom_mbrs};
+  }
+
+  DEV_HOST_INLINE INDEX_T locate_geom(INDEX_T geom_idx) const {
+    auto it = thrust::upper_bound(thrust::seq, ps_num_geoms_.begin(), ps_num_geoms_.end(),
+                                  geom_idx);
+    assert(it != ps_num_geoms_.end());
+    return thrust::distance(ps_num_geoms_.begin(), it) - 1;
+  }
+
+  DEV_HOST_INLINE INDEX_T locate_part(INDEX_T part_idx) const {
+    auto it = thrust::upper_bound(thrust::seq, ps_num_parts_.begin(), ps_num_parts_.end(),
+                                  part_idx);
+    assert(it != ps_num_parts_.end());
+    INDEX_T geom_idx = thrust::distance(ps_num_parts_.begin(), it) - 1;
+    return locate_geom(geom_idx);
+  }
+
+  DEV_HOST_INLINE INDEX_T locate_ring(INDEX_T ring_idx) const {
+    auto it = thrust::upper_bound(thrust::seq, ps_num_rings_.begin(), ps_num_rings_.end(),
+                                  ring_idx);
+    assert(it != ps_num_rings_.end());
+    INDEX_T part_idx = thrust::distance(ps_num_rings_.begin(), it) - 1;
+    return locate_part(part_idx);
+  }
+
+  DEV_HOST_INLINE INDEX_T locate_vertex(INDEX_T vertex_idx) const {
+    auto it = thrust::upper_bound(thrust::seq, ps_num_points_.begin(),
+                                  ps_num_points_.end(), vertex_idx);
+    assert(it != ps_num_points_.end());
+    INDEX_T ring_idx = thrust::distance(ps_num_points_.begin(), it) - 1;
+    return locate_ring(ring_idx);
+  }
 
  private:
   ArrayView<GeometryType> feature_types_;

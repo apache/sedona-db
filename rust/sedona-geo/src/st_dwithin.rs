@@ -219,4 +219,36 @@ mod tests {
 
         assert_eq!(result, ScalarValue::Boolean(Some(true)));
     }
+
+    #[rstest]
+    // A line string of one coord has the distances of its point
+    #[case("LINESTRING (1 1)", "POINT (4 5)", 4.9, false)]
+    #[case("LINESTRING (1 1)", "POINT (4 5)", 5.0, true)]
+    #[case("LINESTRING (1 1)", "LINESTRING (4 5, 4 9)", 4.9, false)]
+    #[case("LINESTRING (1 1)", "POLYGON ((4 5, 6 5, 6 7, 4 7, 4 5))", 4.9, false)]
+    // The squared length of the segment overflows
+    #[case("POINT (3 5e199)", "LINESTRING (0 0, 0 1e200)", 1.0, false)]
+    fn degenerate_and_huge_line_strings(
+        #[case] lhs: &str,
+        #[case] rhs: &str,
+        #[case] distance: f64,
+        #[case] expected: bool,
+    ) {
+        let tester = ScalarUdfTester::new(
+            SedonaScalarUDF::from_impl("st_dwithin", st_dwithin_impl()).into(),
+            vec![
+                WKB_GEOMETRY,
+                WKB_GEOMETRY,
+                SedonaType::Arrow(DataType::Float64),
+            ],
+        );
+        let result = tester
+            .invoke_scalar_scalar_scalar(
+                create_scalar(Some(lhs), &WKB_GEOMETRY),
+                create_scalar(Some(rhs), &WKB_GEOMETRY),
+                distance,
+            )
+            .unwrap();
+        assert_eq!(result, ScalarValue::Boolean(Some(expected)));
+    }
 }

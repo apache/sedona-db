@@ -92,13 +92,16 @@ impl<'a> Iterator for DAffine2Iterator<'a> {
         }
 
         Some(Some(glam::DAffine2 {
+            // glam matrices are column-major: the first column is where
+            // (1, 0) goes. As in PostGIS, x' = a x + b y + xOff and
+            // y' = d x + e y + yOff, so that column is (a, d).
             matrix2: glam::DMat2 {
                 x_axis: glam::DVec2 {
                     x: self.a.value(i),
-                    y: self.b.value(i),
+                    y: self.d.value(i),
                 },
                 y_axis: glam::DVec2 {
-                    x: self.d.value(i),
+                    x: self.b.value(i),
                     y: self.e.value(i),
                 },
             },
@@ -208,20 +211,22 @@ impl<'a> Iterator for DAffine3Iterator<'a> {
         }
 
         Some(Some(glam::DAffine3 {
+            // Column-major, as above: x' = a x + b y + c z + xOff,
+            // y' = d x + e y + f z + yOff, z' = g x + h y + i z + zOff.
             matrix3: glam::DMat3 {
                 x_axis: glam::DVec3 {
                     x: self.a.value(i),
-                    y: self.b.value(i),
-                    z: self.c.value(i),
+                    y: self.d.value(i),
+                    z: self.g.value(i),
                 },
                 y_axis: glam::DVec3 {
-                    x: self.d.value(i),
+                    x: self.b.value(i),
                     y: self.e.value(i),
-                    z: self.f.value(i),
+                    z: self.h.value(i),
                 },
                 z_axis: glam::DVec3 {
-                    x: self.g.value(i),
-                    y: self.h.value(i),
+                    x: self.c.value(i),
+                    y: self.f.value(i),
                     z: self.i.value(i),
                 },
             },
@@ -560,8 +565,8 @@ mod tests {
 
         let expected_first = glam::DAffine2 {
             matrix2: glam::DMat2 {
-                x_axis: glam::DVec2 { x: 1.0, y: 2.0 },
-                y_axis: glam::DVec2 { x: 3.0, y: 4.0 },
+                x_axis: glam::DVec2 { x: 1.0, y: 3.0 },
+                y_axis: glam::DVec2 { x: 2.0, y: 4.0 },
             },
             translation: glam::DVec2 { x: 5.0, y: 6.0 },
         };
@@ -584,9 +589,9 @@ mod tests {
         let mut iter = DAffine3Iterator::new(&args).unwrap();
         let expected = glam::DAffine3 {
             matrix3: glam::DMat3::from_cols(
-                glam::DVec3::new(1.0, 2.0, 3.0),
-                glam::DVec3::new(4.0, 5.0, 6.0),
-                glam::DVec3::new(7.0, 8.0, 9.0),
+                glam::DVec3::new(1.0, 4.0, 7.0),
+                glam::DVec3::new(2.0, 5.0, 8.0),
+                glam::DVec3::new(3.0, 6.0, 9.0),
             ),
             translation: glam::DVec3::new(10.0, 11.0, 12.0),
         };

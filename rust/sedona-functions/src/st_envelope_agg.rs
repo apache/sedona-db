@@ -235,7 +235,6 @@ impl<T: std::fmt::Debug + WkbBounder2D + Default + 'static> Accumulator for Boun
 struct BoundsGroupsAccumulator2D<T: std::fmt::Debug> {
     input_type: SedonaType,
     bounders: Vec<T>,
-    offset: usize,
 }
 
 impl<T: WkbBounder2D + Default> BoundsGroupsAccumulator2D<T> {
@@ -243,7 +242,6 @@ impl<T: WkbBounder2D + Default> BoundsGroupsAccumulator2D<T> {
         Self {
             input_type,
             bounders: Vec::new(),
-            offset: 0,
         }
     }
 
@@ -256,7 +254,6 @@ impl<T: WkbBounder2D + Default> BoundsGroupsAccumulator2D<T> {
         input_type: SedonaType,
     ) -> Result<()> {
         // Check some of our assumptions about how this will be called
-        debug_assert_eq!(self.offset, 0);
         debug_assert_eq!(values.len(), 1);
         debug_assert_eq!(values[0].len(), group_indices.len());
         if let Some(filter) = opt_filter {
@@ -305,16 +302,14 @@ impl<T: WkbBounder2D + Default> BoundsGroupsAccumulator2D<T> {
     }
 
     fn emit_wkb_result(&mut self, emit_to: EmitTo) -> Result<ArrayRef> {
-        let emit_size = match emit_to {
-            EmitTo::All => self.bounders.len(),
-            EmitTo::First(n) => n,
-        };
+        // Remove the emitted prefix so the remaining groups stay aligned with
+        // DataFusion's post-emit group renumbering.
+        let bounders = emit_to.take_needed(&mut self.bounders);
 
         let mut builder =
-            BinaryBuilder::with_capacity(emit_size, emit_size * WKB_MIN_PROBABLE_BYTES);
+            BinaryBuilder::with_capacity(bounders.len(), bounders.len() * WKB_MIN_PROBABLE_BYTES);
 
-        let emit_range = self.offset..(self.offset + emit_size);
-        for bounder in &self.bounders[emit_range.clone()] {
+        for bounder in &bounders {
             let (x, y) = bounder.finish();
             let written = write_envelope(&x, &y, &mut builder)?;
             if written {
@@ -324,49 +319,27 @@ impl<T: WkbBounder2D + Default> BoundsGroupsAccumulator2D<T> {
             }
         }
 
-        match emit_to {
-            EmitTo::All => {
-                self.bounders = Vec::new();
-                self.offset = 0;
-            }
-            EmitTo::First(n) => {
-                self.offset += n;
-            }
-        }
-
         Ok(Arc::new(builder.finish()))
     }
 
     fn emit_state(&mut self, emit_to: EmitTo) -> Result<Vec<ArrayRef>> {
         use arrow_array::builder::Float64Builder;
 
-        let emit_size = match emit_to {
-            EmitTo::All => self.bounders.len(),
-            EmitTo::First(n) => n,
-        };
+        // Remove the emitted prefix so the remaining groups stay aligned with
+        // DataFusion's post-emit group renumbering.
+        let bounders = emit_to.take_needed(&mut self.bounders);
 
-        let mut xmin_builder = Float64Builder::with_capacity(emit_size);
-        let mut ymin_builder = Float64Builder::with_capacity(emit_size);
-        let mut xmax_builder = Float64Builder::with_capacity(emit_size);
-        let mut ymax_builder = Float64Builder::with_capacity(emit_size);
+        let mut xmin_builder = Float64Builder::with_capacity(bounders.len());
+        let mut ymin_builder = Float64Builder::with_capacity(bounders.len());
+        let mut xmax_builder = Float64Builder::with_capacity(bounders.len());
+        let mut ymax_builder = Float64Builder::with_capacity(bounders.len());
 
-        let emit_range = self.offset..(self.offset + emit_size);
-        for bounder in &self.bounders[emit_range] {
+        for bounder in &bounders {
             let (x, y) = bounder.finish();
             xmin_builder.append_value(x.lo());
             ymin_builder.append_value(y.lo());
             xmax_builder.append_value(x.hi());
             ymax_builder.append_value(y.hi());
-        }
-
-        match emit_to {
-            EmitTo::All => {
-                self.bounders = Vec::new();
-                self.offset = 0;
-            }
-            EmitTo::First(n) => {
-                self.offset += n;
-            }
         }
 
         Ok(vec![
@@ -384,7 +357,6 @@ impl<T: WkbBounder2D + Default> BoundsGroupsAccumulator2D<T> {
         opt_filter: Option<&BooleanArray>,
         total_num_groups: usize,
     ) -> Result<()> {
-        debug_assert_eq!(self.offset, 0);
         debug_assert_eq!(values.len(), 4);
 
         // State is 4 Float64 arrays: xmin, ymin, xmax, ymax
@@ -442,10 +414,26 @@ impl<T: WkbBounder2D + Default + 'static> GroupsAccumulator for BoundsGroupsAccu
         &mut self,
         values: &[ArrayRef],
         group_indices: &[usize],
-        opt_filter: Option<&arrow_array::BooleanArray>,
         total_num_groups: usize,
     ) -> Result<()> {
-        self.merge_state(values, group_indices, opt_filter, total_num_groups)
+        self.merge_state(values, group_indices, None, total_num_groups)
+    }
+
+    fn convert_to_state(
+        &self,
+        values: &[ArrayRef],
+        opt_filter: Option<&BooleanArray>,
+    ) -> Result<Vec<ArrayRef>> {
+        let num_rows = values[0].len();
+        let mut accumulator = Self::new(self.input_type.clone());
+        accumulator.execute_update(
+            values,
+            &(0..num_rows).collect::<Vec<_>>(),
+            opt_filter,
+            num_rows,
+            self.input_type.clone(),
+        )?;
+        accumulator.emit_state(EmitTo::All)
     }
 
     fn evaluate(&mut self, emit_to: EmitTo) -> Result<ArrayRef> {
@@ -461,6 +449,7 @@ impl<T: WkbBounder2D + Default + 'static> GroupsAccumulator for BoundsGroupsAccu
 
 #[cfg(test)]
 mod test {
+    use arrow_array::Float64Array;
     use datafusion_expr::AggregateUDF;
     use rstest::rstest;
     use sedona_schema::datatypes::{
@@ -473,6 +462,10 @@ mod test {
     };
 
     use super::*;
+
+    fn float64_array(values: Vec<f64>) -> ArrayRef {
+        Arc::new(Float64Array::from(values))
+    }
 
     #[test]
     fn udf_metadata() {
@@ -607,5 +600,105 @@ mod test {
             .aggregate_groups(&batches, group_indices.clone(), Some(&filter), vec![])
             .unwrap();
         assert_array_equal(&result, &expected);
+    }
+
+    #[test]
+    fn emit_first_result_then_all_preserves_remaining_groups() {
+        let mut accumulator = BoundsGroupsAccumulator2D::<WkbGeometryBounder>::new(WKB_GEOMETRY);
+
+        let batch = create_array(&[Some("POINT (0 0)"), Some("POINT (10 10)")], &WKB_GEOMETRY);
+        accumulator
+            .update_batch(&[batch], &[0, 1], None, 2)
+            .unwrap();
+
+        let emitted = accumulator.evaluate(EmitTo::First(1)).unwrap();
+        assert_array_equal(
+            &emitted,
+            &create_array(&[Some("POINT (0 0)")], &WKB_GEOMETRY),
+        );
+
+        // Old group 1 is now group 0. Emitting all must not slice past the
+        // remaining state or return the already emitted group.
+        let emitted = accumulator.evaluate(EmitTo::All).unwrap();
+        assert_array_equal(
+            &emitted,
+            &create_array(&[Some("POINT (10 10)")], &WKB_GEOMETRY),
+        );
+    }
+
+    #[test]
+    fn emit_first_result_then_update_preserves_remaining_groups() {
+        let mut accumulator = BoundsGroupsAccumulator2D::<WkbGeometryBounder>::new(WKB_GEOMETRY);
+
+        let batch = create_array(&[Some("POINT (0 0)"), Some("POINT (10 10)")], &WKB_GEOMETRY);
+        accumulator
+            .update_batch(&[batch], &[0, 1], None, 2)
+            .unwrap();
+
+        let emitted = accumulator.evaluate(EmitTo::First(1)).unwrap();
+        assert_array_equal(
+            &emitted,
+            &create_array(&[Some("POINT (0 0)")], &WKB_GEOMETRY),
+        );
+
+        // Old group 1 is now group 0; group 1 is brand new.
+        let batch = create_array(
+            &[Some("POINT (11 11)"), Some("POINT (99 99)")],
+            &WKB_GEOMETRY,
+        );
+        accumulator
+            .update_batch(&[batch], &[0, 1], None, 2)
+            .unwrap();
+
+        // A second partial emit covers the renumbered retained group.
+        let emitted = accumulator.evaluate(EmitTo::First(1)).unwrap();
+        assert_array_equal(
+            &emitted,
+            &create_array(
+                &[Some("POLYGON((10 10, 10 11, 11 11, 11 10, 10 10))")],
+                &WKB_GEOMETRY,
+            ),
+        );
+
+        let emitted = accumulator.evaluate(EmitTo::All).unwrap();
+        assert_array_equal(
+            &emitted,
+            &create_array(&[Some("POINT (99 99)")], &WKB_GEOMETRY),
+        );
+    }
+
+    #[test]
+    fn emit_first_state_then_merge_preserves_remaining_groups() {
+        let mut accumulator = BoundsGroupsAccumulator2D::<WkbGeometryBounder>::new(WKB_GEOMETRY);
+
+        let batch = create_array(&[Some("POINT (0 0)"), Some("POINT (10 10)")], &WKB_GEOMETRY);
+        accumulator
+            .update_batch(&[batch], &[0, 1], None, 2)
+            .unwrap();
+
+        let emitted = accumulator.state(EmitTo::First(1)).unwrap();
+        for array in &emitted {
+            assert_array_equal(array, &float64_array(vec![0.0]));
+        }
+
+        // Merge state into the retained group (now group 0) and a new group 1.
+        accumulator
+            .merge_batch(
+                &[
+                    float64_array(vec![11.0, 99.0]),
+                    float64_array(vec![11.0, 99.0]),
+                    float64_array(vec![11.0, 99.0]),
+                    float64_array(vec![11.0, 99.0]),
+                ],
+                &[0, 1],
+                2,
+            )
+            .unwrap();
+
+        let emitted = accumulator.state(EmitTo::All).unwrap();
+        assert_array_equal(&emitted[0], &float64_array(vec![10.0, 99.0]));
+        assert_array_equal(&emitted[1], &float64_array(vec![10.0, 99.0]));
+        assert_array_equal(&emitted[2], &float64_array(vec![11.0, 99.0]));
+        assert_array_equal(&emitted[3], &float64_array(vec![11.0, 99.0]));
     }
 }

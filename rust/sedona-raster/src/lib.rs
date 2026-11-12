@@ -23,6 +23,7 @@ pub mod chunk_cache;
 pub mod display;
 pub mod error;
 pub mod geo_transform;
+pub mod io_budget;
 pub mod raster_loader;
 pub mod size;
 pub mod traits;

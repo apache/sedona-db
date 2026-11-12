@@ -34,6 +34,7 @@ use std::fmt::Display;
 use std::fmt::Write;
 
 use datafusion_common::DataFusionError;
+use serde::Deserializer;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -342,7 +343,11 @@ pub struct GeoParquetColumnMetadata {
     /// Coordinate Reference System (CRS) of the geometry. If the field is not provided, the
     /// default CRS is [OGC:CRS84](https://www.opengis.net/def/crs/OGC/1.3/CRS84), which means the
     /// data in this column must be stored in longitude, latitude based on the WGS84 datum.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_crs",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub crs: Option<Value>,
 
     /// Winding order of exterior ring of polygons. If present must be `"counterclockwise"`;
@@ -375,6 +380,17 @@ pub struct GeoParquetColumnMetadata {
     /// Object containing bounding box column names to help accelerate spatial data retrieval
     #[serde(skip_serializing_if = "Option::is_none")]
     pub covering: Option<GeoParquetCovering>,
+}
+
+/// Preserve the distinction GeoParquet makes between a missing `crs` key and
+/// an explicitly null value. Serde's default `Option` deserializer maps both to
+/// `None`, but here `None` means the key was absent and `Some(Value::Null)` means
+/// the file explicitly declares that the column has no assigned CRS.
+fn deserialize_optional_crs<'de, D>(deserializer: D) -> std::result::Result<Option<Value>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Value::deserialize(deserializer).map(Some)
 }
 
 impl GeoParquetMetadata {
@@ -650,14 +666,16 @@ fn column_from_logical_type(
         let mut column_metadata = GeoParquetColumnMetadata::default();
 
         match logical_type {
-            LogicalType::Geometry { crs } => {
-                column_metadata.crs = geoparquet_crs_from_logical_type(crs.as_ref(), kv_metadata);
+            LogicalType::Geometry(geometry) => {
+                column_metadata.crs =
+                    geoparquet_crs_from_logical_type(geometry.crs.as_ref(), kv_metadata);
                 Ok(Some(column_metadata))
             }
-            LogicalType::Geography { crs, algorithm } => {
-                column_metadata.crs = geoparquet_crs_from_logical_type(crs.as_ref(), kv_metadata);
+            LogicalType::Geography(geography) => {
+                column_metadata.crs =
+                    geoparquet_crs_from_logical_type(geography.crs.as_ref(), kv_metadata);
 
-                let edges = match algorithm {
+                let edges = match &geography.algorithm {
                     None | Some(EdgeInterpolationAlgorithm::SPHERICAL) => "spherical",
                     Some(EdgeInterpolationAlgorithm::VINCENTY) => "vincenty",
                     Some(EdgeInterpolationAlgorithm::ANDOYER) => "andoyer",
@@ -718,6 +736,14 @@ fn geoparquet_crs_from_logical_type(
         // Try to parse the output as JSON such that the resulting column metadata is closer
         // to what would have been in the GeoParquet metadata (e.g., where PROJJSON is parsed).
         if let Ok(value) = crs_str.parse::<Value>() {
+            // Arrow 58 serializes a string-valued GeoArrow CRS as a JSON
+            // string in the Parquet logical type. Apply the same `srid:`
+            // normalization after removing that JSON layer.
+            if let Value::String(value_str) = &value
+                && let Some(srid_string) = value_str.strip_prefix("srid:")
+            {
+                return Some(Value::String(srid_string.to_string()));
+            }
             Some(value)
         } else {
             Some(Value::String(crs_str.to_string()))
@@ -747,7 +773,7 @@ mod test {
     use std::sync::Arc;
 
     use geo_traits::Dimensions;
-    use parquet::basic::{Repetition, Type as PhysicalType};
+    use parquet::basic::{GeographyType, GeometryType, Repetition, Type as PhysicalType};
     use parquet::schema::types::Type;
     use sedona_geometry::types::{GeometryTypeAndDimensions, GeometryTypeId};
 
@@ -768,6 +794,19 @@ mod test {
             meta.geometry_types.iter().next().unwrap(),
             GeometryTypeAndDimensions::new(GeometryTypeId::Point, Dimensions::Xy)
         );
+    }
+
+    #[test]
+    fn distinguishes_missing_and_null_crs() {
+        let missing: GeoParquetColumnMetadata =
+            serde_json::from_str(r#"{"encoding":"WKB","geometry_types":[]}"#).unwrap();
+        let null: GeoParquetColumnMetadata =
+            serde_json::from_str(r#"{"encoding":"WKB","geometry_types":[],"crs":null}"#).unwrap();
+
+        assert_eq!(missing.crs, None);
+        assert_eq!(null.crs, Some(Value::Null));
+        assert!(serde_json::to_value(missing).unwrap().get("crs").is_none());
+        assert_eq!(serde_json::to_value(null).unwrap()["crs"], Value::Null);
     }
 
     #[test]
@@ -803,7 +842,10 @@ mod test {
 
         let schema_additional_parquet_geo = make_parquet_schema(&[
             ("geom_geoparquet", None),
-            ("geom_parquet", Some(LogicalType::Geometry { crs: None })),
+            (
+                "geom_parquet",
+                Some(LogicalType::Geometry(GeometryType { crs: None })),
+            ),
         ]);
         let metadata = GeoParquetMetadata::try_from_parquet_metadata_impl(
             &schema_additional_parquet_geo,
@@ -815,8 +857,10 @@ mod test {
         assert!(metadata.columns.contains_key("geom_geoparquet"));
         assert!(metadata.columns.contains_key("geom_parquet"));
 
-        let schema_overlapping_columns =
-            make_parquet_schema(&[("geom_geoparquet", Some(LogicalType::Geometry { crs: None }))]);
+        let schema_overlapping_columns = make_parquet_schema(&[(
+            "geom_geoparquet",
+            Some(LogicalType::Geometry(GeometryType { crs: None })),
+        )]);
         let metadata = GeoParquetMetadata::try_from_parquet_metadata_impl(
             &schema_overlapping_columns,
             kv_metadata_with_geo_key.as_ref(),
@@ -833,8 +877,10 @@ mod test {
             Some(Value::String("geom_geoparquet_crs".to_string()))
         );
 
-        let schema_only_parquet_geo =
-            make_parquet_schema(&[("geom_parquet", Some(LogicalType::Geometry { crs: None }))]);
+        let schema_only_parquet_geo = make_parquet_schema(&[(
+            "geom_parquet",
+            Some(LogicalType::Geometry(GeometryType { crs: None })),
+        )]);
         let metadata = GeoParquetMetadata::try_from_parquet_metadata_impl(
             &schema_only_parquet_geo,
             None, // No key/value metadata
@@ -863,7 +909,7 @@ mod test {
 
         // Geometry logical type
         let metadata = column_from_logical_type(
-            Some(&LogicalType::Geometry { crs: None }),
+            Some(&LogicalType::Geometry(GeometryType { crs: None })),
             kv_metadata.as_ref(),
         )
         .unwrap()
@@ -872,9 +918,9 @@ mod test {
 
         // Ensure CRS is translated
         let metadata = column_from_logical_type(
-            Some(&LogicalType::Geometry {
+            Some(&LogicalType::Geometry(GeometryType {
                 crs: Some("projjson:some_projjson_key".to_string()),
-            }),
+            })),
             kv_metadata.as_ref(),
         )
         .unwrap()
@@ -886,10 +932,10 @@ mod test {
 
         // Geography logical type
         let metadata = column_from_logical_type(
-            Some(&LogicalType::Geography {
+            Some(&LogicalType::Geography(GeographyType {
                 crs: None,
                 algorithm: None,
-            }),
+            })),
             kv_metadata.as_ref(),
         )
         .unwrap()
@@ -898,10 +944,10 @@ mod test {
 
         // Ensure CRS is translated
         let metadata = column_from_logical_type(
-            Some(&LogicalType::Geography {
+            Some(&LogicalType::Geography(GeographyType {
                 crs: Some("projjson:some_projjson_key".to_string()),
                 algorithm: None,
-            }),
+            })),
             kv_metadata.as_ref(),
         )
         .unwrap()
@@ -913,10 +959,10 @@ mod test {
 
         // Ensure algorithm is translated
         let metadata = column_from_logical_type(
-            Some(&LogicalType::Geography {
+            Some(&LogicalType::Geography(GeographyType {
                 crs: None,
                 algorithm: Some(EdgeInterpolationAlgorithm::VINCENTY),
-            }),
+            })),
             kv_metadata.as_ref(),
         )
         .unwrap()
@@ -963,6 +1009,13 @@ mod test {
         assert_eq!(
             geoparquet_crs_from_logical_type(Some(&"srid:1234".to_string()), kv_metadata.as_ref()),
             Some(Value::String("1234".to_string()))
+        );
+        assert_eq!(
+            geoparquet_crs_from_logical_type(
+                Some(&r#""srid:0""#.to_string()),
+                kv_metadata.as_ref()
+            ),
+            Some(Value::String("0".to_string()))
         );
 
         // strings should get passed through verbatim

@@ -14,8 +14,10 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+import json
 import math
 
+import pyarrow as pa
 import pytest
 import sedonadb
 import shapely
@@ -279,6 +281,13 @@ def test_st_azimuth(eng, geom1, geom2, expected):
             "POINT (3 7)"
         ),
         (
+            "POINT (1 2)",
+            2.0, 3.0,
+            5.0, 7.0,
+            1.0, 1.0,
+            "POINT (9 20)"
+        ),
+        (
             "LINESTRING (0 0, 1 1)",
             1.0, 0.0,
             0.0, 1.0,
@@ -343,6 +352,14 @@ def test_st_affine_2d(eng, geom, a, b, d, e, xoff, yoff, expected):
             0.0, 0.0, 2.0,
             1.0, 3.0, 5.0,
             "POINT Z (3 7 11)",
+        ),
+        (
+            "POINT Z (1 2 3)",
+            1.0, 2.0, 3.0,
+            4.0, 5.0, 6.0,
+            7.0, 8.0, 9.0,
+            10.0, 11.0, 12.0,
+            "POINT Z (24 43 62)",
         ),
     ],
 )
@@ -1399,6 +1416,104 @@ def test_st_makeline(eng):
 def test_st_dimension(eng, geom, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(f"SELECT ST_Dimension({geom_or_null(geom)})", expected)
+
+
+@pytest.mark.parametrize(
+    "wkt",
+    [
+        "POINT (1 2)",
+        "POINT EMPTY",
+        "LINESTRING (1 1, 2 2)",
+        "POLYGON ((1 1, 2 2, 2 1, 1 1))",
+        "MULTIPOINT (0 1, 1 2)",
+        "MULTIPOINT EMPTY",
+        "MULTILINESTRING ((1 1, 2 2), EMPTY, (3 3, 4 4))",
+        "MULTIPOLYGON (((1 1, 2 2, 2 1, 1 1)), EMPTY, ((3 3, 4 4, 4 3, 3 3)))",
+        "GEOMETRYCOLLECTION (POINT (1 2), GEOMETRYCOLLECTION (MULTILINESTRING ((1 1, 2 2), EMPTY, (3 3, 4 4)), LINESTRING (1 1, 2 2)))",
+        "GEOMETRYCOLLECTION EMPTY",
+        "MULTIPOINT Z ((0 1 2), (1 2 3))",
+    ],
+)
+def test_st_geometries(wkt):
+    # A geometry's direct members, one level deep, as shapely.get_parts gives
+    # them: a nested collection is a member, where ST_Dump recurses into it.
+    eng = SedonaDB.create_or_skip()
+    table = eng.con.sql(
+        f"SELECT ST_Geometries({geom_or_null(wkt)}) AS g"
+    ).to_arrow_table()
+    members = table.column("g").to_pylist()[0]
+    expected = shapely.get_parts(shapely.from_wkt(wkt))
+    assert [shapely.from_wkb(m).wkt for m in members] == [g.wkt for g in expected]
+
+
+def test_st_geometries_null():
+    eng = SedonaDB.create_or_skip()
+    table = eng.con.sql("SELECT ST_Geometries(NULL) AS g").to_arrow_table()
+    assert table.column("g").to_pylist() == [None]
+
+
+@pytest.mark.parametrize(
+    ("constructor", "expected"),
+    [
+        ("ST_SetSRID(ST_GeomFromText('MULTIPOINT (0 1, 1 2)'), 3857)", {"crs"}),
+        ("ST_GeogFromWKT('MULTIPOINT (0 1, 1 2)')", {"crs", "edges"}),
+    ],
+)
+def test_st_geometries_members_keep_the_input_type(constructor, expected):
+    # Each list item has the input's spatial type: its CRS, and for
+    # geography its spherical edges.
+    eng = SedonaDB.create_or_skip()
+    df = eng.con.sql(
+        f"SELECT {constructor} AS g, ST_Geometries({constructor}) AS parts"
+    )
+    schema = pa.schema(df.schema)
+    item_name, item_meta = _extension(schema.field("parts").type.value_field)
+    input_name, input_meta = _extension(schema.field("g"))
+    assert item_name == input_name == "geoarrow.wkb"
+    assert expected <= set(item_meta)
+    assert item_meta == input_meta
+
+
+@pytest.mark.parametrize("constructor", ["ST_GeomFromText", "ST_GeogFromWKT"])
+@pytest.mark.parametrize(
+    ("function", "member"), [("ST_Geometries", "part"), ("ST_Dump", "part.geom")]
+)
+def test_geometry_list_item_crs(constructor, function, member):
+    # A CRS column produces item_crs inputs. Unnested members must retain that
+    # CRS and their spatial metadata so other geometry functions can use them.
+    con = sedonadb.connect()
+    result = con.sql(
+        f"""
+        WITH input AS (
+            SELECT ST_SetSRID({constructor}(wkt), srid) AS geom
+            FROM (VALUES
+                ('MULTIPOINT (1 2, 3 4)', 4326),
+                ('POINT (5 6)', 4269),
+                ('POINT (7 8)', 0)
+            ) AS t(wkt, srid)
+        ), parts AS (
+            SELECT UNNEST({function}(geom)) AS part FROM input
+        )
+        SELECT ST_AsText({member}) AS wkt, ST_SRID({member}) AS srid
+        FROM parts ORDER BY wkt
+        """
+    ).to_arrow_table()
+    assert result.to_pydict() == {
+        "wkt": ["POINT(1 2)", "POINT(3 4)", "POINT(5 6)", "POINT(7 8)"],
+        "srid": [4326, 4326, 4269, 0],
+    }
+
+
+def _extension(field):
+    """A field's extension name and metadata, whether or not the extension
+    type is registered with pyarrow (geoarrow-pyarrow registers it)."""
+    if isinstance(field.type, pa.ExtensionType):
+        serialized = field.type.__arrow_ext_serialize__() or b"{}"
+        return field.type.extension_name, json.loads(serialized)
+    return (
+        field.metadata[b"ARROW:extension:name"].decode(),
+        json.loads(field.metadata[b"ARROW:extension:metadata"]),
+    )
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
@@ -2919,6 +3034,28 @@ def test_st_hasm(eng, geom, expected):
     eng.assert_query_result(f"SELECT ST_HasM({geom_or_null(geom)})", expected)
 
 
+@pytest.mark.parametrize(
+    ("geom", "has_z", "has_m"),
+    [
+        ("GEOMETRYCOLLECTION (POINT (0 0), POINT Z (1 1 1))", True, False),
+        ("GEOMETRYCOLLECTION (POINT (0 0), POINT M (1 1 1))", False, True),
+        ("GEOMETRYCOLLECTION (POINT (0 0), POINT M EMPTY)", False, True),
+        (
+            "GEOMETRYCOLLECTION (POINT (0 0), GEOMETRYCOLLECTION (POINT ZM (1 1 1 1)))",
+            True,
+            True,
+        ),
+        ("GEOMETRYCOLLECTION (POINT (0 0), POINT (1 1))", False, False),
+    ],
+)
+def test_st_haszm_of_a_later_member(geom, has_z, has_m):
+    # A collection has Z (or M) when any member does, empty or not, as in
+    # GEOS. PostGIS can't mix dimensions in a collection, so SedonaDB only.
+    eng = SedonaDB.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_HasZ({geom_or_null(geom)})", has_z)
+    eng.assert_query_result(f"SELECT ST_HasM({geom_or_null(geom)})", has_m)
+
+
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
     ("geom", "expected"),
@@ -3011,6 +3148,56 @@ def test_st_isclosed(eng, geom, expected):
 def test_st_iscollection(eng, geom, expected):
     eng = eng.create_or_skip()
     eng.assert_query_result(f"SELECT ST_IsCollection({geom_or_null(geom)})", expected)
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+@pytest.mark.parametrize(
+    ("geom", "expected_cw", "expected_ccw"),
+    [
+        (None, None, None),
+        ("POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))", True, False),
+        ("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", False, True),
+        (
+            "POLYGON ((0 0, 0 4, 4 4, 4 0, 0 0), (1 1, 2 1, 2 2, 1 2, 1 1))",
+            True,
+            False,
+        ),
+        (
+            "POLYGON ((0 0, 0 4, 4 4, 4 0, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))",
+            False,
+            False,
+        ),
+        (
+            "MULTIPOLYGON (((0 0, 0 1, 1 1, 1 0, 0 0)), ((5 5, 6 5, 6 6, 5 6, 5 5)))",
+            False,
+            False,
+        ),
+        (
+            "GEOMETRYCOLLECTION (POINT (1 1), POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0)))",
+            True,
+            False,
+        ),
+        ("LINESTRING (0 0, 1 1)", True, True),
+        ("POLYGON EMPTY", True, True),
+        ("GEOMETRYCOLLECTION EMPTY", True, True),
+        (
+            "POLYGON ((10000000 10000000, 10000000.1 10000000, 10000000.1 10000000.1, 10000000 10000000.1, 10000000 10000000))",
+            False,
+            True,
+        ),
+        (
+            "POLYGON ((10000000 10000000, 10000000 10000000.1, 10000000.1 10000000.1, 10000000.1 10000000, 10000000 10000000))",
+            True,
+            False,
+        ),
+    ],
+)
+def test_st_ispolygoncw_ccw(eng, geom, expected_cw, expected_ccw):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(f"SELECT ST_IsPolygonCW({geom_or_null(geom)})", expected_cw)
+    eng.assert_query_result(
+        f"SELECT ST_IsPolygonCCW({geom_or_null(geom)})", expected_ccw
+    )
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
@@ -3127,6 +3314,24 @@ def test_st_linemerge_directed(eng, geom, expected):
     eng.assert_query_result(
         f"SELECT ST_LineMerge({geom_or_null(geom)}, true)",
         expected,
+    )
+
+
+@pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
+def test_st_linemerge_directed_per_row(eng):
+    # directed is read for each row, and a missing one gives a missing result
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        """SELECT ST_LineMerge(ST_GeomFromText(wkt), directed) FROM (VALUES
+            (1, 'MULTILINESTRING ((0 0, 1 0), (1 1, 1 0))', false),
+            (2, 'MULTILINESTRING ((0 0, 1 0), (1 1, 1 0))', true),
+            (3, 'MULTILINESTRING ((0 0, 1 0), (1 1, 1 0))', NULL)
+        ) AS t(id, wkt, directed) ORDER BY id""",
+        [
+            ("LINESTRING (0 0, 1 0, 1 1)",),
+            ("MULTILINESTRING ((0 0, 1 0), (1 1, 1 0))",),
+            (None,),
+        ],
     )
 
 

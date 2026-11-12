@@ -668,3 +668,73 @@ impl Drop for SedonaCTableProvider {
         }
     }
 }
+
+/// Version two scalar kernel factory. See sedona_extension.h for the ABI contract.
+#[derive(Default)]
+#[repr(C)]
+pub struct SedonaCScalarKernelV2 {
+    pub get_property_schema: Option<
+        unsafe extern "C" fn(
+            *const Self,
+            *const c_char,
+            *mut FFI_ArrowSchema,
+            *mut SedonaCError,
+        ) -> c_int,
+    >,
+    pub get_property: Option<
+        unsafe extern "C" fn(
+            *const Self,
+            *const c_char,
+            *const c_char,
+            *mut FFI_ArrowArray,
+            *mut SedonaCError,
+        ) -> c_int,
+    >,
+    pub new_impl: Option<
+        unsafe extern "C" fn(
+            *const Self,
+            *const SedonaCConfigOptionsView,
+            *mut SedonaCScalarKernelImpl,
+            *mut SedonaCError,
+        ) -> c_int,
+    >,
+    pub reserved: *mut c_void,
+    pub release: Option<unsafe extern "C" fn(*mut Self)>,
+    pub private_data: *mut c_void,
+}
+unsafe impl Send for SedonaCScalarKernelV2 {}
+unsafe impl Sync for SedonaCScalarKernelV2 {}
+impl Drop for SedonaCScalarKernelV2 {
+    fn drop(&mut self) {
+        if let Some(release) = self.release {
+            unsafe { release(self) };
+        }
+    }
+}
+
+/// Borrowed configuration, valid for the lifetime of the implementation using it.
+#[derive(Default)]
+#[repr(C)]
+pub struct SedonaCConfigOptionsView {
+    pub get_option: Option<
+        unsafe extern "C" fn(
+            *const Self,
+            *const c_char,
+            *mut FFI_ArrowSchema,
+            *mut FFI_ArrowArray,
+            *mut SedonaCError,
+        ) -> c_int,
+    >,
+    pub get_option_object: Option<
+        unsafe extern "C" fn(
+            *const Self,
+            *const c_char,
+            c_int,
+            *mut c_void,
+            usize,
+            *mut SedonaCError,
+        ) -> c_int,
+    >,
+    pub reserved: *mut c_void,
+    pub private_data: *const c_void,
+}

@@ -73,6 +73,27 @@ SEXP savvy_configure_proj_shared__impl(SEXP c_arg__shared_library_path,
   return handle_result(res);
 }
 
+SEXP savvy_configure_gdal_prefix_native__impl(SEXP c_arg__prefix) {
+  return handle_result(savvy_configure_gdal_prefix_native__ffi(c_arg__prefix));
+}
+
+SEXP savvy_configure_gdal_shared__impl(SEXP c_arg__shared_library_path) {
+  return handle_result(
+      savvy_configure_gdal_shared__ffi(c_arg__shared_library_path));
+}
+
+SEXP savvy_configure_gdal_system_native__impl(void) {
+  return handle_result(savvy_configure_gdal_system_native__ffi());
+}
+
+SEXP savvy_configure_proj_prefix_native__impl(SEXP c_arg__prefix) {
+  return handle_result(savvy_configure_proj_prefix_native__ffi(c_arg__prefix));
+}
+
+SEXP savvy_configure_proj_system_native__impl(void) {
+  return handle_result(savvy_configure_proj_system_native__ffi());
+}
+
 SEXP savvy_init_r_runtime__impl(DllInfo *c_arg___dll_info) {
   SEXP res = savvy_init_r_runtime__ffi(c_arg___dll_info);
   return handle_result(res);
@@ -404,6 +425,16 @@ static const R_CallMethodDef CallEntries[] = {
      (DL_FUNC)&savvy_apply_crses_to_sf_stream__impl, 4},
     {"savvy_configure_proj_shared__impl",
      (DL_FUNC)&savvy_configure_proj_shared__impl, 3},
+    {"savvy_configure_gdal_prefix_native__impl",
+     (DL_FUNC)&savvy_configure_gdal_prefix_native__impl, 1},
+    {"savvy_configure_gdal_shared__impl",
+     (DL_FUNC)&savvy_configure_gdal_shared__impl, 1},
+    {"savvy_configure_gdal_system_native__impl",
+     (DL_FUNC)&savvy_configure_gdal_system_native__impl, 0},
+    {"savvy_configure_proj_prefix_native__impl",
+     (DL_FUNC)&savvy_configure_proj_prefix_native__impl, 1},
+    {"savvy_configure_proj_system_native__impl",
+     (DL_FUNC)&savvy_configure_proj_system_native__impl, 0},
     {"savvy_init_r_runtime_interrupts__impl",
      (DL_FUNC)&savvy_init_r_runtime_interrupts__impl, 2},
     {"savvy_sedonadb_adbc_init_func__impl",

@@ -22,6 +22,11 @@ SEXP savvy_apply_crses_to_sf_stream__ffi(SEXP c_arg__stream_in_xptr,
 SEXP savvy_configure_proj_shared__ffi(SEXP c_arg__shared_library_path,
                                       SEXP c_arg__database_path,
                                       SEXP c_arg__search_path);
+SEXP savvy_configure_gdal_prefix_native__ffi(SEXP c_arg__prefix);
+SEXP savvy_configure_gdal_shared__ffi(SEXP c_arg__shared_library_path);
+SEXP savvy_configure_gdal_system_native__ffi(void);
+SEXP savvy_configure_proj_prefix_native__ffi(SEXP c_arg__prefix);
+SEXP savvy_configure_proj_system_native__ffi(void);
 SEXP savvy_init_r_runtime__ffi(DllInfo *c_arg___dll_info);
 SEXP savvy_init_r_runtime_interrupts__ffi(SEXP c_arg__interrupts_call,
                                           SEXP c_arg__pkg_env);

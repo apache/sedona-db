@@ -39,6 +39,31 @@ from sedonadb.datasource import PyogrioFormatSpec
 CHILD_PROCESS_TIMEOUT_SECONDS = 15
 
 
+def test_read_ogr_subset_with_renamed_geometry(con, tmp_path):
+    # Column pruning narrows the scan first; a rename of the geometry column
+    # is then pushed down on top, whose column indices refer to the narrowed
+    # output rather than to the file (apache/sedona-db#1405).
+    gdf = geopandas.GeoDataFrame(
+        {"name": ["a", "b"], "v": [1.0, 2.0]},
+        geometry=geopandas.points_from_xy([0, 1], [0, 1]),
+        crs="EPSG:3857",
+    )
+    path = tmp_path / "things.gpkg"
+    gdf.to_file(path, layer="things")
+    df = con.read_pyogrio(path, options={"layer": "things"})
+    df.to_view("things", overwrite=True)
+
+    result = con.sql("SELECT v, geom AS geometry FROM things ORDER BY v").to_pandas()
+    assert list(result.columns) == ["v", "geometry"]
+    assert result["v"].tolist() == [1.0, 2.0]
+    assert [g.wkt for g in result["geometry"]] == ["POINT (0 0)", "POINT (1 1)"]
+
+    renamed = df.rename(geometry="geom")
+    subset = renamed.select(renamed["v"], renamed["geometry"]).to_pandas()
+    assert list(subset.columns) == ["v", "geometry"]
+    assert len(subset) == 2
+
+
 def test_read_ogr_projection(con):
     n = 1024
     series = geopandas.GeoSeries.from_xy(

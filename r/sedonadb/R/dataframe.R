@@ -562,7 +562,9 @@ sd_summarize <- function(.data, ..., .env = parent.frame()) {
 #'   `sd_write_parquet()`; however, this argument allows setting any DataFusion
 #'   Parquet writer option. If an option is specified here and by another
 #'   argument to this function, the value specified as an explicit argument
-#'   takes precedence.
+#'   takes precedence. Options whose names start with `aws.`, `gcp.`, or
+#'   `azure.` (e.g., `aws.region`) instead configure the object store for a
+#'   remote `path` (e.g., `s3://`), as the `options` of [sd_read_parquet()] do.
 #' @param partition_by A character vector of column names to partition by. If non-empty,
 #'   applies hive-style partitioning to the output
 #' @param sort_by A character vector of column names to sort by. Currently only

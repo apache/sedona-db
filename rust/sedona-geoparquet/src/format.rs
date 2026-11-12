@@ -216,7 +216,13 @@ impl FileFormat for GeoParquetFormat {
                 }
             })
             .boxed() // Workaround https://github.com/rust-lang/rust/issues/64552
-            .buffered(state.config_options().execution.meta_fetch_concurrency)
+            .buffered(
+                state
+                    .config_options()
+                    .execution
+                    .meta_fetch_concurrency
+                    .get(),
+            )
             .try_collect()
             .await?;
 
@@ -431,7 +437,7 @@ pub struct GeoParquetFileSource {
     metadata_size_hint: Option<usize>,
     predicate: Option<Arc<dyn PhysicalExpr>>,
     options: TableGeoParquetOptions,
-    metadata_cache: Option<Arc<dyn FileMetadataCache>>,
+    metadata_cache: Option<Arc<FileMetadataCache>>,
     /// Factory for creating bounders used for spatial pruning
     ///
     /// Enables spatial pruning for both GEOMETRY and GEOGRAPHY columns.
@@ -579,6 +585,19 @@ impl GeoParquetFileSource {
 }
 
 impl FileSource for GeoParquetFileSource {
+    fn apply_expressions(
+        &self,
+        f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> Result<TreeNodeRecursion>,
+    ) -> Result<TreeNodeRecursion> {
+        if self.inner.apply_expressions(f)? == TreeNodeRecursion::Stop {
+            return Ok(TreeNodeRecursion::Stop);
+        }
+        if let Some(predicate) = &self.predicate {
+            return f(predicate);
+        }
+        Ok(TreeNodeRecursion::Continue)
+    }
+
     fn create_file_opener(
         &self,
         object_store: Arc<dyn ObjectStore>,
@@ -780,7 +799,7 @@ mod test {
 
     use rstest::rstest;
     use sedona_geometry::types::Edges;
-    use sedona_schema::crs::{deserialize_crs, lnglat};
+    use sedona_schema::crs::deserialize_crs;
     use sedona_schema::datatypes::{SedonaType, WKB_GEOMETRY};
     use sedona_schema::schema::SedonaSchema;
     use sedona_testing::create::create_scalar;
@@ -815,10 +834,7 @@ mod test {
             .unwrap();
         assert_eq!(sedona_types.len(), 2);
         assert_eq!(sedona_types[0], SedonaType::Arrow(DataType::Utf8View));
-        assert_eq!(
-            sedona_types[1],
-            SedonaType::WkbView(Edges::Planar, lnglat())
-        );
+        assert_eq!(sedona_types[1], SedonaType::WkbView(Edges::Planar, None));
 
         // Check that the batches resulting from the actual execution also have
         // the correct schema
@@ -831,10 +847,7 @@ mod test {
             .unwrap();
         assert_eq!(sedona_types.len(), 2);
         assert_eq!(sedona_types[0], SedonaType::Arrow(DataType::Utf8View));
-        assert_eq!(
-            sedona_types[1],
-            SedonaType::WkbView(Edges::Planar, lnglat())
-        );
+        assert_eq!(sedona_types[1], SedonaType::WkbView(Edges::Planar, None));
 
         // Check that the content is the same as if it were read by the normal reader
         let unwrapped_batches: Vec<_> = batches
@@ -901,10 +914,7 @@ mod test {
             .unwrap();
         assert_eq!(sedona_types.len(), 2);
         assert_eq!(sedona_types[0], SedonaType::Arrow(DataType::Utf8View));
-        assert_eq!(
-            sedona_types[1],
-            SedonaType::WkbView(Edges::Planar, lnglat())
-        );
+        assert_eq!(sedona_types[1], SedonaType::WkbView(Edges::Planar, None));
 
         // Make sure all the rows show up!
         let batches = df.collect().await.unwrap();
@@ -1074,7 +1084,7 @@ mod test {
         let schema = Arc::new(Schema::new(vec![
             WKB_GEOMETRY.to_storage_field("geometry", true).unwrap(),
         ]));
-        let table_schema = TableSchema::new(schema, vec![]);
+        let table_schema = TableSchema::from(schema);
         let file_source = format.file_source(table_schema);
         let conf =
             FileScanConfigBuilder::new(ObjectStoreUrl::local_filesystem(), file_source).build();
@@ -1106,7 +1116,7 @@ mod test {
             DataType::Int32,
             false,
         )]));
-        let table_schema = TableSchema::new(schema, vec![]);
+        let table_schema = TableSchema::from(schema);
 
         // Create a parquet source with the correct constructor signature
         let parquet_source = ParquetSource::new(table_schema);

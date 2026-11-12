@@ -113,7 +113,7 @@ pub(crate) struct GeoParquetMorselizer {
     pub enable_pruning: bool,
     pub metrics: GeoParquetFileOpenerMetrics,
     pub options: TableGeoParquetOptions,
-    pub metadata_cache: Option<Arc<dyn FileMetadataCache>>,
+    pub metadata_cache: Option<Arc<FileMetadataCache>>,
     pub bounder_factory: WkbBounder2DFactory,
 }
 
@@ -152,7 +152,7 @@ struct GeoParquetMetadataPlanner {
     enable_pruning: bool,
     metrics: GeoParquetFileOpenerMetrics,
     options: TableGeoParquetOptions,
-    metadata_cache: Option<Arc<dyn FileMetadataCache>>,
+    metadata_cache: Option<Arc<FileMetadataCache>>,
     bounder_factory: WkbBounder2DFactory,
 }
 
@@ -497,7 +497,7 @@ fn filter_access_plan_using_native_geostats(
     if top_level_indices.iter().all(|i| {
         !matches!(
             parquet_schema.column(*i).logical_type_ref(),
-            Some(LogicalType::Geometry { .. }) | Some(LogicalType::Geography { .. })
+            Some(LogicalType::Geometry(_)) | Some(LogicalType::Geography(_))
         )
     }) {
         return Ok(());

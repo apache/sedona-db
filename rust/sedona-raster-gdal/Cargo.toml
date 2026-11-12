@@ -36,7 +36,9 @@ arrow-buffer = { workspace = true }
 arrow-schema = { workspace = true }
 async-trait = { workspace = true }
 datafusion-common = { workspace = true }
+datafusion-common-runtime = { workspace = true }
 datafusion-expr = { workspace = true }
+futures = { workspace = true }
 lru = { workspace = true }
 sedona-common = { workspace = true }
 sedona-expr = { workspace = true }
@@ -45,19 +47,26 @@ sedona-gdal = { workspace = true }
 sedona-raster = { workspace = true }
 sedona-raster-functions = { workspace = true }
 sedona-schema = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
 
 [features]
 # Enable bindgen for GDAL versions without pre-built bindings (e.g., GDAL 3.13+).
 bindgen = ["sedona-gdal/bindgen"]
 
 [dev-dependencies]
+axum = { workspace = true }
 criterion = { workspace = true }
 sedona-gdal = { workspace = true, features = ["gdal-sys"] }
 sedona-proj = { workspace = true, features = ["proj-sys"] }
 sedona-testing = { workspace = true, features = ["criterion"] }
 tempfile = { workspace = true }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time"] }
+tower-http = { workspace = true, features = ["fs"] }
+
+[[bench]]
+harness = false
+name = "gdal_io_concurrency"
+path = "benches/gdal_io_concurrency.rs"
 
 [[bench]]
 harness = false

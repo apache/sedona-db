@@ -27,6 +27,12 @@ kernels:
 
 See [Coordinate Reference Systems](../../concepts/crs.md) for how SedonaDB represents and compares CRS.
 
+`ST_SRID` returns `0` both when the geometry has no CRS and when it has a CRS
+with no authority code, such as a custom WKT or PROJJSON definition. The SRID is
+a lossy integer view of a CRS: `ST_SetSRID(geom, ST_SRID(other))` clears the CRS
+when `other` carries a custom definition. Use `ST_CRS` and `ST_SetCRS` to read
+and carry the full definition.
+
 ## Examples
 
 ```sql

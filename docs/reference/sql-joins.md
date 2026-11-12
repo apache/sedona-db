@@ -59,6 +59,19 @@ INNER JOIN
     ON ST_KNN(cities_l.geometry, cities_r.geometry, 5, false)
 ```
 
+### Ties
+
+When several objects are exactly as far from a query geometry as its *k*-th nearest neighbor, the join returns *k* of them by default. Pass `true` as the fifth argument of `ST_KNN` to return all of them instead (so possibly more than *k* rows for that query geometry), or `false` to return *k*:
+
+```sql
+SELECT h.name AS hotel, r.name AS restaurant
+FROM hotels AS h
+JOIN restaurants AS r
+    ON ST_KNN(h.geometry, r.geometry, 3, false, true)
+```
+
+Without the fifth argument, the `sedona.spatial_join.knn_include_tie_breakers` option decides (`false` unless set).
+
 ### KNN Join Caveats
 
 #### Filter Pushdown Behavior
