@@ -31,7 +31,7 @@ const DEFAULT_CRS: &str = "OGC:CRS84";
 /// Plans SQL `GEOMETRY` and `GEOGRAPHY` types as GeoArrow WKB extension types.
 ///
 /// `GEOMETRY` accepts an optional CRS. `GEOGRAPHY` accepts an optional CRS and
-/// edge interpolation (`spherical` or `planar`).
+/// spherical edge interpolation.
 #[derive(Debug, Default)]
 pub struct SedonaTypePlanner;
 
@@ -77,13 +77,11 @@ fn require_at_most(type_name: &str, modifiers: &[String], maximum: usize) -> Res
 }
 
 fn parse_edges(value: &str) -> Result<Edges> {
-    if value.eq_ignore_ascii_case("planar") {
-        Ok(Edges::Planar)
-    } else if value.eq_ignore_ascii_case("spherical") {
+    if value.eq_ignore_ascii_case("spherical") {
         Ok(Edges::Spherical)
     } else {
         Err(plan_datafusion_err!(
-            "Invalid GEOGRAPHY edge interpolation '{value}'; expected 'spherical' or 'planar'"
+            "Invalid GEOGRAPHY edge interpolation '{value}'; expected 'spherical'"
         ))
     }
 }
@@ -129,8 +127,8 @@ mod tests {
             SedonaType::Wkb(Edges::Spherical, lnglat())
         );
         assert_eq!(
-            plan(custom_type("GEOGRAPHY", &["EPSG:3857", "PLANAR"])),
-            SedonaType::Wkb(Edges::Planar, deserialize_crs("EPSG:3857").unwrap())
+            plan(custom_type("GEOGRAPHY", &["EPSG:3857", "SPHERICAL"])),
+            SedonaType::Wkb(Edges::Spherical, deserialize_crs("EPSG:3857").unwrap())
         );
     }
 
@@ -161,9 +159,12 @@ mod tests {
         let error = SedonaTypePlanner
             .plan_type_field(&custom_type("geography", &["OGC:CRS84", "rhumb"]))
             .unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("expected 'spherical' or 'planar'"));
+        assert!(error.to_string().contains("expected 'spherical'"));
+
+        let error = SedonaTypePlanner
+            .plan_type_field(&custom_type("geography", &["OGC:CRS84", "planar"]))
+            .unwrap_err();
+        assert!(error.to_string().contains("expected 'spherical'"));
     }
 
     #[tokio::test]
@@ -174,7 +175,7 @@ mod tests {
                 geom GEOMETRY, \
                 geog GEOGRAPHY, \
                 projected GEOMETRY('EPSG:3857'), \
-                planar GEOGRAPHY('EPSG:3857', planar)\
+                projected_geog GEOGRAPHY('EPSG:3857', spherical)\
             )",
         )
         .await?
@@ -196,8 +197,10 @@ mod tests {
             SedonaType::Wkb(Edges::Planar, deserialize_crs("EPSG:3857")?)
         );
         assert_eq!(
-            SedonaType::from_storage_field(schema.field_with_name(None, "planar")?.as_ref())?,
-            SedonaType::Wkb(Edges::Planar, deserialize_crs("EPSG:3857")?)
+            SedonaType::from_storage_field(
+                schema.field_with_name(None, "projected_geog")?.as_ref()
+            )?,
+            SedonaType::Wkb(Edges::Spherical, deserialize_crs("EPSG:3857")?)
         );
         Ok(())
     }
