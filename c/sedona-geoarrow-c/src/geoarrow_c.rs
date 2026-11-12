@@ -348,6 +348,7 @@ fn geoarrow_type_id(sedona_type: &SedonaType) -> Result<GeoArrowType, GeoArrowCE
             DataType::LargeBinary => GeoArrowType_GEOARROW_TYPE_LARGE_WKB,
             DataType::BinaryView => GeoArrowType_GEOARROW_TYPE_WKB_VIEW,
             DataType::Utf8 => GeoArrowType_GEOARROW_TYPE_WKT,
+            DataType::LargeUtf8 => GeoArrowType_GEOARROW_TYPE_LARGE_WKT,
             DataType::Utf8View => GeoArrowType_GEOARROW_TYPE_WKT_VIEW,
             _ => {
                 return Err(GeoArrowCError::Invalid(format!(
@@ -378,6 +379,7 @@ fn arrow_storage_type(type_id: GeoArrowType) -> Result<DataType, GeoArrowCError>
         GeoArrowType_GEOARROW_TYPE_LARGE_WKB => DataType::LargeBinary,
         GeoArrowType_GEOARROW_TYPE_WKB_VIEW => DataType::BinaryView,
         GeoArrowType_GEOARROW_TYPE_WKT => DataType::Utf8,
+        GeoArrowType_GEOARROW_TYPE_LARGE_WKT => DataType::LargeUtf8,
         GeoArrowType_GEOARROW_TYPE_WKT_VIEW => DataType::Utf8View,
         _ => {
             return Err(GeoArrowCError::Invalid(format!(

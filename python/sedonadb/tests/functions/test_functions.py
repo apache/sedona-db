@@ -1310,36 +1310,36 @@ def test_st_unaryunion(eng, geom, expected):
         ("POINT M EMPTY", "POINT M EMPTY"),
         ("POINT Z EMPTY", "POINT Z EMPTY"),
         ("POINT ZM EMPTY", "POINT ZM EMPTY"),
-        ("POINT M (0 1 2)", "POINT M(0 1 2)"),
-        ("POINT Z (0 0 0)", "POINT Z(0 0 0)"),
-        ("POINT ZM (1 2 3 4)", "POINT ZM(1 2 3 4)"),
-        ("LINESTRING Z (0 0 0, 1 1 1)", "LINESTRING Z(0 0 0,1 1 1)"),
-        ("LINESTRING ZM (0 0 1 2, 1 1 3 4)", "LINESTRING ZM(0 0 1 2,1 1 3 4)"),
+        ("POINT M (0 1 2)", "POINT M (0 1 2)"),
+        ("POINT Z (0 0 0)", "POINT Z (0 0 0)"),
+        ("POINT ZM (1 2 3 4)", "POINT ZM (1 2 3 4)"),
+        ("LINESTRING Z (0 0 0, 1 1 1)", "LINESTRING Z (0 0 0, 1 1 1)"),
+        ("LINESTRING ZM (0 0 1 2, 1 1 3 4)", "LINESTRING ZM (0 0 1 2, 1 1 3 4)"),
         (
             "POLYGON Z ((0 0 10, 4 0 10, 4 4 10, 0 4 10, 0 0 10))",
-            "POLYGON Z((0 0 10,4 0 10,4 4 10,0 4 10,0 0 10))",
+            "POLYGON Z ((0 0 10, 4 0 10, 4 4 10, 0 4 10, 0 0 10))",
         ),
         (
             "POLYGON ZM ((0 0 10 1, 4 0 10 2, 4 4 10 3, 0 4 10 4, 0 0 10 5))",
-            "POLYGON ZM((0 0 10 1,4 0 10 2,4 4 10 3,0 4 10 4,0 0 10 5))",
+            "POLYGON ZM ((0 0 10 1, 4 0 10 2, 4 4 10 3, 0 4 10 4, 0 0 10 5))",
         ),
-        ("MULTIPOINT Z ((0 0 0), (1 1 1))", "MULTIPOINT Z(0 0 0,1 1 1)"),
-        ("MULTIPOINT ZM ((0 0 1 2), (1 1 3 4))", "MULTIPOINT ZM(0 0 1 2,1 1 3 4)"),
+        ("MULTIPOINT Z ((0 0 0), (1 1 1))", "MULTIPOINT Z (0 0 0, 1 1 1)"),
+        ("MULTIPOINT ZM ((0 0 1 2), (1 1 3 4))", "MULTIPOINT ZM (0 0 1 2, 1 1 3 4)"),
         # Polygons overlap, so it's reduced to a single one
         (
             "MULTIPOLYGON Z (((0 0 10, 4 0 10, 4 4 10, 0 4 10, 0 0 10)), ((1 1 5, 1 2 5, 2 2 5, 2 1 5, 1 1 5)))",
-            "POLYGON Z((0 4 10,4 4 10,4 0 10,0 0 10,0 4 10))",
+            "POLYGON Z ((0 4 10, 4 4 10, 4 0 10, 0 0 10, 0 4 10))",
         ),
         ("GEOMETRYCOLLECTION Z EMPTY", "GEOMETRYCOLLECTION Z EMPTY"),
         ("GEOMETRYCOLLECTION ZM EMPTY", "GEOMETRYCOLLECTION ZM EMPTY"),
         (
-            "GEOMETRYCOLLECTION Z(POINT Z(1 2 3), LINESTRING Z(0 0 0,1 1 1))",
-            "GEOMETRYCOLLECTION Z(POINT Z(1 2 3),LINESTRING Z(0 0 0,1 1 1))",
+            "GEOMETRYCOLLECTION Z (POINT Z (1 2 3), LINESTRING Z (0 0 0, 1 1 1))",
+            "GEOMETRYCOLLECTION Z (POINT Z (1 2 3), LINESTRING Z (0 0 0, 1 1 1))",
         ),
         # dimension specified on nested geometries, but not outer geometrycollection
         (
-            "GEOMETRYCOLLECTION (POINT Z(1 2 3), LINESTRING Z(0 0 0,1 1 1))",
-            "GEOMETRYCOLLECTION Z(POINT Z(1 2 3),LINESTRING Z(0 0 0,1 1 1))",
+            "GEOMETRYCOLLECTION (POINT Z (1 2 3), LINESTRING Z (0 0 0, 1 1 1))",
+            "GEOMETRYCOLLECTION Z (POINT Z (1 2 3), LINESTRING Z (0 0 0, 1 1 1))",
         ),
         # Skipping GeometryCollection ZM tests because geos unary_union() doesn't seem to work properly for them yet.
     ],
@@ -1351,14 +1351,12 @@ def test_st_unaryunion_zm(eng, geom, expected):
         eng.assert_query_result(
             f"SELECT ST_IsEmpty(ST_UnaryUnion({geom_or_null(geom)}))", True
         )
-    elif is_postgis and ("M(" in expected or "M (" in expected):
+    elif is_postgis and "M (" in expected:
         pytest.skip("PostGIS doesn't support M dimensions")
     else:
-        # Test for exact string equality
-        # Remove all spaces from both the actual and expected results to ignore formatting differences
         eng.assert_query_result(
-            f"SELECT replace(ST_AsText(ST_UnaryUnion({geom_or_null(geom)})), ' ', '')",
-            expected.replace(" ", ""),
+            f"SELECT ST_UnaryUnion({geom_or_null(geom)})",
+            expected,
         )
 
 
@@ -1499,7 +1497,7 @@ def test_geometry_list_item_crs(constructor, function, member):
         """
     ).to_arrow_table()
     assert result.to_pydict() == {
-        "wkt": ["POINT(1 2)", "POINT(3 4)", "POINT(5 6)", "POINT(7 8)"],
+        "wkt": ["POINT (1 2)", "POINT (3 4)", "POINT (5 6)", "POINT (7 8)"],
         "srid": [4326, 4326, 4269, 0],
     }
 
@@ -2426,6 +2424,27 @@ def test_st_geomfromtext(eng, wkt, expected):
     eng.assert_query_result(f"SELECT ST_GeomFromText({val_or_null(wkt)})", expected)
 
 
+@pytest.mark.parametrize(
+    "storage_type", [pa.string(), pa.large_string(), pa.string_view()]
+)
+def test_st_geomfromtext_string_storage(storage_type):
+    eng = SedonaDB()
+    eng.create_table_arrow(
+        "wkt_input",
+        pa.table(
+            {
+                "wkt": pa.array(
+                    ["POINT (1 2)", None, "LINESTRING EMPTY"], type=storage_type
+                )
+            }
+        ),
+    )
+    eng.assert_query_result(
+        "SELECT ST_GeomFromText(wkt) FROM wkt_input",
+        [("POINT (1 2)",), (None,), ("LINESTRING EMPTY",)],
+    )
+
+
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
     ("wkt", "srid", "expected"),
@@ -2467,8 +2486,12 @@ def test_st_geomfromewkt(eng, ewkt, expected, expected_srid):
     if ewkt is not None:
         ewkt = f"'{ewkt}'"
     eng = eng.create_or_skip()
+    if isinstance(eng, SedonaDB) and expected_srid:
+        # EWKT carries a per-row CRS in SedonaDB; the harness preserves it.
+        crs = "OGC:CRS84" if expected_srid == 4326 else f"EPSG:{expected_srid}"
+        expected = ((crs, expected),)
     eng.assert_query_result(
-        f"SELECT ST_AsText(ST_GeomFromEWKT({val_or_null(ewkt)}))",
+        f"SELECT ST_GeomFromEWKT({val_or_null(ewkt)})",
         expected,
     )
     eng.assert_query_result(

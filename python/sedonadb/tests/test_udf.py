@@ -20,6 +20,7 @@ import pyarrow as pa
 import pytest
 import sedonadb
 from sedonadb import udf
+from sedonadb.testing import SedonaDB
 
 
 def some_udf(arg0, arg1):
@@ -176,10 +177,11 @@ def test_python_udf_uses_literal_result_conversion(con):
         return shapely.Point(x, y)
 
     con.register(make_point)
-    assert con.sql(
-        "SELECT ST_AsText(make_point(x, y)) AS col "
+    result = con.sql(
+        "SELECT make_point(x, y) AS col "
         "FROM (VALUES (1.0, 2.0), (3.0, 4.0), (NULL, 5.0)) AS t(x, y)"
-    ).to_arrow_table()["col"].to_pylist() == ["POINT(1 2)", "POINT(3 4)", None]
+    ).to_arrow_table()
+    SedonaDB().assert_result(result, [("POINT (1 2)",), ("POINT (3 4)",), (None,)])
 
 
 @pytest.mark.parametrize("srid", [0, 3857])
@@ -568,9 +570,9 @@ def test_native_scalar_udf_register_appends_overload(con):
     )
 
     # ...and the WKT-string -> geometry overload appended second dispatches too.
-    pd.testing.assert_frame_equal(
-        con.sql(f"SELECT ST_AsText({name}('POINT (1 2)')) AS col").to_pandas(),
-        pd.DataFrame({"col": ["POINT (1 2)"]}),
+    SedonaDB().assert_result(
+        con.sql(f"SELECT {name}('POINT (1 2)') AS col").to_arrow_table(),
+        "POINT (1 2)",
     )
 
 

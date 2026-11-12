@@ -261,7 +261,9 @@ mod tests {
     use super::*;
 
     #[rstest]
-    fn fromwkt(#[values(DataType::Utf8, DataType::Utf8View)] data_type: DataType) {
+    fn fromwkt(
+        #[values(DataType::Utf8, DataType::LargeUtf8, DataType::Utf8View)] data_type: DataType,
+    ) {
         let udf = SedonaScalarUDF::from_impl("st_geomfromwkt", st_geomfromwkt_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![SedonaType::Arrow(data_type)]);
         tester.assert_return_type(WKB_GEOMETRY);
