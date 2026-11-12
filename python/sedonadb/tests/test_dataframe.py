@@ -294,6 +294,50 @@ def test_count(con):
     assert df.count() == 3
 
 
+def test_item(con):
+    value = con.sql("SELECT 1 + 1 AS value").item()
+    assert value == 2 and type(value) is int
+    assert con.sql("SELECT 'one' AS value").item() == "one"
+    assert con.sql("SELECT CAST(NULL AS BIGINT) AS value").item() is None
+
+    # An aggregate, and a filter that leaves one row
+    df = con.sql("SELECT * FROM (VALUES (1), (2), (3)) AS t(x)")
+    assert con.sql("SELECT sum(x) FROM (VALUES (1), (2), (3)) AS t(x)").item() == 6
+    assert df.filter(df["x"] == 2).item() == 2
+
+
+def test_item_spatial(con):
+    import shapely
+
+    # Geometry and geography values come back as Shapely geometries
+    point = con.sql("SELECT ST_Point(0, 1) AS geom").item()
+    assert isinstance(point, shapely.Point) and point.wkt == "POINT (0 1)"
+    point = con.sql("SELECT ST_GeogFromWKT('POINT (0 1)') AS geog").item()
+    assert isinstance(point, shapely.Point) and point.wkt == "POINT (0 1)"
+    assert (
+        con.sql("SELECT ST_GeomFromWKT(CAST(NULL AS VARCHAR)) AS geom").item() is None
+    )
+    # but not a column that is only named like one
+    assert con.sql("SELECT X'0102' AS geometry").item() == b"\x01\x02"
+
+    # Rasters come back as the Python raster object
+    raster = con.sql("SELECT RS_Example() AS rast").item()
+    assert type(raster).__name__ == "Raster"
+
+
+@pytest.mark.parametrize(
+    "query, message",
+    [
+        ("SELECT 1 AS a, 2 AS b", "exactly one column, got 2"),
+        ("SELECT * FROM (VALUES (1), (2), (3)) AS t(x)", "exactly one row, got more"),
+        ("SELECT * FROM (VALUES (1)) AS t(x) WHERE x > 1", "exactly one row, got none"),
+    ],
+)
+def test_item_needs_one_value(con, query, message):
+    with pytest.raises(ValueError, match=message):
+        con.sql(query).item()
+
+
 def test_params(con):
     # Binding a query that does not contain parameters with no parameters
     # should work
