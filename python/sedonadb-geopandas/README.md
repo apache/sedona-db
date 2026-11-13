@@ -219,12 +219,40 @@ it takes no negative count. A column's `name` is a string, and `rename()` of a
 column only names it, as there is no index to relabel.
 
 Reductions (`sum()`, `mean()`, `min()`, `max()`, `count()`, `median()`,
-`std()`, `var()`, `quantile()`, `nunique()`) compute their result, skipping
-missing values (NaN included) as pandas does by default; an integer column keeps
-its integer type where pandas, having turned its missing values into NaN, would
-report a float. `unique()` and `value_counts()` cannot follow the order of first
-appearance, since a lazy frame has no row order: `value_counts()` breaks ties by
-value.
+`std()`, `var()`, `sem()`, `skew()`, `kurt()`, `any()`, `all()`, `quantile()`,
+`nunique()`) compute their result, skipping missing values (NaN included) as
+pandas does by default; an integer column keeps its integer type where pandas,
+having turned its missing values into NaN, would report a float. The arithmetic
+ones (`sum()`, `mean()`, `median()`, `std()`, `var()`, `sem()`, `skew()`,
+`kurt()`, `quantile()`) take numbers and booleans only: pandas' `sum()` of text
+concatenates it, in an order a lazy frame doesn't have, and pandas also gives
+the `sum()` of durations and the `mean()`, `median()`, `std()` and `quantile()`
+of durations and timestamps, which raise a TypeError here. A frame's
+reduce all its columns in one scan (three for `skew()` and `kurt()`, and one per
+column for `nunique()`), as pandas' do with `axis=0` (there is no `axis=1`), and
+take their options by keyword, as in pandas 3; `agg()` of a list of names takes
+the options of each method of those names, which selects the columns as it does
+(pandas hands `numeric_only` and `bool_only` to each column's method instead).
+`skew()` and `kurt()` of values that are all alike are NaN, as in pandas 3
+(pandas 2 says 0), and don't depend on the scale of the values (pandas gives 0
+or NaN for values near float64's limits); `any()` and `all()` refuse
+timestamps, as pandas 3 does, and read a geometry as true unless it is empty,
+as GeoPandas does, but skip a missing one (GeoPandas reads it as false whatever
+`skipna` is). Quantiles, and the percentiles of `describe()`,
+are interpolated as pandas interpolates them, not with the engine's
+`percentile_cont()`, which rounds its interpolation to millionths. `unique()`,
+`value_counts()` and `mode()` cannot follow the order of first appearance, since
+a lazy frame has no row order: `value_counts()` breaks ties by value, and so
+does the top value of `describe()` (of a categorical, by category, as in
+pandas); `nlargest()` and `nsmallest()` keep any of tied values. Geometries
+count as distinct by their WKB, as in GeoPandas, but `nunique(dropna=False)`
+counts a missing one, as pandas does (GeoPandas' `unique()` drops it); their
+`mode()` is in WKB order, a GeoSeries with the column's CRS, which GeoPandas'
+drops. A frame's
+`skew()` is GeoPandas' (an affine transformation of the active geometry) when it
+has an active geometry column, and pandas' otherwise; `info()` writes the dtypes
+of `dtypes` (int64 for integers with a missing value, which `to_pandas()` makes
+floats) and no memory usage, which a lazy frame doesn't know.
 
 `where()`, `mask()`, and `clip()` keep a column to one kind of value: a
 replacement or bound of another kind (text in a number column, say) raises,

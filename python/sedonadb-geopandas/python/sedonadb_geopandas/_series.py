@@ -581,6 +581,11 @@ class Series:
         """This expression's Arrow type as stored, encodings included."""
         return pa.schema(self._df.select(self._expr.alias("x")).schema).field("x").type
 
+    def _is_categorical(self):
+        """Whether pandas reads this column as a categorical: whether it is
+        dictionary-encoded."""
+        return pa.types.is_dictionary(self._stored_dtype())
+
     def _key(self):
         """This column as a key that compares as pandas compares values, with
         its type (see `_matching_key`)."""
@@ -1220,12 +1225,13 @@ class Series:
             values = values.cast(dtype)
         return self._df.select(values.alias("x"))
 
-    def _aggregate(self, func, ddof=1, min_count=0):
+    def _aggregate(self, func, ddof=1, min_count=0, skipna=True):
         """The aggregate expression for the reduction `func` of this column,
         skipping missing values as pandas does, and a function finishing its
         result (identity but for geometry).
 
-        Shared by this column's own reductions and by grouped aggregation.
+        Shared by this column's own reductions, a frame's, and grouped
+        aggregation.
         """
         if func == "sum":
             total = self._numeric("sum").funcs.sum()
@@ -1242,6 +1248,16 @@ class Series:
             return self._spread("std", ddof, "stddev", "stddev_pop"), _same
         if func == "var":
             return self._spread("var", ddof, "var_samp", "var_pop"), _same
+        if func == "sem":
+            spread = self._spread("sem", ddof, "stddev", "stddev_pop")
+            count = self._numeric("sem").funcs.count().cast(pa.float64())
+            return spread / count.funcs.sqrt(), _same
+        if func == "any":
+            truth = self._truth("any", skipna)
+            return truth.funcs.bool_or().funcs.coalesce(lit(False)), _same
+        if func == "all":
+            truth = self._truth("all", skipna)
+            return truth.funcs.bool_and().funcs.coalesce(lit(True)), _same
         if func in ("min", "max"):
             return getattr(self._ordered(func).funcs, func)(), _same
         if func in ("first", "last"):
@@ -1297,6 +1313,65 @@ class Series:
         result = self._reduce(self._aggregate(method)[0])
         return math.nan if result is None else result
 
+    def sem(self, ddof=1):
+        """The standard error of the mean, skipping missing values (`ddof` 1
+        or 0); NaN with too few values."""
+        return self._reduce(self._aggregate("sem", ddof=ddof)[0])
+
+    def skew(self, skipna=True):
+        """The skewness of the values, bias-corrected as pandas computes it,
+        skipping missing values (any makes it NaN if `skipna=False`); NaN with
+        fewer than three values, or with none that differ (as pandas 3 has
+        it: pandas 2 says 0)."""
+        return _shapes([self], "skew", skipna)[0]
+
+    def kurt(self, skipna=True):
+        """The excess kurtosis (Fisher's) of the values, bias-corrected as
+        pandas computes it, skipping missing values; NaN with fewer than four
+        values, or with none that differ."""
+        return _shapes([self], "kurt", skipna)[0]
+
+    kurtosis = kurt
+
+    def any(self, *, skipna=True):
+        """Whether any value is true, as Python reads it (not 0, not empty),
+        skipping missing values; with `skipna=False`, a missing value is as
+        true as pandas reads it. False if there are no values."""
+        return self._reduce(self._aggregate("any", skipna=skipna)[0])
+
+    def all(self, *, skipna=True):
+        """Whether every value is true (see `any()`); True if there are no
+        values."""
+        return self._reduce(self._aggregate("all", skipna=skipna)[0])
+
+    def _truth(self, method, skipna):
+        """This column's values as booleans for `any()` and `all()`, as
+        Python reads them; missing where a value is missing if `skipna`."""
+        truth = self._value_truth(method)
+        if skipna:
+            truth = _choose(~self._missing(), truth, lit(pa.scalar(None, pa.bool_())))
+        return truth
+
+    def _value_truth(self, method):
+        """This column's values as booleans, a missing value as pandas reads it."""
+        dtype = self._dtype()
+        if pa.types.is_timestamp(dtype) or pa.types.is_date(dtype):
+            # As pandas 3 (pandas 2 reads them as counts of units).
+            raise TypeError(f"'{method}' with datetime64 dtypes is not supported")
+        if pa.types.is_duration(dtype):
+            # True unless zero; NaT, a count of units to pandas, is true.
+            truth = (self._decoded().cast(pa.int64()) != lit(0)).funcs.coalesce(
+                lit(True)
+            )
+        elif pa.types.is_null(dtype):
+            # Nothing but missing values, which pandas reads as None: false.
+            truth = self._decoded().is_not_null()
+        else:
+            truth = _truthiness(self._decoded(), dtype)
+        if truth is None:
+            raise TypeError(f"{method}() is not supported for {dtype}")
+        return truth
+
     def count(self):
         """The number of values that are not missing (NaN counts as missing)."""
         return self._reduce(self._aggregate("count")[0])
@@ -1318,13 +1393,8 @@ class Series:
         values = self._numeric("quantile").cast(pa.float64())
         results = []
         if qs:
-            row = self._df.agg(
-                *[
-                    values.funcs.percentile_cont(lit(value)).alias(f"q{i}")
-                    for i, value in enumerate(qs)
-                ]
-            ).to_pandas()
-            results = [row[f"q{i}"].iloc[0] for i in range(len(qs))]
+            row = _one_row(self._df.agg(*_quantile_aggregates(values, qs, "q")))
+            results = _interpolated(row, "q", qs)
         if not many:
             return results[0]
         import pandas as pd
@@ -1334,8 +1404,13 @@ class Series:
 
     def nunique(self, dropna=True):
         """The number of distinct values, a missing value counting once if
-        `dropna=False`."""
-        distinct = self._distinct_values("nunique").distinct()
+        `dropna=False`. Geometries are distinct if their WKB is, as GeoPandas
+        tells them apart."""
+        if isinstance(self._dtype(), pa.ExtensionType):
+            wkb = self._decoded().funcs.st_asbinary()
+            distinct = self._df.select(wkb.alias("x")).distinct()
+        else:
+            distinct = self._distinct_values("nunique").distinct()
         if dropna:
             return self._reduce_on(distinct, distinct["x"].funcs.count())
         return distinct.count()
@@ -1388,6 +1463,249 @@ class Series:
             result = result / result.sum()
         return result
 
+    def mode(self, dropna=True):
+        """The most frequent value(s), sorted, as a pandas Series, as in pandas.
+
+        Values compare as `value_counts()` compares them: NaN is a missing
+        value, which counts with `dropna=False`, and -0.0 is 0.0. Of a
+        categorical, a categorical of its categories, in their order.
+        """
+        import pandas as pd
+
+        if self._is_categorical():
+            return self._categorical_mode(dropna)
+        counts = self.value_counts(sort=False, dropna=dropna)
+        if not len(counts):
+            # No values: an empty Series of this column's dtype.
+            return pd.Series([], dtype=self.dtype, name=self._name)
+        # In value order, a missing value last, as value_counts(sort=False)
+        # gives them.
+        modes = counts.index[counts == counts.max()]
+        return pd.Series(modes, name=self._name)
+
+    def _categorical_mode(self, dropna):
+        """mode() of a categorical: its codes', of its categories, in their
+        order, a missing value (code -1) first, as pandas has them.
+
+        Each value counted is matched to its category as it is: value_counts()
+        holds integers counted with a missing value as floats, which can't
+        tell 2**63 + 1 from 2**63 + 2.
+        """
+        import numpy as np
+        import pandas as pd
+        import pyarrow.compute as pc
+
+        values = self._distinct_values("mode")
+        if dropna:
+            values = values.filter(values["x"].is_not_null())
+        counts = values.group_by("x").agg(values._ctx.lit(1).funcs.count().alias("n"))
+        counts = counts.to_arrow_table()
+        keys, n = counts["x"], counts["n"].to_numpy()
+        # Its categories, which computing the dtype computes the column for.
+        dtype = self.dtype
+        present = pc.is_valid(keys)
+        codes = np.full(len(keys), -1)
+        codes[present.to_numpy()] = dtype.categories.get_indexer(
+            pc.filter(keys, present).to_pandas()
+        )
+        modes = np.sort(codes[n == n.max()]) if len(n) else codes
+        categorical = pd.Categorical.from_codes(modes, dtype=dtype)
+        return pd.Series(categorical, name=self._name)
+
+    def nlargest(self, n=5, keep="first"):
+        """The `n` largest values, largest first, as a Series of a new frame,
+        as in pandas: missing values come after them, if there are fewer
+        than `n`.
+
+        Which of tied values are kept isn't guaranteed (there is no row
+        order), so `keep="first"` and `keep="last"` are alike; `keep="all"`
+        keeps every value tied with the `n`-th.
+        """
+        return self._extremes(n, keep, "nlargest")
+
+    def nsmallest(self, n=5, keep="first"):
+        """The `n` smallest values, smallest first (see `nlargest()`)."""
+        return self._extremes(n, keep, "nsmallest")
+
+    def _extremes(self, n, keep, method):
+        if keep not in ("first", "last", "all"):
+            raise ValueError('keep must be either "first", "last" or "all"')
+        if not isinstance(n, numbers.Integral) or isinstance(n, bool):
+            raise TypeError(f"{method}() needs an integer n, not {n!r}")
+        dtype = self._dtype()
+        if not (
+            _kind(dtype) in ("number", "bool")
+            or pa.types.is_timestamp(dtype)
+            or pa.types.is_duration(dtype)
+        ):
+            raise TypeError(f"Cannot use method '{method}' with dtype {self.dtype}")
+        largest = method == "nlargest"
+        # Missing values last, as pandas fills up with them past the values.
+        ordered = self.sort_values(ascending=not largest)
+        n = max(int(n), 0)
+        if keep != "all" or n == 0:
+            return ordered.head(n)
+        # The n-th of the values, and every value tied with it; with fewer
+        # values than n, all of them and every missing value, as in pandas.
+        present = self.dropna()
+        nth = present.sort_values(ascending=not largest)
+        nth = nth._df.limit(1, offset=n - 1).select(nth._expr.alias("x"))
+        nth = nth.to_pandas()["x"]
+        if not len(nth):
+            return ordered
+        tied = present._compare(nth.iloc[0], operator.ge if largest else operator.le)
+        kept = type(self)(present._df.filter(tied._expr), self._expr, self._name)
+        return kept.sort_values(ascending=not largest)
+
+    def describe(self, percentiles=None, include=None, exclude=None):
+        """A summary of the values, as a pandas Series, as pandas'
+        `describe()`.
+
+        For numbers: count, mean, std, min, percentiles and max; for
+        durations the same, for timestamps the same without std; for
+        booleans, strings, categoricals (of numbers too, as pandas describes
+        them) and geometries (alike if their WKB is): count, unique, top (the
+        most frequent value) and freq. Of values as frequent as each other,
+        top is the smallest (of geometries, the one of the smallest WKB), as
+        there is no order of first appearance to break the tie by; of a
+        categorical's, the first category, as in pandas. Which percentiles
+        are reported is as pandas has it, and they are interpolated as pandas
+        does.
+        """
+        return _descriptions([self], percentiles)[0]
+
+    def _described_measures(self, row, i, quantiles, labels):
+        """This column's description from the statistics `_descriptions()`
+        computed into `row` as column `i`, and its `quantiles`: floats for
+        numbers, pandas timestamps or timedeltas for times."""
+        import pandas as pd
+
+        def number(value):
+            return math.nan if value is None or pd.isna(value) else float(value)
+
+        dtype = self._dtype()
+        if _kind(dtype) == "number":
+            values = [
+                row[f"n{i}"],
+                row[f"mean{i}"],
+                row[f"std{i}"],
+                row[f"min{i}"],
+                *quantiles,
+                row[f"max{i}"],
+            ]
+            values = [number(value) for value in values]
+            index = ["count", "mean", "std", "min", *labels, "max"]
+            return pd.Series(values, index=index, name=self._name, dtype="float64")
+        names = ["mean"] if pa.types.is_timestamp(dtype) else ["mean", "std"]
+        # A mean, spread or percentile of times between two counts of their
+        # unit is cut toward zero, as pandas does; read back through Arrow,
+        # in the column's unit and time zone. (A timestamp has no spread.)
+        computed = [row[f"{name}{i}"] for name in names] + list(quantiles)
+        ticks = [None if pd.isna(value) else int(value) for value in computed]
+        times = pa.array(ticks, pa.int64()).cast(dtype).to_pandas().tolist()
+        means, percentiles = times[: len(names)], times[len(names) :]
+        values = [
+            int(row[f"n{i}"]),
+            *means,
+            row[f"min{i}"],
+            *percentiles,
+            row[f"max{i}"],
+        ]
+        values = [pd.NaT if value is None else value for value in values]
+        index = ["count", *names, "min", *labels, "max"]
+        return pd.Series(values, index=index, name=self._name, dtype=object)
+
+    def _described_values(self):
+        """This column's description as values counted: count, unique, top,
+        freq. Of a categorical's values as frequent as each other, top is the
+        first category, as pandas counts them in category order."""
+        import pandas as pd
+
+        counts = self.value_counts()
+        if self._is_categorical() and len(counts):
+            order = {value: j for j, value in enumerate(self.dtype.categories)}
+            counts = counts.sort_index(key=lambda index: index.map(order))
+            counts = counts.sort_values(ascending=False, kind="stable")
+        count = int(counts.sum())
+        index = ["count", "unique", "top", "freq"]
+        if not len(counts):
+            values = [count, 0, math.nan, math.nan]
+            return pd.Series(values, index=index, name=self._name, dtype=object)
+        # Of the dtype pandas infers: of numbers for a categorical of them.
+        values = [count, len(counts), counts.index[0], counts.iloc[0]]
+        return pd.Series(values, index=index, name=self._name)
+
+    def _described_geometries(self):
+        """This column of geometries' description, as GeoPandas' (a pandas
+        one of Python objects): count, unique, top and freq, geometries alike
+        if their WKB is. Of geometries as frequent as each other, top is the
+        one of the smallest WKB."""
+        import pandas as pd
+        import shapely
+
+        counts = self._geometry_counts()
+        top = counts.sort(counts["n"].desc(), counts["x"].asc()).limit(1).to_pandas()
+        sizes = _one_row(
+            counts.agg(
+                counts["n"].funcs.sum().alias("count"),
+                counts._ctx.lit(1).funcs.count().alias("unique"),
+            )
+        )
+        count = 0 if pd.isna(sizes["count"]) else int(sizes["count"])
+        if len(top):
+            top, freq = shapely.from_wkb(top["x"].iloc[0]), top["n"].iloc[0]
+        else:
+            top, freq = math.nan, math.nan
+        index = ["count", "unique", "top", "freq"]
+        values = [count, int(sizes["unique"]), top, freq]
+        return pd.Series(values, index=index, name=self._name, dtype=object)
+
+    def _geometry_counts(self, dropna=True):
+        """A frame of this column of geometries' distinct WKB (`x`) and how
+        many rows have each (`n`), a missing one among them unless `dropna`."""
+        wkb = self._df.select(self._decoded().funcs.st_asbinary().alias("x"))
+        if dropna:
+            wkb = wkb.filter(wkb["x"].is_not_null())
+        return wkb.group_by("x").agg(wkb._ctx.lit(1).funcs.count().alias("n"))
+
+    @property
+    def hasnans(self):
+        """Whether a value is missing (NaN included); this computes it."""
+        return self._df.filter(self._missing()).limit(1).count() > 0
+
+    @property
+    def is_unique(self):
+        """Whether no two values are alike, as pandas tells (two missing values
+        are alike); this computes it."""
+        from sedonadb_geopandas._relational import _unique
+
+        key, _ = self._key()
+        return _unique(self._df.select(key.alias("x")), ["x"])
+
+    def agg(self, func=None, *args, **kwargs):
+        """This column reduced by the reduction named `func`, or by each of a
+        list of names (as a pandas Series indexed by them), as pandas'
+        `agg()`."""
+        if isinstance(func, str):
+            return self._by_name(func)(*args, **kwargs)
+        if isinstance(func, (list, tuple)):
+            import pandas as pd
+
+            results = [self._by_name(name)(*args, **kwargs) for name in func]
+            return pd.Series(results, index=list(func), name=self._name)
+        raise NotImplementedError(
+            f"agg() takes reductions by name, not {type(func).__name__}"
+        )
+
+    aggregate = agg
+
+    def _by_name(self, name):
+        if name not in _REDUCTIONS:
+            raise AttributeError(
+                f"'{name}' is not a valid function for '{type(self).__name__}' object"
+            )
+        return getattr(self, name)
+
     # -- materialization ---------------------------------------------------
     def to_pandas(self):
         """Execute and return this column as a pandas (or GeoPandas) Series."""
@@ -1426,6 +1744,221 @@ def _zero_normalized(df, expr):
     if not pa.types.is_floating(dtype):
         return expr
     return (expr if dtype == stored else expr.cast(dtype)) + lit(0.0)
+
+
+# The reductions `agg()` takes by name.
+_REDUCTIONS = (
+    "all",
+    "any",
+    "count",
+    "kurt",
+    "kurtosis",
+    "max",
+    "mean",
+    "median",
+    "min",
+    "nunique",
+    "sem",
+    "skew",
+    "std",
+    "sum",
+    "var",
+)
+
+
+def _shapes(columns, method, skipna):
+    """The skewness or kurtosis (`method`) of each Series of `columns`, of one
+    frame, as pandas computes them, in three scans.
+
+    The first tells values that differ (min and max) from those that do not,
+    whose skewness is undefined, without the rounding of a mean making them
+    differ. The second is the mean of the values less the smallest, which is
+    exact for nearby values; the third, their central moments about it. Sums
+    of powers of the values, in one scan, would lose the moments to rounding
+    for values far from 0, such as timestamps or projected coordinates.
+
+    The values less the smallest are divided by their range, which the
+    skewness and kurtosis do not depend on, so that neither their mean nor
+    the powers of their deviations overflow or underflow for values of any
+    magnitude; for a range past float64's (values near its largest either
+    way), halves of the values are. Infinite values give NaN, as in pandas.
+    """
+    df = columns[0]._df
+    values = [column._numeric(method).cast(pa.float64()) for column in columns]
+    first = []
+    for i, (column, value) in enumerate(zip(columns, values)):
+        first += [
+            value.funcs.count().alias(f"n{i}"),
+            value.funcs.min().alias(f"lo{i}"),
+            value.funcs.max().alias(f"hi{i}"),
+            column._missing().cast(pa.int64()).funcs.sum().alias(f"x{i}"),
+        ]
+    bounds = _one_row(df.agg(*first))
+    shifted = []
+    for i, value in enumerate(values):
+        lo = float(bounds[f"lo{i}"]) if bounds[f"n{i}"] else 0.0
+        hi = float(bounds[f"hi{i}"]) if bounds[f"n{i}"] else 0.0
+        # Halving is exact, and keeps the range of finite values finite.
+        half = 1.0 if math.isfinite(hi - lo) else 0.5
+        scale = hi * half - lo * half
+        if not (math.isfinite(scale) and scale > 0):
+            # Values all alike, whose result is NaN whatever this is, or
+            # infinite, which make the moments NaN.
+            scale = 1.0
+        shifted.append((value * lit(half) - lit(lo * half)) / lit(scale))
+    means = _one_row(
+        df.agg(*[value.funcs.avg().alias(f"m{i}") for i, value in enumerate(shifted)])
+    )
+    second = []
+    for i, value in enumerate(shifted):
+        mean = means[f"m{i}"]
+        deviation = value - lit(0.0 if mean != mean else float(mean))
+        square = deviation * deviation
+        second += [
+            square.funcs.sum().alias(f"a{i}"),
+            (square * deviation).funcs.sum().alias(f"b{i}"),
+            (square * square).funcs.sum().alias(f"c{i}"),
+        ]
+    sums = _one_row(df.agg(*second))
+    results = []
+    for i in range(len(columns)):
+        n = int(bounds[f"n{i}"])
+        if (
+            (not skipna and bounds[f"x{i}"])
+            or n == 0
+            or bounds[f"lo{i}"] == bounds[f"hi{i}"]
+        ):
+            results.append(math.nan)
+            continue
+        m2, m3, m4 = (float(sums[f"{k}{i}"]) for k in "abc")
+        if abs(m3) < 1e-14:
+            # Rounding error, as pandas 2 takes it (its `_zero_out_fperr()`), so
+            # that values symmetric about their mean have a skewness of 0. Of
+            # values scaled to a range of 1, the cut-off doesn't depend on their
+            # scale, and m2 and m4 (at least 1/2 and 1/8) never fall below it.
+            m3 = 0.0
+        results.append(_shape(method, n, m2, m3, m4))
+    return results
+
+
+def _one_row(df):
+    """The values of a frame of one row, by column name, each of its column's
+    pandas type: a row of a pandas frame would share one."""
+    table = df.to_pandas()
+    return {name: table[name].iloc[0] for name in table.columns}
+
+
+def _percentiles(percentiles):
+    """The percentiles pandas' describe() reports for `percentiles`, and their
+    labels ("25%"). pandas checks them and decides which (pandas 2 adds the
+    median, pandas 3 does not), so its description of the values 0 and 1,
+    whose percentiles are themselves, tells which."""
+    import pandas as pd
+
+    probe = pd.Series([0.0, 1.0]).describe(percentiles=percentiles)
+    # Between min and max.
+    labels = list(probe.index[4:-1])
+    return [float(probe[label]) for label in labels], labels
+
+
+def _descriptions(columns, percentiles):
+    """pandas' description of each Series of `columns`, of one frame: the
+    statistics of every column of numbers or times in one scan."""
+    qs, labels = _percentiles(percentiles)
+    results = [None] * len(columns)
+    aggregates, measured = [], []
+    for i, column in enumerate(columns):
+        dtype = column._dtype()
+        if column._is_categorical():
+            # Counted, as pandas describes a categorical, of numbers too.
+            results[i] = column._described_values()
+        elif _kind(dtype) == "number" or (
+            pa.types.is_timestamp(dtype) or pa.types.is_duration(dtype)
+        ):
+            measured.append(i)
+            values = column._valued()
+            # Times as counts of their unit; min and max in their own type.
+            ticks = values if _kind(dtype) == "number" else values.cast(pa.int64())
+            ticks = ticks.cast(pa.float64())
+            aggregates += [
+                ticks.funcs.count().alias(f"n{i}"),
+                ticks.funcs.avg().alias(f"mean{i}"),
+                ticks.funcs.stddev().alias(f"std{i}"),
+                values.funcs.min().alias(f"min{i}"),
+                values.funcs.max().alias(f"max{i}"),
+                *_quantile_aggregates(ticks, qs, f"q{i}_"),
+            ]
+        elif _kind(dtype) in ("bool", "string") or pa.types.is_null(dtype):
+            results[i] = column._described_values()
+        elif isinstance(dtype, pa.ExtensionType):
+            results[i] = column._described_geometries()
+        else:
+            raise NotImplementedError(f"describe() is not supported for {dtype}")
+    if measured:
+        row = _one_row(columns[0]._df.agg(*aggregates))
+        for i in measured:
+            quantiles = _interpolated(row, f"q{i}_", qs)
+            results[i] = columns[i]._described_measures(row, i, quantiles, labels)
+    return results
+
+
+def _numpy_quantile(q):
+    """`q` as numpy reads it from pandas, which passes it as a percentage."""
+    return (q * 100.0) / 100.0
+
+
+def _quantile_aggregates(values, qs, key):
+    """Aggregates of the values on either side of each quantile in `qs` of
+    `values` (float64, missing values null), as columns `{key}lo{j}` and
+    `{key}hi{j}`, and of their number, as `{key}n`, for `_interpolated()`.
+
+    The engine's percentile_cont() quantizes its interpolation weight to
+    millionths (DataFusion 54), so the two values are taken from the sorted
+    values, at the position numpy reads ((n - 1) * q), and interpolated as
+    numpy interpolates them.
+    """
+    n = values.funcs.count()
+    ordered = values.funcs.array_agg().funcs.array_compact().funcs.array_sort()
+    aggregates = [n.alias(f"{key}n")]
+    for j, q in enumerate(qs):
+        position = (n - lit(1)).cast(pa.float64()) * lit(_numpy_quantile(q))
+        below = position.funcs.floor().cast(pa.int64()) + lit(1)
+        above = (below + lit(1)).funcs.least(n)
+        aggregates += [
+            ordered.funcs.array_element(below).alias(f"{key}lo{j}"),
+            ordered.funcs.array_element(above).alias(f"{key}hi{j}"),
+        ]
+    return aggregates
+
+
+def _interpolated(row, key, qs):
+    """The quantiles `qs` from the values `_quantile_aggregates()` put in
+    `row`, interpolated linearly, operation for operation as numpy does."""
+    n = row[f"{key}n"]
+    results = []
+    for j, q in enumerate(qs):
+        if not n:
+            results.append(math.nan)
+            continue
+        position = (int(n) - 1) * _numpy_quantile(q)
+        t = position - math.floor(position)
+        a, b = float(row[f"{key}lo{j}"]), float(row[f"{key}hi{j}"])
+        difference = b - a
+        results.append(b - difference * (1 - t) if t >= 0.5 else a + difference * t)
+    return results
+
+
+def _shape(method, n, m2, m3, m4):
+    """pandas' skewness or kurtosis of `n` values from their central moments'
+    sums `m2`, `m3` and `m4`."""
+    if method == "skew":
+        if n < 3:
+            return math.nan
+        return n * (n - 1) ** 0.5 / (n - 2) * (m3 / m2**1.5)
+    if n < 4:
+        return math.nan
+    adjustment = 3 * (n - 1) ** 2 / ((n - 2) * (n - 3))
+    return n * (n + 1) * (n - 1) * m4 / ((n - 2) * (n - 3) * m2**2) - adjustment
 
 
 def _buffer_style(style, names, argument):
@@ -1625,6 +2158,10 @@ def _truthiness(expr, dtype):
     if kind == "bool":
         truth = expr
     elif kind == "number":
+        # Adding 0.0 makes -0.0 0.0, which the engine's float ordering tells
+        # apart from it: -0.0 is false.
+        if pa.types.is_floating(dtype):
+            expr = expr + lit(0.0)
         truth = expr != lit(0)
     elif kind == "string":
         truth = expr != lit("")
@@ -3546,16 +4083,20 @@ class GeoSeries(Series):
         rebuilt = self._as_column_kind(wkb.funcs.st_geomfromwkb(), own_crs=None)
         return self._geo(rebuilt)
 
-    def _aggregate(self, func, ddof=1, min_count=0):
-        """As for any column, for geometry: `count`, and `first`/`last`, which
-        take the smallest or largest WKB (a geometry that is not missing, as
-        there is no row order) and rebuild it with this column's spatial kind
-        and CRS once aggregated."""
+    def _aggregate(self, func, ddof=1, min_count=0, skipna=True):
+        """As for any column, for geometry: `count`, `any`/`all` (see
+        `_value_truth()`), and `first`/`last`, which take the smallest or
+        largest WKB (a geometry that is not missing, as there is no row order)
+        and rebuild it with this column's spatial kind and CRS once
+        aggregated."""
         if func == "count":
             return self._expr.funcs.count(), _same
         if func not in ("first", "last"):
-            # Refused as for any column that holds no numbers.
-            return super()._aggregate(func, ddof=ddof, min_count=min_count)
+            # any() and all(), or refused as for any column that holds no
+            # numbers.
+            return super()._aggregate(
+                func, ddof=ddof, min_count=min_count, skipna=skipna
+            )
         extreme = "min" if func == "first" else "max"
         wkb = getattr(self._expr.geo.as_binary().funcs, extreme)()
         ctx = self._df._ctx
@@ -3567,6 +4108,30 @@ class GeoSeries(Series):
             return _geometry_from_wkb(value, geography, crs, ctx)
 
         return wkb, rebuild
+
+    def _value_truth(self, method):
+        """True unless empty, as Shapely (and so GeoPandas) reads a geometry;
+        a missing one is false, as pandas reads None."""
+        return (~self._expr.funcs.st_isempty()).funcs.coalesce(lit(False))
+
+    def mode(self, dropna=True):
+        """The most frequent geometries, as a GeoPandas GeoSeries with this
+        column's CRS (GeoPandas' drops it), geometries alike if their WKB is,
+        as in `describe()`; in WKB order, a missing one last, as a lazy frame
+        has no order of first appearance."""
+        import pandas as pd
+
+        counts = self._geometry_counts(dropna)
+        most = _one_row(counts.agg(counts["n"].funcs.max().alias("n")))["n"]
+        if pd.isna(most):
+            modes = counts.limit(0)
+        else:
+            modes = counts.filter(counts["n"] == lit(int(most)))
+        modes = modes.sort(modes["x"].asc())
+        geometry = _geometry_from_wkb(
+            modes["x"], self._is_geography(), self.crs, self._df._ctx
+        )
+        return modes.select(geometry.alias(self._name)).to_pandas()[self._name]
 
     def _replacement(self, other, method):
         """`other` as WKB, to put in this column, with its type (None if
