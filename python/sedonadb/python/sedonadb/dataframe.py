@@ -1321,7 +1321,9 @@ class DataFrame:
         Python object (e.g., an `int` for an integer, `None` for a null). A
         geometry or geography is returned as a `ScalarGeometry`, which keeps its
         CRS and can be passed back to a query, and a raster as a `Raster`. So are
-        the geometries and rasters in a list, a struct or a map.
+        the geometries and rasters in a list, a struct or a map that came in with
+        their types; the engine's own `make_array()`, `named_struct()`, `map()`
+        and `array_agg()` hold them as `binary`, which comes back as WKB bytes.
 
         Raises a `ValueError` if the result does not have exactly one column and
         one row.

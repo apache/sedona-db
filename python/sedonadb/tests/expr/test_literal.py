@@ -577,6 +577,34 @@ def test_scalar_geometry():
     assert pa.array(lit(point)).type.crs == point_type.crs
 
 
+def test_scalar_geometry_equality():
+    point_type = ga.wkb().with_crs("EPSG:3857")
+    wkbs = [shapely.Point(0, 1).wkb, shapely.Point(0, 1).wkb, shapely.Point(1, 1).wkb]
+    point, same, other = (
+        ScalarGeometry(point_type.wrap_array(pa.array(wkbs)), i) for i in range(3)
+    )
+    assert point == same and hash(point) == hash(same)
+    assert point != other
+    assert len({point, same, other}) == 2
+
+    # Whatever the storage of the WKB or the spelling of the CRS
+    for value_type, storage in (
+        (ga.large_wkb().with_crs("EPSG:3857"), pa.large_binary()),
+        (ga.wkb().with_crs("epsg:3857"), pa.binary()),
+    ):
+        value = ScalarGeometry(value_type.wrap_array(pa.array(wkbs[:1], storage)))
+        assert point == value and hash(point) == hash(value)
+
+    # Of another CRS or kind, the same WKB is another value
+    for value_type in (
+        ga.wkb(),
+        ga.wkb().with_crs("EPSG:4326"),
+        point_type.with_edge_type(ga.EdgeType.SPHERICAL),
+    ):
+        assert point != ScalarGeometry(value_type.wrap_array(pa.array(wkbs[:1])))
+    assert point != shapely.Point(0, 1)
+
+
 def test_scalar_geography():
     spherical = ga.wkb().with_edge_type(ga.EdgeType.SPHERICAL).with_crs(ga.OGC_CRS84)
     point = ScalarGeometry(spherical.wrap_array(pa.array([shapely.Point(0, 1).wkb])))

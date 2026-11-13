@@ -313,9 +313,11 @@ def test_item_spatial(con):
 
     # Geometry and geography values keep their CRS and edge type, so they can be
     # passed back to a query
-    point = con.sql("SELECT ST_SetSRID(ST_Point(0, 1), 3857) AS geom").item()
+    point_query = "SELECT ST_SetSRID(ST_Point(0, 1), 3857) AS geom"
+    point = con.sql(point_query).item()
     assert isinstance(point, ScalarGeometry)
     assert point.to_shapely().equals(shapely.Point(0, 1))
+    assert point == con.sql(point_query).item()
     assert con.sql("SELECT ST_SRID($1)", params=(point,)).item() == 3857
     query = "SELECT ST_Intersects($1, ST_SetSRID(ST_Point(0, 1), 3857))"
     assert con.sql(query, params=(point,)).item() is True
@@ -350,6 +352,11 @@ def test_item_nested(con):
     items = con.create_data_frame(pa.table({"points": lists})).item()
     assert len(items) == 2 and items[1] is None
     assert con.sql("SELECT ST_SRID($1)", params=(items[0],)).item() == 3857
+
+    # The engine's own lists and structs hold geometries as binary
+    wkb = shapely.Point(0, 1).wkb
+    assert con.sql("SELECT make_array(ST_Point(0, 1)) AS v").item() == [wkb]
+    assert con.sql("SELECT named_struct('g', ST_Point(0, 1)) AS v").item() == {"g": wkb}
 
 
 @pytest.mark.parametrize(

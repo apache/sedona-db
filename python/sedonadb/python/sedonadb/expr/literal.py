@@ -179,6 +179,28 @@ class ScalarGeometry:
         """Implement the array protocol so this works with lit()"""
         return self._array.__arrow_c_array__(requested_schema=requested_schema)
 
+    def __eq__(self, other) -> bool:
+        """Two values are equal if their WKB, their CRS (as the engine compares
+        CRSes) and whether they are a geometry or a geography are"""
+        if not isinstance(other, ScalarGeometry):
+            return NotImplemented
+        return self.wkb == other.wkb and self._kind() == other._kind()
+
+    def __hash__(self) -> int:
+        # Equal values can spell their CRS differently but share their WKB
+        return hash(self.wkb)
+
+    def _kind(self) -> PySedonaType:
+        # The edges and the CRS without the storage of the WKB, which can differ
+        # for the same value (e.g., binary_view from a Parquet file); pyarrow's
+        # comparison of GeoArrow types leaves out the edges and the CRS
+        import geoarrow.pyarrow as ga
+
+        value_type = self._array.type
+        return PySedonaType(
+            ga.wkb().with_crs(value_type.crs).with_edge_type(value_type.edge_type)
+        )
+
     def __repr__(self) -> str:
         sedona_type = repr(PySedonaType(self._array.type)).removeprefix("SedonaType ")
         try:
