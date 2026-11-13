@@ -1397,6 +1397,25 @@ class Series:
         # Cheap: show the underlying expression rather than executing.
         return f"<{type(self).__name__} {self._expr!r} (lazy; call .to_pandas())>"
 
+    # -- accessors ---------------------------------------------------------
+    # Last in the class: a property named `str` hides the builtin from the
+    # rest of the class body.
+    @property
+    def str(self):
+        """String methods for a column of strings, as pandas' `Series.str`
+        (an AttributeError for other columns, as in pandas)."""
+        from sedonadb_geopandas._accessors import StringMethods
+
+        return StringMethods(self)
+
+    @property
+    def dt(self):
+        """Date and time properties for a column of timestamps or durations,
+        as pandas' `Series.dt` (an AttributeError for other columns)."""
+        from sedonadb_geopandas._accessors import datetime_properties
+
+        return datetime_properties(self)
+
 
 def _zero_normalized(df, expr):
     """`expr` (a column expression or a scalar), with -0.0 as 0.0 if it is

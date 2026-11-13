@@ -251,6 +251,31 @@ but no Series or frame (a pandas one included), alone or in the dict, which
 would need row alignment; a value that is not a geometry matches no geometry, as
 in GeoPandas.
 
+The `.str` and `.dt` accessors compute in the engine. Their regular expressions
+are the engine's (Rust's `regex` crate, close to the RE2 that pandas 3's
+pyarrow-backed strings use): no lookaround or backreferences, `$` matching only
+at the very end (Python's also matches before a final newline), and no empty
+match right after another. `find()` and `rfind()` take no `start` or `end`,
+`slice()` a step of 1 (or -1 over the whole value), `replace()` replaces all,
+the first, or none (`n` of -1, 1 or 0) and takes no callable, and `cat()` joins
+columns of the same frame: without `others` it would join values in row order,
+which a lazy frame does not have. `contains()` of text (`regex=False`) ignoring
+case compares the values in upper case, as pandas does for Python strings ("ß"
+contains "ss"; pandas 3's pyarrow-backed strings fold one character at a time).
+A boolean string method answers for a missing value as the installed pandas
+does (pandas 2 leaves it missing, pandas 3 makes it False). `.dt` reads the
+wall time of timestamps with a time zone, as pandas does; `floor()`, `ceil()`
+and `round()` take fixed frequencies, positive ones that are a multiple of the
+column's unit or divide it, as in pandas 3 (pandas 2 rounds to a whole number of
+units), and a wall time that is ambiguous or does not exist after rounding or
+localizing fails, as in pandas by default (`ambiguous` and `nonexistent` take
+`"raise"` only). `day_name()` and `month_name()` are in English, `date` and
+`time` give a missing value as None rather than NaT, and `time` is to the
+microsecond, as Python's times are. A timestamp past the years the engine
+reads dates of, -262143 to 262142 (which seconds, milliseconds and microseconds
+reach), raises an error for its fields, names, date and time, where pandas
+gives most of them.
+
 `merge()` joins on columns as pandas does, including in matching a missing key
 (NaN or None) with a missing key, unlike SQL; without an index, its rows don't
 keep the left frame's order (`sort=True` orders them by key), and
