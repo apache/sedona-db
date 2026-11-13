@@ -77,6 +77,7 @@ use sedona_pointcloud::las::{
     options::{GeometryEncoding, LasExtraBytes, LasOptions},
 };
 use sedona_raster_functions::rs_ensure_loaded::RsEnsureLoaded;
+use sedona_raster_gdal::GdalRasterFileFormatFactory;
 use sedona_schema::schema::SedonaSchema;
 #[cfg(feature = "gpu")]
 use sedona_spatial_join_gpu::options::GpuOptions;
@@ -310,6 +311,12 @@ impl SedonaContext {
 
         // Register GeoParquet file format
         state.register_file_format(Arc::new(GeoParquetFormatFactory::new()), true)?;
+
+        // GeoTIFF is one concrete registration of the generic GDAL raster
+        // reader. Additional GDAL-supported extensions can use the same
+        // parameterized factory without changing the reader implementation.
+        state.register_file_format(Arc::new(GdalRasterFileFormatFactory::new("tif")), false)?;
+        state.register_file_format(Arc::new(GdalRasterFileFormatFactory::new("tiff")), false)?;
 
         #[cfg(feature = "pointcloud")]
         {
@@ -1555,6 +1562,44 @@ mod tests {
             ],
             &batches
         );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "gdal")]
+    #[tokio::test]
+    async fn gdal_raster_file_format_reads_metadata_and_native_tiles() -> Result<()> {
+        let ctx = SedonaContext::new_local_interactive().await?;
+        let path = sedona_testing::data::test_raster("landsat8.tif")?;
+
+        let batches = ctx
+            .sql(&format!(
+                "SELECT RS_Width(raster) AS width, RS_Height(raster) AS height FROM '{path}'"
+            ))
+            .await?
+            .collect()
+            .await?;
+        assert_batches_eq!(
+            [
+                "+-------+--------+",
+                "| width | height |",
+                "+-------+--------+",
+                "| 512   | 512    |",
+                "+-------+--------+",
+            ],
+            &batches
+        );
+
+        let options = HashMap::from([("tile".to_string(), "true".to_string())]);
+        let tiled = ctx.read(&path, &options, None, false).await?;
+        let schema = tiled.schema().as_arrow();
+        assert_eq!(schema.fields().len(), 1);
+        assert_eq!(schema.field(0).name(), "raster");
+        assert_eq!(
+            SedonaType::from_storage_field(schema.field(0))?,
+            SedonaType::Raster
+        );
+        assert_eq!(tiled.count().await?, 4);
 
         Ok(())
     }
