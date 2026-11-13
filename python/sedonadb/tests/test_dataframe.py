@@ -308,12 +308,24 @@ def test_item(con):
 
 def test_item_spatial(con):
     import shapely
+    from sedonadb.expr import ScalarGeometry
+    from sedonadb.raster import Raster
 
-    # Geometry and geography values come back as Shapely geometries
-    point = con.sql("SELECT ST_Point(0, 1) AS geom").item()
-    assert isinstance(point, shapely.Point) and point.wkt == "POINT (0 1)"
-    point = con.sql("SELECT ST_GeogFromWKT('POINT (0 1)') AS geog").item()
-    assert isinstance(point, shapely.Point) and point.wkt == "POINT (0 1)"
+    # Geometry and geography values keep their CRS and edge type, so they can be
+    # passed back to a query
+    point = con.sql("SELECT ST_SetSRID(ST_Point(0, 1), 3857) AS geom").item()
+    assert isinstance(point, ScalarGeometry)
+    assert point.to_shapely().equals(shapely.Point(0, 1))
+    assert con.sql("SELECT ST_SRID($1)", params=(point,)).item() == 3857
+    query = "SELECT ST_Intersects($1, ST_SetSRID(ST_Point(0, 1), 3857))"
+    assert con.sql(query, params=(point,)).item() is True
+    geog = con.sql("SELECT ST_GeogFromWKT('POINT (0 1)') AS geog").item()
+    assert isinstance(geog, ScalarGeometry)
+    assert geog.to_shapely().equals(shapely.Point(0, 1))
+    schema = con.sql("SELECT $1 AS geog", params=(geog,)).schema
+    assert repr(schema.field("geog").type).endswith(
+        "geography<Wkb(ogc:crs84, Spherical)>"
+    )
     assert (
         con.sql("SELECT ST_GeomFromWKT(CAST(NULL AS VARCHAR)) AS geom").item() is None
     )
@@ -322,10 +334,22 @@ def test_item_spatial(con):
 
     # Rasters come back as the Python raster object
     raster = con.sql("SELECT RS_Example() AS rast").item()
-    assert type(raster).__name__ == "Raster"
+    assert isinstance(raster, Raster)
     assert (
         con.sql("SELECT RS_FromGDALRaster(CAST(NULL AS BYTEA)) AS rast").item() is None
     )
+
+
+def test_item_nested(con):
+    import shapely
+
+    # The geometries inside a list keep their CRS too
+    point_type = ga.wkb().with_crs("EPSG:3857")
+    points = point_type.wrap_array(pa.array([shapely.Point(0, 1).wkb, None]))
+    lists = pa.ListArray.from_arrays(pa.array([0, 2], pa.int32()), points)
+    items = con.create_data_frame(pa.table({"points": lists})).item()
+    assert len(items) == 2 and items[1] is None
+    assert con.sql("SELECT ST_SRID($1)", params=(items[0],)).item() == 3857
 
 
 @pytest.mark.parametrize(

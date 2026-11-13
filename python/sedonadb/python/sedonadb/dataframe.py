@@ -1319,8 +1319,9 @@ class DataFrame:
         This is useful for a query expected to give a single value, such as an
         aggregate or a filter that leaves one row. The value is returned as a
         Python object (e.g., an `int` for an integer, `None` for a null). A
-        geometry or geography is returned as a Shapely geometry, which requires
-        that shapely is installed.
+        geometry or geography is returned as a `ScalarGeometry`, which keeps its
+        CRS and can be passed back to a query, and a raster as a `Raster`. So are
+        the geometries and rasters in a list, a struct or a map.
 
         Raises a `ValueError` if the result does not have exactly one column and
         one row.
@@ -1331,6 +1332,7 @@ class DataFrame:
             >>> sd.sql("SELECT 1 + 1 AS value").item()
             2
             >>> sd.sql("SELECT ST_Point(0, 1) AS geom").item()
+            ScalarGeometry geometry<Wkb>
             <POINT (0 1)>
 
         """
@@ -1346,17 +1348,10 @@ class DataFrame:
             got = "none" if table.num_rows == 0 else "more than one"
             raise ValueError(f"item() requires exactly one row, got {got}")
 
-        scalar = table.column(0)[0]
-        if not scalar.is_valid:
-            return None
+        from sedonadb.expr.literal import _resolve_py_value
 
-        value = scalar.as_py()
-        if self._impl.geometry_columns():
-            import shapely
-
-            return shapely.from_wkb(value)
-
-        return value
+        column = table.column(0)
+        return _resolve_py_value(next(chunk for chunk in column.chunks if len(chunk)))
 
     def with_params(self, *args: List[Any], **kwargs: Dict[str, Any]):
         """Replace unbound parameters in this query

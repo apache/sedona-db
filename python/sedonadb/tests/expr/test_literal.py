@@ -23,7 +23,12 @@ import pandas as pd
 import geoarrow.pyarrow as ga
 import geopandas.testing
 
-from sedonadb.expr.literal import _resolve_arrow_array, lit
+from sedonadb.expr.literal import (
+    ScalarGeometry,
+    _resolve_arrow_array,
+    _resolve_py_value,
+    lit,
+)
 from sedonadb.expr.expression import Expr
 import pytest
 
@@ -553,3 +558,120 @@ def test_numpy_void_literal():
     lit_array = pa.array(lit(record))
     assert lit_array.type == pa.struct([("c", pa.int16()), ("r", pa.float32())])
     assert lit_array.to_pylist() == [{"c": 3, "r": 1.5}]
+
+
+def test_scalar_geometry():
+    point_type = ga.wkb().with_crs("EPSG:3857")
+    values = point_type.wrap_array(pa.array([None, shapely.Point(0, 1).wkb]))
+    point = ScalarGeometry(values, 1)
+
+    assert point.crs == point_type.crs
+    assert point.wkb == shapely.Point(0, 1).wkb
+    assert point.to_shapely().equals(shapely.Point(0, 1))
+    assert point.__geo_interface__ == {"type": "Point", "coordinates": (0.0, 1.0)}
+    assert shapely.geometry.shape(point).equals(shapely.Point(0, 1))
+    assert repr(point) == "ScalarGeometry geometry<Wkb(epsg:3857)>\n<POINT (0 1)>"
+
+    # As a literal, it is the one value with its type
+    assert pa.array(lit(point)).equals(values.slice(1, 1))
+    assert pa.array(lit(point)).type.crs == point_type.crs
+
+
+def test_scalar_geography():
+    spherical = ga.wkb().with_edge_type(ga.EdgeType.SPHERICAL).with_crs(ga.OGC_CRS84)
+    point = ScalarGeometry(spherical.wrap_array(pa.array([shapely.Point(0, 1).wkb])))
+    assert pa.array(lit(point)).type.edge_type == ga.EdgeType.SPHERICAL
+    assert repr(point).startswith("ScalarGeometry geography<Wkb(ogc:crs84, Spherical)>")
+
+
+def test_scalar_geometry_repr_truncates_long_values():
+    line = shapely.LineString([(i, i) for i in range(100)])
+    value = ScalarGeometry(ga.wkb().wrap_array(pa.array([line.wkb])))
+    header, wkt = repr(value).split("\n")
+    assert header == "ScalarGeometry geometry<Wkb>"
+    assert wkt == f"<{line.wkt[:67]}...>"
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        pa.array([1, None, 3]),
+        pa.array(["a", None, "c"]).slice(1),
+        pa.array([[1], None, [2, 3]]),
+        pa.array([[1, 2], [3, 4]], pa.list_(pa.int64(), 2)),
+        pa.array([{"a": 1, "b": [2]}, None, {"a": None, "b": None}]),
+        pa.array(
+            [[("k", 1)], None, [("k", 2), ("l", None)]],
+            pa.map_(pa.string(), pa.int64()),
+        ),
+    ],
+)
+def test_resolve_py_value_as_py(values):
+    # Without a geometry or a raster, a value is what pyarrow gives
+    assert [
+        _resolve_py_value(values, i) for i in range(len(values))
+    ] == values.to_pylist()
+
+
+def test_resolve_py_value_geometry():
+    point_type = ga.wkb().with_crs("EPSG:3857")
+    points = point_type.wrap_array(pa.array([None, shapely.Point(0, 1).wkb]))
+    assert _resolve_py_value(points, 0) is None
+    point = _resolve_py_value(points, 1)
+    assert isinstance(point, ScalarGeometry)
+    assert point.wkb == shapely.Point(0, 1).wkb and point.crs == point_type.crs
+
+
+def test_resolve_py_value_nested_geometry():
+    # pyarrow's as_py() gives the geometries inside a list, a struct or a map as
+    # WKB, without their CRS
+    point_type = ga.wkb().with_crs("EPSG:3857")
+    wkbs = [shapely.Point(0, 1).wkb, None, shapely.Point(1, 2).wkb]
+    points = point_type.wrap_array(pa.array(wkbs))
+    offsets = pa.array([0, 1, 3], pa.int32())
+
+    def check(value, wkb):
+        if wkb is None:
+            assert value is None
+        else:
+            assert isinstance(value, ScalarGeometry)
+            assert value.wkb == wkb and value.crs == point_type.crs
+
+    items = _resolve_py_value(pa.ListArray.from_arrays(offsets, points), 1)
+    assert len(items) == 2
+    check(items[0], None)
+    check(items[1], wkbs[2])
+
+    structs = pa.StructArray.from_arrays([pa.array([1, 2, 3]), points], ["a", "geom"])
+    fields = _resolve_py_value(structs, 2)
+    assert list(fields) == ["a", "geom"] and fields["a"] == 3
+    check(fields["geom"], wkbs[2])
+
+    keys = pa.array(["p", "q", "r"])
+    entries = _resolve_py_value(pa.MapArray.from_arrays(offsets, keys, points), 1)
+    assert [key for key, _ in entries] == ["q", "r"]
+    check(entries[0][1], None)
+    check(entries[1][1], wkbs[2])
+
+
+def test_resolve_py_value_raster_shares_buffers():
+    from sedonadb._lib import raster_type
+    from sedonadb.raster import Raster
+
+    raster = Raster.from_numpy(np.arange(1024, dtype=np.uint8).reshape(32, 32))
+    source = _resolve_arrow_array([None, raster], raster_type())
+    assert _resolve_py_value(source, 0) is None
+
+    # The raster refers to the array's pixels rather than copying them
+    result = _resolve_py_value(source, 1)
+    assert isinstance(result, Raster)
+    source_data = source.storage.field("bands").values.field("data")
+    result_data = pa.array(result).storage.field("bands").values.field("data")
+    assert result_data.buffers()[2].address == source_data.buffers()[2].address
+
+    # and so do the rasters inside a list
+    rasters = pa.ListArray.from_arrays(pa.array([0, 2], pa.int32()), source)
+    items = _resolve_py_value(rasters, 0)
+    assert items[0] is None
+    item_data = pa.array(items[1]).storage.field("bands").values.field("data")
+    assert item_data.buffers()[2].address == source_data.buffers()[2].address
