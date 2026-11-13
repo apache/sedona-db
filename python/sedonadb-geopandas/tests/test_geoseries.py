@@ -27,6 +27,7 @@ import warnings
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 import pyproj
 import pytest
 import shapely
@@ -924,19 +925,26 @@ def test_centroid_origin_leaves_collections_of_empty_parts(call):
     ids=["interpolate", "centroid"],
 )
 def test_leaving_empties_out_keeps_a_wkb_view_column(call):
-    # ST_GeomFromWKB stores its WKB as a binary view, which the empty
-    # geometries left out must not be mixed with plain binary for.
+    # Supply a binary view explicitly: the empty geometries left out must
+    # not be mixed with plain binary, regardless of the WKB parser's output type.
     wkts = ["LINESTRING (0 0, 2 0)", "LINESTRING EMPTY", "MULTILINESTRING (EMPTY)"]
-    values = ", ".join(f"('{w}')" for w in wkts) + ", (NULL)"
+    gs = gpd.GeoSeries.from_wkt([*wkts, None])
+    field = pa.field(
+        "g",
+        pa.binary_view(),
+        metadata={
+            "ARROW:extension:name": "geoarrow.wkb",
+            "ARROW:extension:metadata": "{}",
+        },
+    )
+    table = pa.Table.from_arrays(
+        [pa.array(gs.to_wkb().tolist(), type=pa.binary_view())],
+        schema=pa.schema([field]),
+    )
     gdf = sgpd.GeoDataFrame(
-        sgpd.default_context().sql(
-            "SELECT ST_GeomFromWKB(ST_AsBinary(ST_GeomFromWKT(w))) AS g "
-            f"FROM (VALUES {values}) AS t(w)"
-        ),
-        geometry="g",
+        sgpd.default_context().create_data_frame(table), geometry="g"
     )
     assert "View" in str(gdf._df.schema.field("g").type)
-    gs = gpd.GeoSeries.from_wkt([*wkts, None])
     _assert_same_geometries(call(gdf.geometry), call(gs))
 
 
