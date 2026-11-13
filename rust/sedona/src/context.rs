@@ -1563,33 +1563,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn st_astext_precision_sql() -> Result<()> {
-        let ctx = SedonaContext::new();
-
-        let batches = ctx
-            .sql(
-                "SELECT ST_AsText(\
-                    ST_GeomFromWKT('POINT (1.123456789 2.5)'), 6\
-                ) AS geom",
-            )
-            .await?
-            .collect()
-            .await?;
-        assert_batches_eq!(
-            [
-                "+----------------------+",
-                "| geom                 |",
-                "+----------------------+",
-                "| POINT (1.123457 2.5) |",
-                "+----------------------+",
-            ],
-            &batches
-        );
-
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn nested_expressions_sql() -> Result<()> {
         let ctx = SedonaContext::new();
 

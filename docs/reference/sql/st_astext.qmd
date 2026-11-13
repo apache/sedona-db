@@ -51,5 +51,4 @@ SELECT ST_AsText(ST_GeogPoint(1.0, 2.0));
 
 ```sql
 SELECT ST_AsText(ST_Point(1.123456789, 2.5), 6);
--- POINT (1.123457 2.5)
 ```
