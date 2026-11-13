@@ -294,6 +294,84 @@ def test_count(con):
     assert df.count() == 3
 
 
+def test_item(con):
+    value = con.sql("SELECT 1 + 1 AS value").item()
+    assert value == 2 and type(value) is int
+    assert con.sql("SELECT 'one' AS value").item() == "one"
+    assert con.sql("SELECT CAST(NULL AS BIGINT) AS value").item() is None
+
+    # An aggregate, and a filter that leaves one row
+    df = con.sql("SELECT * FROM (VALUES (1), (2), (3)) AS t(x)")
+    assert con.sql("SELECT sum(x) FROM (VALUES (1), (2), (3)) AS t(x)").item() == 6
+    assert df.filter(df["x"] == 2).item() == 2
+
+
+def test_item_spatial(con):
+    import shapely
+    from sedonadb.expr import ScalarGeometry
+    from sedonadb.raster import Raster
+
+    # Geometry and geography values keep their CRS and edge type, so they can be
+    # passed back to a query
+    point_query = "SELECT ST_SetSRID(ST_Point(0, 1), 3857) AS geom"
+    point = con.sql(point_query).item()
+    assert isinstance(point, ScalarGeometry)
+    assert point.to_shapely().equals(shapely.Point(0, 1))
+    assert point == con.sql(point_query).item()
+    assert con.sql("SELECT ST_SRID($1)", params=(point,)).item() == 3857
+    query = "SELECT ST_Intersects($1, ST_SetSRID(ST_Point(0, 1), 3857))"
+    assert con.sql(query, params=(point,)).item() is True
+    geog = con.sql("SELECT ST_GeogFromWKT('POINT (0 1)') AS geog").item()
+    assert isinstance(geog, ScalarGeometry)
+    assert geog.to_shapely().equals(shapely.Point(0, 1))
+    schema = con.sql("SELECT $1 AS geog", params=(geog,)).schema
+    assert repr(schema.field("geog").type).endswith(
+        "geography<Wkb(ogc:crs84, Spherical)>"
+    )
+    assert (
+        con.sql("SELECT ST_GeomFromWKT(CAST(NULL AS VARCHAR)) AS geom").item() is None
+    )
+    # but not a column that is only named like one
+    assert con.sql("SELECT X'0102' AS geometry").item() == b"\x01\x02"
+
+    # Rasters come back as the Python raster object
+    raster = con.sql("SELECT RS_Example() AS rast").item()
+    assert isinstance(raster, Raster)
+    assert (
+        con.sql("SELECT RS_FromGDALRaster(CAST(NULL AS BYTEA)) AS rast").item() is None
+    )
+
+
+def test_item_nested(con):
+    import shapely
+
+    # The geometries inside a list keep their CRS too
+    point_type = ga.wkb().with_crs("EPSG:3857")
+    points = point_type.wrap_array(pa.array([shapely.Point(0, 1).wkb, None]))
+    lists = pa.ListArray.from_arrays(pa.array([0, 2], pa.int32()), points)
+    items = con.create_data_frame(pa.table({"points": lists})).item()
+    assert len(items) == 2 and items[1] is None
+    assert con.sql("SELECT ST_SRID($1)", params=(items[0],)).item() == 3857
+
+    # The engine's own lists and structs hold geometries as binary
+    wkb = shapely.Point(0, 1).wkb
+    assert con.sql("SELECT make_array(ST_Point(0, 1)) AS v").item() == [wkb]
+    assert con.sql("SELECT named_struct('g', ST_Point(0, 1)) AS v").item() == {"g": wkb}
+
+
+@pytest.mark.parametrize(
+    "query, message",
+    [
+        ("SELECT 1 AS a, 2 AS b", "exactly one column, got 2"),
+        ("SELECT * FROM (VALUES (1), (2), (3)) AS t(x)", "exactly one row, got more"),
+        ("SELECT * FROM (VALUES (1)) AS t(x) WHERE x > 1", "exactly one row, got none"),
+    ],
+)
+def test_item_needs_one_value(con, query, message):
+    with pytest.raises(ValueError, match=message):
+        con.sql(query).item()
+
+
 def test_params(con):
     # Binding a query that does not contain parameters with no parameters
     # should work

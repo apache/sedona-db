@@ -486,6 +486,8 @@ class RasterScalar(pa.ExtensionScalar):
     """Scalar type for sedona.raster extension arrays."""
 
     def as_py(self):
+        if not self.is_valid:
+            return None
         return Raster(pa.array([self.value]))
 
 

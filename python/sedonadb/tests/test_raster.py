@@ -40,6 +40,15 @@ def test_type_class_resolution(con):
     assert isinstance(tab["raster"][0].as_py(), Raster)
 
 
+def test_null_raster_scalar(con):
+    tab = con.sql(
+        "SELECT RS_FromGDALRaster(CAST(NULL AS BYTEA)) AS raster"
+    ).to_arrow_table()
+    assert isinstance(tab["raster"][0], RasterScalar)
+    assert tab["raster"][0].as_py() is None
+    assert tab["raster"].to_pylist() == [None]
+
+
 def test_raster_from_chunked_array(con):
     t = con.sql("SELECT RS_Example() as raster")
     tab = pa.concat_tables([t.to_arrow_table(), t.to_arrow_table()])

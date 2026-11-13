@@ -1313,6 +1313,48 @@ class DataFrame:
         """
         return self._impl.count()
 
+    def item(self) -> Any:
+        """Execute and return the value of a result with one row and one column
+
+        This is useful for a query expected to give a single value, such as an
+        aggregate or a filter that leaves one row. The value is returned as a
+        Python object (e.g., an `int` for an integer, `None` for a null). A
+        geometry or geography is returned as a `ScalarGeometry`, which keeps its
+        CRS and can be passed back to a query, and a raster as a `Raster`. So are
+        the geometries and rasters in a list, a struct or a map that came in with
+        their types; the engine's own `make_array()`, `named_struct()`, `map()`
+        and `array_agg()` hold them as `binary`, which comes back as WKB bytes.
+
+        Raises a `ValueError` if the result does not have exactly one column and
+        one row.
+
+        Examples:
+
+            >>> sd = sedona.db.connect()
+            >>> sd.sql("SELECT 1 + 1 AS value").item()
+            2
+            >>> sd.sql("SELECT ST_Point(0, 1) AS geom").item()
+            ScalarGeometry geometry<Wkb>
+            <POINT (0 1)>
+
+        """
+        columns = self.columns
+        if len(columns) != 1:
+            raise ValueError(
+                f"item() requires exactly one column, got {len(columns)}: {columns}"
+            )
+
+        # Two rows are enough to tell one row from more than one
+        table = self.limit(2).to_arrow_table()
+        if table.num_rows != 1:
+            got = "none" if table.num_rows == 0 else "more than one"
+            raise ValueError(f"item() requires exactly one row, got {got}")
+
+        from sedonadb.expr.literal import _resolve_py_value
+
+        column = table.column(0)
+        return _resolve_py_value(next(chunk for chunk in column.chunks if len(chunk)))
+
     def with_params(self, *args: List[Any], **kwargs: Dict[str, Any]):
         """Replace unbound parameters in this query
 
