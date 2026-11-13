@@ -11,7 +11,7 @@ sd_write_parquet(
   partition_by = character(0),
   sort_by = character(0),
   single_file_output = NULL,
-  geoparquet_version = "1.0",
+  geoparquet_version = "1.1",
   overwrite_bbox_columns = FALSE,
   max_row_group_size = NULL,
   compression = NULL
@@ -43,20 +43,22 @@ a single file is written if \code{partition_by} is unspecified and
 \code{path} ends with \code{.parquet}}
 
 \item{geoparquet_version}{GeoParquet metadata version to write if output contains
-one or more geometry columns. The default ("1.0") is the most widely
-supported and will result in geometry columns being recognized in many
-readers; however, only includes statistics at the file level.
-Use "1.1" to compute an additional bounding box column
-for every geometry column in the output: some readers can use these columns
-to prune row groups when files contain an effective spatial ordering.
-The extra columns will appear just before their geometry column and
-will be named "[geom_col_name]_bbox" for all geometry columns except
-"geometry", whose bounding box column name is just "bbox"}
+one or more geometry columns. The default ("1.1") computes an additional
+bounding box column for every geometry column in the output: readers such as
+SedonaDB, Sedona Spark, GDAL, GeoPandas and DuckDB use these columns to
+prune files and row groups, especially when files contain an effective
+spatial ordering. The extra columns appear just before their geometry
+column and are named "[geom_col_name]_bbox" for all geometry columns
+except "geometry", whose bounding box column name is just "bbox".
+Use "1.0" to omit the bounding box columns; it is recognized by the widest
+range of readers, but carries nothing a reader could prune with}
 
-\item{overwrite_bbox_columns}{Use TRUE to overwrite any bounding box columns
-that already exist in the input. This is useful in a read -> modify
--> write scenario to ensure these columns are up-to-date. If FALSE
-(the default), an error will be raised if a bbox column already exists}
+\item{overwrite_bbox_columns}{Use TRUE to replace a column that has a bounding
+box column's name but not its shape. A column with the name and the shape
+(a struct of xmin, ymin, xmax, ymax) is a bounding box column from an
+earlier write and is always recomputed, so a read -> write of a GeoParquet
+1.1 file needs no option. If FALSE (the default), any other column of that
+name raises an error rather than being replaced}
 
 \item{max_row_group_size}{Target maximum number of rows in each row group.
 Defaults to the global configuration value (1M rows).}

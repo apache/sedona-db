@@ -333,13 +333,16 @@ def test_write_geoparquet_options(geoarrow_data):
         metadata = parquet.read_metadata(tmp_parquet)
         assert metadata.row_group(0).num_rows == 1024
 
-        # Set via keyword arg and ensure that value is respected
+        # Set via keyword arg and ensure that value is respected. GeoParquet 1.0
+        # here and below: the bbox column of the default 1.1 output compresses
+        # poorly and would blur the size comparison that follows.
         con.sql(
             "SET datafusion.execution.parquet.max_row_group_size = 1000000"
         ).execute()
         con.create_data_frame(gdf).to_parquet(
             tmp_parquet,
             max_row_group_size=1024,
+            geoparquet_version="1.0",
         )
 
         gdf_roundtrip = geopandas.read_parquet(tmp_parquet)
@@ -353,6 +356,7 @@ def test_write_geoparquet_options(geoarrow_data):
         con.create_data_frame(gdf).to_parquet(
             tmp_parquet,
             compression="uncompressed",
+            geoparquet_version="1.0",
         )
         assert tmp_parquet.stat().st_size > (size_with_default_compression * 2)
 
@@ -423,22 +427,53 @@ def test_write_geoparquet_1_1(con, geoarrow_data):
         df_roundtrip = con.read_parquet(tmp_parquet).to_pandas()
         assert "bbox" in df_roundtrip.columns
 
-        # An attempt to rewrite this should fail because it would have to overwrite
-        # the bbox column
+        # Rewriting it recomputes the bbox column in place: a column with the
+        # covering's name and shape is the first write's, not the user's data
         tmp_parquet2 = Path(td) / "tmp2.parquet"
+        con.read_parquet(tmp_parquet).to_parquet(tmp_parquet2, geoparquet_version="1.1")
+        df_roundtrip = con.read_parquet(tmp_parquet2).to_pandas()
+        assert "bbox" in df_roundtrip.columns
+
+        # A "bbox" column of any other type is the user's, and is only replaced
+        # when asked
+        tmp_parquet3 = Path(td) / "tmp3.parquet"
+        df_other_bbox = con.sql(
+            "SELECT 'not a bbox' AS bbox, ST_Point(0, 1) AS geometry"
+        )
         with pytest.raises(
             SedonaError, match="Can't overwrite GeoParquet 1.1 bbox column 'bbox'"
         ):
-            con.read_parquet(tmp_parquet).to_parquet(
-                tmp_parquet2, geoparquet_version="1.1"
-            )
-
-        # ...unless we pass the appropriate option
-        con.read_parquet(tmp_parquet).to_parquet(
-            tmp_parquet2, geoparquet_version="1.1", overwrite_bbox_columns=True
+            df_other_bbox.to_parquet(tmp_parquet3, geoparquet_version="1.1")
+        df_other_bbox.to_parquet(
+            tmp_parquet3, geoparquet_version="1.1", overwrite_bbox_columns=True
         )
-        df_roundtrip = con.read_parquet(tmp_parquet2).to_pandas()
-        assert "bbox" in df_roundtrip.columns
+        assert "bbox" in con.read_parquet(tmp_parquet3).to_pandas().columns
+
+
+def test_write_geoparquet_default_is_1_1(con):
+    # Without a version, the writer adds a bbox covering column and declares it
+    df = con.sql("SELECT ST_Point(1, 2) AS geometry")
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp_parquet = Path(td) / "tmp.parquet"
+        df.to_parquet(tmp_parquet)
+
+        geo_metadata = json.loads(
+            parquet.ParquetFile(tmp_parquet).metadata.metadata[b"geo"]
+        )
+        assert geo_metadata["version"] == "1.1.0"
+        assert geo_metadata["columns"]["geometry"]["covering"] == {
+            "bbox": {
+                "xmin": ["bbox", "xmin"],
+                "ymin": ["bbox", "ymin"],
+                "xmax": ["bbox", "xmax"],
+                "ymax": ["bbox", "ymax"],
+            }
+        }
+        assert parquet.ParquetFile(tmp_parquet).schema_arrow.names == [
+            "bbox",
+            "geometry",
+        ]
 
 
 def test_write_geoparquet_bbox_columns_option(con):
@@ -802,7 +837,9 @@ def test_read_partitioned_parquet(con):
     with tempfile.TemporaryDirectory() as td:
         out_dir = Path(td) / "out_dir"
 
-        t.to_parquet(out_dir, partition_by="grp")
+        # GeoParquet 1.0: the subject is partition discovery, and 1.1 would add a
+        # geom_bbox column to compare against
+        t.to_parquet(out_dir, partition_by="grp", geoparquet_version="1.0")
 
         # Test default partitioning read behaviour (autodiscover)
         result = con.read_parquet(out_dir)
