@@ -118,7 +118,7 @@ def test_read_ogr_multi_file(con):
         con.create_data_frame(gdf).to_view("tmp_gdf", overwrite=True)
         con.sql(
             """SELECT idx, partition::VARCHAR AS partition, wkb_geometry FROM tmp_gdf"""
-        ).to_parquet(td, partition_by="partition")
+        ).to_parquet(td, partition_by="partition", geoparquet_version="1.0")
         for parquet_path in Path(td).rglob("*.parquet"):
             fgb_path = str(parquet_path).replace(".parquet", ".fgb")
             con.read_parquet(parquet_path).to_pandas().to_file(fgb_path)

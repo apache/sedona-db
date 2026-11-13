@@ -937,9 +937,42 @@ mod test {
         let ctx = setup_context();
         let df = ctx.table(&example).await.unwrap();
 
-        let logical_types =
-            test_dataframe_roundtrip(&ctx, df, TableGeoParquetOptions::default()).await;
+        // GeoParquet 1.0: no bbox column, so the output has the input's columns
+        let options = TableGeoParquetOptions {
+            geoparquet_version: GeoParquetVersion::V1_0,
+            ..Default::default()
+        };
+        let logical_types = test_dataframe_roundtrip(&ctx, df, options).await;
         assert!(logical_types.get("geometry").unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn writer_defaults_to_geoparquet_1_1_with_a_bbox_covering() {
+        let example = test_geoparquet("example", "geometry").unwrap();
+        let ctx = setup_context();
+        let tmpdir = tempdir().unwrap();
+        let path = tmpdir.path().join("default.parquet");
+        let df = ctx.table(&example).await.unwrap();
+
+        write_dataframe_to_path(&ctx, df, &path, TableGeoParquetOptions::default()).await;
+
+        let metadata = read_geoparquet_metadata(&path);
+        assert_eq!(metadata.version, "1.1.0");
+        assert_eq!(
+            metadata.columns["geometry"].covering,
+            Some(GeoParquetCovering::bbox_struct_xy("bbox"))
+        );
+        let read_back = ctx
+            .table(path.to_string_lossy().into_owned())
+            .await
+            .unwrap();
+        let names = read_back
+            .schema()
+            .fields()
+            .iter()
+            .map(|f| f.name().as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["wkt", "bbox", "geometry"]);
     }
 
     #[tokio::test]
@@ -972,13 +1005,12 @@ mod test {
             ))
             .unwrap();
 
-        write_dataframe_to_path(
-            &ctx,
-            source.clone(),
-            &path,
-            TableGeoParquetOptions::default(),
-        )
-        .await;
+        // GeoParquet 1.0, so the file holds only the geometry column read back below
+        let options = TableGeoParquetOptions {
+            geoparquet_version: GeoParquetVersion::V1_0,
+            ..Default::default()
+        };
+        write_dataframe_to_path(&ctx, source.clone(), &path, options).await;
         let metadata = read_geoparquet_metadata(&path);
         assert_eq!(metadata.columns["geometry"].crs, Some(Value::Null));
 

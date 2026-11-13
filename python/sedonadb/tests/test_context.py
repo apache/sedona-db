@@ -197,7 +197,8 @@ def test_read_parquet_geometry_columns_roundtrip(con, tmp_path):
     geometry_columns = json.dumps({"geom": {"encoding": "WKB", "crs": "EPSG:3857"}})
     df = con.read_parquet(out_geo1, geometry_columns=geometry_columns)
     out_geo2 = tmp_path / "geo2.parquet"
-    df.to_parquet(out_geo2)
+    # The input was read from a GeoParquet 1.1 file, so it carries a bbox column
+    df.to_parquet(out_geo2, overwrite_bbox_columns=True)
 
     geom_meta = _geom_column_metadata(out_geo2)
     assert geom_meta["encoding"] == "WKB"
@@ -207,7 +208,8 @@ def test_read_parquet_geometry_columns_roundtrip(con, tmp_path):
     geometry_columns = json.dumps({"geom": {"encoding": "WKB", "crs": "EPSG:4326"}})
     df = con.read_parquet(out_geo2, geometry_columns=geometry_columns)
     out_geo3 = tmp_path / "geo3.parquet"
-    df.to_parquet(out_geo3)
+    # The input was read from a GeoParquet 1.1 file, so it carries a bbox column
+    df.to_parquet(out_geo3, overwrite_bbox_columns=True)
 
     geom_meta = _geom_column_metadata(out_geo3)
     assert geom_meta["encoding"] == "WKB"
@@ -219,7 +221,8 @@ def test_read_parquet_geometry_columns_roundtrip(con, tmp_path):
     )
     df = con.read_parquet(out_geo3, geometry_columns=geometry_columns)
     out_geo4 = tmp_path / "geo4.parquet"
-    df.to_parquet(out_geo4)
+    # The input was read from a GeoParquet 1.1 file, so it carries a bbox column
+    df.to_parquet(out_geo4, overwrite_bbox_columns=True)
     geom_meta = _geom_column_metadata(out_geo4)
     assert geom_meta["encoding"] == "WKB"
     assert "crs" not in geom_meta
@@ -293,7 +296,8 @@ def test_read_parquet_geometry_columns_multiple_columns(con, tmp_path):
     )
     df = con.read_parquet(out_geo1, geometry_columns=geometry_columns)
     out_geo2 = tmp_path / "geo_multi2.parquet"
-    df.to_parquet(out_geo2)
+    # The input was read from a GeoParquet 1.1 file, so it carries a bbox column
+    df.to_parquet(out_geo2, overwrite_bbox_columns=True)
 
     geom1_meta = _geom_column_metadata(out_geo2, "geom1")
     geom2_meta = _geom_column_metadata(out_geo2, "geom2")

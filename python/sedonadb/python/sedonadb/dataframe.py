@@ -1573,16 +1573,18 @@ class DataFrame:
                 a single file is written if `partition_by` is unspecified and
                 `path` ends with `.parquet`.
             geoparquet_version: GeoParquet metadata version to write if output contains
-                one or more geometry columns. The default (1.0) is the most widely
-                supported and will result in geometry columns being recognized in many
-                readers; however, only includes statistics at the file level.
+                one or more geometry columns. The default (1.1) computes an additional
+                bounding box column for every geometry column in the output: readers
+                such as SedonaDB, Sedona Spark, GDAL, GeoPandas and DuckDB use these
+                columns to prune files and row groups, especially when files contain
+                an effective spatial ordering. The extra columns appear just before
+                their geometry column and are named "[geom_col_name]_bbox" for all
+                geometry columns except "geometry", whose bounding box column name is
+                just "bbox"; they are ordinary columns when the file is read back.
 
-                Use GeoParquet 1.1 to compute an additional bounding box column
-                for every geometry column in the output: some readers can use these columns
-                to prune row groups when files contain an effective spatial ordering.
-                The extra columns will appear just before their geometry column and
-                will be named "[geom_col_name]_bbox" for all geometry columns except
-                "geometry", whose bounding box column name is just "bbox".
+                Use GeoParquet 1.0 to omit the bounding box columns. It is recognized
+                by the widest range of readers, but this writer records no statistics
+                a reader could prune with (not even the file-level bounding box).
 
                 Use GeoParquet 2.0 to write compatible GeoParquet metadata with
                 Parquet-native Geometry and/or Geography data types; use "none" to omit

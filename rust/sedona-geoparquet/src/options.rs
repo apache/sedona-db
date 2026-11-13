@@ -154,17 +154,19 @@ pub enum GeoParquetVersion {
     /// Write GeoParquet 1.0 metadata
     ///
     /// GeoParquet 1.0 has the widest support among readers and writers; however
-    /// it does not include row-group level statistics.
-    #[default]
+    /// it does not include row-group level statistics, and this writer does not
+    /// record the file-level bounding box either, so a reader has nothing to
+    /// prune with.
     V1_0,
 
-    /// Write GeoParquet 1.1 metadata and optional bounding box column
+    /// Write GeoParquet 1.1 metadata and optional bounding box column (the default)
     ///
     /// A bbox column will be included for any column where the Parquet options would
     /// have otherwise written statistics (which it will by default).
     /// This option may be more computationally expensive; however, will result in
     /// row-group level statistics that some readers (e.g., SedonaDB) can use to prune
     /// row groups on read.
+    #[default]
     V1_1,
 
     /// Write GeoParquet 2.0
