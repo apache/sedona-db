@@ -129,7 +129,21 @@ test_that("sd_read() reads GeoTIFF metadata and native tiles", {
   )
   skip_if_not(file.exists(path), "sedona-testing raster fixtures are unavailable")
 
-  raster <- sd_read(path)
+  raster <- tryCatch(
+    sd_read(path),
+    error = function(cnd) {
+      format_unregistered <- grepl(
+        "No format registered for extension 'tif'",
+        conditionMessage(cnd),
+        fixed = TRUE
+      )
+      if (format_unregistered) {
+        skip("sedonadb was built without GDAL support")
+      }
+
+      stop(cnd)
+    }
+  )
   expect_identical(colnames(raster), "raster")
   expect_identical(sd_count(raster), 1)
 
