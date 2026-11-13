@@ -20,12 +20,12 @@ import struct
 from collections.abc import Iterable, Iterator
 from typing import TYPE_CHECKING, Any, Optional
 
-import geoarrow.types as gat
 import pyarrow as pa
 
 from sedonadb._lib import geotransform_from_bbox, raster_type
 
 if TYPE_CHECKING:
+    import geoarrow.types as gat
     import numpy as np
 
 
@@ -205,8 +205,10 @@ class Raster:
         return self._array.field(k)[0].as_py()
 
     @property
-    def crs(self) -> gat.Crs:
+    def crs(self) -> "gat.Crs":
         """The coordinate reference system of this raster."""
+        import geoarrow.types as gat
+
         return gat.type_spec(crs=self._py_field("crs")).crs
 
     @property
@@ -776,6 +778,8 @@ def _build_raster(
     `Raster.lazy` (OutDb) and `Raster.from_numpy` (InDb) constructors. The
     trailing two `dim_names`/`shape` entries are the spatial `(y, x)` axes."""
     if crs is not None:
+        import geoarrow.types as gat
+
         crs = gat.type_spec(crs=crs).crs.to_json()
     nodata_bytes = None
     if nodata is not None:

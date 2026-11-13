@@ -15,7 +15,10 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import subprocess
+import sys
 import tempfile
+import textwrap
 from pathlib import Path
 
 import geoarrow.pyarrow as ga
@@ -468,6 +471,41 @@ def test_dataframe_to_pandas(con):
     pd.testing.assert_frame_equal(
         df_without_geo.to_pandas(), pd.DataFrame({"one": [1]})
     )
+
+
+@pytest.mark.skip(reason="subprocess import blocking may fail on wheel test platforms")
+def test_dataframe_to_arrow_without_geoarrow():
+    # geoarrow-pyarrow is an optional dependency, so results must still convert
+    # when it is not installed. Run in a subprocess that cannot import geoarrow,
+    # since this process has already imported it.
+    # https://github.com/apache/sedona-db/issues/1558
+    code = textwrap.dedent("""
+        import sys
+
+        class BlockGeoarrow:
+            def find_spec(self, name, path=None, target=None):
+                if name == "geoarrow" or name.startswith("geoarrow."):
+                    raise ImportError(f"No module named {name!r}")
+                return None
+
+        sys.meta_path.insert(0, BlockGeoarrow())
+
+        import sedonadb
+
+        sd = sedonadb.connect()
+        df = sd.sql("SELECT 1 AS x")
+        assert df.to_arrow_table().to_pydict() == {"x": [1]}
+        assert df.to_arrow_reader().read_all().to_pydict() == {"x": [1]}
+        assert df.to_pandas()["x"].tolist() == [1]
+
+        # Geometry columns keep their storage type and extension metadata
+        table = sd.sql("SELECT ST_Point(0, 1) AS geometry").to_arrow_table()
+        metadata = table.schema.field("geometry").metadata
+        assert metadata[b"ARROW:extension:name"] == b"geoarrow.wkb"
+
+        assert not any(name.startswith("geoarrow") for name in sys.modules)
+    """)
+    subprocess.run([sys.executable, "-c", code], check=True)
 
 
 def test_dataframe_to_parquet_file_url(con, tmp_path):
