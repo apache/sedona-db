@@ -335,6 +335,20 @@ impl InternalDataFrame {
         Ok(new_data_frame(inner, self.runtime.clone()))
     }
 
+    fn unnest(&self, columns: savvy::Sexp) -> Result<InternalDataFrame> {
+        let columns = savvy::StringSexp::try_from(columns)?;
+        let columns = columns.iter().map(Column::from_name).collect();
+        let (state, plan) = self.inner.clone().into_parts();
+        let plan = datafusion_expr::LogicalPlanBuilder::from(plan)
+            .unnest_columns_with_options(
+                columns,
+                datafusion_common::UnnestOptions::new().with_preserve_nulls(false),
+            )?
+            .build()?;
+        let inner = DataFrame::new(state, plan);
+        Ok(new_data_frame(inner, self.runtime.clone()))
+    }
+
     fn select(&self, exprs_sexp: savvy::Sexp) -> savvy::Result<InternalDataFrame> {
         let exprs = SedonaDBExprFactory::exprs(exprs_sexp)?;
         let inner = self.inner.clone().select(exprs)?;
