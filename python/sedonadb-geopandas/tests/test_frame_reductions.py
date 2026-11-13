@@ -139,6 +139,27 @@ def test_truth_matches_pandas(method, skipna):
     _check(getattr(gdf, method)(bool_only=True), expected)
 
 
+@pytest.mark.parametrize("skipna", [True, False])
+@pytest.mark.parametrize("method", ["any", "all"])
+def test_truth_of_geometry_matches_geopandas(method, skipna):
+    # A geometry is true unless it is empty, as in GeoPandas.
+    with_empty = sgpd.GeoDataFrame(
+        sgpd.default_context().sql(
+            "SELECT i, ST_GeomFromWKT(w) AS geometry FROM "
+            "(VALUES (1, 'POINT (0 1)'), (2, 'POINT EMPTY')) AS v(i, w)"
+        )
+    )
+    for gdf in (_geoframe(), with_empty):
+        expected = gdf.to_geopandas()
+        _check(
+            getattr(gdf, method)(skipna=skipna),
+            getattr(expected, method)(skipna=skipna),
+        )
+        pd.testing.assert_frame_equal(
+            gdf.agg(["any", "all"]), expected.agg(["any", "all"])
+        )
+
+
 def test_counts_match_geopandas():
     for gdf in (_frame(), _geoframe()):
         expected = gdf.to_pandas()

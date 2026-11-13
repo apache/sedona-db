@@ -1347,6 +1347,13 @@ class Series:
     def _truth(self, method, skipna):
         """This column's values as booleans for `any()` and `all()`, as
         Python reads them; missing where a value is missing if `skipna`."""
+        truth = self._value_truth(method)
+        if skipna:
+            truth = _choose(~self._missing(), truth, lit(pa.scalar(None, pa.bool_())))
+        return truth
+
+    def _value_truth(self, method):
+        """This column's values as booleans, a missing value as pandas reads it."""
         dtype = self._dtype()
         if pa.types.is_timestamp(dtype) or pa.types.is_date(dtype):
             # As pandas 3 (pandas 2 reads them as counts of units).
@@ -1363,8 +1370,6 @@ class Series:
             truth = _truthiness(self._decoded(), dtype)
         if truth is None:
             raise TypeError(f"{method}() is not supported for {dtype}")
-        if skipna:
-            truth = _choose(~self._missing(), truth, lit(pa.scalar(None, pa.bool_())))
         return truth
 
     def count(self):
@@ -1638,9 +1643,7 @@ class Series:
         import pandas as pd
         import shapely
 
-        wkb = self._df.select(self._decoded().funcs.st_asbinary().alias("x"))
-        wkb = wkb.filter(wkb["x"].is_not_null())
-        counts = wkb.group_by("x").agg(wkb._ctx.lit(1).funcs.count().alias("n"))
+        counts = self._geometry_counts()
         top = counts.sort(counts["n"].desc(), counts["x"].asc()).limit(1).to_pandas()
         sizes = _one_row(
             counts.agg(
@@ -1656,6 +1659,14 @@ class Series:
         index = ["count", "unique", "top", "freq"]
         values = [count, int(sizes["unique"]), top, freq]
         return pd.Series(values, index=index, name=self._name, dtype=object)
+
+    def _geometry_counts(self, dropna=True):
+        """A frame of this column of geometries' distinct WKB (`x`) and how
+        many rows have each (`n`), a missing one among them unless `dropna`."""
+        wkb = self._df.select(self._decoded().funcs.st_asbinary().alias("x"))
+        if dropna:
+            wkb = wkb.filter(wkb["x"].is_not_null())
+        return wkb.group_by("x").agg(wkb._ctx.lit(1).funcs.count().alias("n"))
 
     @property
     def hasnans(self):
@@ -1820,6 +1831,12 @@ def _shapes(columns, method, skipna):
             results.append(math.nan)
             continue
         m2, m3, m4 = (float(sums[f"{k}{i}"]) for k in "abc")
+        if abs(m3) < 1e-14:
+            # Rounding error, as pandas 2 takes it (its `_zero_out_fperr()`), so
+            # that values symmetric about their mean have a skewness of 0. Of
+            # values scaled to a range of 1, the cut-off doesn't depend on their
+            # scale, and m2 and m4 (at least 1/2 and 1/8) never fall below it.
+            m3 = 0.0
         results.append(_shape(method, n, m2, m3, m4))
     return results
 
@@ -4067,16 +4084,20 @@ class GeoSeries(Series):
         rebuilt = self._as_column_kind(wkb.funcs.st_geomfromwkb(), own_crs=None)
         return self._geo(rebuilt)
 
-    def _aggregate(self, func, ddof=1, min_count=0):
-        """As for any column, for geometry: `count`, and `first`/`last`, which
-        take the smallest or largest WKB (a geometry that is not missing, as
-        there is no row order) and rebuild it with this column's spatial kind
-        and CRS once aggregated."""
+    def _aggregate(self, func, ddof=1, min_count=0, skipna=True):
+        """As for any column, for geometry: `count`, `any`/`all` (see
+        `_value_truth()`), and `first`/`last`, which take the smallest or
+        largest WKB (a geometry that is not missing, as there is no row order)
+        and rebuild it with this column's spatial kind and CRS once
+        aggregated."""
         if func == "count":
             return self._expr.funcs.count(), _same
         if func not in ("first", "last"):
-            # Refused as for any column that holds no numbers.
-            return super()._aggregate(func, ddof=ddof, min_count=min_count)
+            # any() and all(), or refused as for any column that holds no
+            # numbers.
+            return super()._aggregate(
+                func, ddof=ddof, min_count=min_count, skipna=skipna
+            )
         extreme = "min" if func == "first" else "max"
         wkb = getattr(self._expr.geo.as_binary().funcs, extreme)()
         ctx = self._df._ctx
@@ -4088,6 +4109,30 @@ class GeoSeries(Series):
             return _geometry_from_wkb(value, geography, crs, ctx)
 
         return wkb, rebuild
+
+    def _value_truth(self, method):
+        """True unless empty, as Shapely (and so GeoPandas) reads a geometry;
+        a missing one is false, as pandas reads None."""
+        return (~self._expr.funcs.st_isempty()).funcs.coalesce(lit(False))
+
+    def mode(self, dropna=True):
+        """The most frequent geometries, as a GeoPandas GeoSeries with this
+        column's CRS (GeoPandas' drops it), geometries alike if their WKB is,
+        as in `describe()`; in WKB order, a missing one last, as a lazy frame
+        has no order of first appearance."""
+        import pandas as pd
+
+        counts = self._geometry_counts(dropna)
+        most = _one_row(counts.agg(counts["n"].funcs.max().alias("n")))["n"]
+        if pd.isna(most):
+            modes = counts.limit(0)
+        else:
+            modes = counts.filter(counts["n"] == lit(int(most)))
+        modes = modes.sort(modes["x"].asc())
+        geometry = _geometry_from_wkb(
+            modes["x"], self._is_geography(), self.crs, self._df._ctx
+        )
+        return modes.select(geometry.alias(self._name)).to_pandas()[self._name]
 
     def _replacement(self, other, method):
         """`other` as WKB, to put in this column, with its type (None if

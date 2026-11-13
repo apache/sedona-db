@@ -99,15 +99,54 @@ def test_truth_of_no_values():
         assert empty[column].all() == empty[column].to_pandas().all()
 
 
-def test_truth_of_timestamps_and_geometry():
+def test_truth_of_timestamps():
     # As pandas 3: a timestamp has no truth value.
     with pytest.raises(TypeError, match="datetime"):
         _frame()["t"].any()
-    points = sgpd.GeoDataFrame(
-        sgpd.default_context().sql("SELECT ST_Point(0, 1) AS geometry")
+
+
+def _geometries(wkts):
+    values = ", ".join(
+        "(CAST(NULL AS VARCHAR))" if wkt is None else f"('{wkt}')" for wkt in wkts
     )
-    with pytest.raises(TypeError):
-        points.geometry.all()
+    return sgpd.GeoDataFrame(
+        sgpd.default_context().sql(
+            "SELECT ST_SetSRID(ST_GeomFromWKT(w), 3857) AS geometry "
+            f"FROM (VALUES {values}) AS v(w)"
+        )
+    ).geometry
+
+
+@pytest.mark.parametrize("skipna", [True, False])
+@pytest.mark.parametrize("method", ["any", "all"])
+@pytest.mark.parametrize(
+    "wkts",
+    [
+        ["POINT (0 1)"],
+        ["POINT EMPTY"],
+        ["POINT (0 1)", "POINT EMPTY"],
+        ["POINT (0 1)", None],
+        ["POINT EMPTY", None],
+        [None],
+    ],
+)
+def test_truth_of_geometry(wkts, method, skipna):
+    # A geometry is true unless it is empty, as Shapely (and so GeoPandas)
+    # reads it. A missing one is skipped, or with skipna=False is false, as
+    # pandas reads None; GeoPandas reads it as false whatever skipna is.
+    series = _geometries(wkts)
+    expected = series.to_pandas()
+    if skipna:
+        expected = expected.dropna()
+    ours = getattr(series, method)(skipna=skipna)
+    assert ours == getattr(expected, method)()
+    assert isinstance(ours, (bool, np.bool_))
+
+
+def test_truth_of_no_geometries():
+    series = _geometries(["POINT (0 1)"]).head(0)
+    assert series.any() == series.to_pandas().any()
+    assert series.all() == series.to_pandas().all()
 
 
 @pytest.mark.parametrize("skipna", [True, False])
@@ -148,6 +187,23 @@ def test_shape_of_few_values(method):
         series = _series(values, pa.float64())
         ours = getattr(series, method)()
         assert _same(ours, getattr(series.to_pandas(), method)()), (n, ours)
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        [1, 2, 3, 4],
+        [10, 20, 30, 40, 50, 60, 70],
+        [1e9 + 1, 1e9 + 2, 1e9 + 3, 1e9 + 4],
+    ],
+)
+def test_skew_of_symmetric_values(values):
+    # Exactly 0, as pandas gives it, not the rounding error of the moments.
+    series = _series(values)
+    expected = series.to_pandas().skew()
+    assert expected == 0.0
+    assert series.skew() == expected
+    assert _frame(pa.table({"x": values})).skew()["x"] == expected
 
 
 @pytest.mark.parametrize("method", ["skew", "kurt"])
@@ -253,6 +309,42 @@ def test_mode_counting_missing_values():
     expected = series.to_pandas().mode(dropna=False)
     assert len(ours) == len(expected) == 1 and math.isnan(ours.iloc[0])
     assert series.mode().tolist() == series.to_pandas().mode().tolist()
+
+
+@pytest.mark.parametrize("dropna", [True, False])
+@pytest.mark.parametrize(
+    "wkts",
+    [
+        ["POINT (1 1)", "POINT (0 1)", "POINT (0 1)"],
+        ["POINT (1 1)", None, None],
+        ["POINT EMPTY", "POINT EMPTY", "POINT (1 1)"],
+        [None],
+    ],
+)
+def test_mode_of_geometry(wkts, dropna):
+    # Geometries alike if their WKB is, as GeoPandas counts them, with the
+    # column's CRS, which GeoPandas' mode() drops.
+    series = _geometries(wkts)
+    ours = series.mode(dropna=dropna)
+    expected = series.to_pandas().mode(dropna=dropna)
+    assert type(ours) is type(expected)
+    assert ours.to_wkb().tolist() == expected.to_wkb().tolist()
+    assert ours.name == expected.name
+    assert ours.crs == series.to_pandas().crs == "EPSG:3857"
+
+
+def test_several_modes_of_geometry_in_order():
+    # In WKB order, a missing value last: GeoPandas keeps the order of first
+    # appearance, which a lazy frame doesn't have.
+    series = _geometries(["POINT (1 1)", None, "POINT (0 1)"])
+    ours = series.mode(dropna=False)
+    assert [g if g is None else g.wkt for g in ours] == [
+        "POINT (0 1)",
+        "POINT (1 1)",
+        None,
+    ]
+    assert ours.crs == series.to_pandas().crs == "EPSG:3857"
+    assert [g.wkt for g in series.mode()] == ["POINT (0 1)", "POINT (1 1)"]
 
 
 def _categorical(values, categories, ordered=False):
