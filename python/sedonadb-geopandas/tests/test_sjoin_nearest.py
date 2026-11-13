@@ -79,7 +79,7 @@ def _matches(frame, distance="d"):
     """The matched (left row, right row, distance) triples, with None for an
     unmatched side."""
     return collections.Counter(
-        (_key(a, int), _key(b, int), _key(d, lambda d: round(float(d), 9)))
+        (_key(a, int), _key(b, int), _key(d, float))
         for a, b, d in zip(frame["a"], frame["b"], frame[distance])
     )
 
