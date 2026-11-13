@@ -2820,9 +2820,8 @@ class GeoSeries(Series):
         As in GeoPandas, a negative distance counts back from the end, a
         distance past either end stops there, and an empty line gives an
         empty point; `distance` is a number or a numeric `Series` of this
-        frame. Two engine limits: a multi-line raises when the result is
-        computed, as the engine interpolates along single lines only, and the
-        point on a 3D line is 2D (without the Z value GeoPandas interpolates).
+        frame. One engine limit: a multi-line raises when the result is
+        computed, as the engine interpolates along single lines only.
         """
         import shapely
 
