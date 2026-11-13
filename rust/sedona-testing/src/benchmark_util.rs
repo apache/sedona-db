@@ -572,20 +572,20 @@ impl BenchmarkData {
 
         match self.config {
             BenchmarkArgs::Array(_) => {
-                for i in 0..self.num_batches {
-                    tester.invoke_array(self.arrays[0][i].clone())?;
+                for array in self.arrays[0].iter().take(self.num_batches) {
+                    tester.invoke_array(array.clone())?;
                 }
             }
             BenchmarkArgs::ScalarArray(_, _) => {
                 let scalar = &self.scalars[0];
-                for i in 0..self.num_batches {
-                    tester.invoke_scalar_array(scalar.clone(), self.arrays[0][i].clone())?;
+                for array in self.arrays[0].iter().take(self.num_batches) {
+                    tester.invoke_scalar_array(scalar.clone(), array.clone())?;
                 }
             }
             BenchmarkArgs::ArrayScalar(_, _) => {
                 let scalar = &self.scalars[0];
-                for i in 0..self.num_batches {
-                    tester.invoke_array_scalar(self.arrays[0][i].clone(), scalar.clone())?;
+                for array in self.arrays[0].iter().take(self.num_batches) {
+                    tester.invoke_array_scalar(array.clone(), scalar.clone())?;
                 }
             }
             BenchmarkArgs::ArrayArray(_, _) => {
@@ -597,9 +597,9 @@ impl BenchmarkData {
             BenchmarkArgs::ArrayScalarScalar(_, _, _) => {
                 let scalar0 = &self.scalars[0];
                 let scalar1 = &self.scalars[1];
-                for i in 0..self.num_batches {
+                for array in self.arrays[0].iter().take(self.num_batches) {
                     tester.invoke_array_scalar_scalar(
-                        self.arrays[0][i].clone(),
+                        array.clone(),
                         scalar0.clone(),
                         scalar1.clone(),
                     )?;
@@ -608,10 +608,10 @@ impl BenchmarkData {
             BenchmarkArgs::ScalarArrayScalar(_, _, _) => {
                 let scalar0 = &self.scalars[0];
                 let scalar1 = &self.scalars[1];
-                for i in 0..self.num_batches {
+                for array in self.arrays[0].iter().take(self.num_batches) {
                     tester.invoke(vec![
                         ColumnarValue::Scalar(scalar0.clone()),
-                        ColumnarValue::Array(self.arrays[0][i].clone()),
+                        ColumnarValue::Array(array.clone()),
                         ColumnarValue::Scalar(scalar1.clone()),
                     ])?;
                 }

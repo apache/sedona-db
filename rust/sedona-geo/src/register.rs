@@ -48,7 +48,6 @@ pub fn scalar_kernels() -> Vec<(&'static str, Vec<ScalarKernelRef>)> {
         "st_dwithin" => crate::st_dwithin::st_dwithin_impl,
         "st_intersects" => crate::st_intersects::st_intersects_impl,
         "st_length" => crate::st_length::st_length_impl,
-        "st_lineinterpolatepoint" => crate::st_line_interpolate_point::st_line_interpolate_point_impl,
         "st_perimeter" => crate::st_perimeter::st_perimeter_impl,
     )
 }
