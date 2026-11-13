@@ -25,14 +25,17 @@ use datafusion_common::{plan_datafusion_err, Result};
 use datafusion_expr::planner::TypePlanner;
 use sedona_functions::st_setsrid::validate_crs_for_type;
 use sedona_geometry::types::Edges;
-use sedona_schema::{crs::deserialize_crs, datatypes::SedonaType};
+use sedona_schema::{
+    crs::deserialize_crs,
+    datatypes::{SedonaType, WKB_GEOGRAPHY_ITEM_CRS, WKB_GEOMETRY_ITEM_CRS},
+};
 
 const DEFAULT_CRS: &str = "OGC:CRS84";
 
 /// Plans SQL `GEOMETRY` and `GEOGRAPHY` types as GeoArrow WKB extension types.
 ///
-/// `GEOMETRY` accepts an optional CRS. `GEOGRAPHY` accepts an optional CRS and
-/// spherical edge interpolation.
+/// `GEOMETRY` accepts an optional CRS, or `ANY` for item-level CRS values.
+/// `GEOGRAPHY` accepts an optional CRS (or `ANY`) and spherical edge interpolation.
 #[derive(Debug, Default)]
 pub struct SedonaTypePlanner;
 
@@ -49,21 +52,30 @@ impl TypePlanner for SedonaTypePlanner {
             return Ok(None);
         };
 
-        let (edges, crs) = if type_name.eq_ignore_ascii_case("geometry") {
+        let sedona_type = if type_name.eq_ignore_ascii_case("geometry") {
             require_at_most("GEOMETRY", modifiers, 1)?;
             let crs = modifiers.first().map(String::as_str).unwrap_or(DEFAULT_CRS);
-            (Edges::Planar, deserialize_crs(crs)?)
+            if crs.eq_ignore_ascii_case("any") {
+                WKB_GEOMETRY_ITEM_CRS.clone()
+            } else {
+                SedonaType::Wkb(Edges::Planar, deserialize_crs(crs)?)
+            }
         } else if type_name.eq_ignore_ascii_case("geography") {
             require_at_most("GEOGRAPHY", modifiers, 2)?;
             let crs = modifiers.first().map(String::as_str).unwrap_or(DEFAULT_CRS);
             let edges = parse_edges(modifiers.get(1).map(String::as_str).unwrap_or("spherical"))?;
-            (edges, deserialize_crs(crs)?)
+            if crs.eq_ignore_ascii_case("any") {
+                WKB_GEOGRAPHY_ITEM_CRS.clone()
+            } else {
+                SedonaType::Wkb(edges, deserialize_crs(crs)?)
+            }
         } else {
             return Ok(None);
         };
 
-        let sedona_type = SedonaType::Wkb(edges, crs);
-        validate_crs_for_type(sedona_type.crs(), &sedona_type)?;
+        if !sedona_type.is_item_crs() {
+            validate_crs_for_type(sedona_type.crs(), &sedona_type)?;
+        }
         let field = sedona_type.to_storage_field("", true)?;
         Ok(Some(Arc::new(field)))
     }
@@ -121,6 +133,10 @@ mod tests {
             plan(custom_type("GEOMETRY", &["EPSG:3857"])),
             SedonaType::Wkb(Edges::Planar, deserialize_crs("EPSG:3857").unwrap())
         );
+        assert_eq!(
+            plan(custom_type("GEOMETRY", &["ANY"])),
+            WKB_GEOMETRY_ITEM_CRS.clone()
+        );
     }
 
     #[test]
@@ -132,6 +148,10 @@ mod tests {
         assert_eq!(
             plan(custom_type("GEOGRAPHY", &["EPSG:4269", "SPHERICAL"])),
             SedonaType::Wkb(Edges::Spherical, deserialize_crs("EPSG:4269").unwrap())
+        );
+        assert_eq!(
+            plan(custom_type("GEOGRAPHY", &["ANY"])),
+            WKB_GEOGRAPHY_ITEM_CRS.clone()
         );
     }
 
@@ -183,7 +203,9 @@ mod tests {
         ctx.sql(
             "CREATE TABLE spatial_types (\
                 geom GEOMETRY, \
+                any_geom GEOMETRY(ANY), \
                 geog GEOGRAPHY, \
+                any_geog GEOGRAPHY(ANY), \
                 projected GEOMETRY('EPSG:3857'), \
                 nad83_geog GEOGRAPHY('EPSG:4269', spherical)\
             )",
@@ -199,8 +221,16 @@ mod tests {
             SedonaType::Wkb(Edges::Planar, lnglat())
         );
         assert_eq!(
+            SedonaType::from_storage_field(schema.field_with_name(None, "any_geom")?.as_ref())?,
+            WKB_GEOMETRY_ITEM_CRS.clone()
+        );
+        assert_eq!(
             SedonaType::from_storage_field(schema.field_with_name(None, "geog")?.as_ref())?,
             SedonaType::Wkb(Edges::Spherical, lnglat())
+        );
+        assert_eq!(
+            SedonaType::from_storage_field(schema.field_with_name(None, "any_geog")?.as_ref())?,
+            WKB_GEOGRAPHY_ITEM_CRS.clone()
         );
         assert_eq!(
             SedonaType::from_storage_field(schema.field_with_name(None, "projected")?.as_ref())?,
