@@ -291,12 +291,12 @@ type ProjectBboxesResult = (
 ///   today.
 /// - For any other column, the bbox column is named "{col_name}_bbox".
 ///
-/// If a bbox column name already exists in the schema, we replace it.
-/// In the context of writing a file and all that goes with it, the time it
-/// takes to recompute the bounding box is not important; because writing
-/// GeoParquet 1.1 is opt-in, if somebody *did* have a column with "bbox" or
-/// "some_col_bbox", it is unlikely that replacing it would have unintended
-/// consequences.
+/// If a bbox column name already exists in the schema and holds a bounding
+/// box struct (xmin, ymin, xmax, ymax), it is a covering column from an
+/// earlier write and is recomputed in place: reading a GeoParquet 1.1 file and
+/// writing it back must not fail on the column the first write added. A column
+/// of that name with any other type is somebody's data; replacing it needs
+/// `overwrite_bbox_columns`.
 fn project_bboxes(
     input: &Arc<dyn ExecutionPlan>,
     overwrite_bbox_columns: bool,
@@ -345,7 +345,7 @@ fn project_bboxes(
         // Skip any column with the same name as a bbox column, since we are
         // about to replace it with the recomputed bbox.
         if bbox_column_names.contains_key(f.name()) {
-            if overwrite_bbox_columns {
+            if overwrite_bbox_columns || is_bbox_type(f.data_type()) {
                 continue;
             } else {
                 return exec_err!(
@@ -517,6 +517,22 @@ impl SedonaScalarKernel for GeoParquetBbox {
 
 fn bbox_type() -> DataType {
     DataType::Struct(bbox_fields())
+}
+
+/// Whether `data_type` is a bounding box covering column as GeoParquet 1.1
+/// defines it: a struct of xmin, ymin, xmax, ymax in any order (GeoPandas
+/// writes them alphabetically), each a float or a double (this writer emits
+/// floats; other writers emit doubles).
+fn is_bbox_type(data_type: &DataType) -> bool {
+    let DataType::Struct(fields) = data_type else {
+        return false;
+    };
+    let mut names: Vec<&str> = fields.iter().map(|field| field.name().as_str()).collect();
+    names.sort_unstable();
+    names == ["xmax", "xmin", "ymax", "ymin"]
+        && fields
+            .iter()
+            .all(|field| matches!(field.data_type(), DataType::Float32 | DataType::Float64))
 }
 
 fn bbox_fields() -> Fields {
@@ -967,6 +983,43 @@ mod test {
             .await
             .unwrap();
         let names = read_back
+            .schema()
+            .fields()
+            .iter()
+            .map(|f| f.name().as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["wkt", "bbox", "geometry"]);
+    }
+
+    #[tokio::test]
+    async fn rewriting_a_geoparquet_1_1_file_with_defaults_recomputes_its_bbox_column() {
+        let example = test_geoparquet("example", "geometry").unwrap();
+        let ctx = setup_context();
+        let tmpdir = tempdir().unwrap();
+        let first = tmpdir.path().join("first.parquet");
+        let second = tmpdir.path().join("second.parquet");
+        let df = ctx.table(&example).await.unwrap();
+        write_dataframe_to_path(&ctx, df, &first, TableGeoParquetOptions::default()).await;
+
+        // The read-back frame carries the first write's "bbox" column; writing it
+        // again with defaults replaces that column rather than refusing.
+        let read_back = ctx
+            .table(first.to_string_lossy().into_owned())
+            .await
+            .unwrap();
+        write_dataframe_to_path(&ctx, read_back, &second, TableGeoParquetOptions::default()).await;
+
+        let metadata = read_geoparquet_metadata(&second);
+        assert_eq!(metadata.version, "1.1.0");
+        assert_eq!(
+            metadata.columns["geometry"].covering,
+            Some(GeoParquetCovering::bbox_struct_xy("bbox"))
+        );
+        let rewritten = ctx
+            .table(second.to_string_lossy().into_owned())
+            .await
+            .unwrap();
+        let names = rewritten
             .schema()
             .fields()
             .iter()

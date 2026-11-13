@@ -427,22 +427,27 @@ def test_write_geoparquet_1_1(con, geoarrow_data):
         df_roundtrip = con.read_parquet(tmp_parquet).to_pandas()
         assert "bbox" in df_roundtrip.columns
 
-        # An attempt to rewrite this should fail because it would have to overwrite
-        # the bbox column
+        # Rewriting it recomputes the bbox column in place: a column with the
+        # covering's name and shape is the first write's, not the user's data
         tmp_parquet2 = Path(td) / "tmp2.parquet"
+        con.read_parquet(tmp_parquet).to_parquet(tmp_parquet2, geoparquet_version="1.1")
+        df_roundtrip = con.read_parquet(tmp_parquet2).to_pandas()
+        assert "bbox" in df_roundtrip.columns
+
+        # A "bbox" column of any other type is the user's, and is only replaced
+        # when asked
+        tmp_parquet3 = Path(td) / "tmp3.parquet"
+        df_other_bbox = con.sql(
+            "SELECT 'not a bbox' AS bbox, ST_Point(0, 1) AS geometry"
+        )
         with pytest.raises(
             SedonaError, match="Can't overwrite GeoParquet 1.1 bbox column 'bbox'"
         ):
-            con.read_parquet(tmp_parquet).to_parquet(
-                tmp_parquet2, geoparquet_version="1.1"
-            )
-
-        # ...unless we pass the appropriate option
-        con.read_parquet(tmp_parquet).to_parquet(
-            tmp_parquet2, geoparquet_version="1.1", overwrite_bbox_columns=True
+            df_other_bbox.to_parquet(tmp_parquet3, geoparquet_version="1.1")
+        df_other_bbox.to_parquet(
+            tmp_parquet3, geoparquet_version="1.1", overwrite_bbox_columns=True
         )
-        df_roundtrip = con.read_parquet(tmp_parquet2).to_pandas()
-        assert "bbox" in df_roundtrip.columns
+        assert "bbox" in con.read_parquet(tmp_parquet3).to_pandas().columns
 
 
 def test_write_geoparquet_default_is_1_1(con):

@@ -1589,10 +1589,12 @@ class DataFrame:
                 Use GeoParquet 2.0 to write compatible GeoParquet metadata with
                 Parquet-native Geometry and/or Geography data types; use "none" to omit
                 GeoParquet metadata completely.
-            overwrite_bbox_columns: Use `True` to overwrite any bounding box columns
-                that already exist in the input. This is useful in a read -> modify
-                -> write scenario to ensure these columns are up-to-date. If `False`
-                (the default), an error will be raised if a bbox column already exists.
+            overwrite_bbox_columns: Use `True` to replace a column that has a bounding
+                box column's name but not its shape. A column with the name and the
+                shape (a struct of xmin, ymin, xmax, ymax) is a bounding box column from
+                an earlier write and is always recomputed, so a read -> write of a
+                GeoParquet 1.1 file needs no option. If `False` (the default), any other
+                column of that name raises an error rather than being replaced.
             write_bbox_columns: Use `True` or `False` to explicitly request or omit
                 bounding box (covering) columns, independent of `geoparquet_version`.
                 By default, these columns are written only for GeoParquet 1.1. Bounding

@@ -53,10 +53,12 @@ except "geometry", whose bounding box column name is just "bbox".
 Use "1.0" to omit the bounding box columns; it is recognized by the widest
 range of readers, but carries nothing a reader could prune with}
 
-\item{overwrite_bbox_columns}{Use TRUE to overwrite any bounding box columns
-that already exist in the input. This is useful in a read -> modify
--> write scenario to ensure these columns are up-to-date. If FALSE
-(the default), an error will be raised if a bbox column already exists}
+\item{overwrite_bbox_columns}{Use TRUE to replace a column that has a bounding
+box column's name but not its shape. A column with the name and the shape
+(a struct of xmin, ymin, xmax, ymax) is a bounding box column from an
+earlier write and is always recomputed, so a read -> write of a GeoParquet
+1.1 file needs no option. If FALSE (the default), any other column of that
+name raises an error rather than being replaced}
 
 \item{max_row_group_size}{Target maximum number of rows in each row group.
 Defaults to the global configuration value (1M rows).}
