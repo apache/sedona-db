@@ -374,10 +374,13 @@ def test_frequencies_that_are_not_fixed():
             series.dt.floor(freq)
 
 
+@pytest.mark.parametrize("missing", [True, False])
 @pytest.mark.parametrize("unit", UNITS)
-def test_duration_properties(unit):
-    # Days are floored, so the parts of a negative duration are not.
-    values = pd.to_timedelta(DURATIONS).as_unit(unit)
+def test_duration_properties(unit, missing):
+    # Days are floored, so the parts of a negative duration are not. Without a
+    # missing value, pandas' parts are integers, int32 but for the days.
+    durations = DURATIONS if missing else [d for d in DURATIONS if d is not None]
+    values = pd.to_timedelta(durations).as_unit(unit)
     if unit == "s":
         values = values.floor("s")
     elif unit == "ms":

@@ -1232,7 +1232,7 @@ class TimedeltaProperties:
     def seconds(self):
         """The seconds past the days, from 0 to 86399."""
         past = _remainder(self._ticks, 86400 * self._per_second)
-        return self._wrap(past / lit(self._per_second))
+        return self._wrap((past / lit(self._per_second)).cast(pa.int32()))
 
     def _subsecond(self):
         """The nanoseconds past the second."""
@@ -1242,12 +1242,12 @@ class TimedeltaProperties:
     @property
     def microseconds(self):
         """The microseconds past the second, from 0 to 999999."""
-        return self._wrap(self._subsecond() / lit(1000))
+        return self._wrap((self._subsecond() / lit(1000)).cast(pa.int32()))
 
     @property
     def nanoseconds(self):
         """The nanoseconds past the microsecond, from 0 to 999."""
-        return self._wrap(_remainder(self._subsecond(), 1000))
+        return self._wrap(_remainder(self._subsecond(), 1000).cast(pa.int32()))
 
     def total_seconds(self):
         """Each duration in seconds, as a float."""
