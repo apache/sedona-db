@@ -121,6 +121,12 @@ def test_reductions_a_column_has_none_of_raise():
         _geoframe().min()
     with pytest.raises(TypeError):
         _geoframe().to_geopandas().min()
+    # pandas' sum() concatenates text, in an order a lazy frame doesn't have,
+    # and sums durations; these refuse both.
+    with pytest.raises(TypeError, match="not string"):
+        gdf[["i", "s"]].sum()
+    with pytest.raises(TypeError, match="not duration"):
+        gdf[["i", "d"]].sum()
 
 
 @pytest.mark.parametrize("skipna", [True, False])
@@ -242,6 +248,17 @@ def test_agg():
     assert gdf.aggregate("count").tolist() == gdf.count().tolist()
     with pytest.raises(AttributeError, match="cumsum"):
         gdf.agg("cumsum")
+
+
+def test_agg_of_no_names():
+    # No rows, and the columns of no type, as pandas 3 gives (pandas 2 raises).
+    gdf = _frame()
+    empty = gdf.agg([])
+    assert empty.shape == (0, len(TABLE.column_names))
+    assert list(empty.columns) == TABLE.column_names
+    assert empty.dtypes.tolist() == [np.dtype(object)] * len(TABLE.column_names)
+    assert isinstance(gdf.agg({}), pd.DataFrame)
+    assert gdf.agg({}).shape == (0, 0)
 
 
 @pytest.mark.parametrize(

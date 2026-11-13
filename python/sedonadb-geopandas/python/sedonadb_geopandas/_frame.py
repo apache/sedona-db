@@ -1305,7 +1305,9 @@ class GeoDataFrame:
         ones), as a pandas Series indexed by name, as pandas reduces a frame:
         each column's as `Series.<func>()` gives it, in one scan (three for
         skew and kurt, and one per column for nunique). A column the
-        reduction is not for raises, as in pandas."""
+        reduction is not for raises, as in pandas. So do some that pandas
+        reduces (see the README): text and durations for sum(), and durations
+        and timestamps for mean(), median(), std() and quantile()."""
         import pandas as pd
 
         names, values = self._reductions(func, axis, numeric_only, names, **options)
@@ -1534,6 +1536,9 @@ class GeoDataFrame:
         if isinstance(func, (list, tuple)):
             if args:
                 raise TypeError("agg() of a list of names takes keyword arguments")
+            if not func:
+                # No rows, and columns of no type, as pandas 3 gives.
+                return pd.DataFrame(index=[], columns=self.columns, dtype=object)
             # Each column of its own type, as in pandas: from each reduction's
             # values, not from a Series of them, which would share one.
             results = []
@@ -1549,7 +1554,8 @@ class GeoDataFrame:
             unknown = [name for name in func if name not in self.columns]
             if unknown:
                 raise KeyError(f"Column(s) {unknown} do not exist")
-            if all(isinstance(names, str) for names in func.values()):
+            # A dict of no columns gives an empty frame, as in pandas.
+            if func and all(isinstance(names, str) for names in func.values()):
                 values = [
                     self[column].agg(name, *args, **kwargs)
                     for column, name in func.items()

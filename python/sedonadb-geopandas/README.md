@@ -232,7 +232,12 @@ Reductions (`sum()`, `mean()`, `min()`, `max()`, `count()`, `median()`,
 `std()`, `var()`, `sem()`, `skew()`, `kurt()`, `any()`, `all()`, `quantile()`,
 `nunique()`) compute their result, skipping missing values (NaN included) as
 pandas does by default; an integer column keeps its integer type where pandas,
-having turned its missing values into NaN, would report a float. A frame's
+having turned its missing values into NaN, would report a float. The arithmetic
+ones (`sum()`, `mean()`, `median()`, `std()`, `var()`, `sem()`, `skew()`,
+`kurt()`, `quantile()`) take numbers and booleans only: pandas' `sum()` of text
+concatenates it, in an order a lazy frame doesn't have, and pandas also gives
+the `sum()` of durations and the `mean()`, `median()`, `std()` and `quantile()`
+of durations and timestamps, which raise a TypeError here. A frame's
 reduce all its columns in one scan (three for `skew()` and `kurt()`, and one per
 column for `nunique()`), as pandas' do with `axis=0` (there is no `axis=1`), and
 take their options by keyword, as in pandas 3; `agg()` of a list of names takes
