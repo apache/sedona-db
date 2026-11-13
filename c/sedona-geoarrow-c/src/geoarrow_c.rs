@@ -122,6 +122,10 @@ impl ArrayWriter {
             data_type: arrow_storage_type(type_id)?,
         };
         check_code(unsafe { SedonaDBGeoArrowArrayWriterInitFromType(out.ptr_mut(), type_id) })?;
+        if type_id == GeoArrowType_GEOARROW_TYPE_WKT {
+            // Match GEOS/PostGIS MULTIPOINT formatting.
+            check_code(unsafe { SedonaDBGeoArrowArrayWriterSetFlatMultipoint(out.ptr_mut(), 0) })?;
+        }
         Ok(out)
     }
 

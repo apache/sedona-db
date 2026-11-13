@@ -26,7 +26,9 @@ use sedona_expr::{
 };
 use sedona_functions::executor::{WkbBytesExecutor, WkbExecutor};
 use sedona_schema::{
-    datatypes::{SedonaType, WKB_GEOGRAPHY_WGS84, WKB_GEOMETRY},
+    datatypes::{
+        SedonaType, WKB_GEOGRAPHY_WGS84, WKB_GEOMETRY, WKB_VIEW_GEOGRAPHY_WGS84, WKB_VIEW_GEOMETRY,
+    },
     matchers::ArgMatcher,
 };
 
@@ -59,9 +61,9 @@ pub fn st_geogfromwkt_impl() -> ScalarKernelRef {
 /// An implementation of WKB validation using geoarrow-c's WKB reader
 pub fn st_geomfromwkb_impl() -> ScalarKernelRef {
     Arc::new(GeoArrowCCast::new(
-        ArgMatcher::new(vec![ArgMatcher::is_binary()], WKB_GEOMETRY),
+        ArgMatcher::new(vec![ArgMatcher::is_binary()], WKB_VIEW_GEOMETRY),
         None,
-        WKB_GEOMETRY,
+        WKB_VIEW_GEOMETRY,
     ))
 }
 
@@ -70,9 +72,12 @@ pub fn st_geomfromwkb_impl() -> ScalarKernelRef {
 /// An implementation of WKB validation using geoarrow-c's WKB reader
 pub fn st_geogfromwkb_impl() -> ScalarKernelRef {
     Arc::new(GeoArrowCCast::new(
-        ArgMatcher::new(vec![ArgMatcher::is_binary()], WKB_GEOGRAPHY_WGS84.clone()),
+        ArgMatcher::new(
+            vec![ArgMatcher::is_binary()],
+            WKB_VIEW_GEOGRAPHY_WGS84.clone(),
+        ),
         None,
-        WKB_GEOGRAPHY_WGS84.clone(),
+        WKB_VIEW_GEOGRAPHY_WGS84.clone(),
     ))
 }
 
@@ -285,18 +290,25 @@ mod tests {
     }
 
     #[rstest]
-    fn fromwkb(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] data_type: SedonaType) {
+    fn fromwkb(
+        #[values(WKB_GEOMETRY, WKB_LARGE_GEOMETRY, WKB_VIEW_GEOMETRY)] data_type: SedonaType,
+    ) {
         let udf = SedonaScalarUDF::from_impl("st_geomfromwkb", st_geomfromwkb_impl());
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![SedonaType::Arrow(data_type.storage_type().clone())],
         );
-        tester.assert_return_type(WKB_GEOMETRY);
+        tester.assert_return_type(WKB_VIEW_GEOMETRY);
 
         let result = tester
             .invoke_scalar(create_scalar_storage(Some("POINT (1 2)"), &data_type))
             .unwrap();
+        assert_eq!(result.data_type(), DataType::BinaryView);
         tester.assert_scalar_result_equals(result, "POINT (1 2)");
+        let input = create_array(&[Some("POINT (1 2)"), None], &data_type);
+        let result = tester.invoke_array(input).unwrap();
+        assert_eq!(result.data_type(), &DataType::BinaryView);
+        assert_eq!(result.null_count(), 1);
     }
 
     #[rstest]
@@ -575,7 +587,7 @@ mod tests {
 
         let udf = SedonaScalarUDF::from_impl("st_geogfromwkb", st_geogfromwkb_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![SedonaType::Arrow(DataType::Binary)]);
-        tester.assert_return_type(WKB_GEOGRAPHY_WGS84.clone());
+        tester.assert_return_type(WKB_VIEW_GEOGRAPHY_WGS84.clone());
 
         let result = tester
             .invoke_scalar(create_scalar_storage(Some("POINT (1 2)"), &WKB_GEOGRAPHY))

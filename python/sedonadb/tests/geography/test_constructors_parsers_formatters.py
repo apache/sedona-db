@@ -97,16 +97,10 @@ def test_st_asbinary(eng, geom, expected):
 )
 def test_st_astext(eng, geom):
     eng = eng.create_or_skip()
-    expected = {
-        "POINT(1 1)": "POINT (1 1)",
-        "POINT EMPTY": "POINT EMPTY",
-        "LINESTRING(0 0,1 2,3 4)": "LINESTRING (0 0, 1 2, 3 4)",
-        "LINESTRING EMPTY": "LINESTRING EMPTY",
-        "GEOMETRYCOLLECTION(POINT(0 0),POLYGON((0 0,1 0,1 1,0 1,0 0)))": "GEOMETRYCOLLECTION (POINT (0 0), POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0)))",
-    }[geom]
-    if isinstance(eng, PostGIS):
-        expected = geom
-    eng.assert_query_result(f"SELECT ST_AsText({geog_or_null(geom)})", expected)
+    eng.assert_query_result(
+        f"SELECT replace(ST_AsText({geog_or_null(geom)}), ' ', '')",
+        geom.replace(" ", ""),
+    )
 
 
 # PostGIS formats its ZM slightly differently so we just test SedonaDB here

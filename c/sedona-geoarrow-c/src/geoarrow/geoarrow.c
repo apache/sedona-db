@@ -5916,52 +5916,6 @@ GeoArrowErrorCode GeoArrowWKBWriterAppend(struct GeoArrowWKBWriter* writer,
   GEOARROW_RETURN_NOT_OK(GeoArrowWKBWriterAppendValidity(writer, 1));
   return GEOARROW_OK;
 }
-
-struct GeoArrowBufferView GeoArrowWKBWriterPeek(const struct GeoArrowWKBWriter* writer) {
-  const struct WKBWriterPrivate* private_data =
-      (const struct WKBWriterPrivate*)writer->private_data;
-  struct GeoArrowBufferView out = {NULL, 0};
-  if (private_data->length == 0) {
-    return out;
-  }
-
-  int32_t offset;
-  memcpy(&offset,
-         private_data->offsets.data +
-             ((private_data->length - 1) * (int64_t)sizeof(int32_t)),
-         sizeof(int32_t));
-  if (private_data->values.data != NULL) {
-    out.data = private_data->values.data + offset;
-  }
-  out.size_bytes = private_data->values.size_bytes - offset;
-  return out;
-}
-
-void GeoArrowWKBWriterRewind(struct GeoArrowWKBWriter* writer) {
-  struct WKBWriterPrivate* private_data = (struct WKBWriterPrivate*)writer->private_data;
-  if (private_data->length == 0) {
-    return;
-  }
-
-  int32_t offset;
-  memcpy(&offset,
-         private_data->offsets.data +
-             ((private_data->length - 1) * (int64_t)sizeof(int32_t)),
-         sizeof(int32_t));
-
-  if (private_data->validity.buffer.data != NULL) {
-    if (!ArrowBitGet(private_data->validity.buffer.data, private_data->length - 1)) {
-      private_data->null_count--;
-    }
-    int result = ArrowBitmapResize(&private_data->validity, private_data->length - 1, 0);
-    NANOARROW_DCHECK(result == NANOARROW_OK);
-    NANOARROW_UNUSED(result);
-  }
-
-  private_data->length--;
-  private_data->offsets.size_bytes -= sizeof(int32_t);
-  private_data->values.size_bytes = offset;
-}
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7075,52 +7029,6 @@ GeoArrowErrorCode GeoArrowWKTWriterAppend(struct GeoArrowWKTWriter* writer,
 
   GEOARROW_RETURN_NOT_OK(GeoArrowWKTWriterAppendValidity(writer, 1));
   return GEOARROW_OK;
-}
-
-struct GeoArrowStringView GeoArrowWKTWriterPeek(const struct GeoArrowWKTWriter* writer) {
-  const struct WKTWriterPrivate* private_data =
-      (const struct WKTWriterPrivate*)writer->private_data;
-  struct GeoArrowStringView out = {NULL, 0};
-  if (private_data->length == 0) {
-    return out;
-  }
-
-  int32_t offset;
-  memcpy(&offset,
-         private_data->offsets.data +
-             ((private_data->length - 1) * (int64_t)sizeof(int32_t)),
-         sizeof(int32_t));
-  if (private_data->values.data != NULL) {
-    out.data = (const char*)private_data->values.data + offset;
-  }
-  out.size_bytes = private_data->values.size_bytes - offset;
-  return out;
-}
-
-void GeoArrowWKTWriterRewind(struct GeoArrowWKTWriter* writer) {
-  struct WKTWriterPrivate* private_data = (struct WKTWriterPrivate*)writer->private_data;
-  if (private_data->length == 0) {
-    return;
-  }
-
-  int32_t offset;
-  memcpy(&offset,
-         private_data->offsets.data +
-             ((private_data->length - 1) * (int64_t)sizeof(int32_t)),
-         sizeof(int32_t));
-
-  if (private_data->validity.buffer.data != NULL) {
-    if (!ArrowBitGet(private_data->validity.buffer.data, private_data->length - 1)) {
-      private_data->null_count--;
-    }
-    int result = ArrowBitmapResize(&private_data->validity, private_data->length - 1, 0);
-    NANOARROW_DCHECK(result == NANOARROW_OK);
-    NANOARROW_UNUSED(result);
-  }
-
-  private_data->length--;
-  private_data->offsets.size_bytes -= sizeof(int32_t);
-  private_data->values.size_bytes = offset;
 }
 
 GeoArrowErrorCode GeoArrowWKTWriterInit(struct GeoArrowWKTWriter* writer) {

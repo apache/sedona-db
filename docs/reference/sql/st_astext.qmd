@@ -24,16 +24,18 @@ kernels:
   - returns: string
     args: [geography]
   - returns: string
-    args: [geometry, max_decimal_digits]
+    args:
+      - geometry
+      - name: max_decimal_digits
+        type: integer
+        description: >
+          Number of digits after the decimal point, from 0 to 16. Rounds coordinates
+          and removes trailing zeros. Omitting this argument preserves full precision.
   - returns: string
     args: [geography, max_decimal_digits]
 ---
 
 ## Description
-
-The optional `max_decimal_digits` argument rounds each coordinate to between 0 and 16
-digits after the decimal point and removes trailing zeros. Omitting it preserves full
-precision.
 
 Alias: `ST_AsWKT`.
 

@@ -27,7 +27,6 @@ import warnings
 import geopandas as gpd
 import numpy as np
 import pandas as pd
-import pyarrow as pa
 import pyproj
 import pytest
 import shapely
@@ -925,26 +924,19 @@ def test_centroid_origin_leaves_collections_of_empty_parts(call):
     ids=["interpolate", "centroid"],
 )
 def test_leaving_empties_out_keeps_a_wkb_view_column(call):
-    # Supply a binary view explicitly: the empty geometries left out must
-    # not be mixed with plain binary, regardless of the WKB parser's output type.
+    # ST_GeomFromWKB stores its WKB as a binary view, which the empty
+    # geometries left out must not be mixed with plain binary for.
     wkts = ["LINESTRING (0 0, 2 0)", "LINESTRING EMPTY", "MULTILINESTRING (EMPTY)"]
-    gs = gpd.GeoSeries.from_wkt([*wkts, None])
-    field = pa.field(
-        "g",
-        pa.binary_view(),
-        metadata={
-            "ARROW:extension:name": "geoarrow.wkb",
-            "ARROW:extension:metadata": "{}",
-        },
-    )
-    table = pa.Table.from_arrays(
-        [pa.array(gs.to_wkb().tolist(), type=pa.binary_view())],
-        schema=pa.schema([field]),
-    )
+    values = ", ".join(f"('{w}')" for w in wkts) + ", (NULL)"
     gdf = sgpd.GeoDataFrame(
-        sgpd.default_context().create_data_frame(table), geometry="g"
+        sgpd.default_context().sql(
+            "SELECT ST_GeomFromWKB(ST_AsBinary(ST_GeomFromWKT(w))) AS g "
+            f"FROM (VALUES {values}) AS t(w)"
+        ),
+        geometry="g",
     )
     assert "View" in str(gdf._df.schema.field("g").type)
+    gs = gpd.GeoSeries.from_wkt([*wkts, None])
     _assert_same_geometries(call(gdf.geometry), call(gs))
 
 
@@ -1204,13 +1196,14 @@ def test_cx_takes_an_x_and_a_y_range():
 
 
 def test_to_wkt_round_trips():
-    # Equivalent to GeoPandas' WKT but not character-identical (spacing).
     gs = gpd.GeoSeries.from_wkt(CORPUS, crs="EPSG:3857")
     got = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry.to_wkt()
     for text, reference in zip(got.to_pandas().tolist(), gs.tolist()):
         # pandas 3's string dtype marks a missing value as NaN, not None.
         parsed = None if pd.isna(text) else shapely.from_wkt(text)
         assert _same(parsed, reference), (text, reference)
+        if reference is not None:
+            assert text == shapely.to_wkt(reference, rounding_precision=-1)
 
 
 def test_to_wkb_matches_geopandas_iso_flavor():
