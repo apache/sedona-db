@@ -23,6 +23,7 @@ use arrow_schema::FieldRef;
 use datafusion::sql::sqlparser::ast;
 use datafusion_common::{plan_datafusion_err, Result};
 use datafusion_expr::planner::TypePlanner;
+use sedona_functions::st_setsrid::validate_crs_for_type;
 use sedona_geometry::types::Edges;
 use sedona_schema::{crs::deserialize_crs, datatypes::SedonaType};
 
@@ -61,7 +62,9 @@ impl TypePlanner for SedonaTypePlanner {
             return Ok(None);
         };
 
-        let field = SedonaType::Wkb(edges, crs).to_storage_field("", true)?;
+        let sedona_type = SedonaType::Wkb(edges, crs);
+        validate_crs_for_type(sedona_type.crs(), &sedona_type)?;
+        let field = sedona_type.to_storage_field("", true)?;
         Ok(Some(Arc::new(field)))
     }
 }
@@ -127,8 +130,8 @@ mod tests {
             SedonaType::Wkb(Edges::Spherical, lnglat())
         );
         assert_eq!(
-            plan(custom_type("GEOGRAPHY", &["EPSG:3857", "SPHERICAL"])),
-            SedonaType::Wkb(Edges::Spherical, deserialize_crs("EPSG:3857").unwrap())
+            plan(custom_type("GEOGRAPHY", &["EPSG:4269", "SPHERICAL"])),
+            SedonaType::Wkb(Edges::Spherical, deserialize_crs("EPSG:4269").unwrap())
         );
     }
 
@@ -165,6 +168,13 @@ mod tests {
             .plan_type_field(&custom_type("geography", &["OGC:CRS84", "planar"]))
             .unwrap_err();
         assert!(error.to_string().contains("expected 'spherical'"));
+
+        let error = SedonaTypePlanner
+            .plan_type_field(&custom_type("geography", &["EPSG:3857"]))
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("Can't assign non-geographic CRS"));
     }
 
     #[tokio::test]
@@ -175,7 +185,7 @@ mod tests {
                 geom GEOMETRY, \
                 geog GEOGRAPHY, \
                 projected GEOMETRY('EPSG:3857'), \
-                projected_geog GEOGRAPHY('EPSG:3857', spherical)\
+                nad83_geog GEOGRAPHY('EPSG:4269', spherical)\
             )",
         )
         .await?
@@ -197,11 +207,17 @@ mod tests {
             SedonaType::Wkb(Edges::Planar, deserialize_crs("EPSG:3857")?)
         );
         assert_eq!(
-            SedonaType::from_storage_field(
-                schema.field_with_name(None, "projected_geog")?.as_ref()
-            )?,
-            SedonaType::Wkb(Edges::Spherical, deserialize_crs("EPSG:3857")?)
+            SedonaType::from_storage_field(schema.field_with_name(None, "nad83_geog")?.as_ref())?,
+            SedonaType::Wkb(Edges::Spherical, deserialize_crs("EPSG:4269")?)
         );
+
+        let error = ctx
+            .sql("SELECT CAST(ST_Point(0, 1) AS GEOGRAPHY('EPSG:3857'))")
+            .await
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("Can't assign non-geographic CRS"));
         Ok(())
     }
 }
