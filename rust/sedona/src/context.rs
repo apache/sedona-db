@@ -77,7 +77,6 @@ use sedona_pointcloud::las::{
     options::{GeometryEncoding, LasExtraBytes, LasOptions},
 };
 use sedona_raster_functions::rs_ensure_loaded::RsEnsureLoaded;
-use sedona_raster_gdal::GdalRasterFileFormatFactory;
 use sedona_schema::schema::SedonaSchema;
 #[cfg(feature = "gpu")]
 use sedona_spatial_join_gpu::options::GpuOptions;
@@ -315,8 +314,9 @@ impl SedonaContext {
         // GeoTIFF is one concrete registration of the generic GDAL raster
         // reader. Additional GDAL-supported extensions can use the same
         // parameterized factory without changing the reader implementation.
-        state.register_file_format(Arc::new(GdalRasterFileFormatFactory::new("tif")), false)?;
-        state.register_file_format(Arc::new(GdalRasterFileFormatFactory::new("tiff")), false)?;
+        for factory in sedona_raster_gdal::register::default_file_format_factories() {
+            state.register_file_format(factory, false)?;
+        }
 
         #[cfg(feature = "pointcloud")]
         {

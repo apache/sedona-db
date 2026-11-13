@@ -123,6 +123,21 @@ test_that("sd_read() resolves registered formats and options", {
   expect_false("group" %in% names(unpartitioned_out))
 })
 
+test_that("sd_read() reads GeoTIFF metadata and native tiles", {
+  path <- testthat::test_path(
+    "../../../../submodules/sedona-testing/data/raster/landsat8.tif"
+  )
+  skip_if_not(file.exists(path), "sedona-testing raster fixtures are unavailable")
+
+  raster <- sd_read(path)
+  expect_identical(colnames(raster), "raster")
+  expect_identical(sd_count(raster), 1)
+
+  tiled <- sd_read(path, format = "tif", options = list(tile = TRUE))
+  expect_identical(colnames(tiled), "raster")
+  expect_identical(sd_count(tiled), 4)
+})
+
 test_that("sd_read_parquet() forwards reader options", {
   path <- system.file("files/natural-earth_cities_geo.parquet", package = "sedonadb")
 
