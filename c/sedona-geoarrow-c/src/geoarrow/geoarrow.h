@@ -259,6 +259,10 @@ struct ArrowArrayStream {
   _GEOARROW_MAKE_NAME(GEOARROW_NAMESPACE, GeoArrowWKTWriterAppend)
 #define GeoArrowWKTWriterAppendNull \
   _GEOARROW_MAKE_NAME(GEOARROW_NAMESPACE, GeoArrowWKTWriterAppendNull)
+#define GeoArrowWKTWriterPeek \
+  _GEOARROW_MAKE_NAME(GEOARROW_NAMESPACE, GeoArrowWKTWriterPeek)
+#define GeoArrowWKTWriterRewind \
+  _GEOARROW_MAKE_NAME(GEOARROW_NAMESPACE, GeoArrowWKTWriterRewind)
 #define GeoArrowWKTWriterFinish \
   _GEOARROW_MAKE_NAME(GEOARROW_NAMESPACE, GeoArrowWKTWriterFinish)
 #define GeoArrowWKTWriterReset \
@@ -277,6 +281,10 @@ struct ArrowArrayStream {
   _GEOARROW_MAKE_NAME(GEOARROW_NAMESPACE, GeoArrowWKBWriterAppend)
 #define GeoArrowWKBWriterAppendNull \
   _GEOARROW_MAKE_NAME(GEOARROW_NAMESPACE, GeoArrowWKBWriterAppendNull)
+#define GeoArrowWKBWriterPeek \
+  _GEOARROW_MAKE_NAME(GEOARROW_NAMESPACE, GeoArrowWKBWriterPeek)
+#define GeoArrowWKBWriterRewind \
+  _GEOARROW_MAKE_NAME(GEOARROW_NAMESPACE, GeoArrowWKBWriterRewind)
 #define GeoArrowWKBWriterFinish \
   _GEOARROW_MAKE_NAME(GEOARROW_NAMESPACE, GeoArrowWKBWriterFinish)
 #define GeoArrowWKBWriterReset \
@@ -1633,6 +1641,21 @@ GeoArrowErrorCode GeoArrowWKTWriterAppend(struct GeoArrowWKTWriter* writer,
 /// \brief Append a null element to this writer
 GeoArrowErrorCode GeoArrowWKTWriterAppendNull(struct GeoArrowWKTWriter* writer);
 
+/// \brief Return a view of the most recently appended WKT element
+///
+/// The returned view is owned by the writer and is invalidated by the next call
+/// that modifies or resets the writer. Returns EINVAL if no element has been
+/// appended or out is NULL. This function is intended for callers that need WKT
+/// output without building an ArrowArray.
+GeoArrowErrorCode GeoArrowWKTWriterPeek(const struct GeoArrowWKTWriter* writer,
+                                        struct GeoArrowStringView* out);
+
+/// \brief Discard the most recently appended WKT element
+///
+/// This operation retains the writer's allocated memory for reuse. Calling this
+/// function when no element has been appended has no effect.
+void GeoArrowWKTWriterRewind(struct GeoArrowWKTWriter* writer);
+
 /// \brief Finish an ArrowArray containing elements from the visited input
 ///
 /// This function can be called more than once to support multiple batches.
@@ -1683,6 +1706,21 @@ GeoArrowErrorCode GeoArrowWKBWriterAppendNull(struct GeoArrowWKBWriter* writer);
 /// \brief Append a GeoArrowGeometryView to this writer
 GeoArrowErrorCode GeoArrowWKBWriterAppend(struct GeoArrowWKBWriter* writer,
                                           struct GeoArrowGeometryView geom);
+
+/// \brief Return a view of the most recently appended WKB element
+///
+/// The returned view is owned by the writer and is invalidated by the next call
+/// that modifies or resets the writer. Returns EINVAL if no element has been
+/// appended or out is NULL. This function is intended for callers that need WKB
+/// output without building an ArrowArray.
+GeoArrowErrorCode GeoArrowWKBWriterPeek(const struct GeoArrowWKBWriter* writer,
+                                        struct GeoArrowBufferView* out);
+
+/// \brief Discard the most recently appended WKB element
+///
+/// This operation retains the writer's allocated memory for reuse. Calling this
+/// function when no element has been appended has no effect.
+void GeoArrowWKBWriterRewind(struct GeoArrowWKBWriter* writer);
 
 /// \brief Populate a GeoArrowVisitor pointing to this writer
 void GeoArrowWKBWriterInitVisitor(struct GeoArrowWKBWriter* writer,

@@ -315,13 +315,6 @@ impl Visitor {
         }
     }
 
-    /// Create a new visitor wrapper that wraps a visitor that does nothing
-    pub fn void() -> Self {
-        let mut visitor = Self::new();
-        unsafe { SedonaDBGeoArrowVisitorInitVoid(visitor.ptr_mut()) };
-        visitor
-    }
-
     fn ptr_mut(&mut self) -> *mut GeoArrowVisitor {
         &mut self.inner
     }
@@ -405,15 +398,17 @@ mod test {
     fn array_reader() {
         let mut error = CError::new();
         let mut reader = ArrayReader::try_new(&WKB_GEOMETRY).unwrap();
-        let mut visitor = Visitor::void();
+        let mut writer = ArrayWriter::try_new(&WKB_GEOMETRY).unwrap();
         let wkb_array = create_array_storage(&[Some("POINT (0 1)"), None], &WKB_GEOMETRY);
-        reader.visit(&wkb_array, &mut visitor, &mut error).unwrap();
+        reader
+            .visit(&wkb_array, writer.visitor_mut(), &mut error)
+            .unwrap();
 
         let mut reader = ArrayReader::try_new(&WKB_LARGE_GEOMETRY).unwrap();
         let large_wkb_array =
             create_array_storage(&[Some("POINT (0 1)"), None], &WKB_LARGE_GEOMETRY);
         reader
-            .visit(&large_wkb_array, &mut visitor, &mut error)
+            .visit(&large_wkb_array, writer.visitor_mut(), &mut error)
             .unwrap();
     }
 
@@ -421,10 +416,10 @@ mod test {
     fn visit_error() {
         let mut error = CError::new();
         let mut reader = ArrayReader::try_new(&SedonaType::Arrow(DataType::Utf8)).unwrap();
-        let mut visitor = Visitor::void();
+        let mut writer = ArrayWriter::try_new(&WKB_GEOMETRY).unwrap();
         let wkt_array: ArrayRef = arrow_array::create_array!(Utf8, [Some("NOT WKT")]);
         let err = reader
-            .visit(&wkt_array, &mut visitor, &mut error)
+            .visit(&wkt_array, writer.visitor_mut(), &mut error)
             .unwrap_err();
         assert_eq!(
             err.to_string(),

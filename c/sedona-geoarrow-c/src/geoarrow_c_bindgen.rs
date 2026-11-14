@@ -132,8 +132,6 @@ unsafe extern "C" {
 
     pub fn SedonaDBGeoArrowVersion() -> *const c_char;
 
-    pub fn SedonaDBGeoArrowVisitorInitVoid(v: *mut GeoArrowVisitor);
-
     pub fn SedonaDBGeoArrowArrayReaderInitFromType(
         reader: *mut GeoArrowArrayReader,
         type_: GeoArrowType,

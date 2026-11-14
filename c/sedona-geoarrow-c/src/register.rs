@@ -17,8 +17,7 @@
 use sedona_expr::{item_crs::ItemCrsKernel, scalar_udf::ScalarKernelRef};
 
 use crate::kernels::{
-    st_astext_impl, st_astext_precision_impl, st_geogfromwkb_impl, st_geogfromwkt_impl,
-    st_geomfromwkb_impl, st_geomfromwkt_impl,
+    st_astext_impl, st_astext_precision_impl, st_geogfromwkt_impl, st_geomfromwkt_impl,
 };
 
 fn st_astext_kernels() -> Vec<ScalarKernelRef> {
@@ -30,9 +29,7 @@ fn st_astext_kernels() -> Vec<ScalarKernelRef> {
 pub fn scalar_kernels() -> Vec<(&'static str, Vec<ScalarKernelRef>)> {
     vec![
         ("st_astext", st_astext_kernels()),
-        ("st_geogfromwkb", vec![st_geogfromwkb_impl()]),
         ("st_geogfromwkt", vec![st_geogfromwkt_impl()]),
-        ("st_geomfromwkb", vec![st_geomfromwkb_impl()]),
         ("st_geomfromwkt", vec![st_geomfromwkt_impl()]),
     ]
 }
