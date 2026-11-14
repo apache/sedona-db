@@ -5600,6 +5600,44 @@ column names, in the same order, as this DataFrame.</p>
 <div class="doc doc-object doc-function">
 
 
+<h4 id="sedonadb.dataframe.DataFrame.item" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">item</span>
+
+
+<a href="#sedonadb.dataframe.DataFrame.item" class="headerlink" title="Permanent link">¶</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">item</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-external" title="typing.Any" href="https://docs.python.org/3/library/typing.html#typing.Any">Any</a></span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Execute and return the value of a result with one row and one column</p>
+<p>This is useful for a query expected to give a single value, such as an
+aggregate or a filter that leaves one row. The value is returned as a
+Python object (e.g., an <code>int</code> for an integer, <code>None</code> for a null). A
+geometry or geography is returned as a <code>ScalarGeometry</code>, which keeps its
+CRS and can be passed back to a query, and a raster as a <code>Raster</code>. So are
+the geometries and rasters in a list, a struct or a map that came in with
+their types; the engine's own <code>make_array()</code>, <code>named_struct()</code>, <code>map()</code>
+and <code>array_agg()</code> hold them as <code>binary</code>, which comes back as WKB bytes.</p>
+<p>Raises a <code>ValueError</code> if the result does not have exactly one column and
+one row.</p>
+<p>Examples:</p>
+<div class="codehilite"><pre><span></span><code>&gt;&gt;&gt; sd = sedona.db.connect()
+&gt;&gt;&gt; sd.sql("SELECT 1 + 1 AS value").item()
+2
+&gt;&gt;&gt; sd.sql("SELECT ST_Point(0, 1) AS geom").item()
+ScalarGeometry geometry&lt;Wkb&gt;
+&lt;POINT (0 1)&gt;
+</code></pre></div>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
 <h4 id="sedonadb.dataframe.DataFrame.join" class="doc doc-heading">
             <span class="doc doc-object-name doc-function-name">join</span>
 
