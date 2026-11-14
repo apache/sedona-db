@@ -120,6 +120,10 @@ def test_frame_has_the_geometry_methods_geopandas_shares():
     on_frame = [name for name in SHARED if hasattr(sgpd.GeoDataFrame, name)]
     assert on_frame == IMPLEMENTED
     for name in METHODS:
+        if name == "skew":
+            # A frame's is also pandas' skewness, for a frame without an
+            # active geometry column (see test_frame_reductions).
+            continue
         method = getattr(sgpd.GeoDataFrame, name)
         reference = getattr(sgpd.GeoSeries, name)
         assert method.__doc__ == reference.__doc__
