@@ -16,6 +16,6 @@
 # under the License.
 
 from sedonadb.expr.expression import Expr, SortExpr, col, sort_expr
-from sedonadb.expr.literal import Literal, lit
+from sedonadb.expr.literal import Literal, ScalarGeometry, lit
 
-__all__ = ["Expr", "Literal", "SortExpr", "col", "lit", "sort_expr"]
+__all__ = ["Expr", "Literal", "ScalarGeometry", "SortExpr", "col", "lit", "sort_expr"]
