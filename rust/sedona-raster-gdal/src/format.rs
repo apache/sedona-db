@@ -19,26 +19,31 @@
 
 use std::{collections::HashMap, fmt, sync::Arc};
 
-use arrow_array::{ArrayRef, RecordBatch, RecordBatchIterator, RecordBatchReader};
+use arrow_array::{ArrayRef, RecordBatch};
 use arrow_schema::{Schema, SchemaRef};
 use async_trait::async_trait;
-use datafusion_catalog::Session;
+use datafusion_catalog::{Session, memory::DataSourceExec};
 use datafusion_common::{
-    DataFusionError, GetExt, Result, Statistics, exec_datafusion_err, plan_err,
+    DataFusionError, GetExt, Result, Statistics, config::ConfigOptions, exec_datafusion_err,
+    not_impl_err, plan_err, tree_node::TreeNodeRecursion,
 };
 use datafusion_datasource::{
-    TableSchema,
+    PartitionedFile, TableSchema,
     file::FileSource,
     file_compression_type::FileCompressionType,
     file_format::{FileFormat, FileFormatFactory},
     file_scan_config::FileScanConfig,
+    file_stream::{FileOpenFuture, FileOpener},
+    projection::{ProjectionOpener, SplitProjection},
 };
-use datafusion_physical_plan::ExecutionPlan;
+use datafusion_physical_expr::{LexOrdering, PhysicalExpr, projection::ProjectionExprs};
+use datafusion_physical_plan::{
+    ExecutionPlan,
+    filter_pushdown::{FilterPushdownPropagation, PushedDown},
+    metrics::ExecutionPlanMetricsSet,
+};
+use futures::StreamExt;
 use object_store::{ObjectMeta, ObjectStore};
-use sedona_datasource::{
-    format::ExternalFileFormat,
-    spec::{ExternalFormatSpec, Object, OpenReaderArgs},
-};
 use sedona_raster::builder::RasterBuilder;
 use sedona_schema::datatypes::SedonaType;
 
@@ -117,20 +122,13 @@ impl FileFormatFactory for GdalRasterFileFormatFactory {
 pub struct GdalRasterFileFormat {
     extension: String,
     tile: bool,
-    inner: ExternalFileFormat,
 }
 
 impl GdalRasterFileFormat {
     pub fn new(extension: impl Into<String>, tile: bool) -> Self {
-        let extension = extension.into();
-        let spec = Arc::new(GdalRasterFormatSpec {
-            extension: extension.clone(),
-            tile,
-        });
         Self {
-            extension,
+            extension: extension.into(),
             tile,
-            inner: ExternalFileFormat::new(spec),
         }
     }
 
@@ -147,140 +145,213 @@ impl FileFormat for GdalRasterFileFormat {
 
     fn get_ext_with_compression(
         &self,
-        file_compression_type: &FileCompressionType,
+        _file_compression_type: &FileCompressionType,
     ) -> Result<String> {
-        self.inner.get_ext_with_compression(file_compression_type)
+        not_impl_err!("compression is not supported for GDAL raster files")
     }
 
     fn compression_type(&self) -> Option<FileCompressionType> {
-        self.inner.compression_type()
+        None
     }
 
     async fn infer_schema(
         &self,
-        state: &dyn Session,
-        store: &Arc<dyn ObjectStore>,
+        _state: &dyn Session,
+        _store: &Arc<dyn ObjectStore>,
         objects: &[ObjectMeta],
     ) -> Result<SchemaRef> {
-        self.inner.infer_schema(state, store, objects).await
+        if objects.is_empty() {
+            return plan_err!("Can't infer schema for zero objects. Does the input path exist?");
+        }
+        Ok(gdal_raster_schema())
     }
 
     async fn infer_stats(
         &self,
-        state: &dyn Session,
-        store: &Arc<dyn ObjectStore>,
+        _state: &dyn Session,
+        _store: &Arc<dyn ObjectStore>,
         table_schema: SchemaRef,
-        object: &ObjectMeta,
+        _object: &ObjectMeta,
     ) -> Result<Statistics> {
-        self.inner
-            .infer_stats(state, store, table_schema, object)
-            .await
+        Ok(Statistics::new_unknown(&table_schema))
     }
 
     async fn create_physical_plan(
         &self,
-        state: &dyn Session,
+        _state: &dyn Session,
         conf: FileScanConfig,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        self.inner.create_physical_plan(state, conf).await
+        Ok(DataSourceExec::from_data_source(conf))
     }
 
     fn file_source(&self, table_schema: TableSchema) -> Arc<dyn FileSource> {
-        self.inner.file_source(table_schema)
+        Arc::new(GdalRasterFileSource::new(
+            self.extension.clone(),
+            self.tile,
+            table_schema,
+        ))
     }
 }
 
 #[derive(Debug, Clone)]
-struct GdalRasterFormatSpec {
+struct GdalRasterFileSource {
     extension: String,
     tile: bool,
+    table_schema: TableSchema,
+    batch_size: Option<usize>,
+    projection: ProjectionExprs,
+    metrics: ExecutionPlanMetricsSet,
 }
 
-#[async_trait]
-impl ExternalFormatSpec for GdalRasterFormatSpec {
-    async fn infer_schema(&self, _location: &Object) -> Result<Schema> {
-        Ok((*gdal_raster_schema()).clone())
-    }
-
-    async fn open_reader(
-        &self,
-        args: &OpenReaderArgs,
-    ) -> Result<Box<dyn RecordBatchReader + Send>> {
-        let path = args.src.to_url_string().ok_or_else(|| {
-            exec_datafusion_err!(
-                "Cannot determine location for GDAL raster source {}",
-                args.src
-            )
-        })?;
-
-        // Opening and reading the header is mandatory even though the schema is
-        // fixed: this populates the raster's grid, CRS, bands, and nodata. GDAL
-        // is synchronous, so keep the open off DataFusion's async worker.
-        let tile = self.tile;
-        let raster: ArrayRef = tokio::task::spawn_blocking(move || {
-            let header = with_gdal(|gdal| read_outdb_header(gdal, &path))?;
-            let capacity = if tile { header.tile_count()? } else { 1 };
-            let mut builder = RasterBuilder::new(capacity);
-            if tile {
-                header.append_tiles_to(&path, &mut builder)?;
-            } else {
-                header.append_to(&path, &mut builder)?;
-            }
-            Ok::<ArrayRef, DataFusionError>(Arc::new(builder.finish()?))
-        })
-        .await
-        .map_err(|error| exec_datafusion_err!("GDAL raster reader task failed: {error}"))??;
-        let schema = gdal_raster_schema();
-        let mut batch = RecordBatch::try_new(schema.clone(), vec![raster])?;
-        if let Some(projection) = &args.file_projection {
-            batch = batch.project(projection)?;
-        }
-
-        let batch_schema = batch.schema();
-        let batch_size = args.batch_size.unwrap_or(usize::MAX);
-        let batches = if batch_size == 0 || batch.num_rows() <= batch_size {
-            vec![batch]
-        } else {
-            (0..batch.num_rows())
-                .step_by(batch_size)
-                .map(|offset| batch.slice(offset, batch_size.min(batch.num_rows() - offset)))
-                .collect()
-        };
-
-        Ok(Box::new(RecordBatchIterator::new(
-            batches.into_iter().map(Ok),
-            batch_schema,
-        )))
-    }
-
-    fn with_options(
-        &self,
-        options: &HashMap<String, String>,
-    ) -> Result<Arc<dyn ExternalFormatSpec>> {
-        let mut tile = self.tile;
-        for (key, value) in options {
-            if key == "tile" {
-                tile = value.parse::<bool>().map_err(|_| {
-                    DataFusionError::Plan(format!(
-                        "Invalid value for GDAL raster option 'tile': '{value}' (expected true or false)"
-                    ))
-                })?;
-            } else {
-                return plan_err!("Unsupported GDAL raster format option: '{key}'");
-            }
-        }
-        Ok(Arc::new(Self {
-            extension: self.extension.clone(),
+impl GdalRasterFileSource {
+    fn new(extension: String, tile: bool, table_schema: TableSchema) -> Self {
+        let projection = SplitProjection::unprojected(&table_schema).source;
+        Self {
+            extension,
             tile,
-        }))
+            table_schema,
+            batch_size: None,
+            projection,
+            metrics: ExecutionPlanMetricsSet::default(),
+        }
+    }
+}
+
+impl FileSource for GdalRasterFileSource {
+    fn apply_expressions(
+        &self,
+        f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> Result<TreeNodeRecursion>,
+    ) -> Result<TreeNodeRecursion> {
+        for expr in &self.projection {
+            if f(&expr.expr)? == TreeNodeRecursion::Stop {
+                return Ok(TreeNodeRecursion::Stop);
+            }
+        }
+        Ok(TreeNodeRecursion::Continue)
     }
 
-    fn extension(&self) -> &str {
+    fn create_file_opener(
+        &self,
+        _store: Arc<dyn ObjectStore>,
+        base_config: &FileScanConfig,
+        _partition: usize,
+    ) -> Result<Arc<dyn FileOpener>> {
+        let split_projection =
+            SplitProjection::new(self.table_schema.file_schema(), &self.projection);
+        let opener: Arc<dyn FileOpener> = Arc::new(GdalRasterFileOpener {
+            base_url: base_config.object_store_url.to_string(),
+            tile: self.tile,
+            batch_size: self.batch_size.unwrap_or(usize::MAX),
+            file_projection: split_projection.file_indices.clone(),
+        });
+
+        ProjectionOpener::try_new(split_projection, opener, self.table_schema.file_schema())
+    }
+
+    fn try_pushdown_filters(
+        &self,
+        filters: Vec<Arc<dyn PhysicalExpr>>,
+        _config: &ConfigOptions,
+    ) -> Result<FilterPushdownPropagation<Arc<dyn FileSource>>> {
+        Ok(FilterPushdownPropagation::with_parent_pushdown_result(
+            vec![PushedDown::No; filters.len()],
+        ))
+    }
+
+    fn try_pushdown_projection(
+        &self,
+        projection: &ProjectionExprs,
+    ) -> Result<Option<Arc<dyn FileSource>>> {
+        Ok(Some(Arc::new(Self {
+            projection: self.projection.try_merge(projection)?,
+            ..self.clone()
+        })))
+    }
+
+    fn projection(&self) -> Option<&ProjectionExprs> {
+        Some(&self.projection)
+    }
+
+    fn with_batch_size(&self, batch_size: usize) -> Arc<dyn FileSource> {
+        Arc::new(Self {
+            batch_size: Some(batch_size),
+            ..self.clone()
+        })
+    }
+
+    fn metrics(&self) -> &ExecutionPlanMetricsSet {
+        &self.metrics
+    }
+
+    fn table_schema(&self) -> &TableSchema {
+        &self.table_schema
+    }
+
+    fn file_type(&self) -> &str {
         &self.extension
     }
 
-    async fn infer_stats(&self, _location: &Object, schema: &Schema) -> Result<Statistics> {
-        Ok(Statistics::new_unknown(schema))
+    fn repartitioned(
+        &self,
+        _target_partitions: usize,
+        _repartition_file_min_size: usize,
+        _output_ordering: Option<LexOrdering>,
+        _config: &FileScanConfig,
+    ) -> Result<Option<FileScanConfig>> {
+        Ok(None)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct GdalRasterFileOpener {
+    base_url: String,
+    tile: bool,
+    batch_size: usize,
+    file_projection: Vec<usize>,
+}
+
+impl FileOpener for GdalRasterFileOpener {
+    fn open(&self, file: PartitionedFile) -> Result<FileOpenFuture> {
+        let path = format!("{}{}", self.base_url, file.object_meta.location);
+        let tile = self.tile;
+        let batch_size = self.batch_size;
+        let file_projection = self.file_projection.clone();
+
+        Ok(Box::pin(async move {
+            // Opening and reading the header is mandatory even though the schema is
+            // fixed: this populates the raster's grid, CRS, bands, and nodata. GDAL
+            // is synchronous, so keep the open off DataFusion's async worker.
+            let batches = tokio::task::spawn_blocking(move || {
+                let header = with_gdal(|gdal| read_outdb_header(gdal, &path))?;
+                let capacity = if tile { header.tile_count()? } else { 1 };
+                let mut builder = RasterBuilder::new(capacity);
+                if tile {
+                    header.append_tiles_to(&path, &mut builder)?;
+                } else {
+                    header.append_to(&path, &mut builder)?;
+                }
+
+                let raster: ArrayRef = Arc::new(builder.finish()?);
+                let mut batch = RecordBatch::try_new(gdal_raster_schema(), vec![raster])?;
+                batch = batch.project(&file_projection)?;
+
+                let batches = if batch_size == 0 || batch.num_rows() <= batch_size {
+                    vec![batch]
+                } else {
+                    (0..batch.num_rows())
+                        .step_by(batch_size)
+                        .map(|offset| {
+                            batch.slice(offset, batch_size.min(batch.num_rows() - offset))
+                        })
+                        .collect()
+                };
+                Ok::<_, DataFusionError>(batches)
+            })
+            .await
+            .map_err(|error| exec_datafusion_err!("GDAL raster reader task failed: {error}"))??;
+
+            Ok(futures::stream::iter(batches.into_iter().map(Ok)).boxed())
+        }))
     }
 }
 
