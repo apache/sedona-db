@@ -33,7 +33,7 @@ pub struct ArrayReader {
 
 impl Drop for ArrayReader {
     fn drop(&mut self) {
-        if !self.ptr_mut().is_null() {
+        if !self.inner.private_data.is_null() {
             unsafe { SedonaDBGeoArrowArrayReaderReset(self.ptr_mut()) };
         }
     }
@@ -49,7 +49,7 @@ impl ArrayReader {
         };
 
         let mut out = Self { inner };
-        unsafe { SedonaDBGeoArrowArrayReaderInitFromType(out.ptr_mut(), type_id) };
+        check_code(unsafe { SedonaDBGeoArrowArrayReaderInitFromType(out.ptr_mut(), type_id) })?;
         Ok(out)
     }
 
@@ -63,7 +63,8 @@ impl ArrayReader {
         error: &mut CError,
     ) -> Result<(), GeoArrowCError> {
         let (ffi_array, _) = arrow_array::ffi::to_ffi(&array.to_data())?;
-        let array_len = array.len().try_into()?;
+        let length = array.len();
+        let length = length.try_into()?;
 
         unsafe {
             error.reset();
@@ -74,7 +75,7 @@ impl ArrayReader {
 
             visitor.set_error(error);
             let code =
-                SedonaDBGeoArrowArrayReaderVisit(self.ptr_mut(), 0, array_len, visitor.ptr_mut());
+                SedonaDBGeoArrowArrayReaderVisit(self.ptr_mut(), 0, length, visitor.ptr_mut());
             visitor.reset_error();
 
             error.msg_not_ok(code)?;
@@ -100,7 +101,7 @@ pub struct ArrayWriter {
 
 impl Drop for ArrayWriter {
     fn drop(&mut self) {
-        if !self.ptr_mut().is_null() {
+        if !self.inner.private_data.is_null() {
             unsafe { SedonaDBGeoArrowArrayWriterReset(self.ptr_mut()) };
         }
     }
@@ -120,12 +121,26 @@ impl ArrayWriter {
             visitor: Visitor::new(),
             data_type: arrow_storage_type(type_id)?,
         };
-        unsafe { SedonaDBGeoArrowArrayWriterInitFromType(out.ptr_mut(), type_id) };
+        check_code(unsafe { SedonaDBGeoArrowArrayWriterInitFromType(out.ptr_mut(), type_id) })?;
+        if type_id == GeoArrowType_GEOARROW_TYPE_WKT {
+            // Match GEOS/PostGIS MULTIPOINT formatting.
+            check_code(unsafe { SedonaDBGeoArrowArrayWriterSetFlatMultipoint(out.ptr_mut(), 0) })?;
+        }
         Ok(out)
     }
 
     fn ptr_mut(&mut self) -> *mut GeoArrowArrayWriter {
         &mut self.inner
+    }
+
+    /// Set the number of digits after the decimal point for WKT output.
+    pub fn set_precision(&mut self, precision: i32) -> Result<(), GeoArrowCError> {
+        check_code(unsafe { SedonaDBGeoArrowArrayWriterSetPrecision(self.ptr_mut(), precision) })
+    }
+
+    /// Append a null without constructing a visitor or an intermediate array.
+    pub fn append_null(&mut self) -> Result<(), GeoArrowCError> {
+        check_code(unsafe { SedonaDBGeoArrowArrayWriterAppendNull(self.ptr_mut()) })
     }
 
     /// Create a reference to the internal visitor pointing to this writer
@@ -153,6 +168,67 @@ impl ArrayWriter {
             unsafe { arrow_array::ffi::from_ffi_and_data_type(out, self.data_type.clone())? };
 
         Ok(make_array(array_data))
+    }
+}
+
+/// Reusable WKB reader for appending geometry views directly to a writer.
+///
+/// The view borrows both the input bytes and reader scratch space. Keeping the
+/// read and append together ensures neither can be invalidated before the writer
+/// has copied the coordinates.
+pub struct WkbReader {
+    inner: GeoArrowWKBReader,
+}
+
+impl WkbReader {
+    pub fn try_new() -> Result<Self, GeoArrowCError> {
+        let mut out = Self {
+            inner: GeoArrowWKBReader {
+                private_data: ptr::null_mut(),
+            },
+        };
+        check_code(unsafe { SedonaDBGeoArrowWKBReaderInit(&mut out.inner) })?;
+        Ok(out)
+    }
+
+    pub fn append_to(
+        &mut self,
+        wkb: &[u8],
+        writer: &mut ArrayWriter,
+        error: &mut CError,
+    ) -> Result<(), GeoArrowCError> {
+        let src = GeoArrowBufferView {
+            data: wkb.as_ptr(),
+            size_bytes: wkb.len().try_into()?,
+        };
+        let mut geom = GeoArrowGeometryView {
+            root: ptr::null(),
+            size_nodes: 0,
+        };
+        error.reset();
+        unsafe {
+            let code =
+                SedonaDBGeoArrowWKBReaderRead(&mut self.inner, src, &mut geom, error.ptr_mut());
+            error.msg_not_ok(code)?;
+            let code = SedonaDBGeoArrowArrayWriterAppend(writer.ptr_mut(), geom, error.ptr_mut());
+            error.msg_not_ok(code)
+        }
+    }
+}
+
+impl Drop for WkbReader {
+    fn drop(&mut self) {
+        if !self.inner.private_data.is_null() {
+            unsafe { SedonaDBGeoArrowWKBReaderReset(&mut self.inner) };
+        }
+    }
+}
+
+fn check_code(code: i32) -> Result<(), GeoArrowCError> {
+    if code == 0 {
+        Ok(())
+    } else {
+        Err(GeoArrowCError::Code(code))
     }
 }
 
@@ -239,13 +315,6 @@ impl Visitor {
         }
     }
 
-    /// Create a new visitor wrapper that wraps a visitor that does nothing
-    pub fn void() -> Self {
-        let mut visitor = Self::new();
-        unsafe { SedonaDBGeoArrowVisitorInitVoid(visitor.ptr_mut()) };
-        visitor
-    }
-
     fn ptr_mut(&mut self) -> *mut GeoArrowVisitor {
         &mut self.inner
     }
@@ -276,6 +345,7 @@ fn geoarrow_type_id(sedona_type: &SedonaType) -> Result<GeoArrowType, GeoArrowCE
             DataType::LargeBinary => GeoArrowType_GEOARROW_TYPE_LARGE_WKB,
             DataType::BinaryView => GeoArrowType_GEOARROW_TYPE_WKB_VIEW,
             DataType::Utf8 => GeoArrowType_GEOARROW_TYPE_WKT,
+            DataType::LargeUtf8 => GeoArrowType_GEOARROW_TYPE_LARGE_WKT,
             DataType::Utf8View => GeoArrowType_GEOARROW_TYPE_WKT_VIEW,
             _ => {
                 return Err(GeoArrowCError::Invalid(format!(
@@ -306,6 +376,7 @@ fn arrow_storage_type(type_id: GeoArrowType) -> Result<DataType, GeoArrowCError>
         GeoArrowType_GEOARROW_TYPE_LARGE_WKB => DataType::LargeBinary,
         GeoArrowType_GEOARROW_TYPE_WKB_VIEW => DataType::BinaryView,
         GeoArrowType_GEOARROW_TYPE_WKT => DataType::Utf8,
+        GeoArrowType_GEOARROW_TYPE_LARGE_WKT => DataType::LargeUtf8,
         GeoArrowType_GEOARROW_TYPE_WKT_VIEW => DataType::Utf8View,
         _ => {
             return Err(GeoArrowCError::Invalid(format!(
@@ -327,15 +398,17 @@ mod test {
     fn array_reader() {
         let mut error = CError::new();
         let mut reader = ArrayReader::try_new(&WKB_GEOMETRY).unwrap();
-        let mut visitor = Visitor::void();
+        let mut writer = ArrayWriter::try_new(&WKB_GEOMETRY).unwrap();
         let wkb_array = create_array_storage(&[Some("POINT (0 1)"), None], &WKB_GEOMETRY);
-        reader.visit(&wkb_array, &mut visitor, &mut error).unwrap();
+        reader
+            .visit(&wkb_array, writer.visitor_mut(), &mut error)
+            .unwrap();
 
         let mut reader = ArrayReader::try_new(&WKB_LARGE_GEOMETRY).unwrap();
         let large_wkb_array =
             create_array_storage(&[Some("POINT (0 1)"), None], &WKB_LARGE_GEOMETRY);
         reader
-            .visit(&large_wkb_array, &mut visitor, &mut error)
+            .visit(&large_wkb_array, writer.visitor_mut(), &mut error)
             .unwrap();
     }
 
@@ -343,10 +416,10 @@ mod test {
     fn visit_error() {
         let mut error = CError::new();
         let mut reader = ArrayReader::try_new(&SedonaType::Arrow(DataType::Utf8)).unwrap();
-        let mut visitor = Visitor::void();
+        let mut writer = ArrayWriter::try_new(&WKB_GEOMETRY).unwrap();
         let wkt_array: ArrayRef = arrow_array::create_array!(Utf8, [Some("NOT WKT")]);
         let err = reader
-            .visit(&wkt_array, &mut visitor, &mut error)
+            .visit(&wkt_array, writer.visitor_mut(), &mut error)
             .unwrap_err();
         assert_eq!(
             err.to_string(),

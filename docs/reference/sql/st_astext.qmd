@@ -23,6 +23,16 @@ kernels:
     args: [geometry]
   - returns: string
     args: [geography]
+  - returns: string
+    args:
+      - geometry
+      - name: max_decimal_digits
+        type: integer
+        description: >
+          Number of digits after the decimal point, from 0 to 16. Rounds coordinates
+          and removes trailing zeros. Omitting this argument preserves full precision.
+  - returns: string
+    args: [geography, max_decimal_digits]
 ---
 
 ## Description
@@ -37,4 +47,8 @@ SELECT ST_AsText(ST_Point(1.0, 2.0));
 
 ```sql
 SELECT ST_AsText(ST_GeogPoint(1.0, 2.0));
+```
+
+```sql
+SELECT ST_AsText(ST_Point(1.123456789, 2.5), 6);
 ```

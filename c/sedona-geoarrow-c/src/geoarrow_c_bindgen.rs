@@ -43,6 +43,7 @@ pub type GeoArrowType = enum_t;
 pub const GeoArrowType_GEOARROW_TYPE_WKB: GeoArrowType = 100001;
 pub const GeoArrowType_GEOARROW_TYPE_LARGE_WKB: GeoArrowType = 100002;
 pub const GeoArrowType_GEOARROW_TYPE_WKT: GeoArrowType = 100003;
+pub const GeoArrowType_GEOARROW_TYPE_LARGE_WKT: GeoArrowType = 100004;
 pub const GeoArrowType_GEOARROW_TYPE_WKB_VIEW: GeoArrowType = 100005;
 pub const GeoArrowType_GEOARROW_TYPE_WKT_VIEW: GeoArrowType = 100006;
 
@@ -89,10 +90,47 @@ pub struct GeoArrowArrayWriter {
     pub private_data: *mut c_void,
 }
 
-unsafe extern "C" {
-    pub fn SedonaDBGeoArrowVersion() -> *const c_char;
+#[repr(C)]
+pub struct GeoArrowWKBReader {
+    pub private_data: *mut c_void,
+}
 
-    pub fn SedonaDBGeoArrowVisitorInitVoid(v: *mut GeoArrowVisitor);
+#[repr(C)]
+pub struct GeoArrowBufferView {
+    pub data: *const u8,
+    pub size_bytes: i64,
+}
+
+#[repr(C)]
+pub struct GeoArrowGeometryNode {
+    _private: [u8; 0],
+}
+
+#[repr(C)]
+pub struct GeoArrowGeometryView {
+    pub root: *const GeoArrowGeometryNode,
+    pub size_nodes: i64,
+}
+
+unsafe extern "C" {
+    pub fn SedonaDBGeoArrowWKBReaderInit(reader: *mut GeoArrowWKBReader) -> GeoArrowErrorCode;
+    pub fn SedonaDBGeoArrowWKBReaderReset(reader: *mut GeoArrowWKBReader);
+    pub fn SedonaDBGeoArrowWKBReaderRead(
+        reader: *mut GeoArrowWKBReader,
+        src: GeoArrowBufferView,
+        out: *mut GeoArrowGeometryView,
+        error: *mut GeoArrowError,
+    ) -> GeoArrowErrorCode;
+    pub fn SedonaDBGeoArrowArrayWriterAppend(
+        writer: *mut GeoArrowArrayWriter,
+        geom: GeoArrowGeometryView,
+        error: *mut GeoArrowError,
+    ) -> GeoArrowErrorCode;
+    pub fn SedonaDBGeoArrowArrayWriterAppendNull(
+        writer: *mut GeoArrowArrayWriter,
+    ) -> GeoArrowErrorCode;
+
+    pub fn SedonaDBGeoArrowVersion() -> *const c_char;
 
     pub fn SedonaDBGeoArrowArrayReaderInitFromType(
         reader: *mut GeoArrowArrayReader,
@@ -122,6 +160,16 @@ unsafe extern "C" {
     pub fn SedonaDBGeoArrowArrayWriterInitVisitor(
         writer: *mut GeoArrowArrayWriter,
         v: *mut GeoArrowVisitor,
+    ) -> GeoArrowErrorCode;
+
+    pub fn SedonaDBGeoArrowArrayWriterSetFlatMultipoint(
+        writer: *mut GeoArrowArrayWriter,
+        flat_multipoint: c_int,
+    ) -> GeoArrowErrorCode;
+
+    pub fn SedonaDBGeoArrowArrayWriterSetPrecision(
+        writer: *mut GeoArrowArrayWriter,
+        precision: c_int,
     ) -> GeoArrowErrorCode;
 
     pub fn SedonaDBGeoArrowArrayWriterFinish(
