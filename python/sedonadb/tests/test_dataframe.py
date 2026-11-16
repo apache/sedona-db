@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import os
 import subprocess
 import sys
 import tempfile
@@ -493,7 +494,13 @@ def test_dataframe_to_pandas(con):
     )
 
 
-@pytest.mark.skip(reason="subprocess import blocking may fail on wheel test platforms")
+# cibuildwheel exports CIBUILDWHEEL=1 into its test environment. Wheel test
+# platforms cannot reliably spawn a nested interpreter, so the subprocess check
+# below is skipped there; the python CI job still runs it.
+@pytest.mark.skipif(
+    os.environ.get("CIBUILDWHEEL") == "1",
+    reason="wheel test platforms cannot reliably spawn a nested interpreter",
+)
 def test_dataframe_to_arrow_without_geoarrow():
     # geoarrow-pyarrow is an optional dependency, so results must still convert
     # when it is not installed. Run in a subprocess that cannot import geoarrow,
