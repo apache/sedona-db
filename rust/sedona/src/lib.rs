@@ -30,4 +30,5 @@ mod read;
 pub mod record_batch_reader_provider;
 pub mod show;
 pub mod size_parser;
+pub mod type_planner;
 pub mod url_table;

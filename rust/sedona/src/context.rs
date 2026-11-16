@@ -24,6 +24,7 @@ use crate::object_storage::{
     ensure_object_store_registered_with_options, register_object_store_and_config_extensions,
 };
 use crate::read::{read_provider, resolve_read_format};
+use crate::type_planner::SedonaTypePlanner;
 use crate::url_table::install_sedona_url_table;
 use crate::{
     catalog::SedonaCatalogRegistry,
@@ -127,7 +128,8 @@ impl SedonaContext {
     pub fn new() -> Self {
         // This will panic only if the default build settings are
         // incorrect which we test!
-        let state_builder = SessionStateBuilder::new_with_default_features();
+        let state_builder = SessionStateBuilder::new_with_default_features()
+            .with_type_planner(Arc::new(SedonaTypePlanner));
         // DataFusion #22620 workaround tracked by
         // https://github.com/apache/sedona-db/issues/1232.
         let state_builder = register_vendored_optimizer_rules(state_builder).unwrap();
@@ -287,7 +289,8 @@ impl SedonaContext {
         let mut state_builder = SessionStateBuilder::new()
             .with_default_features()
             .with_runtime_env(runtime_env)
-            .with_config(session_config);
+            .with_config(session_config)
+            .with_type_planner(Arc::new(SedonaTypePlanner));
 
         // DataFusion #22620 workaround tracked by
         // https://github.com/apache/sedona-db/issues/1232.
