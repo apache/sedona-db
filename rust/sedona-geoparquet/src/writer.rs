@@ -520,16 +520,18 @@ fn bbox_type() -> DataType {
 }
 
 /// Whether `data_type` is a bounding box covering column as GeoParquet 1.1
-/// defines it: a struct of xmin, ymin, xmax, ymax in any order (GeoPandas
-/// writes them alphabetically), each a float or a double (this writer emits
-/// floats; other writers emit doubles).
+/// defines it: a struct of xmin, ymin, xmax, ymax, optionally with zmin and
+/// zmax for a 3D covering, in any order, each a float or a double (this writer
+/// emits floats; GeoPandas, for one, emits doubles). The writer replaces such
+/// a column with its own 2D covering.
 fn is_bbox_type(data_type: &DataType) -> bool {
     let DataType::Struct(fields) = data_type else {
         return false;
     };
     let mut names: Vec<&str> = fields.iter().map(|field| field.name().as_str()).collect();
     names.sort_unstable();
-    names == ["xmax", "xmin", "ymax", "ymin"]
+    (names == ["xmax", "xmin", "ymax", "ymin"]
+        || names == ["xmax", "xmin", "ymax", "ymin", "zmax", "zmin"])
         && fields
             .iter()
             .all(|field| matches!(field.data_type(), DataType::Float32 | DataType::Float64))
@@ -1026,6 +1028,62 @@ mod test {
             .map(|f| f.name().as_str())
             .collect::<Vec<_>>();
         assert_eq!(names, vec!["wkt", "bbox", "geometry"]);
+    }
+
+    #[tokio::test]
+    async fn rewriting_a_file_with_a_3d_double_bbox_covering_replaces_it_with_a_2d_one() {
+        // GeoParquet 1.1 allows a covering with zmin/zmax, and other writers
+        // store the bounds as doubles. Such a column is still a covering, so
+        // the writer replaces it with its own 2D float covering instead of
+        // refusing to overwrite it.
+        let ctx = setup_context();
+        let tmpdir = tempdir().unwrap();
+        let path = tmpdir.path().join("3d_bbox.parquet");
+        let bbox_3d_fields: Fields = ["xmin", "ymin", "zmin", "xmax", "ymax", "zmax"]
+            .iter()
+            .map(|name| Field::new(*name, DataType::Float64, true))
+            .collect();
+        let bbox_3d = StructArray::new(
+            bbox_3d_fields.clone(),
+            (0..6)
+                .map(|i| create_array!(Float64, [Some(i as f64)]) as ArrayRef)
+                .collect(),
+            None,
+        );
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("bbox", DataType::Struct(bbox_3d_fields), true),
+            WKB_GEOMETRY.to_storage_field("geometry", true).unwrap(),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(bbox_3d),
+                create_array(&[Some("POINT Z (1 2 3)")], &WKB_GEOMETRY),
+            ],
+        )
+        .unwrap();
+        let source = ctx
+            .read_table(Arc::new(
+                MemTable::try_new(schema, vec![vec![batch]]).unwrap(),
+            ))
+            .unwrap();
+
+        write_dataframe_to_path(&ctx, source, &path, TableGeoParquetOptions::default()).await;
+
+        let metadata = read_geoparquet_metadata(&path);
+        assert_eq!(
+            metadata.columns["geometry"].covering,
+            Some(GeoParquetCovering::bbox_struct_xy("bbox"))
+        );
+        let written = ctx
+            .table(path.to_string_lossy().into_owned())
+            .await
+            .unwrap();
+        let bbox_field = written
+            .schema()
+            .field_with_unqualified_name("bbox")
+            .unwrap();
+        assert_eq!(bbox_field.data_type(), &bbox_type());
     }
 
     #[tokio::test]

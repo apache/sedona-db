@@ -434,6 +434,32 @@ def test_write_geoparquet_1_1(con, geoarrow_data):
         df_roundtrip = con.read_parquet(tmp_parquet2).to_pandas()
         assert "bbox" in df_roundtrip.columns
 
+        # The same goes for a covering another writer produced: GeoPandas stores
+        # its bbox as a struct of doubles, which is still a covering
+        gdf_parquet = Path(td) / "geopandas.parquet"
+        gdf.to_parquet(gdf_parquet, write_covering_bbox=True)
+        assert parquet.read_schema(gdf_parquet).field("bbox").type == pa.struct(
+            [
+                ("xmin", pa.float64()),
+                ("ymin", pa.float64()),
+                ("xmax", pa.float64()),
+                ("ymax", pa.float64()),
+            ]
+        )
+        tmp_parquet4 = Path(td) / "tmp4.parquet"
+        con.read_parquet(gdf_parquet).to_parquet(tmp_parquet4, geoparquet_version="1.1")
+        names = parquet.read_schema(tmp_parquet4).names
+        assert names.count("bbox") == 1
+        assert names.index("bbox") == names.index("geometry") - 1
+        assert parquet.read_schema(tmp_parquet4).field("bbox").type == pa.struct(
+            [
+                ("xmin", pa.float32()),
+                ("ymin", pa.float32()),
+                ("xmax", pa.float32()),
+                ("ymax", pa.float32()),
+            ]
+        )
+
         # A "bbox" column of any other type is the user's, and is only replaced
         # when asked
         tmp_parquet3 = Path(td) / "tmp3.parquet"
