@@ -17,7 +17,7 @@
 
 //! GDAL-backed raster file formats.
 
-use std::{collections::HashMap, fmt, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use arrow_array::{ArrayRef, RecordBatch};
 use arrow_schema::{Schema, SchemaRef};
@@ -59,7 +59,7 @@ pub fn gdal_raster_schema() -> SchemaRef {
 }
 
 /// Factory for a GDAL-backed raster extension such as `tif` or `tiff`.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct GdalRasterFileFormatFactory {
     extension: String,
 }
@@ -69,14 +69,6 @@ impl GdalRasterFileFormatFactory {
         Self {
             extension: extension.into().trim_start_matches('.').to_lowercase(),
         }
-    }
-}
-
-impl fmt::Debug for GdalRasterFileFormatFactory {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("GdalRasterFileFormatFactory")
-            .field("extension", &self.extension)
-            .finish()
     }
 }
 
@@ -94,6 +86,8 @@ impl FileFormatFactory for GdalRasterFileFormatFactory {
     ) -> Result<Arc<dyn FileFormat>> {
         let mut tile = false;
         for (key, value) in format_options {
+            // The format. prefix is a DataFusion convention that ensures SQL format options make
+            // it through this function.
             let key = key.strip_prefix("format.").unwrap_or(key);
             if key == "tile" {
                 tile = value.parse::<bool>().map_err(|_| {
