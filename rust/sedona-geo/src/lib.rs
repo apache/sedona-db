@@ -28,6 +28,5 @@ mod st_dwithin;
 mod st_intersection_agg;
 mod st_intersects;
 mod st_length;
-mod st_line_interpolate_point;
 mod st_perimeter;
 pub mod to_geo;

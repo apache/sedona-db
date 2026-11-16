@@ -328,6 +328,27 @@ def test_write_ogr_from_view_types(con):
         assert tab_roundtrip.sort_by("string_col") == tab_simple
 
 
+@pytest.mark.parametrize("ext", ["gpkg", "fgb"])
+def test_write_ogr_from_ewkb(con, ext):
+    # GDAL silently writes NULL geometries when given EWKB with an embedded
+    # SRID, so check that these are written as ISO WKB.
+    # https://github.com/apache/sedona-db/issues/1523
+    ewkb_point_srid = bytes.fromhex(
+        "0101000020ad1000000000000000000000000000000000f03f"
+    )
+    con.create_data_frame(pa.table({"wkb": [ewkb_point_srid]})).to_view(
+        "pyogrio_ewkb", overwrite=True
+    )
+    df = con.sql(
+        "SELECT ST_SetCrs(ST_GeomFromWKB(wkb), 'EPSG:4269') AS geometry FROM pyogrio_ewkb"
+    )
+
+    with tempfile.TemporaryDirectory() as td:
+        df.to_pyogrio(f"{td}/foofy.{ext}")
+        roundtrip = geopandas.read_file(f"{td}/foofy.{ext}")
+        assert roundtrip.geometry.to_wkt().tolist() == ["POINT (0 1)"]
+
+
 def test_read_ogr_partitioned(con):
     n = 100
     series = geopandas.GeoSeries.from_xy(

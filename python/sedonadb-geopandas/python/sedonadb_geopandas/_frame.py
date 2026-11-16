@@ -18,9 +18,11 @@
 
 import functools
 import inspect
+import math
 import numbers
 import operator
 import os
+import warnings
 
 import pyarrow as pa
 from sedonadb.expr import Expr, Literal, lit
@@ -30,12 +32,16 @@ from sedonadb_geopandas._series import (
     _NO_VALUE,
     GeoSeries,
     Series,
+    _REDUCTIONS,
     _CoordinateIndexer,
+    _descriptions,
     _geometry_from_wkb,
     _kind,
+    _one_row,
     _pandas_dtypes,
     _replacement_pairs,
     _same_crs,
+    _shapes,
     is_scalar,
     normalize_scalar,
 )
@@ -251,6 +257,26 @@ def _unused_name(df, name, reserved=()):
     while name in df.schema.names or name in reserved:
         name = f"_{name}"
     return name
+
+
+def _join_distance(value, method, name):
+    """`value`, the `name` argument of `method`, as a float: only a single
+    number. A Series or expression cannot be one: the join's condition is built
+    against re-aliased copies of both frames, so a column reference would
+    resolve by name inside the join rather than against the frame it was read
+    from."""
+    from sedonadb_geopandas._series import _numeric_value
+
+    if isinstance(value, (Series, Expr)) or not is_scalar(value):
+        raise TypeError(
+            f"{method}() `{name}` must be a number, got {type(value).__name__}"
+        )
+    number = _numeric_value(value)
+    if not isinstance(number, numbers.Real) or isinstance(number, bool):
+        raise TypeError(
+            f"{method}() `{name}` must be a number, got {type(value).__name__}"
+        )
+    return float(number)
 
 
 def _from_geopandas(data, context):
@@ -1236,6 +1262,304 @@ class GeoDataFrame:
     def __abs__(self):
         return self.abs()
 
+    # -- reductions and summaries ---------------------------------------------
+    def _reduced(self, func, axis, numeric_only=False, names=None, **options):
+        """The reduction `func` of each column (of `names`, or of the numeric
+        ones), as a pandas Series indexed by name, as pandas reduces a frame:
+        each column's as `Series.<func>()` gives it, in one scan (three for
+        skew and kurt, and one per column for nunique). A column the
+        reduction is not for raises, as in pandas. So do some that pandas
+        reduces (see the README): text and durations for sum(), and durations
+        and timestamps for mean(), median(), std() and quantile()."""
+        import pandas as pd
+
+        names, values = self._reductions(func, axis, numeric_only, names, **options)
+        if not names:
+            return pd.Series([], dtype=_NO_COLUMNS.get(func, "float64"))
+        return pd.Series(values, index=names)
+
+    def _reductions(self, func, axis, numeric_only=False, names=None, **options):
+        """The names of the columns `_reduced()` reduces, and the result of
+        each, of its own type (a Series of them would share one)."""
+        _check_axis(axis, func)
+        names = self.columns if names is None else names
+        if numeric_only:
+            names = [
+                name
+                for name in names
+                if _kind(self[name]._dtype()) in ("number", "bool")
+            ]
+        columns = [self[name] for name in names]
+        if not columns:
+            return names, []
+        if func in ("skew", "kurt"):
+            values = _shapes(columns, func, options.get("skipna", True))
+        elif func == "nunique":
+            values = [column.nunique(**options) for column in columns]
+        else:
+            aggregates = [
+                column._aggregate(func, **options)[0].alias(f"c{i}")
+                for i, column in enumerate(columns)
+            ]
+            row = _one_row(self._df.agg(*aggregates))
+            values = [row[f"c{i}"] for i in range(len(columns))]
+            if func in ("min", "max"):
+                # No values: NaN, as Series.min() gives.
+                values = [math.nan if value is None else value for value in values]
+        return names, values
+
+    def sum(self, *, axis=0, numeric_only=False, min_count=0):
+        """The sum of each column, as pandas' `DataFrame.sum()` (see
+        `Series.sum()`); this computes it. As in pandas 3, this and the other
+        reductions take their options by keyword (pandas 2 takes `skipna`
+        second, which these don't take: they skip missing values)."""
+        return self._reduced("sum", axis, numeric_only, min_count=min_count)
+
+    def mean(self, *, axis=0, numeric_only=False):
+        return self._reduced("mean", axis, numeric_only)
+
+    def median(self, *, axis=0, numeric_only=False):
+        return self._reduced("median", axis, numeric_only)
+
+    def std(self, *, axis=0, ddof=1, numeric_only=False):
+        return self._reduced("std", axis, numeric_only, ddof=ddof)
+
+    def var(self, *, axis=0, ddof=1, numeric_only=False):
+        return self._reduced("var", axis, numeric_only, ddof=ddof)
+
+    def sem(self, *, axis=0, ddof=1, numeric_only=False):
+        return self._reduced("sem", axis, numeric_only, ddof=ddof)
+
+    def skew(self, *args, **kwargs):
+        """With an active geometry column, GeoPandas' skew: of the geometries,
+        an affine transformation (see `GeoSeries.skew()`). Without one, as a
+        pandas DataFrame's: the skewness of each column (see `Series.skew()`),
+        taking `axis`, `skipna` and `numeric_only`."""
+        if self._geometry_name is not None:
+            return self.geometry.skew(*args, **kwargs)
+        return self._skewness(*args, **kwargs)
+
+    def _skewness(self, *, axis=0, skipna=True, numeric_only=False):
+        return self._reduced("skew", axis, numeric_only, skipna=skipna)
+
+    def kurt(self, *, axis=0, skipna=True, numeric_only=False):
+        return self._reduced("kurt", axis, numeric_only, skipna=skipna)
+
+    kurtosis = kurt
+
+    def min(self, *, axis=0, numeric_only=False):
+        return self._reduced("min", axis, numeric_only)
+
+    def max(self, *, axis=0, numeric_only=False):
+        return self._reduced("max", axis, numeric_only)
+
+    def count(self, axis=0, numeric_only=False):
+        """The number of values that are not missing in each column."""
+        return self._reduced("count", axis, numeric_only)
+
+    def nunique(self, axis=0, dropna=True):
+        """The number of distinct values in each column (see
+        `Series.nunique()`)."""
+        return self._reduced("nunique", axis, dropna=dropna)
+
+    def any(self, *, axis=0, bool_only=False, skipna=True):
+        """Whether any value of each column (of each boolean one, with
+        `bool_only=True`) is true (see `Series.any()`)."""
+        return self._reduced(
+            "any", axis, names=self._truth_columns(bool_only), skipna=skipna
+        )
+
+    def all(self, *, axis=0, bool_only=False, skipna=True):
+        """Whether every value of each column is true (see `Series.all()`)."""
+        return self._reduced(
+            "all", axis, names=self._truth_columns(bool_only), skipna=skipna
+        )
+
+    def _truth_columns(self, bool_only):
+        if not bool_only:
+            return self.columns
+        return [name for name in self.columns if _kind(self[name]._dtype()) == "bool"]
+
+    def describe(self, percentiles=None, include=None, exclude=None):
+        """A summary of the columns, as a pandas DataFrame, as pandas'
+        `describe()` (see `Series.describe()`), with the columns pandas
+        would select. This computes it: the numbers and times in one scan.
+        """
+        import pandas as pd
+
+        # The columns pandas selects, from its description of no rows of
+        # these columns' types (which, of times, pandas 2 warns about its own
+        # internals for).
+        probe = self._df.limit(0).to_pandas()
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=r"(Datetime|Timedelta)Array.__init__ is deprecated",
+                category=FutureWarning,
+            )
+            selected = probe.describe(
+                percentiles=percentiles, include=include, exclude=exclude
+            )
+        names = list(selected.columns)
+        descriptions = _descriptions([self[name] for name in names], percentiles)
+        # pandas' row order: the labels of the shortest description first.
+        rows = []
+        for labels in sorted((d.index for d in descriptions), key=len):
+            rows += [label for label in labels if label not in rows]
+        frame = pd.concat([d.reindex(rows) for d in descriptions], axis=1, sort=False)
+        frame.columns = names
+        return frame
+
+    def info(
+        self, verbose=None, buf=None, max_cols=None, memory_usage=None, show_counts=None
+    ):
+        """A summary of the frame, written as pandas' `info()` writes it, to
+        `buf` (by default, standard output): its rows, and each column's
+        values that are not missing and dtype, as `dtypes` gives it (so an
+        integer or boolean column with a missing value has the dtype
+        `to_pandas()` gives it with none, not floats or Python objects). This
+        computes those counts. There is no memory usage to tell, as the frame
+        is lazy: `memory_usage` changes nothing.
+        """
+        import sys
+
+        import pandas as pd
+
+        names = self.columns
+        dtypes = self.dtypes
+        if max_cols is None:
+            max_cols = pd.get_option("display.max_info_columns")
+        if verbose is None:
+            verbose = len(names) <= max_cols
+        if show_counts is None:
+            show_counts = True
+        counted = [self._df._ctx.lit(1).funcs.count().alias("rows")]
+        if verbose and show_counts:
+            # NaN is missing, as pandas counts it.
+            counted += [
+                self[name]._aggregate("count")[0].alias(f"c{i}")
+                for i, name in enumerate(names)
+            ]
+        counts = _one_row(self._df.agg(*counted))
+        rows = int(counts["rows"])
+        lines = [str(type(self))]
+        lines.append(
+            f"RangeIndex: {rows} entries, 0 to {rows - 1}"
+            if rows
+            else "RangeIndex: 0 entries"
+        )
+        if not names:
+            lines.append(f"Empty {type(self).__name__}")
+        elif verbose:
+            lines.append(f"Data columns (total {len(names)} columns):")
+            headers = [
+                " # ",
+                "Column",
+                *(["Non-Null Count"] if show_counts else []),
+                "Dtype",
+            ]
+            body = []
+            for i, name in enumerate(names):
+                count = [f"{int(counts[f'c{i}'])} non-null"] if show_counts else []
+                body.append([f" {i}", name, *count, str(dtypes[name])])
+            widths = [
+                max(len(header), *(len(row[j]) for row in body))
+                for j, header in enumerate(headers)
+            ]
+
+            def line(cells):
+                return "  ".join(
+                    cell[:width].ljust(width) for cell, width in zip(cells, widths)
+                )
+
+            lines.append(line(headers))
+            lines.append(line(["-" * len(header) for header in headers]))
+            lines += [line(row) for row in body]
+        else:
+            lines.append(f"Columns: {len(names)} entries, {names[0]} to {names[-1]}")
+        counted_dtypes = dtypes.value_counts().groupby(lambda dtype: dtype.name).sum()
+        lines.append(
+            "dtypes: "
+            + ", ".join(
+                f"{name}({count:d})" for name, count in sorted(counted_dtypes.items())
+            )
+        )
+        (sys.stdout if buf is None else buf).write("\n".join(lines) + "\n")
+
+    def agg(self, func=None, axis=0, *args, **kwargs):
+        """The frame reduced by the reduction named `func`, as pandas' `agg()`:
+        one name gives a pandas Series of each column's, a list of names a
+        DataFrame of them (a row per name), and a dict from columns to a name
+        or a list of names the reductions of those columns."""
+        import pandas as pd
+
+        _check_axis(axis, "agg")
+        if isinstance(func, str):
+            return self._by_name(func)(*args, **kwargs)
+        if isinstance(func, (list, tuple)):
+            if args:
+                raise TypeError("agg() of a list of names takes keyword arguments")
+            if not func:
+                # No rows, and columns of no type, as pandas 3 gives.
+                return pd.DataFrame(index=[], columns=self.columns, dtype=object)
+            # Each column of its own type, as in pandas: from each reduction's
+            # values, not from a Series of them, which would share one.
+            results = []
+            for name in func:
+                arguments, options = self._reduction_arguments(name, axis, kwargs)
+                names, values = self._reductions(*arguments, **options)
+                results.append(dict(zip(names, values)))
+            return pd.DataFrame(
+                {column: [result[column] for result in results] for column in names},
+                index=list(func),
+            )
+        if isinstance(func, dict):
+            unknown = [name for name in func if name not in self.columns]
+            if unknown:
+                raise KeyError(f"Column(s) {unknown} do not exist")
+            # A dict of no columns gives an empty frame, as in pandas.
+            if func and all(isinstance(names, str) for names in func.values()):
+                values = [
+                    self[column].agg(name, *args, **kwargs)
+                    for column, name in func.items()
+                ]
+                return pd.Series(values, index=list(func))
+            columns, rows = {}, []
+            for column, names in func.items():
+                names = [names] if isinstance(names, str) else list(names)
+                columns[column] = self[column].agg(names, *args, **kwargs)
+                rows += [name for name in names if name not in rows]
+            return pd.DataFrame(
+                {column: values.reindex(rows) for column, values in columns.items()}
+            )
+        raise NotImplementedError(
+            f"agg() takes reductions by name, not {type(func).__name__}"
+        )
+
+    aggregate = agg
+
+    def _by_name(self, name):
+        if name not in _REDUCTIONS:
+            raise AttributeError(
+                f"'{name}' is not a valid function for '{type(self).__name__}' object"
+            )
+        return getattr(self, name)
+
+    def _reduction_arguments(self, name, axis, options):
+        """The arguments and options of `_reductions()` for the reduction
+        `name` with `options`, as the frame's method of that name reads them:
+        a TypeError for an option it does not take, as calling it raises."""
+        method = self._skewness if name == "skew" else self._by_name(name)
+        bound = inspect.signature(method).bind(axis=axis, **options)
+        bound.apply_defaults()
+        options = dict(bound.arguments)
+        axis = options.pop("axis")
+        numeric_only = options.pop("numeric_only", False)
+        names = None
+        if "bool_only" in options:
+            names = self._truth_columns(options.pop("bool_only"))
+        return (_REDUCED.get(name, name), axis, numeric_only, names), options
+
     def to_crs(self, crs=None, epsg=None):
         """Reproject the geometry column to `crs` (`ST_Transform`), as
         `GeoSeries.to_crs` does."""
@@ -1352,18 +1676,7 @@ class GeoDataFrame:
         columns must share a CRS (GeoPandas warns and joins anyway, which is
         almost always a mistake). Use `to_crs` on one side first.
         """
-        if not isinstance(other, GeoDataFrame):
-            raise TypeError(
-                f"sjoin() expects a GeoDataFrame, got {type(other).__name__}"
-            )
-        if self._geometry_name is None or other._geometry_name is None:
-            raise ValueError(
-                "sjoin() requires an active geometry column on both frames"
-            )
-        if how not in ("inner", "left", "right"):
-            raise ValueError(
-                f"sjoin() `how` must be 'inner', 'left', or 'right', got {how!r}"
-            )
+        self._check_join(other, how, "sjoin")
         if predicate not in _SJOIN_PREDICATES:
             raise ValueError(
                 f"sjoin() `predicate` must be one of {sorted(_SJOIN_PREDICATES)}, "
@@ -1377,48 +1690,14 @@ class GeoDataFrame:
                 "only for that predicate"
             )
         if distance is not None:
-            # Only a single number. A Series or expression cannot be a distance:
-            # the predicate is built against re-aliased copies of both frames, so
-            # a column reference would resolve by name inside the join rather
-            # than against the frame it was read from.
-            from sedonadb_geopandas._series import _numeric_value
-
-            if isinstance(distance, (Series, Expr)) or not is_scalar(distance):
-                raise TypeError(
-                    f"sjoin() `distance` must be a number, got {type(distance).__name__}"
-                )
-            distance = _numeric_value(distance)
-            if not isinstance(distance, numbers.Real) or isinstance(distance, bool):
-                raise TypeError(
-                    f"sjoin() `distance` must be a number, got {type(distance).__name__}"
-                )
-            distance = float(distance)
-
-        from sedonadb_geopandas._series import _same_crs
-
-        left_crs, right_crs = self.crs, other.crs
-        if (left_crs is None) != (right_crs is None) or (
-            left_crs is not None and not _same_crs(left_crs, right_crs.to_json())
-        ):
-            raise ValueError(
-                f"sjoin() needs both geometry columns in the same CRS, got "
-                f"{left_crs} and {right_crs}; reproject one side with to_crs() first"
-            )
+            distance = _join_distance(distance, "sjoin", "distance")
+        self._check_join_crs(other, "sjoin")
 
         # Both sides are aliased so the predicate and the output projection can
         # name columns unambiguously when both frames use the same names.
         left = self._df.alias("sjoin_left")
         right = other._df.alias("sjoin_right")
-        left_geom = left[self._geometry_name]
-        right_geom = right[other._geometry_name]
-        if left_crs is not None and left_crs.to_json() != right_crs.to_json():
-            # The same CRS can be spelled differently (an EPSG code and the
-            # matching PROJ string), and the engine refuses that as a mismatch.
-            # Only the predicate's operand is restamped; each output column keeps
-            # its own CRS.
-            right_geom = right_geom.funcs.st_setcrs(
-                self._df._ctx.lit(left_crs.to_json())
-            )
+        left_geom, right_geom = self._join_geometries(other, left, right)
         # Always a single spatial predicate: that is what the planner rewrites
         # into an indexed spatial join. A composition (`a OR b`) falls back to a
         # nested-loop join, which is quadratic.
@@ -1427,7 +1706,169 @@ class GeoDataFrame:
         else:
             on = getattr(left_geom.geo, _SJOIN_PREDICATES[predicate])(right_geom)
         joined = left.join(right, on=on, how=how)
+        _, projection = self._join_projection(
+            other, left, right, how, lsuffix, rsuffix, "sjoin"
+        )
+        geometry = self._geometry_name if how != "right" else other._geometry_name
+        return GeoDataFrame(joined.select(*projection), geometry)
 
+    def sjoin_nearest(
+        self,
+        right,
+        how="inner",
+        max_distance=None,
+        lsuffix="left",
+        rsuffix="right",
+        distance_col=None,
+        exclusive=False,
+    ):
+        """Join rows to the nearest rows of the other frame, as in
+        `geopandas.sjoin_nearest`.
+
+        With `how="inner"` or `"left"`, each row of this frame is matched to
+        the rows of `right` whose geometry is nearest its own: all of them,
+        when several are as near. With `how="right"`, each row of `right` is
+        matched to the nearest rows of this frame. As in GeoPandas, a row with
+        an empty or missing geometry has no nearest rows, and `how="left"` and
+        `"right"` keep the rows of their side that are matched to none, with
+        missing values for the other side. Distances are planar, in the units
+        of the CRS.
+
+        Args:
+            right: The right-hand `GeoDataFrame`.
+            how: `"inner"`, `"left"`, or `"right"`.
+            max_distance: Match only rows at most this far apart, a number
+                greater than 0; `None` for no limit.
+            lsuffix: Suffix for left columns whose names also occur on the right;
+                `None` keeps them unsuffixed.
+            rsuffix: Suffix for the corresponding right columns; `None` keeps
+                them unsuffixed.
+            distance_col: The name of a column for each match's distance,
+                missing for a row matched to none. It comes after the other
+                columns, or in place of a column of that name, as in GeoPandas.
+            exclusive: Not supported yet.
+
+        Returns:
+            A `GeoDataFrame` carrying one geometry column: the left frame's for
+            `how="inner"`/`"left"`, the right frame's for `how="right"`, as in
+            GeoPandas.
+
+        Differences from GeoPandas: as for `sjoin()`, there is no
+        `index_left`/`index_right` column, and the two geometry columns must
+        share a CRS. The rows come in no particular order. A `max_distance` of
+        NaN is refused, where GeoPandas sets no limit, and so is a
+        `distance_col` naming the active geometry column, which GeoPandas fills
+        with the distances. `exclusive=True` is not supported, nor is a
+        geography column: the engine has no nearest-neighbour join of
+        geography yet (apache/sedona-db#1086).
+        """
+        self._check_join(right, how, "sjoin_nearest")
+        if max_distance is not None:
+            max_distance = _join_distance(max_distance, "sjoin_nearest", "max_distance")
+            if not max_distance > 0:
+                raise ValueError(
+                    f"sjoin_nearest() `max_distance` must be greater than 0, got "
+                    f"{max_distance}"
+                )
+        if distance_col is not None and not isinstance(distance_col, str):
+            raise TypeError(
+                f"sjoin_nearest() `distance_col` must be a column name, got "
+                f"{type(distance_col).__name__}"
+            )
+        if exclusive:
+            raise NotImplementedError(
+                "sjoin_nearest() does not support exclusive=True yet"
+            )
+        if self.geometry._is_geography() or right.geometry._is_geography():
+            raise NotImplementedError(
+                "sjoin_nearest() does not support geography yet: the engine has no "
+                "nearest-neighbour join of geography (apache/sedona-db#1086)"
+            )
+        self._check_join_crs(right, "sjoin_nearest")
+
+        left = self._df.alias("sjoin_left")
+        right_df = right._df.alias("sjoin_right")
+        left_geom, right_geom = self._join_geometries(right, left, right_df)
+        # Each row of the query side gets its nearest rows of the other.
+        if how == "right":
+            query, candidates = right_geom, left_geom
+        else:
+            query, candidates = left_geom, right_geom
+        # The nearest row, by planar distance, and every other row as near as it
+        # (ST_KNN's include_tie_breakers), as in GeoPandas.
+        on = query.funcs.st_knn(candidates, 1, False, True)
+        distance = query.funcs.st_distance(candidates)
+        if max_distance is not None:
+            # The join checks a condition beside ST_KNN on the nearest rows it
+            # finds, so this keeps them only when they are near enough. A row of
+            # the query side whose nearest rows are farther has none, as in
+            # GeoPandas, which looks for the nearest only within max_distance.
+            on = on & (distance <= lit(max_distance))
+        joined = left.join(right_df, on=on, how=how)
+        names, projection = self._join_projection(
+            right, left, right_df, how, lsuffix, rsuffix, "sjoin_nearest"
+        )
+        geometry = self._geometry_name if how != "right" else right._geometry_name
+        if distance_col is not None:
+            if distance_col == geometry:
+                raise ValueError(
+                    f"sjoin_nearest() `distance_col` {distance_col!r} names the "
+                    f"active geometry column; pass another name"
+                )
+            distance = distance.alias(distance_col)
+            if distance_col in names:
+                projection[names.index(distance_col)] = distance
+            else:
+                projection.append(distance)
+        return GeoDataFrame(joined.select(*projection), geometry)
+
+    def _check_join(self, other, how, method):
+        """Raises unless `other` and `how` can be joined to this frame by
+        `method`, `sjoin()` or `sjoin_nearest()`."""
+        if not isinstance(other, GeoDataFrame):
+            raise TypeError(
+                f"{method}() expects a GeoDataFrame, got {type(other).__name__}"
+            )
+        if self._geometry_name is None or other._geometry_name is None:
+            raise ValueError(
+                f"{method}() requires an active geometry column on both frames"
+            )
+        if how not in ("inner", "left", "right"):
+            raise ValueError(
+                f"{method}() `how` must be 'inner', 'left', or 'right', got {how!r}"
+            )
+
+    def _check_join_crs(self, other, method):
+        """Raises unless both active geometry columns have one CRS."""
+        left_crs, right_crs = self.crs, other.crs
+        if (left_crs is None) != (right_crs is None) or (
+            left_crs is not None and not _same_crs(left_crs, right_crs.to_json())
+        ):
+            raise ValueError(
+                f"{method}() needs both geometry columns in the same CRS, got "
+                f"{left_crs} and {right_crs}; reproject one side with to_crs() first"
+            )
+
+    def _join_geometries(self, other, left, right):
+        """The active geometry columns of `left` and `right`, aliased copies of
+        this frame and `other`, for the join's condition."""
+        left_geom = left[self._geometry_name]
+        right_geom = right[other._geometry_name]
+        left_crs, right_crs = self.crs, other.crs
+        if left_crs is not None and left_crs.to_json() != right_crs.to_json():
+            # The same CRS can be spelled differently (an EPSG code and the
+            # matching PROJ string), and the engine refuses that as a mismatch.
+            # Only the condition's operand is restamped; each output column keeps
+            # its own CRS.
+            right_geom = right_geom.funcs.st_setcrs(
+                self._df._ctx.lit(left_crs.to_json())
+            )
+        return left_geom, right_geom
+
+    def _join_projection(self, other, left, right, how, lsuffix, rsuffix, method):
+        """The output column names of a spatial join of this frame and `other`
+        (aliased as `left` and `right`), and their expressions, as GeoPandas
+        names them."""
         # One geometry column survives: whichever side GeoPandas keeps.
         keep_left_geom = how != "right"
         geometry = self._geometry_name if keep_left_geom else other._geometry_name
@@ -1471,8 +1912,8 @@ class GeoDataFrame:
         duplicates = sorted({n for n in final_names if final_names.count(n) > 1})
         if duplicates:
             raise ValueError(
-                f"sjoin() would produce duplicate column name(s) {duplicates} with "
-                f"lsuffix={lsuffix!r} and rsuffix={rsuffix!r}. Pass different "
+                f"{method}() would produce duplicate column name(s) {duplicates} "
+                f"with lsuffix={lsuffix!r} and rsuffix={rsuffix!r}. Pass different "
                 f"suffixes, or rename the column first."
             )
 
@@ -1482,7 +1923,7 @@ class GeoDataFrame:
         projection += [
             right[name].alias(out) for name, out in zip(emitted_right, right_out)
         ]
-        return GeoDataFrame(joined.select(*projection), geometry)
+        return final_names, projection
 
     # -- geometry and CRS bookkeeping --------------------------------------
 
@@ -2303,7 +2744,6 @@ _GEOMETRY_METHODS = (
     "simplify",
     "simplify_coverage",
     "sindex",
-    "skew",
     "snap",
     "symmetric_difference",
     "total_bounds",
@@ -2317,6 +2757,22 @@ _GEOMETRY_METHODS = (
     "voronoi_polygons",
     "within",
 )
+
+
+# The reductions of `agg()`'s names that are spelled otherwise there.
+_REDUCED = {"kurtosis": "kurt"}
+
+# The dtype of a reduction of no columns, as pandas gives it.
+_NO_COLUMNS = {"count": "int64", "nunique": "int64", "any": "bool", "all": "bool"}
+
+
+def _check_axis(axis, method):
+    """A frame reduces each column (pandas' axis 0)."""
+    if not (isinstance(axis, (str, numbers.Integral)) and axis in (0, "index")):
+        raise NotImplementedError(
+            f"{method}() reduces each column (axis=0); reducing each row "
+            f"(axis={axis!r}) is not supported"
+        )
 
 
 def _forwarded(name):

@@ -26,13 +26,14 @@ readme = "README.md"
 requires-python = ">=3.9"
 dynamic = ["version"]
 dependencies = [
-    # 0.5.0 is the first release with the spatial predicates this wrapper's
-    # results depend on (boundary-only cases of `within`/`touches`), undefined
-    # distances to empty geometries, and literals that keep a GeoArrow
-    # scalar's kind and CRS. Nightlies version above the latest release, so
-    # they satisfy this floor.
-    "sedonadb>=0.5.0",
-    "sedonadb-expr>=0.5.0",
+    # 0.6.0 is the first release with what this wrapper relies on since 0.5.0:
+    # ST_KNN's include_tie_breakers argument, which sjoin_nearest() passes;
+    # engine fixes its results depend on, among them affine transformations,
+    # has_z/has_m of collections and the coordinates of collections mixing
+    # dimensions; and sedonadb-expr's shortest_line. Nightlies version as
+    # 0.6.0aN, below 0.6.0, so the floor is the first of them.
+    "sedonadb>=0.6.0a0",
+    "sedonadb-expr>=0.6.0a0",
     "pyarrow",
     # Geometry scalars (assignment, comparison operands) are Shapely objects;
     # Shapely 2 dropped the sequence protocol on multipart geometries, which
