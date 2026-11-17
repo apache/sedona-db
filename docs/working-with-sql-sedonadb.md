@@ -54,7 +54,7 @@ This approach correctly instructs SedonaDB to construct an array containing the 
 
 ## Integer and Decimal Arguments to Double-Precision Functions
 
-Some functions require a double-precision (`Float64`) numeric argument, for example because the library implementing them only works with doubles. Integer and decimal values passed in such a position are widened to `Float64` for you, so `1` or `CAST(1.5 AS DECIMAL(10, 2))` work where `1.5` does. This widening only happens when no implementation of the function accepts the argument as given, and it never applies to non-numeric arguments. A decimal with more than about 15 significant digits loses precision when it becomes a double, which is the same precision coordinates themselves have.
+Some functions require a double-precision (`Float64`) numeric argument, for example because the library implementing them only works with doubles. Integer and decimal values passed in such a position are cast to `Float64` for you when the query is planned, so `1` or `CAST(1.5 AS DECIMAL(10, 2))` work where `1.5` does, and `EXPLAIN` shows the cast. This only happens when no implementation of the function accepts the argument as given, and it never applies to non-numeric arguments. A decimal with more than about 15 significant digits loses precision when it becomes a double, which is the same precision coordinates themselves have.
 
 ## Temporary Views Not Supported in SQL
 

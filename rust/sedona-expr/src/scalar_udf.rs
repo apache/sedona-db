@@ -281,19 +281,41 @@ impl SedonaScalarUDF {
         Ok(None)
     }
 
-    /// Resolve the kernel and return type for a set of argument types
+    /// The argument types a plan has to cast `args` to before this function can run
+    /// on them, or `None` when a kernel accepts `args` as given
     ///
     /// Kernels are first matched against the argument types exactly as given.
     /// Only when no kernel matches are the integer and decimal arguments widened
     /// to `Float64` and the kernels tried again, so that a kernel declaring an
     /// exact `Float64` argument accepts an integer or decimal literal (e.g.,
     /// the `1` or `1.5` a Spark Connect client sends as `Int32`/`Decimal128`)
-    /// without every such kernel having to handle the cast itself. The third
-    /// element of the result is the argument types the kernel was matched
-    /// against, or `None` if no widening was applied. Nothing else is coerced:
-    /// a kernel that matches the arguments as given (including one that accepts
-    /// any numeric type) sees them untouched, and when no kernel matches even
-    /// after widening the error names the types as they were given.
+    /// without every such kernel having to handle the cast itself. Nothing else
+    /// is coerced: a kernel that matches the arguments as given (including one
+    /// that accepts any numeric type) sees them untouched, and when no kernel
+    /// matches even after widening the error names the types as they were given.
+    ///
+    /// The widening is a planning-time decision: the `sedona.widen_numeric_args`
+    /// analyzer rule in `sedona-query-planner` calls this and wraps the widened
+    /// arguments in explicit casts, so the casts show in `EXPLAIN`, a literal is
+    /// cast once when the plan is simplified rather than on every batch, and the
+    /// kernel is invoked with the types it matched. [ScalarUDFImpl::return_type]
+    /// resolves against the widened types too, so the schema DataFusion derives
+    /// while building the plan (before any analyzer runs) already agrees with the
+    /// analyzed plan.
+    pub fn widened_arg_types(
+        &self,
+        args: &[SedonaType],
+        scalars: &[Option<&ScalarValue>],
+    ) -> Result<Option<Vec<SedonaType>>> {
+        let (_, _, widened_args) = self.return_type_impl(args, scalars)?;
+        Ok(widened_args)
+    }
+
+    /// Resolve the kernel and return type for a set of argument types
+    ///
+    /// The third element of the result is the argument types the kernel was
+    /// matched against when they differ from `args`, as described in
+    /// [Self::widened_arg_types], or `None` when a kernel matched `args` as given.
     fn return_type_impl(
         &self,
         args: &[SedonaType],
@@ -433,35 +455,31 @@ impl ScalarUDFImpl for SedonaScalarUDF {
         let (kernel, return_type, widened_types) =
             self.return_type_impl(&arg_types, &arg_scalars)?;
 
-        let Some(widened_types) = widened_types else {
-            return kernel.invoke_batch_from_args(
-                &arg_types,
-                &args.args,
-                &return_type,
-                args.number_rows,
-                Some(&*args.config_options),
+        if let Some(widened_types) = widened_types {
+            // The kernel matched only after widening, so the plan was expected to
+            // cast these arguments before invoking this function. Running the kernel
+            // on the unwidened values would hand it types it never agreed to.
+            let args_display = arg_types
+                .iter()
+                .map(|arg| arg.logical_type_name())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let widened_display = widened_types
+                .iter()
+                .map(|arg| arg.logical_type_name())
+                .collect::<Vec<_>>()
+                .join(", ");
+            return sedona_internal_err!(
+                "{}({args_display}) needs its arguments cast to ({widened_display}) \
+                 before it runs; the plan was not analyzed with the \
+                 sedona.widen_numeric_args rule",
+                self.name
             );
-        };
-
-        // The kernel matched the widened types, so hand it the values widened the same
-        // way. DEFAULT_CAST_OPTIONS has safe: false, so a value that can't be represented
-        // errors rather than becoming null.
-        let widened_args = args
-            .args
-            .iter()
-            .zip(arg_types.iter().zip(&widened_types))
-            .map(|(value, (arg_type, widened_type))| {
-                if arg_type == widened_type {
-                    Ok(value.clone())
-                } else {
-                    value.cast_to(widened_type.storage_type(), Some(&DEFAULT_CAST_OPTIONS))
-                }
-            })
-            .collect::<Result<Vec<_>>>()?;
+        }
 
         kernel.invoke_batch_from_args(
-            &widened_types,
-            &widened_args,
+            &arg_types,
+            &args.args,
             &return_type,
             args.number_rows,
             Some(&*args.config_options),
@@ -476,7 +494,7 @@ impl ScalarUDFImpl for SedonaScalarUDF {
 #[cfg(test)]
 mod tests {
 
-    use arrow_array::{Float64Array, Int32Array, StringArray};
+    use arrow_array::StringArray;
     use datafusion_common::{DFSchema, scalar::ScalarValue};
     use sedona_testing::testers::ScalarUdfTester;
 
@@ -593,8 +611,7 @@ mod tests {
 
     #[test]
     fn widen_integer_and_decimal_args_to_float64_kernel() {
-        // A kernel that accepts exactly Float64 and echoes its argument back, checking
-        // that it was indeed handed Float64
+        // A kernel that accepts exactly Float64 and echoes its argument back
         let float64_kernel = SimpleSedonaScalarKernel::new_ref(
             ArgMatcher::new(
                 vec![ArgMatcher::is_arrow(DataType::Float64)],
@@ -602,54 +619,51 @@ mod tests {
             ),
             Arc::new(|arg_types, args| {
                 assert_eq!(arg_types, &[SedonaType::Arrow(DataType::Float64)]);
-                assert_eq!(args[0].data_type(), DataType::Float64);
                 Ok(args[0].clone())
             }),
         );
         let udf = SedonaScalarUDF::from_impl("float64_only", float64_kernel);
 
-        // Decimal128 scalar: 1.50 as DECIMAL(10, 2)
-        let tester = ScalarUdfTester::new(
-            udf.clone().into(),
-            vec![SedonaType::Arrow(DataType::Decimal128(10, 2))],
-        );
-        tester.assert_return_type(DataType::Float64);
+        // Decimal128 and Int32 arguments resolve the Float64 kernel's return type,
+        // and the plan is told to cast them to Float64 first
+        for arg_type in [DataType::Decimal128(10, 2), DataType::Int32] {
+            let tester =
+                ScalarUdfTester::new(udf.clone().into(), vec![SedonaType::Arrow(arg_type)]);
+            tester.assert_return_type(DataType::Float64);
+        }
         assert_eq!(
-            tester
-                .invoke(vec![ColumnarValue::Scalar(ScalarValue::Decimal128(
-                    Some(150),
-                    10,
-                    2
-                ))])
-                .unwrap()
-                .to_array(1)
-                .unwrap()
-                .as_ref(),
-            &Float64Array::from(vec![1.5])
+            udf.widened_arg_types(&[SedonaType::Arrow(DataType::Decimal128(10, 2))], &[None])
+                .unwrap(),
+            Some(vec![SedonaType::Arrow(DataType::Float64)])
+        );
+        assert_eq!(
+            udf.widened_arg_types(&[SedonaType::Arrow(DataType::Int32)], &[None])
+                .unwrap(),
+            Some(vec![SedonaType::Arrow(DataType::Float64)])
         );
 
-        // Int32 scalar
+        // Invoking on the unwidened values (a plan the analyzer rule did not see) is
+        // refused rather than handing the kernel an Int32 it never matched
         let tester =
             ScalarUdfTester::new(udf.clone().into(), vec![SedonaType::Arrow(DataType::Int32)]);
-        tester.assert_return_type(DataType::Float64);
-        assert_eq!(
-            tester.invoke_scalar(7_i32).unwrap(),
-            ScalarValue::Float64(Some(7.0))
+        let err = tester.invoke_scalar(7_i32).unwrap_err();
+        assert!(
+            err.to_string().contains(
+                "float64_only(int32) needs its arguments cast to (float64) before it runs; \
+                 the plan was not analyzed with the sedona.widen_numeric_args rule"
+            ),
+            "{err}"
         );
 
-        // Int32 array (with a null)
-        assert_eq!(
-            tester
-                .invoke_array(Arc::new(Int32Array::from(vec![Some(1), None, Some(-3)])))
-                .unwrap()
-                .as_ref(),
-            &Float64Array::from(vec![Some(1.0), None, Some(-3.0)])
-        );
-
-        // Float64 passed as-is is not re-cast (and still works)
+        // Float64 passed as-is needs no widening and runs
         let tester = ScalarUdfTester::new(
             udf.clone().into(),
             vec![SedonaType::Arrow(DataType::Float64)],
+        );
+        assert_eq!(
+            udf.widened_arg_types(&[SedonaType::Arrow(DataType::Float64)], &[None])
+                .unwrap(),
+            None
         );
         assert_eq!(
             tester.invoke_scalar(2.5).unwrap(),
@@ -668,25 +682,77 @@ mod tests {
                 ],
                 SedonaType::Arrow(DataType::Float64),
             ),
-            Arc::new(|arg_types, args| {
-                assert_eq!(
-                    arg_types,
-                    &[WKB_GEOMETRY, SedonaType::Arrow(DataType::Float64)]
-                );
-                assert_eq!(args[0].data_type(), DataType::Binary);
-                Ok(args[1].clone())
-            }),
+            Arc::new(|_, _| unreachable!("Should not be executed")),
         );
         let udf = SedonaScalarUDF::from_impl("geom_and_float64", kernel);
 
         let tester = ScalarUdfTester::new(
-            udf.into(),
+            udf.clone().into(),
             vec![WKB_GEOMETRY, SedonaType::Arrow(DataType::Int64)],
         );
         tester.assert_return_type(DataType::Float64);
         assert_eq!(
-            tester.invoke_scalar_scalar("POINT (0 1)", 10_i64).unwrap(),
-            ScalarValue::Float64(Some(10.0))
+            udf.widened_arg_types(
+                &[WKB_GEOMETRY, SedonaType::Arrow(DataType::Int64)],
+                &[None, None]
+            )
+            .unwrap(),
+            Some(vec![WKB_GEOMETRY, SedonaType::Arrow(DataType::Float64)])
+        );
+    }
+
+    #[test]
+    fn widen_literal_seen_by_a_return_type_that_depends_on_it() {
+        // A kernel whose return type is read off a Float64 literal sees the literal
+        // as Float64 when it was given as an integer
+        let kernel = SimpleSedonaScalarKernel::new_ref(
+            ArgMatcher::new(
+                vec![ArgMatcher::is_arrow(DataType::Float64)],
+                SedonaType::Arrow(DataType::Float64),
+            ),
+            Arc::new(|_, _| unreachable!("Should not be executed")),
+        );
+
+        #[derive(Debug)]
+        struct ReturnsUtf8ForLiteralOne(ScalarKernelRef);
+
+        impl SedonaScalarKernel for ReturnsUtf8ForLiteralOne {
+            fn return_type_from_args_and_scalars(
+                &self,
+                args: &[SedonaType],
+                scalars: &[Option<&ScalarValue>],
+            ) -> Result<Option<SedonaType>> {
+                Ok(self.0.return_type(args)?.map(|return_type| {
+                    if scalars[0] == Some(&ScalarValue::Float64(Some(1.0))) {
+                        SedonaType::Arrow(DataType::Utf8)
+                    } else {
+                        return_type
+                    }
+                }))
+            }
+
+            fn return_type(&self, _args: &[SedonaType]) -> Result<Option<SedonaType>> {
+                unreachable!("return_type_from_args_and_scalars is overridden")
+            }
+
+            fn invoke_batch(
+                &self,
+                _arg_types: &[SedonaType],
+                _args: &[ColumnarValue],
+            ) -> Result<ColumnarValue> {
+                unreachable!("Should not be executed")
+            }
+        }
+
+        let udf = SedonaScalarUDF::from_impl("literal_aware", ReturnsUtf8ForLiteralOne(kernel));
+        let tester = ScalarUdfTester::new(udf.into(), vec![SedonaType::Arrow(DataType::Int32)]);
+        assert_eq!(
+            tester.return_type_with_scalar(Some(1_i32)).unwrap(),
+            SedonaType::Arrow(DataType::Utf8)
+        );
+        assert_eq!(
+            tester.return_type_with_scalar(Some(2_i32)).unwrap(),
+            SedonaType::Arrow(DataType::Float64)
         );
     }
 

@@ -29,3 +29,4 @@ pub mod raster_source_spread;
 mod spatial_expr_utils;
 pub mod spatial_join_physical_planner;
 pub mod spatial_predicate;
+pub mod widen_numeric_args;

@@ -138,6 +138,17 @@ def test_udf_float64_input_accepts_integer_and_decimal(con):
     with pytest.raises(Exception, match=r"twice\(utf8\): No kernel matching arguments"):
         con.sql("SELECT twice('a')").to_arrow_table()
 
+    # The widening is an explicit cast in the plan: a column argument keeps it,
+    # and a literal argument is cast once when the plan is simplified
+    plan = con.sql(
+        "EXPLAIN SELECT twice(x) FROM (VALUES (1), (2)) AS t(x)"
+    ).to_pandas()
+    plan_text = "\n".join(plan.iloc[:, 1].astype(str).tolist())
+    assert "twice(CAST(t.x AS Float64))" in plan_text, plan_text
+    plan = con.sql("EXPLAIN SELECT twice(CAST(1.5 AS DECIMAL(10, 2)))").to_pandas()
+    plan_text = "\n".join(plan.iloc[:, 1].astype(str).tolist())
+    assert "CAST" not in plan_text, plan_text
+
 
 def test_udf_any_input(con):
     udf_impl = udf.arrow_udf(pa.binary())(some_udf)
