@@ -140,9 +140,7 @@ def test_udf_float64_input_accepts_integer_and_decimal(con):
 
     # The widening is an explicit cast in the plan: a column argument keeps it,
     # and a literal argument is cast once when the plan is simplified
-    plan = con.sql(
-        "EXPLAIN SELECT twice(x) FROM (VALUES (1), (2)) AS t(x)"
-    ).to_pandas()
+    plan = con.sql("EXPLAIN SELECT twice(x) FROM (VALUES (1), (2)) AS t(x)").to_pandas()
     plan_text = "\n".join(plan.iloc[:, 1].astype(str).tolist())
     assert "twice(CAST(t.x AS Float64))" in plan_text, plan_text
     plan = con.sql("EXPLAIN SELECT twice(CAST(1.5 AS DECIMAL(10, 2)))").to_pandas()
