@@ -52,9 +52,16 @@ sedona = Sedona()
 def register_pyarrow_extension_types():
     """Register extension types
 
-    This should be called after a lazy pyarrow import.
+    This should be called after a lazy pyarrow import. The geoarrow extension
+    types are registered only if geoarrow-pyarrow is installed, since it is an
+    optional dependency. Without it, geometry columns keep their storage type
+    and their extension name and metadata in the field metadata, and results
+    without geometry columns convert as usual.
     """
-    import geoarrow.pyarrow  # noqa: F401
+    try:
+        import geoarrow.pyarrow  # noqa: F401
+    except ImportError:
+        pass
 
     from sedonadb.raster import register_extension_type
 
