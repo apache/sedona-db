@@ -129,8 +129,16 @@ test_that("sd_read() reads GeoTIFF metadata and native tiles", {
   )
   skip_if_not(file.exists(path), "sedona-testing raster fixtures are unavailable")
 
-  raster <- tryCatch(
-    sd_read(path),
+  tryCatch(
+    {
+      raster <- sd_read(path)
+      expect_identical(colnames(raster), "raster")
+      expect_identical(sd_count(raster), 1)
+
+      tiled <- sd_read(path, format = "tif", options = list(tile = TRUE))
+      expect_identical(colnames(tiled), "raster")
+      expect_identical(sd_count(tiled), 4)
+    },
     error = function(cnd) {
       format_unregistered <- grepl(
         "No format registered for extension 'tif'",
@@ -141,15 +149,17 @@ test_that("sd_read() reads GeoTIFF metadata and native tiles", {
         skip("sedonadb was built without GDAL support")
       }
 
+      gdal_unavailable <- grepl(
+        "GDAL is not configured|Failed to load GDAL library",
+        conditionMessage(cnd)
+      )
+      if (gdal_unavailable) {
+        skip("GDAL is not available in this test environment")
+      }
+
       stop(cnd)
     }
   )
-  expect_identical(colnames(raster), "raster")
-  expect_identical(sd_count(raster), 1)
-
-  tiled <- sd_read(path, format = "tif", options = list(tile = TRUE))
-  expect_identical(colnames(tiled), "raster")
-  expect_identical(sd_count(tiled), 4)
 })
 
 test_that("sd_read_parquet() forwards reader options", {
