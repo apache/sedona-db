@@ -384,6 +384,27 @@ def test_st_dwithin(eng, geom1, geom2, distance, expected):
     )
 
 
+@pytest.mark.parametrize("eng", [SedonaDB])
+@pytest.mark.parametrize(
+    ("distance", "expected"),
+    [
+        # The s2geography kernel takes a double; a decimal (what Spark makes of a
+        # literal such as 111200.0) or an integer is widened to one, so the
+        # caller does not have to cast
+        pytest.param("CAST(111200 AS DECIMAL(7, 1))", True, id="decimal_within"),
+        pytest.param("CAST(111000 AS DECIMAL(7, 1))", False, id="decimal_beyond"),
+        pytest.param("111200", True, id="integer_within"),
+        pytest.param("CAST(111000 AS INTEGER)", False, id="int32_beyond"),
+    ],
+)
+def test_st_dwithin_distance_widened_to_double(eng, distance, expected):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_DWithin({geog_or_null('POINT (0 0)')}, {geog_or_null('POINT (0 1)')}, {distance})",
+        expected,
+    )
+
+
 @pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
 @pytest.mark.parametrize(
     ("geom1", "geom2", "expected"),
