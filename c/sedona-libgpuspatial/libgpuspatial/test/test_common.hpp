@@ -540,6 +540,8 @@ inline void ParseWKTMultiPolygon(Context<POINT_T, INDEX_T>& ctx, const char* wkt
   poly = poly_array_view[0];
 }
 
+void TestRelatePolygonRT(const char* wkt1, const char* wkt2, bool check_im = true);
+
 template <typename GEOMETRY1_T, typename GEOMETRY2_T>
 inline void TestRelate(const char* wkt1, const char* wkt2, const GEOMETRY1_T& g1,
                        const GEOMETRY2_T& g2) {
@@ -555,6 +557,13 @@ inline void TestRelate(const char* wkt1, const char* wkt2, const GEOMETRY1_T& g1
   char res[10];
   IntersectionMatrix::ToString(val, res);
   ASSERT_STREQ(actualVal.c_str(), res);
+
+  if constexpr ((std::is_same_v<GEOMETRY1_T, Polygon<point_t, index_t>> ||
+                 std::is_same_v<GEOMETRY1_T, MultiPolygon<point_t, index_t>>) &&
+                (std::is_same_v<GEOMETRY2_T, Polygon<point_t, index_t>> ||
+                 std::is_same_v<GEOMETRY2_T, MultiPolygon<point_t, index_t>>)) {
+    TestRelatePolygonRT(wkt1, wkt2);
+  }
 }
 
 }  // namespace gpuspatial
