@@ -306,6 +306,11 @@ SEXP savvy_InternalDataFrame_to_view__impl(SEXP self__, SEXP c_arg__ctx,
   return handle_result(res);
 }
 
+SEXP savvy_InternalDataFrame_unnest__impl(SEXP self__, SEXP c_arg__columns) {
+  SEXP res = savvy_InternalDataFrame_unnest__ffi(self__, c_arg__columns);
+  return handle_result(res);
+}
+
 SEXP savvy_InternalDataFrame_with_params__impl(SEXP self__,
                                                SEXP c_arg__params_sexp) {
   SEXP res =
@@ -495,6 +500,8 @@ static const R_CallMethodDef CallEntries[] = {
      (DL_FUNC)&savvy_InternalDataFrame_to_provider__impl, 2},
     {"savvy_InternalDataFrame_to_view__impl",
      (DL_FUNC)&savvy_InternalDataFrame_to_view__impl, 4},
+    {"savvy_InternalDataFrame_unnest__impl",
+     (DL_FUNC)&savvy_InternalDataFrame_unnest__impl, 2},
     {"savvy_InternalDataFrame_with_params__impl",
      (DL_FUNC)&savvy_InternalDataFrame_with_params__impl, 2},
     {"savvy_SedonaDBExpr_alias__impl", (DL_FUNC)&savvy_SedonaDBExpr_alias__impl,
