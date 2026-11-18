@@ -29,7 +29,7 @@ use sedona_schema::{
     matchers::ArgMatcher,
 };
 
-use crate::{s2geog_check, s2geography_c_bindgen::*};
+use crate::{decimal_kernel::DecimalToFloat64Kernel, s2geog_check, s2geography_c_bindgen::*};
 
 fn covering_cell_ids_type() -> SedonaType {
     SedonaType::Arrow(DataType::new_list(DataType::Int64, true))
@@ -58,6 +58,31 @@ pub fn s2_scalar_kernels() -> Result<Vec<(String, ScalarKernelRef)>> {
             ))
         })
         .collect::<Result<Vec<_>>>()?;
+
+    // These kernels accept floating-point inputs but cannot read Arrow decimals.
+    // Add decimal-only overloads for their continuous numeric argument, leaving
+    // other arguments (such as ST_Buffer's integer quad_segs) to the inner matcher.
+    let decimal_kernels = kernels
+        .iter()
+        .filter_map(|(name, kernel)| {
+            let argument = match name.as_str() {
+                "st_dwithin" => 2,
+                "st_buffer"
+                | "st_lineinterpolatepoint"
+                | "st_reduceprecision"
+                | "st_segmentize"
+                | "st_simplify"
+                | "st_tessellategeog"
+                | "st_tessellategeom" => 1,
+                _ => return None,
+            };
+            Some((
+                name.clone(),
+                Arc::new(DecimalToFloat64Kernel::new(kernel.clone(), argument)) as ScalarKernelRef,
+            ))
+        })
+        .collect::<Vec<_>>();
+    kernels.extend(decimal_kernels);
 
     // A few functions need explicit NULL type matching. This is mostly a DataFusion
     // thing (NULL can happen when binding parameters) so we handle it here and not
@@ -356,6 +381,231 @@ mod test {
     fn test_s2_scalar_kernels() {
         let kernels = s2_scalar_kernels().unwrap();
         assert!(!kernels.is_empty());
+    }
+
+    #[rstest]
+    fn decimal_dwithin(
+        #[values(
+            DataType::Decimal32(9, 1),
+            DataType::Decimal64(12, 1),
+            DataType::Decimal128(20, 1),
+            DataType::Decimal256(40, 1),
+            DataType::Decimal128(20, -2)
+        )]
+        decimal_type: DataType,
+        #[values(WKB_GEOGRAPHY, WKB_VIEW_GEOGRAPHY)] geog_type: SedonaType,
+    ) {
+        let tester = ScalarUdfTester::new(
+            s2_udf("st_dwithin").into(),
+            vec![
+                geog_type.clone(),
+                geog_type.clone(),
+                decimal_type.clone().into(),
+            ],
+        );
+        tester.assert_return_type(DataType::Boolean);
+        let point0 = create_scalar(Some("POINT (0 0)"), &geog_type);
+        let point1 = create_scalar(Some("POINT (0 1)"), &geog_type);
+        let distance = ScalarValue::Decimal128(Some(1112000), 20, 1)
+            .cast_to(&decimal_type)
+            .unwrap();
+        assert_eq!(
+            tester
+                .invoke_scalar_scalar_scalar(point0.clone(), point1.clone(), distance.clone())
+                .unwrap(),
+            ScalarValue::Boolean(Some(true))
+        );
+
+        // Decimal arrays, including an offset and null, with scalar geographies.
+        let distances = arrow_array::Decimal128Array::from(vec![
+            Some(0),
+            Some(1112000),
+            Some(1110000),
+            None,
+            Some(-1000),
+        ])
+        .with_precision_and_scale(20, 1)
+        .unwrap();
+        let distances = ColumnarValue::Array(Arc::new(distances.slice(1, 4)))
+            .cast_to(&decimal_type, None)
+            .unwrap();
+        let result = tester
+            .invoke(vec![
+                ColumnarValue::Scalar(point0.clone()),
+                ColumnarValue::Scalar(point1.clone()),
+                distances,
+            ])
+            .unwrap()
+            .to_array(4)
+            .unwrap();
+        assert_eq!(
+            result.as_ref(),
+            &arrow_array::BooleanArray::from(vec![Some(true), Some(false), None, Some(false),])
+        );
+
+        // A decimal scalar is broadcast over geography arrays.
+        let points = create_array(
+            &[Some("POINT (0 1)"), Some("POINT (0 2)"), None],
+            &geog_type,
+        );
+        let result = tester
+            .invoke(vec![
+                ColumnarValue::Scalar(point0.clone()),
+                ColumnarValue::Array(points.clone()),
+                ColumnarValue::Scalar(distance),
+            ])
+            .unwrap()
+            .to_array(3)
+            .unwrap();
+        assert_eq!(
+            result.as_ref(),
+            &arrow_array::BooleanArray::from(vec![Some(true), Some(false), None])
+        );
+        let result = tester
+            .invoke(vec![
+                ColumnarValue::Scalar(point0.clone()),
+                ColumnarValue::Array(points),
+                ColumnarValue::Scalar(ScalarValue::try_new_null(&decimal_type).unwrap()),
+            ])
+            .unwrap()
+            .to_array(3)
+            .unwrap();
+        assert_eq!(result.null_count(), 3);
+
+        // Preserve the imported kernel's empty-batch handling.
+        let result = tester
+            .invoke(vec![
+                ColumnarValue::Scalar(point0),
+                ColumnarValue::Scalar(point1),
+                ColumnarValue::Array(arrow_array::new_empty_array(&decimal_type)),
+            ])
+            .unwrap()
+            .to_array(0)
+            .unwrap();
+        assert_eq!(result.len(), 0);
+    }
+
+    #[rstest]
+    #[case("st_buffer", WKB_GEOGRAPHY, WKB_GEOGRAPHY, 1000)]
+    #[case("st_lineinterpolatepoint", WKB_GEOGRAPHY, WKB_GEOGRAPHY, 25)]
+    #[case("st_reduceprecision", WKB_GEOGRAPHY, WKB_GEOGRAPHY, 10)]
+    #[case("st_segmentize", WKB_GEOGRAPHY, WKB_GEOGRAPHY, 10000000)]
+    #[case("st_simplify", WKB_GEOGRAPHY, WKB_GEOGRAPHY, 1000)]
+    #[case("st_tessellategeog", WKB_GEOMETRY, WKB_GEOGRAPHY, 10000000)]
+    #[case("st_tessellategeom", WKB_GEOGRAPHY, WKB_GEOMETRY, 10000000)]
+    fn decimal_geography_functions(
+        #[case] name: &str,
+        #[case] input_type: SedonaType,
+        #[case] output_type: SedonaType,
+        #[case] coefficient: i128,
+    ) {
+        let udf = s2_udf(name);
+        let decimal = ScalarUdfTester::new(
+            udf.clone().into(),
+            vec![input_type.clone(), DataType::Decimal128(20, 2).into()],
+        );
+        decimal.assert_return_type(output_type);
+        let double = ScalarUdfTester::new(udf.into(), vec![input_type, DataType::Float64.into()]);
+        let geometry = "LINESTRING (0 0, 0 1)";
+        let actual = decimal
+            .invoke_scalar_scalar(geometry, ScalarValue::Decimal128(Some(coefficient), 20, 2))
+            .unwrap();
+        let expected = double
+            .invoke_scalar_scalar(geometry, coefficient as f64 / 100.0)
+            .unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn decimal_interpolation_preserves_crs() {
+        let geog_type = SedonaType::Wkb(
+            sedona_geometry::types::Edges::Spherical,
+            sedona_schema::crs::lnglat(),
+        );
+        let tester = ScalarUdfTester::new(
+            s2_udf("st_lineinterpolatepoint").into(),
+            vec![geog_type.clone(), DataType::Decimal128(10, 2).into()],
+        );
+        tester.assert_return_type(geog_type);
+        let result = tester
+            .invoke_scalar_scalar(
+                "LINESTRING (0 0, 0 1)",
+                ScalarValue::Decimal128(Some(25), 10, 2),
+            )
+            .unwrap();
+        tester.assert_scalar_result_equals(result, "POINT (0 0.25)");
+    }
+
+    #[test]
+    fn decimal_buffer_preserves_other_arguments() {
+        let udf = s2_udf("st_buffer");
+        for option in [
+            ScalarValue::Int32(Some(4)),
+            ScalarValue::Utf8(Some("quad_segs=4".into())),
+        ] {
+            let decimal = ScalarUdfTester::new(
+                udf.clone().into(),
+                vec![
+                    WKB_GEOGRAPHY,
+                    DataType::Decimal128(10, 2).into(),
+                    option.data_type().into(),
+                ],
+            );
+            let double = ScalarUdfTester::new(
+                udf.clone().into(),
+                vec![
+                    WKB_GEOGRAPHY,
+                    DataType::Float64.into(),
+                    option.data_type().into(),
+                ],
+            );
+            let actual = decimal
+                .invoke_scalar_scalar_scalar(
+                    "POINT (0 0)",
+                    ScalarValue::Decimal128(Some(100000), 10, 2),
+                    option.clone(),
+                )
+                .unwrap();
+            let expected = double
+                .invoke_scalar_scalar_scalar("POINT (0 0)", 1000.0, option)
+                .unwrap();
+            assert_eq!(actual, expected);
+        }
+
+        // Decimal quad_segs is not a supported overload, even with a decimal distance.
+        let tester = ScalarUdfTester::new(
+            udf.into(),
+            vec![
+                WKB_GEOGRAPHY,
+                DataType::Decimal128(10, 2).into(),
+                DataType::Decimal128(10, 0).into(),
+            ],
+        );
+        assert!(
+            tester
+                .return_type()
+                .unwrap_err()
+                .message()
+                .contains("No kernel matching arguments")
+        );
+        for arg_types in [
+            vec![WKB_GEOGRAPHY, WKB_GEOGRAPHY, DataType::Utf8.into()],
+            vec![
+                WKB_GEOMETRY,
+                WKB_GEOMETRY,
+                DataType::Decimal128(10, 2).into(),
+            ],
+            vec![WKB_GEOGRAPHY, DataType::Decimal128(10, 2).into()],
+        ] {
+            let tester = ScalarUdfTester::new(s2_udf("st_dwithin").into(), arg_types);
+            assert!(
+                tester
+                    .return_type()
+                    .unwrap_err()
+                    .message()
+                    .contains("No kernel matching arguments")
+            );
+        }
     }
 
     #[test]
