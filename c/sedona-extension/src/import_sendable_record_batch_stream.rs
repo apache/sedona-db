@@ -88,6 +88,11 @@ unsafe impl Sync for ProducerState {}
 
 /// Shared state between the handler callbacks and the stream.
 struct ImportedStreamState {
+    // Optional library/operation owner for strict ObjectStore streams. It stays
+    // alive until both consumer and producer have released the stream.
+    owner: Option<Arc<dyn Send + Sync>>,
+    queued_tasks: AtomicU64,
+    terminal_received: AtomicBool,
     /// Sender for messages from callbacks to stream (lock-free).
     sender: mpsc::UnboundedSender<StreamMessage>,
     /// Number of outstanding requests (for back-pressure).
@@ -110,6 +115,9 @@ unsafe impl Sync for ImportedStreamState {}
 impl ImportedStreamState {
     fn new(prefetch_count: u64, sender: mpsc::UnboundedSender<StreamMessage>) -> Self {
         Self {
+            owner: None,
+            queued_tasks: AtomicU64::new(0),
+            terminal_received: AtomicBool::new(false),
             sender,
             pending_requests: AtomicU64::new(0),
             abandoned: AtomicBool::new(false),
@@ -312,7 +320,7 @@ impl ImportedAsyncDeviceStream {
     /// * `prefetch_count` - Number of batches to request ahead for back-pressure.
     ///   A larger value reduces latency but uses more memory.
     pub fn new(prefetch_count: u64) -> (Self, AsyncDeviceStreamHandler) {
-        Self::new_inner(prefetch_count, None)
+        Self::new_inner(prefetch_count, None, None)
     }
 
     /// Create a stream whose schema is known by the caller before the producer
@@ -325,18 +333,31 @@ impl ImportedAsyncDeviceStream {
         prefetch_count: u64,
         schema: SchemaRef,
     ) -> (Self, AsyncDeviceStreamHandler) {
-        Self::new_inner(prefetch_count, Some(schema))
+        Self::new_inner(prefetch_count, Some(schema), None)
+    }
+
+    /// ObjectStore imports retain their library and admission slot until the
+    /// producer releases its handler. They also reject unsolicited task floods
+    /// and release without an explicit terminal event.
+    pub(crate) fn new_with_owner(
+        schema: SchemaRef,
+        owner: Arc<dyn Send + Sync>,
+    ) -> (Self, AsyncDeviceStreamHandler) {
+        Self::new_inner(1, Some(schema), Some(owner))
     }
 
     fn new_inner(
         prefetch_count: u64,
         schema: Option<SchemaRef>,
+        owner: Option<Arc<dyn Send + Sync>>,
     ) -> (Self, AsyncDeviceStreamHandler) {
         // A zero-sized window can never make progress; treat it as the minimum
         // useful prefetch size.
         let prefetch_count = prefetch_count.max(1);
         let (sender, receiver) = mpsc::unbounded();
-        let state = Arc::new(ImportedStreamState::new(prefetch_count, sender));
+        let mut state = ImportedStreamState::new(prefetch_count, sender);
+        state.owner = owner;
+        let state = Arc::new(state);
 
         // Handler is heap-allocated and will be freed when:
         // 1. Producer calls release(), or
@@ -399,6 +420,9 @@ impl ImportedAsyncDeviceStream {
                     self.poll_next_inner(cx)
                 }
                 StreamMessage::Task(mut task) => {
+                    if self.state.owner.is_some() {
+                        self.state.queued_tasks.fetch_sub(1, Ordering::AcqRel);
+                    }
                     // Decrement pending (lock-free)
                     self.state.pending_requests.fetch_sub(1, Ordering::Release);
                     // Maybe request more (acquires lock only if needed)
@@ -588,9 +612,23 @@ unsafe extern "C" fn handler_on_next_task(
 
     // Send message through channel (lock-free)
     if task.is_null() {
+        state_arc.terminal_received.store(true, Ordering::Release);
         // NULL task signals end of stream
         state_arc.sender.close_channel();
     } else {
+        if state_arc.owner.is_some() && state_arc.queued_tasks.fetch_add(1, Ordering::AcqRel) >= 2 {
+            state_arc.queued_tasks.fetch_sub(1, Ordering::AcqRel);
+            let _ =
+                state_arc
+                    .sender
+                    .unbounded_send(StreamMessage::Error(ArrowError::CDataInterface(
+                        "ObjectStore producer exceeded its task window".into(),
+                    )));
+            state_arc.terminal_received.store(true, Ordering::Release);
+            state_arc.sender.close_channel();
+            let _ = Arc::into_raw(state_arc);
+            return 1;
+        }
         // Take ownership of the task by copying it
         let task_copy = std::ptr::read(task);
         let _ = state_arc
@@ -627,6 +665,7 @@ unsafe extern "C" fn handler_on_error(
         c_str.to_string_lossy().into_owned()
     };
 
+    state_arc.terminal_received.store(true, Ordering::Release);
     // Send error through channel (lock-free)
     let _ = state_arc
         .sender
@@ -654,6 +693,16 @@ unsafe extern "C" fn handler_release(self_: *mut FFI_ArrowAsyncDeviceStreamHandl
     let state_ptr = handler.private_data as *const ImportedStreamState;
     let state_arc = Arc::from_raw(state_ptr);
 
+    if state_arc.owner.is_some()
+        && !state_arc.terminal_received.load(Ordering::Acquire)
+        && !state_arc.abandoned.load(Ordering::Acquire)
+    {
+        let _ = state_arc
+            .sender
+            .unbounded_send(StreamMessage::Error(ArrowError::CDataInterface(
+                "ObjectStore producer released before completion".into(),
+            )));
+    }
     state_arc.clear_producer();
     state_arc.sender.close_channel();
 

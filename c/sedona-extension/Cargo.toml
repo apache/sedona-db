@@ -35,6 +35,8 @@ protobuf = ["datafusion-proto", "prost"]
 arrow-array = { workspace = true, features = ["ffi"]}
 arrow-schema = { workspace = true, features = ["ffi"]}
 async-trait = { workspace = true }
+bytes = { workspace = true }
+chrono = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-catalog = { workspace = true }
 datafusion-execution = { workspace = true }
@@ -43,17 +45,19 @@ datafusion-physical-expr = { workspace = true }
 datafusion-physical-plan = { workspace = true }
 datafusion-proto = { workspace = true, optional = true }
 prost = { workspace = true, optional = true }
-futures = { workspace = true }
+futures = { workspace = true, features = ["thread-pool"] }
 libc = "0.2.178"
+object_store = { workspace = true }
 sedona-common = { workspace = true }
 sedona-catalog = { workspace = true }
 sedona-expr = { workspace = true }
 sedona-schema = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
 tokio-stream = { workspace = true }
 
 [dev-dependencies]
 datafusion = { workspace = true, features = ["sql"] }
 sedona-testing = { workspace = true }
+tempfile = { workspace = true }

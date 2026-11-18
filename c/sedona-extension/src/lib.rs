@@ -22,6 +22,7 @@ pub mod expr;
 pub mod extension;
 pub mod import_sendable_record_batch_stream;
 pub mod metrics;
+pub mod object_store;
 pub mod runtime;
 pub mod scalar_kernel;
 pub mod scalar_kernel_v2;
