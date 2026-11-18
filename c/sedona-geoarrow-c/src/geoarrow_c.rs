@@ -138,6 +138,11 @@ impl ArrayWriter {
         check_code(unsafe { SedonaDBGeoArrowArrayWriterSetPrecision(self.ptr_mut(), precision) })
     }
 
+    /// Write WKT using enough significant digits to round-trip each coordinate.
+    pub fn set_precision_unlimited(&mut self) -> Result<(), GeoArrowCError> {
+        check_code(unsafe { SedonaDBGeoArrowArrayWriterSetPrecisionUnlimited(self.ptr_mut()) })
+    }
+
     /// Append a null without constructing a visitor or an intermediate array.
     pub fn append_null(&mut self) -> Result<(), GeoArrowCError> {
         check_code(unsafe { SedonaDBGeoArrowArrayWriterAppendNull(self.ptr_mut()) })

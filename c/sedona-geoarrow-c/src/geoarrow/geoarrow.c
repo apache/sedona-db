@@ -1548,14 +1548,25 @@ static int finish_start_format_wkt(struct GeoArrowVisitorKernelPrivate* private_
   NANOARROW_UNUSED(schema);
   NANOARROW_UNUSED(options);
 
-  long precision = 16;
+  struct ArrowStringView precision_arg;
+  precision_arg.data = NULL;
+  precision_arg.size_bytes = 0;
   NANOARROW_RETURN_NOT_OK(
-      kernel_get_arg_long(options, "precision", &precision, 0, error));
-  if (precision < 0 || precision > 16) {
-    return EINVAL;
+      ArrowMetadataGetValue(options, ArrowCharView("precision"), &precision_arg));
+  if (precision_arg.data == NULL || (precision_arg.size_bytes == 9 &&
+                                     memcmp(precision_arg.data, "unlimited", 9) == 0)) {
+    NANOARROW_RETURN_NOT_OK(
+        GeoArrowWKTWriterSetPrecisionUnlimited(&private_data->wkt_writer));
+  } else {
+    long precision = 0;
+    NANOARROW_RETURN_NOT_OK(
+        kernel_get_arg_long(options, "precision", &precision, 0, error));
+    if (precision < 0 || precision > 17) {
+      return EINVAL;
+    }
+    NANOARROW_RETURN_NOT_OK(
+        GeoArrowWKTWriterSetPrecision(&private_data->wkt_writer, (int)precision));
   }
-  NANOARROW_RETURN_NOT_OK(
-      GeoArrowWKTWriterSetPrecision(&private_data->wkt_writer, (int)precision));
 
   long max_element_size_bytes = -1;
   NANOARROW_RETURN_NOT_OK(kernel_get_arg_long(options, "max_element_size_bytes",
@@ -6550,6 +6561,8 @@ GeoArrowErrorCode GeoArrowWKTReaderVisit(struct GeoArrowWKTReader* reader,
 
 
 
+#define WKT_WRITER_PRECISION_UNLIMITED -1
+
 struct WKTWriterPrivate {
   enum ArrowType storage_type;
   struct ArrowBitmap validity;
@@ -6609,6 +6622,10 @@ static GeoArrowErrorCode WKTWriterWriteGeometryType(
 
 static GeoArrowErrorCode WKTWriterReserveCoords(struct WKTWriterPrivate* private_data,
                                                 int64_t n_coords, int n_values) {
+  int max_chars_estimated_per_value =
+      private_data->precision == WKT_WRITER_PRECISION_UNLIMITED
+          ? 24
+          : private_data->precision + 1 + 8;
   int64_t max_chars_per_coord_theoretical =
       // space + comma after coordinate
       (n_coords * 2) +
@@ -6623,9 +6640,8 @@ static GeoArrowErrorCode WKTWriterReserveCoords(struct WKTWriterPrivate* private
   int64_t max_chars_estimated =
       (n_coords * 2) +               // space + comma after coordinate
       (n_coords * (n_values - 1)) +  // spaces between ordinates
-      // precision + decimal + estimate of normal
-      // digits to the left of the decimal
-      ((private_data->precision + 1 + 8) * n_coords * n_values) +
+      // Estimate of formatted coordinate value length
+      (max_chars_estimated_per_value * n_coords * n_values) +
       // Ensure that the last reserve() call doesn't trigger an allocation
       max_chars_per_coord_theoretical;
 
@@ -6782,6 +6798,10 @@ static int coords_wkt(struct GeoArrowVisitor* v, const struct GeoArrowCoordView*
 
   GEOARROW_RETURN_NOT_OK(WKTWriterReserveCoords(private, n_coords, n_dims));
 
+  int max_chars_estimated_per_value = private->precision == WKT_WRITER_PRECISION_UNLIMITED
+                                          ? 24
+                                          : private->precision + 1 + 8;
+
   int64_t max_chars_per_coord_theoretical =
       // space + comma after coordinate
       (n_coords * 2) +
@@ -6796,9 +6816,8 @@ static int coords_wkt(struct GeoArrowVisitor* v, const struct GeoArrowCoordView*
   int64_t max_chars_estimated =
       (n_coords * 2) +             // space + comma after coordinate
       (n_coords * (n_dims - 1)) +  // spaces between ordinates
-      // precision + decimal + estimate of normal
-      // digits to the left of the decimal
-      ((private->precision + 1 + 8) * n_coords * n_dims) +
+      // Estimate of formatted coordinate value length
+      (max_chars_estimated_per_value * n_coords * n_dims) +
       // Ensure that the last reserve() call doesn't trigger an allocation
       max_chars_per_coord_theoretical;
   NANOARROW_RETURN_NOT_OK(ArrowBufferReserve(&private->values, max_chars_estimated));
@@ -7174,7 +7193,7 @@ GeoArrowErrorCode GeoArrowWKTWriterInit(struct GeoArrowWKTWriter* writer) {
   ArrowBitmapInit(&private->validity);
   ArrowBufferInit(&private->offsets);
   ArrowBufferInit(&private->values);
-  private->precision = 16;
+  private->precision = WKT_WRITER_PRECISION_UNLIMITED;
   private->use_flat_multipoint = 1;
   private->max_element_size_bytes = -1;
   writer->private_data = private;
@@ -7184,12 +7203,19 @@ GeoArrowErrorCode GeoArrowWKTWriterInit(struct GeoArrowWKTWriter* writer) {
 
 GeoArrowErrorCode GeoArrowWKTWriterSetPrecision(struct GeoArrowWKTWriter* writer,
                                                 int precision) {
-  if (precision < 0 || precision > 16) {
+  if (precision < 0 || precision > 17) {
     return EINVAL;
   }
 
   struct WKTWriterPrivate* private = (struct WKTWriterPrivate*)writer->private_data;
   private->precision = precision;
+  return GEOARROW_OK;
+}
+
+GeoArrowErrorCode GeoArrowWKTWriterSetPrecisionUnlimited(
+    struct GeoArrowWKTWriter* writer) {
+  struct WKTWriterPrivate* private = (struct WKTWriterPrivate*)writer->private_data;
+  private->precision = WKT_WRITER_PRECISION_UNLIMITED;
   return GEOARROW_OK;
 }
 
@@ -7726,6 +7752,19 @@ GeoArrowErrorCode GeoArrowArrayWriterSetPrecision(struct GeoArrowArrayWriter* wr
   return GeoArrowWKTWriterSetPrecision(&private_data->wkt_writer, precision);
 }
 
+GeoArrowErrorCode GeoArrowArrayWriterSetPrecisionUnlimited(
+    struct GeoArrowArrayWriter* writer) {
+  struct GeoArrowArrayWriterPrivate* private_data =
+      (struct GeoArrowArrayWriterPrivate*)writer->private_data;
+
+  if (private_data->type != GEOARROW_TYPE_WKT &&
+      private_data->type != GEOARROW_TYPE_LARGE_WKT) {
+    return EINVAL;
+  }
+
+  return GeoArrowWKTWriterSetPrecisionUnlimited(&private_data->wkt_writer);
+}
+
 GeoArrowErrorCode GeoArrowArrayWriterSetFlatMultipoint(struct GeoArrowArrayWriter* writer,
                                                        int flat_multipoint) {
   struct GeoArrowArrayWriterPrivate* private_data =
@@ -7841,6 +7880,17 @@ void GeoArrowArrayWriterReset(struct GeoArrowArrayWriter* writer) {
 #include "ryu/ryu.h"
 
 int64_t GeoArrowPrintDouble(double f, uint32_t precision, char* result) {
+  if (precision == UINT32_MAX) {
+    // Use fixed notation where 20 decimal places are sufficient for all 17
+    // significant digits, and scientific notation outside that range. Ryu's
+    // conversion emits the shortest representation that round-trips.
+    if ((f != 0 && f > -1.0e-4 && f < 1.0e-4) || f > 1.0e17 || f < -1.0e17) {
+      return GeoArrowd2sexp_buffered_n(f, 17, result);
+    } else {
+      return GeoArrowd2sfixed_buffered_n(f, 20, result);
+    }
+  }
+
   // Use exponential to serialize very large numbers in scientific notation
   // and ignore user precision for these cases.
   if (f > 1.0e17 || f < -1.0e17) {
@@ -7855,6 +7905,12 @@ int64_t GeoArrowPrintDouble(double f, uint32_t precision, char* result) {
 #else
 
 int64_t GeoArrowPrintDouble(double f, uint32_t precision, char* result) {
+  if (precision == UINT32_MAX) {
+    // Seventeen significant decimal digits are sufficient to round-trip an
+    // IEEE-754 double. %g also avoids wasting precision on leading zeroes.
+    return snprintf(result, 40, "%.17g", f);
+  }
+
   // For very large numbers, use scientific notation ignoring user precision
   if (f > 1.0e17 || f < -1.0e17) {
     return snprintf(result, 40, "%0.*e", 16, f);

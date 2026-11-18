@@ -19,8 +19,8 @@
 
 main() {
   local -r repo_url="https://github.com/geoarrow/geoarrow-c"
-  # Main snapshot including case-insensitive WKT parsing.
-  local -r commit_sha=6e002d2d1741f8ee351bf44933c74086a0f3956f
+  # Main snapshot including unlimited-precision WKT output.
+  local -r commit_sha=5026a2e9efa993d7644d9d4512f416ea0c8ee811
 
   echo "Fetching $commit_sha from $repo_url"
   SCRATCH=$(mktemp -d)

@@ -100,24 +100,39 @@ impl SedonaScalarKernel for GeoArrowCAsText {
             return executor.finish(new_null_array(&DataType::Utf8, executor.num_iterations()));
         }
 
-        // Both overloads use the same writer, with either constant or per-row
-        // precision. Keep scalar validation outside the loop, including empty batches.
-        let precision = match args.get(1) {
-            Some(arg) => arg.cast_to(&DataType::Int64, None)?,
-            None => ColumnarValue::Scalar(ScalarValue::Int64(Some(16))),
+        // Keep scalar validation outside the loop, including empty batches.
+        // The one-argument overload uses GeoArrow C's round-trip-safe WKT mode.
+        let Some(arg) = args.get(1) else {
+            return write_wkt(&executor, std::iter::repeat(WktPrecision::Unlimited));
         };
+
+        let precision = arg.cast_to(&DataType::Int64, None)?;
         match precision {
             ColumnarValue::Scalar(ScalarValue::Int64(Some(precision))) => {
                 validate_precision(precision)?;
-                write_wkt(&executor, std::iter::repeat(Some(precision)))
+                write_wkt(
+                    &executor,
+                    std::iter::repeat(WktPrecision::Fixed(Some(precision))),
+                )
             }
             ColumnarValue::Scalar(ScalarValue::Int64(None)) => {
                 executor.finish(new_null_array(&DataType::Utf8, executor.num_iterations()))
             }
-            ColumnarValue::Array(array) => write_wkt(&executor, as_int64_array(&array)?.iter()),
+            ColumnarValue::Array(array) => write_wkt(
+                &executor,
+                as_int64_array(&array)?.iter().map(WktPrecision::Fixed),
+            ),
             _ => unreachable!("precision was cast to Int64"),
         }
     }
+}
+
+#[derive(Clone, Copy)]
+enum WktPrecision {
+    /// Use GeoArrow C's round-trip-safe, unlimited-precision output.
+    Unlimited,
+    /// A specified number of decimal places, or SQL NULL.
+    Fixed(Option<i64>),
 }
 
 fn validate_precision(precision: i64) -> Result<i32> {
@@ -132,14 +147,18 @@ fn validate_precision(precision: i64) -> Result<i32> {
 
 fn write_wkt(
     executor: &WkbBytesExecutor,
-    mut precisions: impl Iterator<Item = Option<i64>>,
+    mut precisions: impl Iterator<Item = WktPrecision>,
 ) -> Result<ColumnarValue> {
     let mut error = CError::new();
     let mut reader = WkbReader::try_new()?;
     let mut writer = ArrayWriter::try_new(&SedonaType::Arrow(DataType::Utf8))?;
     executor.execute_wkb_void(|wkb| {
         match (wkb, precisions.next().unwrap()) {
-            (Some(wkb), Some(precision)) => {
+            (Some(wkb), WktPrecision::Unlimited) => {
+                writer.set_precision_unlimited()?;
+                reader.append_to(wkb, &mut writer, &mut error)?;
+            }
+            (Some(wkb), WktPrecision::Fixed(Some(precision))) => {
                 writer.set_precision(validate_precision(precision)?)?;
                 reader.append_to(wkb, &mut writer, &mut error)?;
             }
@@ -287,6 +306,20 @@ mod tests {
 
         let result = tester.invoke_scalar("POINT (1 2)").unwrap();
         assert_eq!(result, ScalarValue::Utf8(Some("POINT (1 2)".to_string())));
+    }
+
+    #[test]
+    fn astext_uses_unlimited_precision() {
+        let udf = SedonaScalarUDF::from_impl("st_astext", st_astext_impl());
+        let tester = ScalarUdfTester::new(udf.into(), vec![WKB_GEOMETRY]);
+
+        let result = tester
+            .invoke_scalar("POINT (0.12345678901234567 1e-20)")
+            .unwrap();
+        assert_eq!(
+            result,
+            ScalarValue::Utf8(Some("POINT (0.12345678901234566 1e-20)".to_string()))
+        );
     }
 
     #[test]

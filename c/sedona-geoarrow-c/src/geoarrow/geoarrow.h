@@ -249,6 +249,8 @@ struct ArrowArrayStream {
   _GEOARROW_MAKE_NAME(GEOARROW_NAMESPACE, GeoArrowWKTWriterInit)
 #define GeoArrowWKTWriterSetPrecision \
   _GEOARROW_MAKE_NAME(GEOARROW_NAMESPACE, GeoArrowWKTWriterSetPrecision)
+#define GeoArrowWKTWriterSetPrecisionUnlimited \
+  _GEOARROW_MAKE_NAME(GEOARROW_NAMESPACE, GeoArrowWKTWriterSetPrecisionUnlimited)
 #define GeoArrowWKTWriterSetFlatMultipoint \
   _GEOARROW_MAKE_NAME(GEOARROW_NAMESPACE, GeoArrowWKTWriterSetFlatMultipoint)
 #define GeoArrowWKTWriterSetMaxElementSizeBytes \
@@ -317,6 +319,8 @@ struct ArrowArrayStream {
   _GEOARROW_MAKE_NAME(GEOARROW_NAMESPACE, GeoArrowArrayWriterInitFromSchema)
 #define GeoArrowArrayWriterSetPrecision \
   _GEOARROW_MAKE_NAME(GEOARROW_NAMESPACE, GeoArrowArrayWriterSetPrecision)
+#define GeoArrowArrayWriterSetPrecisionUnlimited \
+  _GEOARROW_MAKE_NAME(GEOARROW_NAMESPACE, GeoArrowArrayWriterSetPrecisionUnlimited)
 #define GeoArrowArrayWriterSetFlatMultipoint \
   _GEOARROW_MAKE_NAME(GEOARROW_NAMESPACE, GeoArrowArrayWriterSetFlatMultipoint)
 #define GeoArrowArrayWriterInitVisitor \
@@ -1602,11 +1606,20 @@ GeoArrowErrorCode GeoArrowWKTWriterInit(struct GeoArrowWKTWriter* writer);
 
 /// \brief Set the number of digits after the decimal point in WKT output
 ///
-/// Returns EINVAL if precision is outside the range [0, 16]. The default
-/// precision is 16. This option may be changed between elements after
+/// Returns EINVAL if precision is outside the range [0, 17]. Unlimited
+/// precision is the default. This option may be changed between elements after
 /// GeoArrowWKTWriterInitVisitor() has been called.
 GeoArrowErrorCode GeoArrowWKTWriterSetPrecision(struct GeoArrowWKTWriter* writer,
                                                 int precision);
+
+/// \brief Set round-trip-safe precision in WKT output
+///
+/// Coordinates are written using enough significant digits that reading the
+/// output recovers the identical double value. The representation may use
+/// scientific notation for very small or very large values. This option may be
+/// changed between elements after GeoArrowWKTWriterInitVisitor() has been called.
+GeoArrowErrorCode GeoArrowWKTWriterSetPrecisionUnlimited(
+    struct GeoArrowWKTWriter* writer);
 
 /// \brief Set the MULTIPOINT output mode
 ///
@@ -1855,10 +1868,17 @@ GeoArrowErrorCode GeoArrowArrayWriterInitFromSchema(struct GeoArrowArrayWriter* 
 ///
 /// Returns EINVAL for precision values that are not valid or if the writer
 /// is not writing to WKT. This option may be changed between elements after
-/// GeoArrowArrayWriterInitVisitor() has been called. The default precision
-/// value is 16. See GeoArrowWKTWriter for details.
+/// GeoArrowArrayWriterInitVisitor() has been called. Unlimited precision is the
+/// default. See GeoArrowWKTWriter for details.
 GeoArrowErrorCode GeoArrowArrayWriterSetPrecision(struct GeoArrowArrayWriter* writer,
                                                   int precision);
+
+/// \brief Set round-trip-safe precision for array writers writing to WKT
+///
+/// Returns EINVAL if the writer is not writing to WKT. See
+/// GeoArrowWKTWriterSetPrecisionUnlimited() for details.
+GeoArrowErrorCode GeoArrowArrayWriterSetPrecisionUnlimited(
+    struct GeoArrowArrayWriter* writer);
 
 /// \brief Set the MULTIPOINT output mode when writing to WKT
 ///
