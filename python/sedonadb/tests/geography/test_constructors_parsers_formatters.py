@@ -97,7 +97,10 @@ def test_st_asbinary(eng, geom, expected):
 )
 def test_st_astext(eng, geom):
     eng = eng.create_or_skip()
-    eng.assert_query_result(f"SELECT ST_AsText({geog_or_null(geom)})", geom)
+    eng.assert_query_result(
+        f"SELECT replace(ST_AsText({geog_or_null(geom)}), ' ', '')",
+        geom.replace(" ", ""),
+    )
 
 
 # PostGIS formats its ZM slightly differently so we just test SedonaDB here
@@ -116,4 +119,5 @@ def test_st_astext(eng, geom):
 )
 def test_st_astext_zm(eng, geom):
     eng = eng.create_or_skip()
-    eng.assert_query_result(f"SELECT ST_AsText({geog_or_null(geom)})", geom)
+    expected = geom if " EMPTY" in geom else geom.replace("(", " (")
+    eng.assert_query_result(f"SELECT ST_AsText({geog_or_null(geom)})", expected)

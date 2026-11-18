@@ -122,19 +122,26 @@ def test_st_aswkb_alias(eng):
 )
 def test_st_astext(eng, geom):
     eng = eng.create_or_skip()
-    expected = geom
+    # Ignore whitespace while retaining coordinate order, dimensions, and nesting.
+    eng.assert_query_result(
+        f"SELECT replace(ST_AsText({geom_or_null(geom)}), ' ', '')",
+        geom.replace(" ", "") if geom is not None else None,
+    )
 
-    if isinstance(eng, PostGIS) and expected is not None:
-        expected = expected.replace(r"M(", r"M (")
-        expected = expected.replace(r"Z(", r"Z (")
 
-    eng.assert_query_result(f"SELECT ST_AsText({geom_or_null(geom)})", expected)
+@pytest.mark.parametrize("eng", [SedonaDB])
+def test_st_astext_precision(eng):
+    eng = eng.create_or_skip()
+    eng.assert_query_result(
+        "SELECT ST_AsText(ST_Point(1.123456789, 2.5), 6)",
+        "POINT (1.123457 2.5)",
+    )
 
 
 @pytest.mark.parametrize("eng", [SedonaDB])
 def test_st_aswkt_alias(eng):
     eng = eng.create_or_skip()
-    eng.assert_query_result("SELECT ST_AsWKT(ST_Point(1, 2))", "POINT(1 2)")
+    eng.assert_query_result("SELECT ST_AsWKT(ST_Point(1, 2))", "POINT (1 2)")
 
 
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
@@ -920,7 +927,7 @@ def test_st_centroid(eng, geom, expected):
             False,
         ),  # Degenerate polygon - zero-area Triangle
         (
-            "Polygon((0 0, 2 0, 1 1, 2 2, 0 2, 1 1, 0 0))",
+            "POLYGON((0 0, 2 0, 1 1, 2 2, 0 2, 1 1, 0 0))",
             False,
         ),  # Star shape with self-intersection
         (
@@ -1034,7 +1041,7 @@ def test_st_issimple(eng, geom, expected):
         # Inner ring shares an edge with the outer ring
         ("POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0), (0 0, 0 1, 1 1, 1 0, 0 0))", False),
         # Self-intersecting polygon (figure-8)
-        ("Polygon((0 0, 2 0, 1 1, 2 2, 0 2, 1 1, 0 0))", False),
+        ("POLYGON((0 0, 2 0, 1 1, 2 2, 0 2, 1 1, 0 0))", False),
         # Inner ring touches the outer ring at a point
         (
             "POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0), (1 10, 1 9, 2 9, 2 10, 1 10))",
@@ -1466,7 +1473,7 @@ def test_geometry_list_item_crs(constructor, function, member):
         """
     ).to_arrow_table()
     assert result.to_pydict() == {
-        "wkt": ["POINT(1 2)", "POINT(3 4)", "POINT(5 6)", "POINT(7 8)"],
+        "wkt": ["POINT (1 2)", "POINT (3 4)", "POINT (5 6)", "POINT (7 8)"],
         "srid": [4326, 4326, 4269, 0],
     }
 
@@ -2393,6 +2400,27 @@ def test_st_geomfromtext(eng, wkt, expected):
     eng.assert_query_result(f"SELECT ST_GeomFromText({val_or_null(wkt)})", expected)
 
 
+@pytest.mark.parametrize(
+    "storage_type", [pa.string(), pa.large_string(), pa.string_view()]
+)
+def test_st_geomfromtext_string_storage(storage_type):
+    eng = SedonaDB()
+    eng.create_table_arrow(
+        "wkt_input",
+        pa.table(
+            {
+                "wkt": pa.array(
+                    ["POINT (1 2)", None, "LINESTRING EMPTY"], type=storage_type
+                )
+            }
+        ),
+    )
+    eng.assert_query_result(
+        "SELECT ST_GeomFromText(wkt) FROM wkt_input",
+        [("POINT (1 2)",), (None,), ("LINESTRING EMPTY",)],
+    )
+
+
 @pytest.mark.parametrize("eng", [SedonaDB, PostGIS])
 @pytest.mark.parametrize(
     ("wkt", "srid", "expected"),
@@ -2435,7 +2463,7 @@ def test_st_geomfromewkt(eng, ewkt, expected, expected_srid):
         ewkt = f"'{ewkt}'"
     eng = eng.create_or_skip()
     eng.assert_query_result(
-        f"SELECT ST_AsText(ST_GeomFromEWKT({val_or_null(ewkt)}))",
+        f"SELECT replace(ST_AsText(ST_GeomFromEWKT({val_or_null(ewkt)})), ' (', '(')",
         expected,
     )
     eng.assert_query_result(
@@ -2738,7 +2766,10 @@ def test_st_geomfromwkbunchecked_invalid_wkb(eng):
     )
 
     # Using invalid WKB elsewhere may result in undefined behavior.
-    with pytest.raises(sedonadb._lib.SedonaError, match="failed to fill whole buffer"):
+    with pytest.raises(
+        sedonadb._lib.SedonaError,
+        match="Expected uint32 but found end of buffer",
+    ):
         eng.execute_and_collect("SELECT ST_AsText(ST_GeomFromWKBUnchecked(0x01))")
 
 
@@ -4575,7 +4606,7 @@ def test_st_minimum_clearance_line(eng, geom, expected):
         ("POINT (0 0)", "Valid Geometry"),
         ("POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))", "Valid Geometry"),
         ("POLYGON ((0 0, 1 1, 0 1, 1 0, 0 0))", "Self-intersection%"),
-        ("Polygon((0 0, 2 0, 1 1, 2 2, 0 2, 1 1, 0 0))", "Ring Self-intersection%"),
+        ("POLYGON((0 0, 2 0, 1 1, 2 2, 0 2, 1 1, 0 0))", "Ring Self-intersection%"),
     ],
 )
 def test_st_isvalidreason(eng, geom, expected):

@@ -35,9 +35,9 @@
   } while (0)
 #endif
 
-#define GEOARROW_THROW_NOT_OK(ERR, EXPR)                                             \
-  _GEOARROW_THROW_NOT_OK_IMPL(_GEOARROW_MAKE_NAME(errno_status_, __COUNTER__), EXPR, \
-                              #EXPR, ERR)
+#define GEOARROW_THROW_NOT_OK(ERR, EXPR) \
+  _GEOARROW_THROW_NOT_OK_IMPL(           \
+      _GEOARROW_MAKE_NAME(errno_status_, _GEOARROW_UNIQUE_SUFFIX), EXPR, #EXPR, ERR)
 
 namespace geoarrow {
 
@@ -563,6 +563,13 @@ class ArrayReader {
     return GeoArrowArrayReaderVisit(&reader_, offset, length, visitor);
   }
 
+  GeoArrowErrorCode VisitGeometry(GeoArrowGeometryCallback callback, void* private_data,
+                                  int64_t offset, int64_t length,
+                                  struct GeoArrowError* error = nullptr) {
+    return GeoArrowArrayReaderVisitGeometry(&reader_, offset, length, callback,
+                                            private_data, error);
+  }
+
   ArrayView& View() {
     if (!view_.is_valid()) {
       const struct GeoArrowArrayView* array_view = nullptr;
@@ -698,6 +705,15 @@ class ArrayWriter {
     }
 
     return &visitor_;
+  }
+
+  void Append(struct GeoArrowGeometryView geom) {
+    struct GeoArrowError error {};
+    GEOARROW_THROW_NOT_OK(&error, GeoArrowArrayWriterAppend(&writer_, geom, &error));
+  }
+
+  void AppendNull() {
+    GEOARROW_THROW_NOT_OK(nullptr, GeoArrowArrayWriterAppendNull(&writer_));
   }
 
   void Finish(struct ArrowArray* out) {
@@ -2016,10 +2032,6 @@ struct MultiPolygonArray
 
 
 
-
-#ifndef GEOARROW_NATIVE_ENDIAN
-#define GEOARROW_NATIVE_ENDIAN 0x01
-#endif
 
 /// \defgroup hpp-binary-utility Binary iteration utilities
 ///
