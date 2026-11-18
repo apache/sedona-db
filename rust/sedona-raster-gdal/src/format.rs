@@ -47,7 +47,10 @@ use object_store::{ObjectMeta, ObjectStore};
 use sedona_raster::builder::RasterBuilder;
 use sedona_schema::datatypes::SedonaType;
 
-use crate::{gdal_common::with_gdal, utils::read_outdb_header};
+use crate::{
+    gdal_common::{gdal_path_from_object_store_location, with_gdal},
+    utils::read_outdb_header,
+};
 
 /// The fixed schema returned by every GDAL raster file format.
 pub fn gdal_raster_schema() -> SchemaRef {
@@ -306,7 +309,10 @@ struct GdalRasterFileOpener {
 
 impl FileOpener for GdalRasterFileOpener {
     fn open(&self, file: PartitionedFile) -> Result<FileOpenFuture> {
-        let path = format!("{}{}", self.base_url, file.object_meta.location);
+        let path = gdal_path_from_object_store_location(
+            &self.base_url,
+            file.object_meta.location.as_ref(),
+        )?;
         let tile = self.tile;
         let batch_size = self.batch_size;
         let file_projection = self.file_projection.clone();
@@ -379,5 +385,25 @@ mod tests {
             .unwrap();
         let format = format.downcast_ref::<GdalRasterFileFormat>().unwrap();
         assert!(format.tile());
+    }
+
+    #[test]
+    fn object_store_paths_escape_remote_url_delimiters() {
+        assert_eq!(
+            gdal_path_from_object_store_location("http://host/", "a#b?.tif").unwrap(),
+            "http://host/a%23b%3F.tif"
+        );
+        assert_eq!(
+            gdal_path_from_object_store_location("s3://bucket", "dir/a b%.tif").unwrap(),
+            "s3://bucket/dir/a%20b%25.tif"
+        );
+    }
+
+    #[test]
+    fn object_store_paths_preserve_local_filesystem_handling() {
+        assert_eq!(
+            gdal_path_from_object_store_location("file://", "/tmp/a#b.tif").unwrap(),
+            "file:///tmp/a#b.tif"
+        );
     }
 }

@@ -6304,6 +6304,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tower-http 0.7.1",
+ "url",
 ]
 
 [[package]]

@@ -53,6 +53,7 @@ sedona-raster = { workspace = true }
 sedona-raster-functions = { workspace = true }
 sedona-schema = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
+url = { workspace = true }
 
 [features]
 # Enable bindgen for GDAL versions without pre-built bindings (e.g., GDAL 3.13+).
@@ -62,6 +63,7 @@ bindgen = ["sedona-gdal/bindgen"]
 axum = { workspace = true }
 criterion = { workspace = true }
 datafusion = { workspace = true, features = ["sql"] }
+object_store = { workspace = true, features = ["http"] }
 sedona-gdal = { workspace = true, features = ["gdal-sys"] }
 sedona-proj = { workspace = true, features = ["proj-sys"] }
 sedona-testing = { workspace = true, features = ["criterion"] }
