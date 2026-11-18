@@ -652,6 +652,64 @@ struct SedonaCCatalogProviderList {
   void* private_data;
 };
 
+/// Version 1 read-only ObjectStore ABI. See object_store/README.md for JSON and
+/// Arrow schemas, limits, error codes, threading, and cancellation semantics.
+#define SEDONA_OBJECT_STORE_ABI_VERSION 1
+#define SEDONA_OBJECT_STORE_READ 1
+#define SEDONA_OBJECT_STORE_LIST 2
+#define SEDONA_OBJECT_STORE_LIST_WITH_DELIMITER 4
+#define SEDONA_OBJECT_STORE_MAX_BYTES 1048576
+#define SEDONA_OBJECT_STORE_MAX_ROWS 128
+
+struct SedonaCObjectStoreCall {
+  uint64_t timeout_ms;
+  /// Thread-safe and nonblocking. Nonzero requests cancellation. The context
+  /// and its private_data are borrowed only for the duration of call().
+  int (*is_cancelled)(const void* private_data);
+  const void* private_data;
+};
+
+struct SedonaCObjectStoreBuffer {
+  const uint8_t* data;
+  size_t len;
+  /// Release owned bytes and clear release. May be called on any thread.
+  void (*release)(struct SedonaCObjectStoreBuffer* self);
+  void* private_data;
+};
+
+struct SedonaCObjectStoreStream {
+  /// Single-use. On return 0, producer owns handler until handler->release;
+  /// otherwise caller owns handler and no callbacks may have been invoked.
+  int (*start)(struct SedonaCObjectStoreStream* self,
+               struct ArrowAsyncDeviceStreamHandler* handler,
+               struct SedonaCError* err);
+  /// Called after start returns (success or failure), or without starting.
+  /// Releasing a started handle does not invalidate its running producer.
+  void (*release)(struct SedonaCObjectStoreStream* self);
+  void* private_data;
+};
+
+struct SedonaCObjectStoreResponse {
+  struct SedonaCObjectStoreBuffer metadata;
+  struct SedonaCObjectStoreStream stream;
+};
+
+struct SedonaCObjectStore {
+  uint64_t abi_version;
+  uint64_t capabilities;
+  /// Thread-safe. UTF-8 JSON requests are borrowed only during this call.
+  /// out and err must be zero-initialized. All populated outputs are owned even
+  /// on failure. Return 0 on success or a documented storage error code.
+  int (*call)(const struct SedonaCObjectStore* self,
+              const struct SedonaCObjectStoreCall* context,
+              const uint8_t* request, size_t request_len,
+              struct SedonaCObjectStoreResponse* out,
+              struct SedonaCError* err);
+  void (*release)(struct SedonaCObjectStore* self);
+  void* private_data;
+  uint64_t reserved[4];
+};
+
 #ifdef __cplusplus
 }
 #endif
