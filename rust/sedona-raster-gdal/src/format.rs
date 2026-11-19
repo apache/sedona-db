@@ -45,6 +45,7 @@ use datafusion_physical_plan::{
 use futures::StreamExt;
 use object_store::{ObjectMeta, ObjectStore};
 use sedona_raster::builder::RasterBuilder;
+use sedona_raster::{io_budget::RasterIoBudget, raster_loader::io_budget_from_config};
 use sedona_schema::datatypes::SedonaType;
 
 use crate::{
@@ -84,7 +85,7 @@ impl GetExt for GdalRasterFileFormatFactory {
 impl FileFormatFactory for GdalRasterFileFormatFactory {
     fn create(
         &self,
-        _state: &dyn Session,
+        state: &dyn Session,
         format_options: &HashMap<String, String>,
     ) -> Result<Arc<dyn FileFormat>> {
         let mut tile = false;
@@ -103,10 +104,10 @@ impl FileFormatFactory for GdalRasterFileFormatFactory {
             }
         }
 
-        Ok(Arc::new(GdalRasterFileFormat::new(
-            self.extension.clone(),
-            tile,
-        )))
+        let budget = io_budget_from_config(state.config_options()).unwrap_or_default();
+        Ok(Arc::new(
+            GdalRasterFileFormat::new(self.extension.clone(), tile).with_budget(budget),
+        ))
     }
 
     fn default(&self) -> Arc<dyn FileFormat> {
@@ -119,6 +120,10 @@ impl FileFormatFactory for GdalRasterFileFormatFactory {
 pub struct GdalRasterFileFormat {
     extension: String,
     tile: bool,
+    /// The session-wide cap shared with GDAL pixel reads and `RS_FromPath`
+    /// header opens. It reaches every `FileOpener`, including those created
+    /// for different DataFusion partitions.
+    budget: RasterIoBudget,
 }
 
 impl GdalRasterFileFormat {
@@ -126,7 +131,15 @@ impl GdalRasterFileFormat {
         Self {
             extension: extension.into(),
             tile,
+            budget: RasterIoBudget::default(),
         }
+    }
+
+    /// Use a shared budget for the blocking metadata reads made by this
+    /// format's file openers.
+    fn with_budget(mut self, budget: RasterIoBudget) -> Self {
+        self.budget = budget;
+        self
     }
 
     pub fn tile(&self) -> bool {
@@ -175,9 +188,14 @@ impl FileFormat for GdalRasterFileFormat {
 
     async fn create_physical_plan(
         &self,
-        _state: &dyn Session,
+        state: &dyn Session,
         conf: FileScanConfig,
     ) -> Result<Arc<dyn ExecutionPlan>> {
+        // A ListingTable keeps its file format after it is created, while
+        // `SET sedona.raster.io_concurrency` may happen before a later scan.
+        // Refresh the shared handle at planning time so existing file sources
+        // observe the new limit as well as newly created formats.
+        io_budget_from_config(state.config_options());
         Ok(DataSourceExec::from_data_source(conf))
     }
 
@@ -185,6 +203,7 @@ impl FileFormat for GdalRasterFileFormat {
         Arc::new(GdalRasterFileSource::new(
             self.extension.clone(),
             self.tile,
+            self.budget.clone(),
             table_schema,
         ))
     }
@@ -194,6 +213,7 @@ impl FileFormat for GdalRasterFileFormat {
 struct GdalRasterFileSource {
     extension: String,
     tile: bool,
+    budget: RasterIoBudget,
     table_schema: TableSchema,
     batch_size: Option<usize>,
     projection: ProjectionExprs,
@@ -201,11 +221,17 @@ struct GdalRasterFileSource {
 }
 
 impl GdalRasterFileSource {
-    fn new(extension: String, tile: bool, table_schema: TableSchema) -> Self {
+    fn new(
+        extension: String,
+        tile: bool,
+        budget: RasterIoBudget,
+        table_schema: TableSchema,
+    ) -> Self {
         let projection = SplitProjection::unprojected(&table_schema).source;
         Self {
             extension,
             tile,
+            budget,
             table_schema,
             batch_size: None,
             projection,
@@ -238,6 +264,7 @@ impl FileSource for GdalRasterFileSource {
         let opener: Arc<dyn FileOpener> = Arc::new(GdalRasterFileOpener {
             base_url: base_config.object_store_url.to_string(),
             tile: self.tile,
+            budget: self.budget.clone(),
             batch_size: self.batch_size.unwrap_or(usize::MAX),
             file_projection: split_projection.file_indices.clone(),
         });
@@ -303,6 +330,7 @@ impl FileSource for GdalRasterFileSource {
 struct GdalRasterFileOpener {
     base_url: String,
     tile: bool,
+    budget: RasterIoBudget,
     batch_size: usize,
     file_projection: Vec<usize>,
 }
@@ -314,15 +342,22 @@ impl FileOpener for GdalRasterFileOpener {
             file.object_meta.location.as_ref(),
         )?;
         let tile = self.tile;
+        let budget = self.budget.clone();
         let batch_size = self.batch_size;
         let file_projection = self.file_projection.clone();
 
         Ok(Box::pin(async move {
             // Opening and reading the header is mandatory even though the schema is
             // fixed: this populates the raster's grid, CRS, bands, and nodata. GDAL
-            // is synchronous, so keep the open off DataFusion's async worker.
+            // is synchronous, so keep the open off DataFusion's async worker. The
+            // budget is session-wide, rather than per opener or partition, so its
+            // limit remains the configured total when DataFusion scans file groups
+            // concurrently.
             let batches = tokio::task::spawn_blocking(move || {
-                let header = with_gdal(|gdal| read_outdb_header(gdal, &path))?;
+                let header = {
+                    let _permit = budget.acquire_blocking();
+                    with_gdal(|gdal| read_outdb_header(gdal, &path))?
+                };
                 let capacity = if tile { header.tile_count()? } else { 1 };
                 let mut builder = RasterBuilder::new(capacity);
                 if tile {
@@ -358,7 +393,10 @@ impl FileOpener for GdalRasterFileOpener {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use datafusion::execution::context::SessionConfig;
     use datafusion::prelude::SessionContext;
+    use sedona_raster::raster_loader::{RasterLoaderConfig, RasterLoaderRegistry};
+    use std::sync::RwLock;
 
     #[test]
     fn fixed_schema_is_one_raster_column() {
@@ -385,6 +423,27 @@ mod tests {
             .unwrap();
         let format = format.downcast_ref::<GdalRasterFileFormat>().unwrap();
         assert!(format.tile());
+    }
+
+    #[test]
+    fn factory_passes_the_session_io_budget_to_every_file_source() {
+        let budget = RasterIoBudget::new(3);
+        let mut config = ConfigOptions::new();
+        config.extensions.insert(
+            RasterLoaderConfig::from_handle(Arc::new(RwLock::new(RasterLoaderRegistry::new())))
+                .with_io_budget(budget.clone()),
+        );
+        let context = SessionContext::new_with_config(SessionConfig::from(config));
+
+        let format = GdalRasterFileFormatFactory::new("tif")
+            .create(&context.state(), &HashMap::new())
+            .unwrap();
+        let format = format.downcast_ref::<GdalRasterFileFormat>().unwrap();
+        assert!(format.budget.ptr_eq(&budget));
+
+        let source = format.file_source(TableSchema::from(gdal_raster_schema()));
+        let source = source.downcast_ref::<GdalRasterFileSource>().unwrap();
+        assert!(source.budget.ptr_eq(&budget));
     }
 
     #[test]
