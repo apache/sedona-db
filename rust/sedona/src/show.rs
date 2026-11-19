@@ -252,7 +252,7 @@ impl<'a> DisplayTable<'a> {
             if self.count_visible_columns() == self.columns.len() {
                 let middle_index = self.columns.len() / 2;
                 self.columns[middle_index].hidden = true;
-            } else if iterations % 2 == 0 {
+            } else if iterations.is_multiple_of(2) {
                 let (i, _) = self
                     .columns
                     .iter()
