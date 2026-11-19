@@ -29,7 +29,7 @@ use crate::url_table::install_sedona_url_table;
 use crate::{
     catalog::SedonaCatalogRegistry,
     random_geometry_provider::RandomGeometryFunction,
-    show::{show_batches, DisplayTableOptions},
+    show::{show_dataframe, DisplayTableOptions},
 };
 use arrow_array::RecordBatch;
 use arrow_schema::{DataType, Schema};
@@ -54,9 +54,7 @@ use datafusion_common::not_impl_err;
 use datafusion_common::TableReference;
 use datafusion_expr::dml::InsertOp;
 use datafusion_expr::sqlparser::dialect::{dialect_from_str, Dialect};
-use datafusion_expr::{
-    AggregateUDFImpl, LogicalPlan, LogicalPlanBuilder, ScalarUDF, ScalarUDFImpl, SortExpr,
-};
+use datafusion_expr::{AggregateUDFImpl, LogicalPlanBuilder, ScalarUDF, ScalarUDFImpl, SortExpr};
 use parking_lot::Mutex;
 use sedona_catalog::SedonaCatalogList;
 use sedona_common::{sedona_internal_datafusion_err, SedonaOptions};
@@ -944,7 +942,7 @@ impl Default for SedonaContext {
 pub trait SedonaDataFrame {
     /// Build a table of the first `limit` results in this DataFrame
     ///
-    /// This will limit and execute the query and build a table using [show_batches].
+    /// This will limit the query, project columns needed for display, and build a table.
     async fn show_sedona<'a>(
         self,
         ctx: &SedonaContext,
@@ -983,29 +981,9 @@ impl SedonaDataFrame for DataFrame {
         self,
         ctx: &SedonaContext,
         limit: Option<usize>,
-        mut options: DisplayTableOptions<'a>,
+        options: DisplayTableOptions<'a>,
     ) -> Result<String> {
-        let df = if matches!(
-            self.logical_plan(),
-            LogicalPlan::Explain(_) | LogicalPlan::DescribeTable(_) | LogicalPlan::Analyze(_)
-        ) {
-            // Show multi-line output without truncation for plans like `EXPLAIN`
-            options.max_row_height = usize::MAX;
-
-            // We don't want to apply an additional .limit() to plans like `Explain`
-            // as that will trigger an internal error: Unsupported logical plan: Explain must be root of the plan
-            self
-        } else {
-            // Apply limit if specified
-            self.limit(0, limit)?
-        };
-
-        let schema_without_qualifiers = df.schema().clone().strip_qualifiers();
-        let schema = schema_without_qualifiers.as_arrow();
-        let batches = df.collect().await?;
-        let mut out = Vec::new();
-        show_batches(ctx, &mut out, schema, batches, options)?;
-        String::from_utf8(out).map_err(|e| DataFusionError::External(Box::new(e)))
+        show_dataframe(ctx, self, limit, options).await
     }
 
     async fn write_geoparquet(
