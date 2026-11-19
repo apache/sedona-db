@@ -18,8 +18,8 @@
 
 title: RS_BandPath
 description: >
-  Retrieves the file path of an out-of-database (out-db) raster band, returning
-  the external raster file location referenced by the raster.
+  Returns the URI of an out-of-database (out-db) raster band's first chunk:
+  the external file the band references.
 kernels:
   - returns: utf8
     args: [raster]
@@ -27,8 +27,11 @@ kernels:
 
 ## Description
 
-Primarily used with out-db rasters, where only raster path and geo-referencing
-metadata are stored in the database.
+An out-db band stores a grid of chunk references instead of pixels; each chunk
+names an object, or a byte range of one. `RS_BandPath` returns the `uri` of the
+band's first chunk. For a band that `RS_FromPath` created, that is the source
+file, with the source band selected by the band's codecs rather than by the
+path. Returns null for an in-db band, whose pixels live in the raster itself.
 
 ## Examples
 

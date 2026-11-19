@@ -43,6 +43,7 @@ use datafusion_common::ScalarValue;
 use datafusion_expr::{Expr, Literal};
 use sedona_raster::array::RasterStructArray;
 use sedona_raster::builder::{RasterBuilder, StartBandArgs};
+use sedona_raster::chunks::{ChunkRef, GdalCodec};
 use sedona_raster::traits::is_spatial_dim_pair;
 use sedona_schema::crs::lnglat;
 use sedona_schema::raster::BandDataType;
@@ -142,8 +143,10 @@ struct BandSpec {
     /// `None` means "fill with sequential values at build time". OutDb bands
     /// set `Some(vec![])` — the empty-`data` OutDb convention.
     data: Option<Vec<u8>>,
-    outdb_uri: Option<String>,
-    outdb_format: Option<String>,
+    /// An OutDb band is one whole-object chunk at this URI, decoded by
+    /// `codecs`; both `None` for an InDb band.
+    chunk_uri: Option<String>,
+    codecs: Option<String>,
 }
 
 /// A compact, declarative raster fixture.
@@ -297,15 +300,22 @@ impl RasterSpec {
         self
     }
 
-    /// Make the most recently added band OutDb: its bytes live at `uri`
-    /// (using the SedonaDB `<url>#band=N` convention where applicable) and
-    /// its `data` buffer is the empty OutDb sentinel.
-    pub fn outdb(mut self, uri: &str, format: Option<&str>) -> Self {
+    /// Make the most recently added band OutDb: one whole-object chunk at
+    /// `uri`, decoded by the `codecs` pipeline (JSON), with the empty-`data`
+    /// OutDb sentinel. For the common GDAL case use [`Self::outdb_gdal`].
+    pub fn outdb(mut self, uri: &str, codecs: &str) -> Self {
         let band = self.last_band_mut("outdb");
-        band.outdb_uri = Some(uri.to_string());
-        band.outdb_format = format.map(|f| f.to_string());
+        band.chunk_uri = Some(uri.to_string());
+        band.codecs = Some(codecs.to_string());
         band.data = Some(Vec::new());
         self
+    }
+
+    /// Make the most recently added band OutDb on the GDAL codec: source
+    /// band `band` (1-based) of the file at `uri`, as `RS_FromPath` writes.
+    pub fn outdb_gdal(self, uri: &str, band: u32) -> Self {
+        let codecs = GdalCodec::new(band).to_json();
+        self.outdb(uri, &codecs)
     }
 
     /// Build a one-row raster `StructArray` from this spec.
@@ -334,8 +344,8 @@ impl RasterSpec {
             data_type,
             nodata: None,
             data,
-            outdb_uri: None,
-            outdb_format: None,
+            chunk_uri: None,
+            codecs: None,
         });
         self
     }
@@ -378,13 +388,20 @@ impl RasterSpec {
             .expect("start raster");
         for band in &self.bands {
             let dims: Vec<&str> = band.dims.iter().map(|d| d.as_str()).collect();
+            let chunk = band
+                .chunk_uri
+                .as_deref()
+                .map(|uri| [Some(ChunkRef::whole(uri))]);
+            let args = StartBandArgs::new(&dims, &band.shape, band.data_type);
+            let args = match (&chunk, &band.codecs) {
+                (Some(chunk), Some(codecs)) => args.with_single_chunk(chunk, codecs),
+                _ => args,
+            };
             builder
                 .start_band(StartBandArgs {
                     name: band.name.as_deref(),
                     nodata: band.nodata.as_deref(),
-                    outdb_uri: band.outdb_uri.as_deref(),
-                    outdb_format: band.outdb_format.as_deref(),
-                    ..StartBandArgs::new(&dims, &band.shape, band.data_type)
+                    ..args
                 })
                 .expect("start band");
             let bytes = match &band.data {
@@ -646,13 +663,18 @@ mod tests {
     fn outdb_band() {
         let raster = RasterSpec::d2(4, 4)
             .band(BandDataType::Float32)
-            .outdb("s3://bucket/raster.tif#band=2", None)
+            .outdb_gdal("s3://bucket/raster.tif", 2)
             .build();
         let array = RasterStructArray::try_new(&raster).unwrap();
         let raster_ref = array.get(0).unwrap();
         let band = raster_ref.band(0).unwrap();
         assert!(!band.is_indb());
-        assert_eq!(band.outdb_uri(), Some("s3://bucket/raster.tif#band=2"));
+        assert_eq!(band.chunk_shape(), Some(&[4i64, 4][..]));
+        let chunks = band.chunks().unwrap();
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks.get(0).unwrap().uri, Some("s3://bucket/raster.tif"));
+        let codec = GdalCodec::parse(band.codecs().unwrap()).unwrap().unwrap();
+        assert_eq!(codec.band, 2);
     }
 
     #[test]

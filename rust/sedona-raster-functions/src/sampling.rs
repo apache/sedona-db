@@ -35,9 +35,7 @@ use sedona_geometry::error::SedonaGeometryError;
 use sedona_geometry::transform::{CrsEngine, CrsTransform, visit_point_coords};
 use sedona_raster::error::RasterResultExt;
 use sedona_raster::geo_transform::GeoTransformEx;
-use sedona_raster::traits::{
-    BandRef, NdBuffer, RasterRef, nodata_bytes_to_f64_lossless, split_outdb_band_fragment,
-};
+use sedona_raster::traits::{BandRef, NdBuffer, RasterRef, nodata_bytes_to_f64_lossless};
 use sedona_schema::crs::CrsRef;
 use sedona_schema::datatypes::SedonaType;
 use wkb::reader::read_wkb;
@@ -78,16 +76,22 @@ pub(crate) fn resolve_band<'a>(
         .map_err(|e| exec_datafusion_err!("{func}: {e}"))
 }
 
-/// How an error message names `raster`: the file its bands were read from,
-/// when every band carries the same source URI, otherwise `"this raster"`.
+/// How an error message names `raster`: the object its bands' first chunks
+/// read from, when every band names the same one, otherwise `"this raster"`.
 ///
-/// A band's URI loses its `#band=N` fragment, so the bands of one file compare
-/// equal, and a URL loses its query string, which can hold a signed URL's
-/// credentials that do not belong in an error message.
+/// Every band of a GDAL file names the file (the source band lives in the
+/// band's codec), so the bands of one file compare equal, and a URL loses its
+/// query string, which can hold a signed URL's credentials that do not belong
+/// in an error message.
 pub(crate) fn describe_raster(raster: &dyn RasterRef) -> String {
     let mut source = None;
     for index in 0..raster.num_bands() {
-        let Some(uri) = raster.band_outdb_uri(index) else {
+        let Some(uri) = raster
+            .band_chunks(index)
+            .filter(|chunks| !chunks.is_empty())
+            .and_then(|chunks| chunks.get(0))
+            .and_then(|chunk| chunk.uri)
+        else {
             return "this raster".to_string();
         };
         let uri = source_of(uri);
@@ -100,13 +104,11 @@ pub(crate) fn describe_raster(raster: &dyn RasterRef) -> String {
     source.unwrap_or_else(|| "this raster".to_string())
 }
 
-/// A band URI without its `#band=N` fragment and, for a `scheme://` URL, its
-/// query string.
+/// A chunk URI without, for a `scheme://` URL, its query string.
 fn source_of(uri: &str) -> String {
-    let uri = split_outdb_band_fragment(uri).map_or_else(|_| uri.to_string(), |(base, _)| base);
     match uri.split_once('?') {
         Some((base, _)) if uri.contains("://") => base.to_string(),
-        _ => uri,
+        _ => uri.to_string(),
     }
 }
 
@@ -340,15 +342,16 @@ mod tests {
     }
 
     fn outdb(spec: RasterSpec, uri: &str) -> RasterSpec {
-        spec.band(BandDataType::UInt8).outdb(uri, Some("geotiff"))
+        spec.band(BandDataType::UInt8).outdb_gdal(uri, 1)
     }
 
     #[test]
     fn names_the_file_every_band_was_read_from() {
-        let spec = outdb(
-            outdb(RasterSpec::d2(2, 2), "s3://bucket/foofy.tif#band=1"),
-            "s3://bucket/foofy.tif#band=2",
-        );
+        // Bands 1 and 2 of one file: the band lives in the codec, so both
+        // chunks name the same object.
+        let spec = outdb(RasterSpec::d2(2, 2), "s3://bucket/foofy.tif")
+            .band(BandDataType::UInt8)
+            .outdb_gdal("s3://bucket/foofy.tif", 2);
         assert_eq!(describe(spec), "s3://bucket/foofy.tif");
     }
 
@@ -356,7 +359,7 @@ mod tests {
     fn drops_a_urls_query_string() {
         let spec = outdb(
             RasterSpec::d2(2, 2),
-            "https://host/foofy.tif?X-Amz-Signature=secret#band=1",
+            "https://host/foofy.tif?X-Amz-Signature=secret",
         );
         assert_eq!(describe(spec), "https://host/foofy.tif");
         // A local path keeps a literal '?'.

@@ -27,6 +27,7 @@ use datafusion_common::cast::{
 };
 
 use crate::band_builder::BandWriter;
+use crate::chunks::{ChunkColumns, Chunks};
 use crate::error::RasterError;
 use crate::traits::{BandRef, NdBuffer, Override, RasterRef};
 use crate::view_entries::{ViewEntries, ViewEntry};
@@ -48,8 +49,11 @@ struct BandRefImpl<'a> {
     source_shape_values: &'a Int64Array,
     band_name_array: &'a StringArray,
     nodata_array: &'a BinaryArray,
-    outdb_uri_array: &'a StringArray,
-    outdb_format_array: &'a StringViewArray,
+    chunk_shape_list: &'a ListArray,
+    chunk_shape_values: &'a Int64Array,
+    codecs_array: &'a StringViewArray,
+    chunks_list: &'a ListArray,
+    chunk_columns: ChunkColumns<'a>,
     data_array: &'a BinaryViewArray,
     /// Absolute row index within the flattened bands arrays
     band_row: usize,
@@ -116,20 +120,33 @@ impl<'a> BandRef for BandRefImpl<'a> {
         }
     }
 
-    fn outdb_uri(&self) -> Option<&str> {
-        if self.outdb_uri_array.is_null(self.band_row) {
+    fn chunk_shape(&self) -> Option<&[i64]> {
+        if self.chunk_shape_list.is_null(self.band_row) {
+            return None;
+        }
+        let offsets = self.chunk_shape_list.value_offsets();
+        Some(
+            &self.chunk_shape_values.values()
+                [offsets[self.band_row] as usize..offsets[self.band_row + 1] as usize],
+        )
+    }
+
+    fn codecs(&self) -> Option<&str> {
+        if self.codecs_array.is_null(self.band_row) {
             None
         } else {
-            Some(self.outdb_uri_array.value(self.band_row))
+            Some(self.codecs_array.value(self.band_row))
         }
     }
 
-    fn outdb_format(&self) -> Option<&str> {
-        if self.outdb_format_array.is_null(self.band_row) {
-            None
-        } else {
-            Some(self.outdb_format_array.value(self.band_row))
+    fn chunks(&self) -> Option<Chunks<'_>> {
+        if self.chunks_list.is_null(self.band_row) {
+            return None;
         }
+        let offsets = self.chunks_list.value_offsets();
+        let start = offsets[self.band_row] as usize;
+        let len = offsets[self.band_row + 1] as usize - start;
+        Some(self.chunk_columns.slice(start, len))
     }
 
     fn is_indb(&self) -> bool {
@@ -206,8 +223,11 @@ pub struct RasterRefImpl<'a> {
     band_view_start: &'a Int64Array,
     band_view_step: &'a Int64Array,
     band_view_steps: &'a Int64Array,
-    band_outdb_uri_array: &'a StringArray,
-    band_outdb_format_array: &'a StringViewArray,
+    band_chunk_shape_list: &'a ListArray,
+    band_chunk_shape_values: &'a Int64Array,
+    band_codecs_array: &'a StringViewArray,
+    band_chunks_list: &'a ListArray,
+    band_chunk_columns: ChunkColumns<'a>,
     band_data_array: &'a BinaryViewArray,
     raster_index: usize,
 }
@@ -599,8 +619,11 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
             source_shape_values: self.band_source_shape_values,
             band_name_array: self.band_name_array,
             nodata_array: self.band_nodata_array,
-            outdb_uri_array: self.band_outdb_uri_array,
-            outdb_format_array: self.band_outdb_format_array,
+            chunk_shape_list: self.band_chunk_shape_list,
+            chunk_shape_values: self.band_chunk_shape_values,
+            codecs_array: self.band_codecs_array,
+            chunks_list: self.band_chunks_list,
+            chunk_columns: self.band_chunk_columns,
             data_array: self.band_data_array,
             band_row,
             data_type,
@@ -621,30 +644,32 @@ impl<'a> RasterRef for RasterRefImpl<'a> {
         BandDataType::try_from_u32(value)
     }
 
-    fn band_outdb_uri(&self, index: usize) -> Option<&str> {
+    fn band_codecs(&self, index: usize) -> Option<&str> {
         if index >= self.num_bands() {
             return None;
         }
         let start = self.bands_list.value_offsets()[self.raster_index] as usize;
         let band_row = start + index;
-        if self.band_outdb_uri_array.is_null(band_row) {
+        if self.band_codecs_array.is_null(band_row) {
             None
         } else {
-            Some(self.band_outdb_uri_array.value(band_row))
+            Some(self.band_codecs_array.value(band_row))
         }
     }
 
-    fn band_outdb_format(&self, index: usize) -> Option<&str> {
+    fn band_chunks(&self, index: usize) -> Option<Chunks<'_>> {
         if index >= self.num_bands() {
             return None;
         }
         let start = self.bands_list.value_offsets()[self.raster_index] as usize;
         let band_row = start + index;
-        if self.band_outdb_format_array.is_null(band_row) {
-            None
-        } else {
-            Some(self.band_outdb_format_array.value(band_row))
+        if self.band_chunks_list.is_null(band_row) {
+            return None;
         }
+        let offsets = self.band_chunks_list.value_offsets();
+        let first = offsets[band_row] as usize;
+        let len = offsets[band_row + 1] as usize - first;
+        Some(self.band_chunk_columns.slice(first, len))
     }
 
     fn band_nodata(&self, index: usize) -> Option<&[u8]> {
@@ -733,8 +758,11 @@ pub struct RasterStructArray<'a> {
     band_view_start: &'a Int64Array,
     band_view_step: &'a Int64Array,
     band_view_steps: &'a Int64Array,
-    band_outdb_uri_array: &'a StringArray,
-    band_outdb_format_array: &'a StringViewArray,
+    band_chunk_shape_list: &'a ListArray,
+    band_chunk_shape_values: &'a Int64Array,
+    band_codecs_array: &'a StringViewArray,
+    band_chunks_list: &'a ListArray,
+    band_chunk_columns: ChunkColumns<'a>,
     band_data_array: &'a BinaryViewArray,
 }
 
@@ -832,10 +860,13 @@ impl<'a> RasterStructArray<'a> {
         let band_view_start = as_int64_array(band_view_struct.column(band_view_indices::START))?;
         let band_view_step = as_int64_array(band_view_struct.column(band_view_indices::STEP))?;
         let band_view_steps = as_int64_array(band_view_struct.column(band_view_indices::STEPS))?;
-        let band_outdb_uri_array = as_string_array(bands_struct.column(band_indices::OUTDB_URI))?;
-        let band_outdb_format_array =
-            as_string_view_array(bands_struct.column(band_indices::OUTDB_FORMAT))?;
         let band_data_array = as_binary_view_array(bands_struct.column(band_indices::DATA))?;
+        let band_chunk_shape_list = as_list_array(bands_struct.column(band_indices::CHUNK_SHAPE))?;
+        let band_chunk_shape_values = as_int64_array(band_chunk_shape_list.values())?;
+        let band_codecs_array = as_string_view_array(bands_struct.column(band_indices::CODECS))?;
+        let band_chunks_list = as_list_array(bands_struct.column(band_indices::CHUNKS))?;
+        let band_chunk_columns =
+            ChunkColumns::try_new(as_struct_array(band_chunks_list.values())?)?;
 
         Ok(Self {
             raster_array,
@@ -859,8 +890,11 @@ impl<'a> RasterStructArray<'a> {
             band_view_start,
             band_view_step,
             band_view_steps,
-            band_outdb_uri_array,
-            band_outdb_format_array,
+            band_chunk_shape_list,
+            band_chunk_shape_values,
+            band_codecs_array,
+            band_chunks_list,
+            band_chunk_columns,
             band_data_array,
         })
     }
@@ -906,8 +940,11 @@ impl<'a> RasterStructArray<'a> {
             band_view_start: self.band_view_start,
             band_view_step: self.band_view_step,
             band_view_steps: self.band_view_steps,
-            band_outdb_uri_array: self.band_outdb_uri_array,
-            band_outdb_format_array: self.band_outdb_format_array,
+            band_chunk_shape_list: self.band_chunk_shape_list,
+            band_chunk_shape_values: self.band_chunk_shape_values,
+            band_codecs_array: self.band_codecs_array,
+            band_chunks_list: self.band_chunks_list,
+            band_chunk_columns: self.band_chunk_columns,
             band_data_array: self.band_data_array,
             raster_index: index,
         })
@@ -919,25 +956,69 @@ impl<'a> RasterStructArray<'a> {
         self.raster_array.is_null(index)
     }
 
-    /// The `outdb_uri` of the first band of raster `raster_idx` whose bytes
-    /// still have to be loaded, borrowed from the array rather than from a
-    /// [`RasterRefImpl`], so it can outlive the per-row accessor (e.g. to
-    /// compare consecutive rows). `None` for a null raster, a raster whose
-    /// bands are all InDb, or an OutDb band without a URI. InDb is decided as
-    /// in [`BandRef::is_indb`], by `data` and the visible shape: a loaded band
-    /// keeps its `outdb_uri` as provenance, so the URI alone does not say
+    /// The object the first band of raster `raster_idx` whose bytes still
+    /// have to be loaded reads from: the `uri` of its first chunk, borrowed
+    /// from the array rather than from a [`RasterRefImpl`], so it can outlive
+    /// the per-row accessor (e.g. to compare consecutive rows). `None` for a
+    /// null raster, a raster whose bands are all InDb, or an OutDb band with
+    /// no chunks or whose first chunk is missing. InDb is decided as in
+    /// [`BandRef::is_indb`], by `data` and the visible shape: a loaded band
+    /// keeps its `chunks` as provenance, so their presence alone does not say
     /// whether a load is needed.
-    pub fn first_outdb_band_uri(&self, raster_idx: usize) -> Option<&'a str> {
+    ///
+    /// Every band of a GDAL file names that file, and a Zarr row names its
+    /// chunk object, so this is the key to group rows by when they should be
+    /// loaded together.
+    pub fn first_outdb_band_source(&self, raster_idx: usize) -> Option<&'a str> {
         if raster_idx >= self.len() || self.is_null(raster_idx) {
             return None;
         }
         let band_row = self
             .band_rows(raster_idx)
             .find(|&band_row| !self.band_row_is_indb(band_row))?;
-        if self.band_outdb_uri_array.is_null(band_row) {
+        let chunks = self.band_chunks_at(band_row)?;
+        if chunks.is_empty() {
             return None;
         }
-        Some(self.band_outdb_uri_array.value(band_row))
+        chunks.get(0)?.uri
+    }
+
+    /// The `chunks` of the band at flattened row `band_row`
+    /// ([`Self::band_data_row`]), borrowed from the array rather than from a
+    /// per-row accessor, so the [`crate::chunks::ChunkRef`]s can outlive the
+    /// `BandRef` (e.g. collected into a load plan for a whole batch). `None`
+    /// for an in-db band.
+    pub fn band_chunks_at(&self, band_row: usize) -> Option<Chunks<'a>> {
+        if self.band_chunks_list.is_null(band_row) {
+            return None;
+        }
+        let offsets = self.band_chunks_list.value_offsets();
+        let first = offsets[band_row] as usize;
+        let len = offsets[band_row + 1] as usize - first;
+        Some(self.band_chunk_columns.slice(first, len))
+    }
+
+    /// The `codecs` of the band at flattened row `band_row`, borrowed from
+    /// the array. `None` for an in-db band.
+    pub fn band_codecs_at(&self, band_row: usize) -> Option<&'a str> {
+        if self.band_codecs_array.is_null(band_row) {
+            None
+        } else {
+            Some(self.band_codecs_array.value(band_row))
+        }
+    }
+
+    /// The `chunk_shape` of the band at flattened row `band_row`, borrowed
+    /// from the array. `None` for an in-db band.
+    pub fn band_chunk_shape_at(&self, band_row: usize) -> Option<&'a [i64]> {
+        if self.band_chunk_shape_list.is_null(band_row) {
+            return None;
+        }
+        let offsets = self.band_chunk_shape_list.value_offsets();
+        Some(
+            &self.band_chunk_shape_values.values()
+                [offsets[band_row] as usize..offsets[band_row + 1] as usize],
+        )
     }
 
     /// [`BandRef::is_indb`] for flattened band row `band_row`, without
@@ -1002,7 +1083,8 @@ impl<'a> RasterStructArray<'a> {
 mod tests {
     use super::*;
     use crate::builder::{RasterBuilder, StartBandArgs};
-    use crate::traits::{BandOverrides, Override};
+    use crate::chunks::{ChunkRef, GdalCodec};
+    use crate::traits::{BandChunks, BandOverrides, Override};
     use arrow_array::{ArrayRef, ListArray, StructArray, UInt32Array};
     use arrow_buffer::{Buffer, NullBuffer, OffsetBuffer, ScalarBuffer};
     use arrow_schema::{DataType, Field, Fields};
@@ -1655,6 +1737,8 @@ mod tests {
         builder
             .start_raster_nd(&transform, &["x"], &[3], None)
             .unwrap();
+        let chunk = [Some(ChunkRef::whole("s3://bucket/a.tif"))];
+        let codecs = GdalCodec::new(1).with_driver("GTiff").to_json();
         builder
             .start_band(StartBandArgs {
                 name: Some("a"),
@@ -1665,9 +1749,8 @@ mod tests {
                     steps: 3,
                 }])),
                 nodata: Some(&[0u8, 0, 0, 0]),
-                outdb_uri: Some("s3://bucket/a.tif"),
-                outdb_format: Some("GTiff"),
                 ..StartBandArgs::new(&["x"], &[8], BandDataType::UInt32)
+                    .with_single_chunk(&chunk, &codecs)
             })
             .unwrap();
         builder.band_data_writer().append_value(vec![0u8; 32]);
@@ -1683,8 +1766,8 @@ mod tests {
 
         assert!(r.band(0).is_err());
         assert_eq!(r.band_data_type(0), Some(BandDataType::UInt32));
-        assert_eq!(r.band_outdb_uri(0), Some("s3://bucket/a.tif"));
-        assert_eq!(r.band_outdb_format(0), Some("GTiff"));
+        assert_eq!(r.band_codecs(0), Some(codecs.as_str()));
+        assert_eq!(r.band_chunks(0).unwrap().to_vec(), chunk.to_vec());
         assert_eq!(r.band_nodata(0), Some(&[0u8, 0, 0, 0][..]));
     }
 
@@ -1692,20 +1775,21 @@ mod tests {
 
     #[test]
     fn raster_ref_fast_paths_return_expected_values() {
-        // Single 2-band raster: band 0 has explicit values for nodata,
-        // outdb_uri, outdb_format; band 1 has all-nullable fields null.
+        // Single 2-band raster: band 0 has explicit values for nodata and the
+        // out-db fields; band 1 has all-nullable fields null.
         let mut builder = RasterBuilder::new(1);
         let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
         builder
             .start_raster_nd(&transform, &["x", "y"], &[3, 2], None)
             .unwrap();
+        let chunk = [Some(ChunkRef::whole("s3://bucket/a.tif"))];
+        let codecs = GdalCodec::new(1).with_driver("GTiff").to_json();
         builder
             .start_band(StartBandArgs {
                 name: Some("a"),
                 nodata: Some(&[0xFFu8, 0xFE]),
-                outdb_uri: Some("s3://bucket/a.tif"),
-                outdb_format: Some("GTiff"),
                 ..StartBandArgs::new(&["y", "x"], &[2, 3], BandDataType::UInt16)
+                    .with_single_chunk(&chunk, &codecs)
             })
             .unwrap();
         builder.band_data_writer().append_value(vec![0u8; 12]);
@@ -1725,32 +1809,33 @@ mod tests {
 
         // Bounds: out-of-range indices yield None on every fast path.
         assert!(r.band_data_type(2).is_none());
-        assert!(r.band_outdb_uri(2).is_none());
-        assert!(r.band_outdb_format(2).is_none());
+        assert!(r.band_codecs(2).is_none());
+        assert!(r.band_chunks(2).is_none());
         assert!(r.band_nodata(2).is_none());
 
         // Band 0 — non-null values.
         assert_eq!(r.band_data_type(0), Some(BandDataType::UInt16));
-        assert_eq!(r.band_outdb_uri(0), Some("s3://bucket/a.tif"));
-        assert_eq!(r.band_outdb_format(0), Some("GTiff"));
+        assert_eq!(r.band_codecs(0), Some(codecs.as_str()));
+        assert_eq!(r.band_chunks(0).unwrap().to_vec(), chunk.to_vec());
         assert_eq!(r.band_nodata(0), Some(&[0xFFu8, 0xFE][..]));
 
         // Band 1 — null fields.
         assert_eq!(r.band_data_type(1), Some(BandDataType::Float32));
-        assert!(r.band_outdb_uri(1).is_none());
-        assert!(r.band_outdb_format(1).is_none());
+        assert!(r.band_codecs(1).is_none());
+        assert!(r.band_chunks(1).is_none());
         assert!(r.band_nodata(1).is_none());
 
-        // Both bands hold bytes, so nothing is left to load: band 0's URI is
-        // provenance, and the array-level accessor does not report it.
-        assert!(rasters.first_outdb_band_uri(0).is_none());
-        assert!(rasters.first_outdb_band_uri(1).is_none());
+        // Both bands hold bytes, so nothing is left to load: band 0's chunks
+        // are provenance, and the array-level accessor does not report them.
+        assert!(rasters.first_outdb_band_source(0).is_none());
+        assert!(rasters.first_outdb_band_source(1).is_none());
 
         // Cross-check against the BandRef slow path.
         let band0 = r.band(0).unwrap();
         assert_eq!(band0.data_type(), BandDataType::UInt16);
-        assert_eq!(band0.outdb_uri(), Some("s3://bucket/a.tif"));
-        assert_eq!(band0.outdb_format(), Some("GTiff"));
+        assert_eq!(band0.codecs(), Some(codecs.as_str()));
+        assert_eq!(band0.chunk_shape(), Some(&[2i64, 3][..]));
+        assert_eq!(band0.chunks().unwrap().to_vec(), chunk.to_vec());
         assert_eq!(band0.nodata(), Some(&[0xFFu8, 0xFE][..]));
 
         // num_bands / band(0-based) / iteration. Exercise via the concrete type
@@ -1769,8 +1854,8 @@ mod tests {
         assert_eq!(r.height().unwrap(), 2);
         assert_eq!(r.transform()[0], 0.0);
         assert_eq!(r.transform()[1], 1.0);
-        // Band 0 has bytes, so it reports InDb even though the row carries an
-        // outdb_uri hint.
+        // Band 0 has bytes, so it reports InDb even though the row carries
+        // chunks as provenance.
         assert!(r.band(0).unwrap().is_indb());
     }
 
@@ -1905,13 +1990,14 @@ mod tests {
         builder
             .start_raster_nd(&transform, &["x"], &[3], None)
             .unwrap();
+        let chunk = [Some(ChunkRef::whole("s3://bucket/a.tif"))];
+        let codecs = GdalCodec::new(1).with_driver("GTiff").to_json();
         builder
             .start_band(StartBandArgs {
                 name: Some("a"),
                 nodata: Some(&[0xFFu8, 0xFE]),
-                outdb_uri: Some("s3://bucket/a.tif"),
-                outdb_format: Some("GTiff"),
                 ..StartBandArgs::new(&["x"], &[3], BandDataType::UInt16)
+                    .with_single_chunk(&chunk, &codecs)
             })
             .unwrap();
         builder.band_data_writer().append_value(vec![0u8; 6]);
@@ -1924,7 +2010,8 @@ mod tests {
         // Sanity: raster 0 still resolves correctly.
         let r0 = rasters.get(0).unwrap();
         assert_eq!(r0.band_data_type(0), Some(BandDataType::UInt16));
-        assert_eq!(r0.band_outdb_uri(0), Some("s3://bucket/a.tif"));
+        assert_eq!(r0.band_codecs(0), Some(codecs.as_str()));
+        assert_eq!(r0.band_chunks(0).unwrap().to_vec(), chunk.to_vec());
 
         // Raster 1 is null with zero bands. Every per-band lookup is
         // out of range — `band()` surfaces an out-of-range error,
@@ -1934,8 +2021,8 @@ mod tests {
         assert_eq!(r1.num_bands(), 0);
         assert!(r1.band(0).is_err());
         assert!(r1.band_data_type(0).is_none());
-        assert!(r1.band_outdb_uri(0).is_none());
-        assert!(r1.band_outdb_format(0).is_none());
+        assert!(r1.band_codecs(0).is_none());
+        assert!(r1.band_chunks(0).is_none());
         assert!(r1.band_nodata(0).is_none());
     }
 
@@ -1969,7 +2056,7 @@ mod tests {
     }
 
     #[test]
-    fn first_outdb_band_uri_skips_bands_that_need_no_load() {
+    fn first_outdb_band_source_skips_bands_that_need_no_load() {
         let transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
         let empty_view = ViewEntries::new(vec![ViewEntry {
             source_axis: 0,
@@ -1978,42 +2065,48 @@ mod tests {
             steps: 0,
         }]);
         let mut builder = RasterBuilder::new(6);
+        let band1 = GdalCodec::new(1).to_json();
+        let band2 = GdalCodec::new(2).to_json();
 
-        // A loaded band keeps its URI as provenance; the next band is OutDb.
+        // A loaded band keeps its chunks as provenance; the next band (the
+        // same file's band 2) is OutDb.
         builder
             .start_raster_nd(&transform, &["x"], &[4], None)
             .unwrap();
-        for (uri, data) in [("s3://b/a.tif#band=1", 4), ("s3://b/a.tif#band=2", 0)] {
+        let a_tif = [Some(ChunkRef::whole("s3://b/a.tif"))];
+        for (codecs, data) in [(&band1, 4), (&band2, 0)] {
             builder
-                .start_band(StartBandArgs {
-                    outdb_uri: Some(uri),
-                    ..StartBandArgs::new(&["x"], &[4], BandDataType::UInt8)
-                })
+                .start_band(
+                    StartBandArgs::new(&["x"], &[4], BandDataType::UInt8)
+                        .with_single_chunk(&a_tif, codecs),
+                )
                 .unwrap();
             builder.band_data_writer().append_value(vec![0u8; data]);
             builder.finish_band().unwrap();
         }
         builder.finish_raster().unwrap();
 
-        // OutDb with a URI; empty `data` over an empty visible region, through
-        // a view and through the source shape (InDb, nothing to load); OutDb
-        // without a URI.
-        for (spatial, source, view, uri) in [
-            (4, 4, None, Some("s3://b/b.tif")),
-            (0, 4, Some(&empty_view), Some("s3://b/c.tif")),
-            (0, 0, None, Some("s3://b/d.tif")),
+        // OutDb with a chunk; empty `data` over an empty visible region,
+        // through a view and through the source shape (InDb, nothing to
+        // load); empty `data` without chunks.
+        let b_tif = [Some(ChunkRef::whole("s3://b/b.tif"))];
+        let c_tif = [Some(ChunkRef::whole("s3://b/c.tif"))];
+        for (spatial, source, view, chunk) in [
+            (4, 4, None, Some(&b_tif)),
+            (0, 4, Some(&empty_view), Some(&c_tif)),
+            (0, 0, None, None),
             (4, 4, None, None),
         ] {
             builder
                 .start_raster_nd(&transform, &["x"], &[spatial], None)
                 .unwrap();
-            builder
-                .start_band(StartBandArgs {
-                    view,
-                    outdb_uri: uri,
-                    ..StartBandArgs::new(&["x"], &[source], BandDataType::UInt8)
-                })
-                .unwrap();
+            let source_shape = [source];
+            let base = StartBandArgs::new(&["x"], &source_shape, BandDataType::UInt8);
+            let base = match chunk {
+                Some(chunk) => base.with_single_chunk(chunk, &band1),
+                None => base,
+            };
+            builder.start_band(StartBandArgs { view, ..base }).unwrap();
             builder.band_data_writer().append_value([0u8; 0]);
             builder.finish_band().unwrap();
             builder.finish_raster().unwrap();
@@ -2022,11 +2115,11 @@ mod tests {
         let array = builder.finish().unwrap();
         let rasters = RasterStructArray::try_new(&array).unwrap();
 
-        let uris: Vec<_> = (0..6).map(|i| rasters.first_outdb_band_uri(i)).collect();
+        let sources: Vec<_> = (0..6).map(|i| rasters.first_outdb_band_source(i)).collect();
         assert_eq!(
-            uris,
+            sources,
             [
-                Some("s3://b/a.tif#band=2"),
+                Some("s3://b/a.tif"),
                 Some("s3://b/b.tif"),
                 None,
                 None,
@@ -2035,13 +2128,17 @@ mod tests {
             ]
         );
         // The same verdict as the per-band accessor.
-        for (i, uri) in uris.iter().enumerate().take(5) {
+        for (i, source) in sources.iter().enumerate().take(5) {
             let raster = rasters.get(i).unwrap();
             let first_outdb = (0..raster.num_bands())
                 .map(|b| raster.band(b).unwrap())
                 .find(|band| !band.is_indb())
-                .and_then(|band| band.outdb_uri().map(str::to_string));
-            assert_eq!(first_outdb.as_deref(), *uri, "raster {i}");
+                .and_then(|band| {
+                    band.chunks()
+                        .and_then(|chunks| chunks.get(0))
+                        .and_then(|chunk| chunk.uri.map(str::to_string))
+                });
+            assert_eq!(first_outdb.as_deref(), *source, "raster {i}");
         }
     }
 
@@ -2154,13 +2251,14 @@ mod tests {
         builder
             .start_raster_nd(&transform, &["y", "x"], &[big, big], None)
             .unwrap();
+        let chunk = [Some(ChunkRef::whole("s3://bucket/huge.tif"))];
+        let codecs = GdalCodec::new(1).with_driver("GTiff").to_json();
         builder
             .start_band(StartBandArgs {
                 name: Some("external"),
                 nodata: Some(&[7u8]),
-                outdb_uri: Some("s3://bucket/huge.tif#band=1"),
-                outdb_format: Some("geotiff"),
                 ..StartBandArgs::new(&["z", "y", "x"], &[1, big, big], BandDataType::UInt8)
+                    .with_single_chunk(&chunk, &codecs)
             })
             .unwrap();
         builder.band_data_writer().append_value([]); // empty → OutDb
@@ -2177,7 +2275,8 @@ mod tests {
         );
         assert_eq!(band.shape(), &[1, big, big]);
         assert_eq!(band.nodata(), Some(&[7u8][..]));
-        assert_eq!(band.outdb_uri(), Some("s3://bucket/huge.tif#band=1"));
+        assert_eq!(band.chunk_shape(), Some(&[1, big, big][..]));
+        assert_eq!(band.chunks().unwrap().to_vec(), chunk.to_vec());
     }
 
     #[test]
@@ -2348,12 +2447,18 @@ mod tests {
         let mut ob = RasterBuilder::new(1);
         ob.start_raster_nd(&[0.0, 1.0, 0.0, 0.0, 0.0, -1.0], &["x"], &[16], None)
             .unwrap();
+        let chunk = [Some(ChunkRef::whole("file:///tmp/orig.tif"))];
+        let codecs = GdalCodec::new(1).to_json();
         in_band
             .copy_into(
                 &mut ob,
                 BandOverrides {
                     data: Override::Clear,
-                    outdb_uri: Override::Set("file:///tmp/orig.tif"),
+                    chunks: Override::Set(BandChunks {
+                        chunk_shape: &[16],
+                        codecs: &codecs,
+                        chunks: &chunk,
+                    }),
                     ..Default::default()
                 },
             )
@@ -2366,7 +2471,35 @@ mod tests {
         let out_band = out_raster.band(0).unwrap();
 
         assert!(!out_band.is_indb());
-        assert_eq!(out_band.outdb_uri(), Some("file:///tmp/orig.tif"));
+        assert_eq!(out_band.codecs(), Some(codecs.as_str()));
+        assert_eq!(out_band.chunks().unwrap().to_vec(), chunk.to_vec());
         assert_eq!(out_band.shape(), &[16]);
+
+        // `Clear` on the out-db fields makes an in-db band out of an out-db
+        // one, given bytes.
+        let bytes = Buffer::from_vec((0u8..16).collect::<Vec<_>>());
+        let mut ib = RasterBuilder::new(1);
+        ib.start_raster_nd(&[0.0, 1.0, 0.0, 0.0, 0.0, -1.0], &["x"], &[16], None)
+            .unwrap();
+        out_band
+            .copy_into(
+                &mut ib,
+                BandOverrides {
+                    data: Override::Set(&bytes),
+                    chunks: Override::Clear,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        ib.finish_band().unwrap();
+        ib.finish_raster().unwrap();
+        let indb = ib.finish().unwrap();
+        let indb_rasters = RasterStructArray::try_new(&indb).unwrap();
+        let indb_raster = indb_rasters.get(0).unwrap();
+        let indb_band = indb_raster.band(0).unwrap();
+        assert!(indb_band.is_indb());
+        assert!(indb_band.chunks().is_none());
+        assert!(indb_band.codecs().is_none());
+        assert!(indb_band.chunk_shape().is_none());
     }
 }

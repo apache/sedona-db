@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import json
 import math
 import struct
 from collections.abc import Iterable, Iterator
@@ -29,6 +30,43 @@ if TYPE_CHECKING:
     import numpy as np
 
 
+GDAL_CODEC = "sedona.gdal"
+"""Name of the container codec that decodes one whole object with GDAL."""
+
+
+def gdal_codecs(band: int = 1, driver: Optional[str] = None) -> str:
+    """The `codecs` pipeline for a band that is one whole file decoded by GDAL.
+
+    This is what `RS_FromPath` writes and what `Raster.lazy` defaults to: a
+    one-codec pipeline named `sedona.gdal` whose configuration selects the
+    1-based source `band` within the file and, optionally, the GDAL `driver`
+    short name (e.g. `"GTiff"`) so GDAL skips format probing.
+
+    Args:
+        band: The 1-based source band within the file.
+        driver: Optional GDAL driver short name. `None` lets GDAL identify the file.
+
+    Returns:
+        The pipeline as a JSON string, ready for `Raster.lazy(codecs=...)`.
+
+    Examples:
+        >>> gdal_codecs()
+        '[{"configuration":{"band":1},"name":"sedona.gdal"}]'
+        >>> gdal_codecs(band=3, driver="GTiff")
+        '[{"configuration":{"band":3,"driver":"GTiff"},"name":"sedona.gdal"}]'
+    """
+    if band < 1:
+        raise ValueError(f"band must be a positive (1-based) index, got {band}")
+    configuration: dict[str, Any] = {"band": band}
+    if driver is not None:
+        configuration["driver"] = driver
+    return json.dumps(
+        [{"name": GDAL_CODEC, "configuration": configuration}],
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
 class Raster:
     """Python representation of a sedona.raster scalar value."""
 
@@ -38,24 +76,26 @@ class Raster:
         shape: Iterable[int],
         dtype: str,
         *,
-        format: Optional[str] = None,
+        codecs: Optional[str] = None,
         crs: Any = None,
         dim_names: Optional[Iterable[str]] = None,
     ) -> "Raster":
         """Create a lazy raster that references external data without loading it.
 
-        This creates a raster with a single band that points to an external data
-        source (e.g., a file on disk or cloud storage) without reading the actual
-        pixel data into memory.
+        This creates a raster with a single out-db band of one chunk: the whole
+        object at `uri`, decoded by `codecs`. No pixel data is read until the
+        band is loaded (e.g. by `RS_EnsureLoaded`).
 
         Args:
-            uri: The URI of the external data source (e.g., file path or cloud URL).
+            uri: The URI of the external object (e.g., file path or cloud URL).
                 This URI is not validated unless the pixels are read.
             shape: The shape of the raster. The trailing two axes are the spatial
                 `(y, x)` pair; any leading axes are extra (e.g. time) dimensions.
             dtype: The pixel data type (e.g., 'uint8', 'float32', 'int16').
-            format: The format of the external data (e.g., 'tif', or 'zarr'). If None,
-                the format will be inferred when the data is accessed.
+            codecs: The band's codec pipeline as Zarr v3 codec JSON: how the
+                bytes at `uri` decode into pixels. `None` means the file is
+                decoded by GDAL, source band 1 (see `gdal_codecs`); pass
+                `gdal_codecs(band=N)` for another band of the file.
             crs: The coordinate reference system. Can be any value accepted by
                 geoarrow.types.type_spec (e.g., string, pyproj.CRS).
             dim_names: Names of the dimensions. Defaults to `["y", "x"]` for a 2-D
@@ -66,8 +106,12 @@ class Raster:
 
         Examples:
             >>> raster = Raster.lazy("s3://bucket/image.tif", (1024, 2048), "uint8")
+            >>> green = Raster.lazy(
+            ...     "s3://bucket/image.tif", (1024, 2048), "uint8",
+            ...     codecs=gdal_codecs(band=2),
+            ... )
             >>> cube = Raster.lazy(
-            ...     "s3://bucket/cube.zarr", (12, 1024, 2048), "float32",
+            ...     "s3://bucket/cube.nc", (12, 1024, 2048), "float32",
             ...     dim_names=["time", "y", "x"],
             ... )
         """
@@ -80,14 +124,37 @@ class Raster:
         if dtype not in BAND_DATA_TYPE_IDS:
             raise ValueError(f"Unsupported raster dtype: {dtype}")
 
+        if codecs is None:
+            codecs = gdal_codecs()
+
+        # One whole-object chunk covering the band. A zero-extent band has no
+        # grid positions, so its chunk list is empty; chunk extents must stay
+        # positive for the grid arithmetic.
+        if math.prod(shape) == 0:
+            chunk_shape = [max(1, n) for n in shape]
+            chunks: list = []
+        else:
+            chunk_shape = shape
+            chunks = [
+                {
+                    "uri": uri,
+                    "offset": None,
+                    "size": None,
+                    "content_type": None,
+                    "checksum": None,
+                    "inline": None,
+                }
+            ]
+
         return _build_raster(
             dim_names,
             shape,
             BAND_DATA_TYPE_IDS[dtype],
             data=b"",
             crs=crs,
-            outdb_uri=uri,
-            outdb_format=format,
+            chunk_shape=chunk_shape,
+            codecs=codecs,
+            chunks=chunks,
         )
 
     @staticmethod
@@ -313,9 +380,37 @@ class Band:
         return tuple(self._py_field("source_shape"))
 
     @property
-    def outdb_uri(self) -> Optional[str]:
-        """The URI for out-of-database storage, if any."""
-        return self._py_field("outdb_uri")
+    def chunk_shape(self) -> Optional[tuple[int, ...]]:
+        """Pixels per chunk per dimension of an out-db band, or None for an
+        in-db band."""
+        chunk_shape = self._py_field("chunk_shape")
+        return None if chunk_shape is None else tuple(chunk_shape)
+
+    @property
+    def codecs(self) -> Optional[str]:
+        """The out-db band's codec pipeline (Zarr v3 codec JSON): how the bytes
+        its chunks reference decode into pixels. None for an in-db band."""
+        return self._py_field("codecs")
+
+    @property
+    def chunks(self) -> Optional[list[Optional[dict]]]:
+        """The out-db band's chunk grid in row-major order, or None for an
+        in-db band.
+
+        Each entry is a dict with keys `uri`, `offset`, `size`, `content_type`
+        and `checksum` (the Iceberg `file` shape), or None for a missing chunk.
+        A band created by `Raster.lazy` or `RS_FromPath` has one chunk, the
+        whole object. A loaded band keeps its chunks beside its pixels.
+        """
+        chunks = self._py_field("chunks")
+        if chunks is None:
+            return None
+        return [
+            None
+            if chunk is None
+            else {key: value for key, value in chunk.items() if key != "inline"}
+            for chunk in chunks
+        ]
 
     @property
     def data_type(self) -> str:
@@ -390,7 +485,7 @@ class Band:
             return memoryview(self.to_numpy())
 
         source_data = self.source_data
-        if self.outdb_uri is not None and len(source_data) == 0:
+        if self.chunks is not None and len(source_data) == 0:
             raise ValueError("Can't extract buffer from a reference to external data.")
 
         # When views are supported, we would need to calculate the striding
@@ -773,12 +868,18 @@ def _build_raster(
     crs=None,
     nodata=None,
     transform=None,
-    outdb_uri=None,
-    outdb_format=None,
+    chunk_shape=None,
+    codecs=None,
+    chunks=None,
 ):
     """Assemble a single-band raster from its components, shared by the
     `Raster.lazy` (OutDb) and `Raster.from_numpy` (InDb) constructors. The
-    trailing two `dim_names`/`shape` entries are the spatial `(y, x)` axes."""
+    trailing two `dim_names`/`shape` entries are the spatial `(y, x)` axes.
+
+    `chunk_shape`, `codecs` and `chunks` describe an OutDb band and are all
+    set or all None; `chunks` is a list of chunk dicts (`uri`, `offset`,
+    `size`, `content_type`, `checksum`, `inline`) or None entries, in
+    row-major grid order."""
     if crs is not None:
         import geoarrow.types as gat
 
@@ -795,6 +896,12 @@ def _build_raster(
 
     # Build band struct array with zero-copy data field
     band_data_array = _wrap_data_zero_copy(data)
+
+    # The out-db columns take their exact Arrow types (list child names
+    # included) from the canonical storage type.
+    band_type = RASTER_STORAGE_TYPE.field("bands").type.value_type
+    chunk_shape_value = None if chunk_shape is None else list(chunk_shape)
+    chunks_value = None if chunks is None else list(chunks)
 
     band_struct = pa.StructArray.from_arrays(
         [
@@ -816,9 +923,12 @@ def _build_raster(
                     )
                 ),
             ),
-            pa.array([outdb_uri], type=pa.utf8()),  # outdb_uri
-            pa.array([outdb_format], type=pa.string_view()),  # outdb_format
             band_data_array,  # data (zero-copy)
+            pa.array(
+                [chunk_shape_value], type=band_type.field("chunk_shape").type
+            ),  # chunk_shape
+            pa.array([codecs], type=band_type.field("codecs").type),  # codecs
+            pa.array([chunks_value], type=band_type.field("chunks").type),  # chunks
         ],
         names=[
             "name",
@@ -827,9 +937,10 @@ def _build_raster(
             "data_type",
             "nodata",
             "view",
-            "outdb_uri",
-            "outdb_format",
             "data",
+            "chunk_shape",
+            "codecs",
+            "chunks",
         ],
     )
 

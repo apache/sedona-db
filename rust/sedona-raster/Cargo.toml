@@ -39,6 +39,7 @@ datafusion-common = { workspace = true }
 lru = { workspace = true }
 sedona-common = { workspace = true }
 sedona-schema = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]

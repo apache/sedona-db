@@ -34,6 +34,7 @@ use arrow_schema::ArrowError;
 use sedona_common::sedona_internal_err;
 use sedona_raster::array::RasterRefImpl;
 use sedona_raster::builder::{RasterBuilder, StartBandArgs};
+use sedona_raster::chunks::{ChunkRef, GdalCodec};
 use sedona_raster::error::RasterResultExt;
 use sedona_raster::traits::RasterRef;
 use sedona_schema::raster::BandDataType;
@@ -171,13 +172,18 @@ impl OutDbHeader {
         self.grid.start_raster_into(builder, self.crs.as_deref())?;
 
         let (width, height) = (self.grid.width, self.grid.height);
-        for (band_idx, band) in (1..).zip(&self.bands) {
-            // Out-db band: location + band selector in the `#band=N` URI; empty data.
-            let outdb_uri = format!("{path}#band={band_idx}");
+        let source_shape = [height, width];
+        let chunk = [Some(ChunkRef::whole(path))];
+        for (band_idx, band) in (1u32..).zip(&self.bands) {
+            // Out-db band: one whole-object chunk at `path`, decoded by the
+            // GDAL codec for source band `band_idx`; empty data. The driver is
+            // left for GDAL to probe: the binding does not expose the opened
+            // dataset's driver name.
+            let codecs = GdalCodec::new(band_idx).to_json();
             builder.start_band(StartBandArgs {
                 nodata: band.nodata.as_deref(),
-                outdb_uri: Some(&outdb_uri),
-                ..StartBandArgs::new(&["y", "x"], &[height, width], band.data_type)
+                ..StartBandArgs::new(&["y", "x"], &source_shape, band.data_type)
+                    .with_single_chunk(&chunk, &codecs)
             })?;
             builder.band_data_writer().append_value([]);
             builder.finish_band()?;
@@ -576,10 +582,10 @@ pub(crate) struct BandHeader<'a> {
 /// the single-band GDAL reader ([`append_as_indb_raster`]), and RS_Clip's
 /// masked-crop output.
 ///
-/// The band is in-db (its `data` buffer is authoritative), so `outdb_uri` /
-/// `outdb_format` are `None`; out-db bands carry no pixel buffer and do not use
-/// this path. An oversize (> u32 view limit) band is rejected with a descriptive
-/// error rather than a panic.
+/// The band is in-db (its `data` buffer is authoritative), so it has no
+/// `chunks`, `chunk_shape` or `codecs`; out-db bands carry no pixel buffer and
+/// do not use this path. An oversize (> u32 view limit) band is rejected with a
+/// descriptive error rather than a panic.
 pub(crate) fn append_band_from_buffer(
     builder: &mut RasterBuilder,
     header: &BandHeader<'_>,
@@ -787,6 +793,7 @@ mod tests {
     use sedona_gdal::raster::types::DatasetOptions;
     use sedona_raster::array::RasterStructArray;
     use sedona_raster::builder::RasterBuilder;
+    use sedona_raster::chunks::GdalCodec;
     use sedona_raster::traits::RasterRef;
     use sedona_schema::raster::BandDataType;
     use sedona_testing::data::test_raster;
@@ -980,7 +987,47 @@ mod tests {
 
         let band = raster.band(0).unwrap();
         assert!(!band.is_indb());
-        assert!(band.outdb_uri().unwrap().contains("test4.tiff"));
+        // One whole-object chunk at the file, decoded by the GDAL codec for
+        // source band 1, over a chunk grid of one.
+        assert_eq!(band.chunk_shape(), Some(&[10i64, 10][..]));
+        let chunks = band.chunks().unwrap();
+        assert_eq!(chunks.len(), 1);
+        let chunk = chunks.get(0).unwrap();
+        assert!(chunk.uri.unwrap().contains("test4.tiff"));
+        assert!(chunk.is_whole_object());
+        let codec = GdalCodec::parse(band.codecs().unwrap()).unwrap().unwrap();
+        assert_eq!(codec.band, 1);
+        assert_eq!(codec.driver, None);
+    }
+
+    #[test]
+    fn append_as_outdb_raster_numbers_source_bands_from_one() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("two_band.tif");
+        let path_str = path.to_string_lossy().to_string();
+        with_gdal(|gdal| {
+            let driver = gdal.get_driver_by_name("GTiff").unwrap();
+            let dataset = driver
+                .create_with_band_type::<u8>(&path_str, 3, 2, 2)
+                .unwrap();
+            dataset
+                .set_geo_transform(&[0.0, 1.0, 0.0, 2.0, 0.0, -1.0])
+                .unwrap();
+            Ok::<_, datafusion_common::DataFusionError>(())
+        })
+        .unwrap();
+
+        let raster = with_gdal(|gdal| load_as_outdb_raster(gdal, &path_str)).unwrap();
+        let raster_struct = RasterStructArray::try_new(&raster).unwrap();
+        let raster = raster_struct.get(0).unwrap();
+        assert_eq!(raster.num_bands(), 2);
+        for (index, expected_band) in [(0, 1u32), (1, 2u32)] {
+            let band = raster.band(index).unwrap();
+            let chunk = band.chunks().unwrap().get(0).unwrap();
+            assert_eq!(chunk.uri, Some(path_str.as_str()));
+            let codec = GdalCodec::parse(band.codecs().unwrap()).unwrap().unwrap();
+            assert_eq!(codec.band, expected_band);
+        }
     }
 
     #[test]

@@ -18,11 +18,13 @@
 //! Session-scoped cache of loaded OutDb band bytes.
 //!
 //! [`RasterChunkCache`] is the interface `RS_EnsureLoaded` caches through.
-//! Before dispatching to a loader it looks each OutDb band up by
-//! [`ChunkKey`] — the band's `outdb_uri` plus its data type — and
-//! afterwards it stores what the loader returned, as the bytes and the
-//! source shape they are laid out in. A Zarr anchor URI names one chunk
-//! and a GDAL URI names one band, so the unit cached is the unit loaded.
+//! Before dispatching to a loader it looks each single-chunk OutDb band up
+//! by [`ChunkKey`] — the chunk's location, the band's codecs and its data
+//! type — and afterwards it stores what the loader returned, as the bytes
+//! and the source shape they are laid out in. A GDAL band is one chunk
+//! (the whole file, decoded for one source band) and a Zarr row is one
+//! chunk object, so the unit cached is the unit loaded. Bands of several
+//! chunks are not cached here.
 //! The requesting band's own view is re-applied by the caller on a hit,
 //! which is why only whole-source ("unresolved") results belong here: the
 //! caller checks that before inserting.
@@ -65,16 +67,18 @@
 //!
 //! # Identity and staleness
 //!
-//! The key is the URI and the data type; the entry also records the source
-//! shape and source-order dimension names the bytes were laid out over,
-//! and a lookup only counts as a hit when those match the requesting band
-//! (a stale entry is a miss, and an insert with a different layout replaces
-//! it). The `outdb_format` is not part of the key: two loaders registered
-//! for the same URI string would alias, which no in-tree loader does.
-//! Bytes behind a URI are assumed not to change for the life of the
-//! session. A store rewritten under a running session serves the old bytes
-//! until the entry is evicted; `SET sedona.raster.cache_max_bytes = 0`
-//! (then back) or [`RasterChunkCache::clear`] drops everything.
+//! The key is the chunk's location (URI, byte range, checksum), the band's
+//! codecs and the data type; the entry also records the source shape and
+//! source-order dimension names the bytes were laid out over, and a lookup
+//! only counts as a hit when those match the requesting band (a stale entry
+//! is a miss, and an insert with a different layout replaces it). The
+//! codecs are in the key because the cache holds *decoded* bytes: the same
+//! object decoded for GDAL band 1 and band 2 is two entries. Bytes behind a
+//! URI are assumed not to change for the life of the session unless the
+//! chunk carries a `checksum`, which then also distinguishes entries. A
+//! store rewritten under a running session serves the old bytes until the
+//! entry is evicted; `SET sedona.raster.cache_max_bytes = 0` (then back) or
+//! [`RasterChunkCache::clear`] drops everything.
 //!
 //! # Accounting
 //!
@@ -143,13 +147,34 @@ pub trait RasterChunkCache: Send + Sync + fmt::Debug {
     fn stats(&self) -> ChunkCacheStats;
 }
 
-/// Identity of a cached load: the band's `outdb_uri` and data type. The
-/// data type is defensive — a URI identifies its bytes, but a mismatched
-/// dtype request must never alias an entry.
+/// Identity of a cached load: the single chunk's location, the band's
+/// codecs (the cache holds decoded bytes, so the same object under two
+/// pipelines is two entries) and the data type. The data type is defensive
+/// — the location and codecs identify the bytes, but a mismatched dtype
+/// request must never alias an entry.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ChunkKey {
     pub uri: String,
+    pub offset: Option<i64>,
+    pub size: Option<i64>,
+    pub checksum: Option<String>,
+    pub codecs: String,
     pub data_type: BandDataType,
+}
+
+impl ChunkKey {
+    /// The key of a single-chunk band: `chunk` is its one entry, `codecs`
+    /// the band's pipeline.
+    pub fn new(chunk: &crate::chunks::ChunkRef<'_>, codecs: &str, data_type: BandDataType) -> Self {
+        Self {
+            uri: chunk.uri.unwrap_or_default().to_string(),
+            offset: chunk.offset,
+            size: chunk.size,
+            checksum: chunk.checksum.map(str::to_string),
+            codecs: codecs.to_string(),
+            data_type,
+        }
+    }
 }
 
 /// A cached whole-source load: the bytes, the shape they are laid out in,
@@ -505,6 +530,10 @@ mod tests {
     fn key(name: &str) -> ChunkKey {
         ChunkKey {
             uri: name.to_string(),
+            offset: None,
+            size: None,
+            checksum: None,
+            codecs: r#"[{"name":"mock"}]"#.to_string(),
             data_type: BandDataType::UInt8,
         }
     }

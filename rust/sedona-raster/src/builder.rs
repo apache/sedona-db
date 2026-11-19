@@ -26,6 +26,7 @@ use std::sync::Arc;
 use sedona_schema::raster::{BandDataType, RasterSchema};
 
 use crate::band_builder::{BandArrayBuilder, BandWriter};
+use crate::chunks::ChunkRef;
 use crate::error::RasterError;
 use crate::traits::{BandOverrides, BandRef, Override, RasterRef};
 use crate::view_entries::ViewEntries;
@@ -120,14 +121,22 @@ pub struct StartBandArgs<'a> {
     pub view: Option<&'a ViewEntries>,
     pub data_type: BandDataType,
     pub nodata: Option<&'a [u8]>,
-    pub outdb_uri: Option<&'a str>,
-    pub outdb_format: Option<&'a str>,
+    /// Pixels per chunk per dimension, parallel to `dim_names`. Required
+    /// with `chunks`, otherwise `None`.
+    pub chunk_shape: Option<&'a [i64]>,
+    /// The band's codec pipeline as JSON (see [`crate::chunks`]). Required
+    /// with `chunks`, otherwise `None`.
+    pub codecs: Option<&'a str>,
+    /// The out-db chunk grid in row-major order, `None` entries for missing
+    /// chunks; `None` for an in-db band. Its length must equal the grid
+    /// size `Π ceil(source_shape / chunk_shape)`.
+    pub chunks: Option<&'a [Option<ChunkRef<'a>>]>,
 }
 
 impl<'a> StartBandArgs<'a> {
     /// The required band descriptors; the optional fields (`name`, `view`,
-    /// `nodata`, `outdb_uri`, `outdb_format`) default to `None`. Override any of
-    /// them with struct-update syntax, e.g.
+    /// `nodata`, `chunk_shape`, `codecs`, `chunks`) default to `None`. Override
+    /// any of them with struct-update syntax, e.g.
     /// `StartBandArgs { nodata: Some(&nd), ..StartBandArgs::new(dims, shape, dtype) }`.
     pub fn new(dim_names: &'a [&'a str], source_shape: &'a [i64], data_type: BandDataType) -> Self {
         Self {
@@ -137,9 +146,20 @@ impl<'a> StartBandArgs<'a> {
             view: None,
             data_type,
             nodata: None,
-            outdb_uri: None,
-            outdb_format: None,
+            chunk_shape: None,
+            codecs: None,
+            chunks: None,
         }
+    }
+
+    /// An out-db band of one whole-object chunk, as a container codec such
+    /// as [`crate::chunks::GDAL_CODEC`] reads: `chunk_shape` is the source
+    /// shape and `chunks` is the one entry in `chunk`.
+    pub fn with_single_chunk(mut self, chunk: &'a [Option<ChunkRef<'a>>], codecs: &'a str) -> Self {
+        self.chunk_shape = Some(self.source_shape);
+        self.codecs = Some(codecs);
+        self.chunks = Some(chunk);
+        self
     }
 }
 
@@ -155,8 +175,6 @@ pub struct WithViewArgs<'a> {
     pub input: &'a dyn BandRef,
     pub view: &'a ViewEntries,
     pub nodata: Option<&'a [u8]>,
-    pub outdb_uri: Option<&'a str>,
-    pub outdb_format: Option<&'a str>,
 }
 
 impl RasterBuilder {
@@ -323,11 +341,11 @@ impl RasterBuilder {
 
     /// Start a new band with explicit N-D parameters.
     ///
-    /// `outdb_uri` is the *location* of the external resource (scheme is
-    /// resolved by an `ObjectStoreRegistry`). `outdb_format` is the *format*
-    /// used to interpret the bytes at that location (e.g. `"geotiff"`,
-    /// `"zarr"`). A null `outdb_format` means the band is in-memory — the
-    /// band's `data` buffer is authoritative.
+    /// `chunks`, `chunk_shape` and `codecs` describe an out-db band: a
+    /// regular grid of chunk references over `source_shape` and the codec
+    /// pipeline that decodes them (see [`crate::chunks`]). All three are
+    /// `None` for an in-db band, whose `data` buffer is authoritative; they
+    /// are validated together before anything is appended.
     ///
     /// `view` is a per-axis window of offsets/steps over `source_shape`.
     /// `None` is the canonical identity view — the whole source buffer in C
@@ -378,8 +396,8 @@ impl RasterBuilder {
     ///   its backing `Buffer`); the composed view addresses the visible region
     ///   within them.
     /// - **OutDb input** → output is OutDb. The data column stays empty and the
-    ///   input's `outdb_uri` / `outdb_format` are inherited (unless overridden);
-    ///   the composed view lives alongside the same external pointer and loading
+    ///   input's `chunks`, `chunk_shape` and `codecs` are inherited; the
+    ///   composed view lives alongside the same chunk references and loading
     ///   is deferred to whoever reads the visible bytes.
     ///
     /// Identity-input shortcut: when `input` carries the identity view, the
@@ -391,8 +409,6 @@ impl RasterBuilder {
             input,
             view,
             nodata,
-            outdb_uri,
-            outdb_format,
         } = args;
         // `copy_into` never composes the view, so compose the delta here:
         // `view` addresses `input`'s *visible* axes, and composing it onto
@@ -411,8 +427,7 @@ impl RasterBuilder {
                 name: name.map_or(Override::Keep, Override::Set),
                 dim_names: Some(dim_names),
                 nodata: nodata.map_or(Override::Keep, Override::Set),
-                outdb_uri: outdb_uri.map_or(Override::Keep, Override::Set),
-                outdb_format: outdb_format.map_or(Override::Keep, Override::Set),
+                chunks: Override::Keep,
                 source_shape: None,
                 view: Override::Set(&composed),
                 data: Override::Keep,
@@ -605,7 +620,7 @@ impl RasterBuilder {
 
         // Build the flat band struct — delegated to `BandArrayBuilder`,
         // which owns all the per-band columns (name, dim_names, shape,
-        // datatype, nodata, view, outdb_uri/format, data).
+        // datatype, nodata, view, data, chunk_shape, codecs, chunks).
         let band_struct = self.bands.finish()?;
 
         // Build bands list
@@ -678,6 +693,7 @@ impl BandWriter for RasterBuilder {
 mod tests {
     use super::*;
     use crate::array::RasterStructArray;
+    use crate::chunks::GdalCodec;
     use crate::traits::RasterRef;
     use crate::view_entries::ViewEntry;
     use arrow_array::RecordBatch;
@@ -1062,15 +1078,17 @@ mod tests {
         builder.band_data_writer().append_value(&test_data);
         builder.finish_band().unwrap();
 
-        // Test OutDbRef band: an out-db location is carried as an `outdb_uri`
-        // with the SedonaDB `#band=N` fragment; the band's own `data` is empty.
+        // Test out-db band: one whole-object chunk decoded by the GDAL codec
+        // for source band 2; the band's own `data` is empty.
+        let chunk = [Some(ChunkRef::whole("s3://mybucket/satellite_image.tif"))];
+        let codecs = GdalCodec::new(2).to_json();
         builder
-            .start_band(StartBandArgs {
-                outdb_uri: Some("s3://mybucket/satellite_image.tif#band=2"),
-                ..StartBandArgs::new(&["y", "x"], &[10, 10], BandDataType::Float32)
-            })
+            .start_band(
+                StartBandArgs::new(&["y", "x"], &[10, 10], BandDataType::Float32)
+                    .with_single_chunk(&chunk, &codecs),
+            )
             .unwrap();
-        // For OutDbRef, data field could be empty or contain metadata/thumbnail
+        // An out-db band's data is the empty sentinel.
         builder.band_data_writer().append_value([]);
         builder.finish_band().unwrap();
 
@@ -1083,20 +1101,138 @@ mod tests {
 
         assert_eq!(raster.num_bands(), 2);
 
-        // Test InDb band
+        // Test InDb band: no out-db fields at all.
         let indb_band = raster.band(0).unwrap();
         assert!(indb_band.is_indb());
         assert_eq!(indb_band.data_type(), BandDataType::UInt8);
-        assert!(indb_band.outdb_uri().is_none());
+        assert!(indb_band.chunk_shape().is_none());
+        assert!(indb_band.codecs().is_none());
+        assert!(indb_band.chunks().is_none());
 
-        // Test OutDbRef band
+        // Test out-db band: the grid is one chunk the size of the source.
         let outdb_band = raster.band(1).unwrap();
         assert!(!outdb_band.is_indb());
         assert_eq!(outdb_band.data_type(), BandDataType::Float32);
+        assert_eq!(outdb_band.chunk_shape(), Some(&[10i64, 10][..]));
+        assert_eq!(outdb_band.codecs(), Some(codecs.as_str()));
+        let chunks = outdb_band.chunks().unwrap();
+        assert_eq!(chunks.len(), 1);
         assert_eq!(
-            outdb_band.outdb_uri().unwrap(),
-            "s3://mybucket/satellite_image.tif#band=2"
+            chunks.get(0),
+            Some(ChunkRef::whole("s3://mybucket/satellite_image.tif"))
         );
+        assert!(!chunks.inline_is_set(0));
+        assert_eq!(GdalCodec::parse(&codecs).unwrap().unwrap().band, 2);
+    }
+
+    #[test]
+    fn start_band_rejects_inconsistent_chunk_fields() {
+        // The three out-db fields are checked together before anything is
+        // appended, so a bad band leaves the builder usable.
+        let mut builder = RasterBuilder::new(1);
+        builder
+            .start_raster_nd(&[0.0, 1.0, 0.0, 0.0, 0.0, -1.0], &["y", "x"], &[4, 4], None)
+            .unwrap();
+        let chunk = [Some(ChunkRef::whole("s3://b/a.tif"))];
+        let codecs = GdalCodec::new(1).to_json();
+
+        // chunks without codecs
+        let err = builder
+            .start_band(StartBandArgs {
+                chunk_shape: Some(&[4, 4]),
+                chunks: Some(&chunk),
+                ..StartBandArgs::new(&["y", "x"], &[4, 4], BandDataType::UInt8)
+            })
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("needs codecs"), "{err}");
+
+        // a chunk grid that does not match the list length
+        let err = builder
+            .start_band(StartBandArgs {
+                chunk_shape: Some(&[2, 2]),
+                codecs: Some(&codecs),
+                chunks: Some(&chunk),
+                ..StartBandArgs::new(&["y", "x"], &[4, 4], BandDataType::UInt8)
+            })
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("4 positions"), "{err}");
+
+        // codecs on an in-db band
+        let err = builder
+            .start_band(StartBandArgs {
+                codecs: Some(&codecs),
+                ..StartBandArgs::new(&["y", "x"], &[4, 4], BandDataType::UInt8)
+            })
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("without chunks"), "{err}");
+
+        // The builder is still usable: a valid band follows.
+        builder
+            .start_band(
+                StartBandArgs::new(&["y", "x"], &[4, 4], BandDataType::UInt8)
+                    .with_single_chunk(&chunk, &codecs),
+            )
+            .unwrap();
+        builder.band_data_writer().append_value([]);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+        let array = builder.finish().unwrap();
+        let rasters = RasterStructArray::try_new(&array).unwrap();
+        assert_eq!(rasters.get(0).unwrap().num_bands(), 1);
+    }
+
+    #[test]
+    fn chunk_grid_round_trips_missing_chunks_and_byte_ranges() {
+        // A 4×4 band in 2×2 tiles: four grid positions, one of them missing,
+        // the rest byte ranges of one object. Read back entry by entry.
+        let mut builder = RasterBuilder::new(1);
+        builder
+            .start_raster_nd(&[0.0, 1.0, 0.0, 0.0, 0.0, -1.0], &["y", "x"], &[4, 4], None)
+            .unwrap();
+        let codecs = r#"[{"name":"bytes","configuration":{"endian":"little"}}]"#;
+        let chunks = [
+            Some(ChunkRef {
+                uri: Some("s3://b/a.bin"),
+                offset: Some(0),
+                size: Some(4),
+                content_type: None,
+                checksum: Some("ETAG:abc"),
+            }),
+            None,
+            Some(ChunkRef::range("s3://b/a.bin", 8, 4)),
+            Some(ChunkRef::range("s3://b/a.bin", 12, 4)),
+        ];
+        builder
+            .start_band(StartBandArgs {
+                chunk_shape: Some(&[2, 2]),
+                codecs: Some(codecs),
+                chunks: Some(&chunks),
+                ..StartBandArgs::new(&["y", "x"], &[4, 4], BandDataType::UInt8)
+            })
+            .unwrap();
+        builder.band_data_writer().append_value([]);
+        builder.finish_band().unwrap();
+        builder.finish_raster().unwrap();
+        let array = builder.finish().unwrap();
+
+        let rasters = RasterStructArray::try_new(&array).unwrap();
+        let raster = rasters.get(0).unwrap();
+        let band = raster.band(0).unwrap();
+        assert!(!band.is_indb());
+        assert_eq!(band.chunk_shape(), Some(&[2i64, 2][..]));
+        assert_eq!(band.codecs(), Some(codecs));
+        let read = band.chunks().unwrap();
+        assert_eq!(read.len(), 4);
+        assert!(read.is_null(1));
+        assert_eq!(read.to_vec(), chunks.to_vec());
+        assert_eq!(read.get(0).unwrap().checksum, Some("ETAG:abc"));
+        // The fast paths agree with the band.
+        assert_eq!(raster.band_codecs(0), Some(codecs));
+        assert_eq!(raster.band_chunks(0).unwrap().to_vec(), chunks.to_vec());
+        assert_eq!(rasters.first_outdb_band_source(0), Some("s3://b/a.bin"));
     }
 
     #[test]
@@ -1995,8 +2131,6 @@ mod tests {
             input: input_band.as_ref(),
             view: &ViewEntries::new(vec![ve(0, 1, 2, 3)]),
             nodata: None,
-            outdb_uri: None,
-            outdb_format: None,
         })
         .unwrap();
         b.finish_band().unwrap();
@@ -2039,8 +2173,6 @@ mod tests {
             input: input_band.as_ref(),
             view: &ViewEntries::new(vec![ve(0, 1, 2, 4)]),
             nodata: None,
-            outdb_uri: None,
-            outdb_format: None,
         })
         .unwrap();
         b1.finish_band().unwrap();
@@ -2063,8 +2195,6 @@ mod tests {
             input: mid_band.as_ref(),
             view: &ViewEntries::new(vec![ve(0, 1, 1, 2)]),
             nodata: None,
-            outdb_uri: None,
-            outdb_format: None,
         })
         .unwrap();
         b2.finish_band().unwrap();
@@ -2087,16 +2217,17 @@ mod tests {
     #[test]
     fn with_view_on_outdb_input_produces_outdb_output_with_composed_view() {
         // Viewing an OutDb band doesn't need the source bytes — the output band
-        // is itself OutDb, pointing at the same external resource via an
-        // inherited outdb_uri, with the composed view describing the slice.
+        // is itself OutDb, pointing at the same chunks through inherited
+        // out-db fields, with the composed view describing the slice.
         let mut b = RasterBuilder::new(1);
         b.start_raster_nd(&[0.0, 1.0, 0.0, 0.0, 0.0, -1.0], &["x"], &[8], None)
             .unwrap();
-        b.start_band(StartBandArgs {
-            outdb_uri: Some("s3://bucket/file.tif#band=1"),
-            outdb_format: Some("geotiff"),
-            ..StartBandArgs::new(&["x"], &[8], BandDataType::UInt8)
-        })
+        let chunk = [Some(ChunkRef::whole("s3://bucket/file.tif"))];
+        let codecs = GdalCodec::new(1).with_driver("GTiff").to_json();
+        b.start_band(
+            StartBandArgs::new(&["x"], &[8], BandDataType::UInt8)
+                .with_single_chunk(&chunk, &codecs),
+        )
         .unwrap();
         b.band_data_writer().append_value([0u8; 0]); // empty → OutDb
         b.finish_band().unwrap();
@@ -2117,8 +2248,6 @@ mod tests {
             input: input_band.as_ref(),
             view: &ViewEntries::new(vec![ve(0, 1, 2, 3)]),
             nodata: None,
-            outdb_uri: None,
-            outdb_format: None,
         })
         .unwrap();
         b2.finish_band().unwrap();
@@ -2133,8 +2262,9 @@ mod tests {
             !out_band.is_indb(),
             "output of OutDb-input with_view must be OutDb"
         );
-        assert_eq!(out_band.outdb_uri(), Some("s3://bucket/file.tif#band=1"));
-        assert_eq!(out_band.outdb_format(), Some("geotiff"));
+        assert_eq!(out_band.chunk_shape(), Some(&[8i64][..]));
+        assert_eq!(out_band.codecs(), Some(codecs.as_str()));
+        assert_eq!(out_band.chunks().unwrap().to_vec(), chunk.to_vec());
         // Input had identity view, so composed == supplied view verbatim.
         assert_eq!(out_band.view().as_slice(), &[ve(0, 1, 2, 3)]);
         assert_eq!(out_band.raw_source_shape(), &[8]);
@@ -2179,8 +2309,6 @@ mod tests {
             input: in_band.as_ref(),
             view: &ViewEntries::new(vec![ve(0, 0, 2, 2)]),
             nodata: None,
-            outdb_uri: None,
-            outdb_format: None,
         })
         .unwrap();
         ob.finish_band().unwrap();

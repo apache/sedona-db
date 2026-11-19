@@ -37,7 +37,7 @@ store/array/chunk dedupe), byte-bounded batch slicing, and any cross-call
 caching. Seeded, so a failure reproduces.
 """
 
-import re
+import json
 import sys
 
 import numpy as np
@@ -84,7 +84,20 @@ ZARR_BASE = 2000
 INDB_BASE = 3000
 
 ZARR_CHUNK = (2, 3)
-ZARR_ANCHOR = re.compile(r"#array=a(\d+)&chunk=(\d+),(\d+)$")
+
+
+def zarr_chunk_of(band):
+    """``(array index, chunk i, chunk j)`` from the band's ``sedona.zarr`` codec,
+    or None when the band is not a Zarr chunk."""
+    if band.codecs is None:
+        return None
+    (codec,) = json.loads(band.codecs)
+    if codec["name"] != "sedona.zarr":
+        return None
+    configuration = codec["configuration"]
+    assert configuration["array"].startswith("a"), configuration
+    ci, cj = configuration["chunk"]
+    return int(configuration["array"][1:]), int(ci), int(cj)
 
 
 def expected_pixels(source, band, dtype, y0, x0, height, width):
@@ -238,7 +251,7 @@ def build_rows(tmp_path, rng):
         # A seeded subset of the group's arrays, named in a seeded order, so
         # the band count differs from group to group. The reader emits bands
         # in the group's own order whatever the option order, so the band
-        # order is taken from the anchors it wrote rather than assumed.
+        # order is taken from the codecs it wrote rather than assumed.
         chosen = {
             int(a)
             for a in rng.permutation(narrays)[: int(rng.integers(1, narrays + 1))]
@@ -249,11 +262,11 @@ def build_rows(tmp_path, rng):
         ).to_arrow_table()
         for i in range(tab.num_rows):
             raster = Raster(tab["raster"], i)
-            anchors = [ZARR_ANCHOR.search(band.outdb_uri) for band in raster.bands]
-            assert all(anchors), [band.outdb_uri for band in raster.bands]
-            order = [int(m.group(1)) for m in anchors]
+            anchors = [zarr_chunk_of(band) for band in raster.bands]
+            assert all(anchors), [band.codecs for band in raster.bands]
+            order = [a for a, _, _ in anchors]
             assert set(order) == chosen and len(order) == len(chosen), (order, chosen)
-            ci, cj = int(anchors[0].group(2)), int(anchors[0].group(3))
+            _, ci, cj = anchors[0]
             keys.append("zarr:" + ",".join(str(v) for v in [g, ci, cj, *order]))
         raster_chunks.append(tab["raster"].combine_chunks())
 
@@ -383,26 +396,33 @@ def test_fuzz_ensure_loaded_mixed_zarr_geotiff_indb(tmp_path, seed):
             assert actual.dtype == expected.dtype, (key, b)
             assert actual.shape == (height, width), (key, b)
             np.testing.assert_array_equal(actual, expected, err_msg=f"{key} band {b}")
-            # Provenance survives the load: OutDb bands keep the URI they
-            # were loaded from; InDb bands never had one.
+            # Provenance survives the load: OutDb bands keep the chunks and
+            # codecs they were loaded from; InDb bands never had any.
             kind, ids = parse_key(key)
             if kind == "zarr":
-                m = ZARR_ANCHOR.search(band.outdb_uri)
-                assert m and int(m.group(1)) == bands[b][1], (
-                    key,
-                    b,
-                    band.outdb_uri,
-                )
-                assert (int(m.group(2)), int(m.group(3))) == (ids[1], ids[2]), key
+                anchor = zarr_chunk_of(band)
+                assert anchor and anchor[0] == bands[b][1], (key, b, band.codecs)
+                assert anchor[1:] == (ids[1], ids[2]), key
+                assert band.chunks[0]["uri"].endswith(
+                    f"/a{bands[b][1]}/c/{ids[1]}/{ids[2]}"
+                ), (key, b, band.chunks)
             elif kind == "tif":
-                # The GDAL loader's anchor names the file and the 1-based band.
-                assert band.outdb_uri.endswith(f"tif_{ids[0]}.tif#band={b + 1}"), (
+                # The GDAL codec names the 1-based source band; the chunk's
+                # uri names the file.
+                (codec,) = json.loads(band.codecs)
+                assert codec["name"] == "sedona.gdal", (key, b, band.codecs)
+                assert codec["configuration"]["band"] == b + 1, (key, b, band.codecs)
+                assert band.chunks[0]["uri"].endswith(f"tif_{ids[0]}.tif"), (
                     key,
                     b,
-                    band.outdb_uri,
+                    band.chunks,
                 )
             else:
-                assert band.outdb_uri is None, (key, band.outdb_uri)
+                assert band.chunks is None and band.codecs is None, (
+                    key,
+                    band.chunks,
+                    band.codecs,
+                )
 
         first = expected_band(key, 0)[py, px]
         last = expected_band(key, len(bands) - 1)[py, px]

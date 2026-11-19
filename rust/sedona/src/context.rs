@@ -107,8 +107,9 @@ pub struct SedonaContext {
     pub ctx: SessionContext,
     catalogs: Arc<SedonaCatalogRegistry>,
     functions: RwLock<FunctionSet>,
-    /// Per-session registry of async raster byte loaders, keyed by
-    /// `outdb_format`. Held behind an `Arc<RwLock<…>>` so the registered
+    /// Per-session registry of async raster byte loaders, matched by the
+    /// codec names of a band's `codecs` pipeline. Held behind an
+    /// `Arc<RwLock<…>>` so the registered
     /// `RS_EnsureLoaded` UDF instance and any extension crates' `register(&ctx)`
     /// entry points observe the same map. See
     /// [`SedonaContext::register_raster_loader`].
@@ -517,19 +518,20 @@ impl SedonaContext {
         Ok(())
     }
 
-    /// Register an async raster byte loader under a `format` key.
+    /// Register an async raster byte loader.
     ///
-    /// Each loader declares the band `outdb_format` values it handles via
-    /// `AsyncRasterLoader::supports_format`. At query time the
-    /// `RS_EnsureLoaded` UDF matches each OutDb band's format against the
-    /// registered loaders (most-recently-registered first) and dispatches
-    /// the byte fetch through the first that accepts it.
+    /// Each loader declares the codec pipelines it decodes, by codec name,
+    /// via `AsyncRasterLoader::supports`. At query time the `RS_EnsureLoaded`
+    /// UDF matches each OutDb band's `codecs` against the registered loaders
+    /// (most-recently-registered first) and dispatches the byte fetch through
+    /// the first that accepts them. A pipeline no loader claims is an error.
     ///
-    /// Used by both compiled-in backends (`sedona-raster-gdal`, the catch-all,
-    /// registered first at bootstrap) and out-of-tree extensions
-    /// (`sedona-raster-zarr::register(&ctx)` from user code after
-    /// construction). Loaders registered later win for the formats they
-    /// claim, so registration order matters: the catch-all goes first.
+    /// Used by both compiled-in backends (`sedona-raster-gdal`, which decodes
+    /// the `sedona.gdal` container codec, registered at bootstrap) and
+    /// out-of-tree extensions (`sedona-raster-zarr::register(&ctx)` from user
+    /// code after construction). Loaders registered later win for the codecs
+    /// they claim, so an extension can take over a codec from a compiled-in
+    /// loader.
     pub fn register_raster_loader(&self, loader: Arc<dyn AsyncRasterLoader>) {
         // Lock poisoning here would mean a previous registrant panicked
         // mid-write — recover-by-ignoring matches how DataFusion handles
@@ -1352,16 +1354,17 @@ mod tests {
         };
 
         let ctx = SedonaContext::new();
-        // GDAL is the catch-all backend, registered at bootstrap: it resolves
-        // any format, including the unset `None` that RS_FromPath emits.
-        // Extension backends like Zarr add themselves later via
-        // `register_raster_loader`.
+        // GDAL is registered at bootstrap and decodes the `sedona.gdal`
+        // container codec that RS_FromPath writes. Extension backends like
+        // Zarr add themselves later via `register_raster_loader`.
         {
             let reg = ctx.raster_loader_registry.read().unwrap();
             let loader = reg
-                .get(None)
+                .get(&[sedona_raster::chunks::GDAL_CODEC])
                 .expect("fresh SedonaContext should register the GDAL backend at bootstrap");
             assert_eq!(loader.name(), "gdal");
+            // Nothing guesses: a pipeline no loader claims resolves to nothing.
+            assert!(reg.get(&["bytes", "zstd"]).is_none());
         }
 
         // Mock runtime registration on top of the bootstrap state.
@@ -1372,8 +1375,8 @@ mod tests {
             fn name(&self) -> &str {
                 "mock"
             }
-            fn supports_format(&self, format: Option<&str>) -> bool {
-                format == Some("mock")
+            fn supports(&self, codec_names: &[&str]) -> bool {
+                codec_names == ["mock"]
             }
             async fn load(
                 &self,
@@ -1390,11 +1393,15 @@ mod tests {
         ctx.register_raster_loader(Arc::new(MockLoader));
         {
             let reg = ctx.raster_loader_registry.read().unwrap();
-            // The mock wins for its own format (most-recently-registered)...
-            assert_eq!(reg.get(Some("mock")).unwrap().name(), "mock");
-            // ...while everything else, including the unset `None`, still
-            // falls through to the GDAL catch-all.
-            assert_eq!(reg.get(None).unwrap().name(), "gdal");
+            // The mock wins for its own codec (most-recently-registered)...
+            assert_eq!(reg.get(&["mock"]).unwrap().name(), "mock");
+            // ...while the GDAL codec still resolves to GDAL.
+            assert_eq!(
+                reg.get(&[sedona_raster::chunks::GDAL_CODEC])
+                    .unwrap()
+                    .name(),
+                "gdal"
+            );
         }
 
         // RS_EnsureLoaded is registered as a UDF at session bootstrap.
@@ -1436,8 +1443,8 @@ mod tests {
             fn name(&self) -> &str {
                 "mock"
             }
-            fn supports_format(&self, format: Option<&str>) -> bool {
-                format == Some("mock")
+            fn supports(&self, codec_names: &[&str]) -> bool {
+                codec_names == ["mock"]
             }
             async fn load(
                 &self,
@@ -1468,6 +1475,7 @@ mod tests {
         let mut b = RasterBuilder::new(6);
         for i in 0..6 {
             let uri = format!("mock://tile/{i}");
+            let chunk = [Some(sedona_raster::chunks::ChunkRef::whole(&uri))];
             b.start_raster_nd(
                 &[0.0, 1.0, 0.0, 0.0, 0.0, -1.0],
                 &["y", "x"],
@@ -1475,11 +1483,10 @@ mod tests {
                 None,
             )
             .unwrap();
-            b.start_band(StartBandArgs {
-                outdb_uri: Some(&uri),
-                outdb_format: Some("mock"),
-                ..StartBandArgs::new(&["y", "x"], &[16, 16], BandDataType::UInt8)
-            })
+            b.start_band(
+                StartBandArgs::new(&["y", "x"], &[16, 16], BandDataType::UInt8)
+                    .with_single_chunk(&chunk, r#"[{"name":"mock"}]"#),
+            )
             .unwrap();
             b.band_data_writer().append_value([0u8; 0]);
             b.finish_band().unwrap();
@@ -2363,21 +2370,24 @@ mod tests {
         );
     }
 
-    /// Builds a one-row table `t(rast)` whose raster has one OutDb band
-    /// served by `format`, registered on `ctx`.
-    async fn register_outdb_table(ctx: &SedonaContext, uri: &str, format: &str) {
+    /// Builds a one-row table `t(rast)` whose raster has one OutDb band, a
+    /// single whole-object chunk at `uri` decoded by the one codec named
+    /// `codec`, registered on `ctx`.
+    async fn register_outdb_table(ctx: &SedonaContext, uri: &str, codec: &str) {
         use arrow_array::RecordBatch;
         use sedona_raster::builder::{RasterBuilder, StartBandArgs};
+        use sedona_raster::chunks::ChunkRef;
         use sedona_schema::raster::BandDataType;
 
+        let codecs = format!(r#"[{{"name":"{codec}"}}]"#);
+        let chunk = [Some(ChunkRef::whole(uri))];
         let mut b = RasterBuilder::new(1);
         b.start_raster_nd(&[0.0, 1.0, 0.0, 0.0, 0.0, -1.0], &["y", "x"], &[4, 8], None)
             .unwrap();
         b.start_band(StartBandArgs {
             name: Some("band0"),
-            outdb_uri: Some(uri),
-            outdb_format: Some(format),
             ..StartBandArgs::new(&["y", "x"], &[4, 8], BandDataType::UInt8)
+                .with_single_chunk(&chunk, &codecs)
         })
         .unwrap();
         b.band_data_writer().append_value([0u8; 0]);
@@ -2445,8 +2455,8 @@ mod tests {
             fn name(&self) -> &str {
                 "counting"
             }
-            fn supports_format(&self, format: Option<&str>) -> bool {
-                format == Some("counting")
+            fn supports(&self, codec_names: &[&str]) -> bool {
+                codec_names == ["counting"]
             }
             async fn load(
                 &self,

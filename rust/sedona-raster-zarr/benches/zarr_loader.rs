@@ -30,9 +30,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use criterion::{Criterion, criterion_group, criterion_main};
+use sedona_raster::chunks::ChunkRef;
 use sedona_raster::raster_loader::{AsyncRasterLoader, RasterLoadRequest};
 use sedona_raster::view_entries::ViewEntries;
-use sedona_raster_zarr::ZarrLoader;
+use sedona_raster_zarr::{ZarrCodec, ZarrLoader, chunk_object_uri};
 use sedona_schema::raster::BandDataType;
 use tempfile::TempDir;
 use zarrs::array::{ArrayBuilder, FillValue, data_type as zarr_dtype};
@@ -75,17 +76,30 @@ fn build_store(dir: &TempDir) -> String {
 fn bench_load(c: &mut Criterion) {
     let tmp = TempDir::new().unwrap();
     let store_uri = build_store(&tmp);
-    // Same anchor format the Zarr reader emits: `{store}#array=..&chunk=..`.
-    let uris: Vec<String> = (0..ARRAYS)
+    // The same chunk references the Zarr reader emits: the codec names the
+    // chunk, the chunk's uri names its object.
+    let anchors: Vec<(String, String)> = (0..ARRAYS)
         .flat_map(|a| (0..CHUNKS_PER_ARRAY).map(move |j| (a, j)))
-        .map(|(a, j)| format!("{store_uri}#array=band{a}&chunk=0,{j}"))
+        .map(|(a, j)| {
+            (
+                ZarrCodec::new(&store_uri, &format!("band{a}"), &[0, j]).to_json(),
+                chunk_object_uri(&store_uri, &format!("band{a}/c/0/{j}")),
+            )
+        })
+        .collect();
+    let chunks: Vec<[Option<ChunkRef>; 1]> = anchors
+        .iter()
+        .map(|(_, uri)| [Some(ChunkRef::whole(uri))])
         .collect();
     let shape = [CHUNK_SIDE as i64, CHUNK_SIDE as i64];
     let view = ViewEntries::identity_for_shape(&shape);
-    let reqs: Vec<RasterLoadRequest> = uris
+    let reqs: Vec<RasterLoadRequest> = anchors
         .iter()
-        .map(|uri| RasterLoadRequest {
-            uri,
+        .zip(&chunks)
+        .map(|((codecs, _), chunk)| RasterLoadRequest {
+            chunks: chunk,
+            chunk_shape: &shape,
+            codecs,
             dim_names: &["y", "x"],
             source_shape: &shape,
             view: &view,

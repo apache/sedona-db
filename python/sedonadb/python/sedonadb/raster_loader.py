@@ -17,14 +17,24 @@
 
 """Raster loader interface for Python-backed raster data sources."""
 
-from typing import Any, Optional, Sequence, Union
+from typing import Any, Sequence, Union
 
 from sedonadb._lib import (
+    PyChunkRef,
     PyRasterLoadRequest,
     PyRasterLoadResult,
     PyViewEntry,
     py_raster_loader,
 )
+
+__all__ = [
+    "PyChunkRef",
+    "PyRasterLoadRequest",
+    "PyRasterLoadResult",
+    "PyViewEntry",
+    "RasterLoadResult",
+    "RasterLoader",
+]
 
 
 class RasterLoadResult:
@@ -99,15 +109,23 @@ class RasterLoader:
         """
         raise NotImplementedError()
 
-    def supports_format(self, format: Optional[str]) -> bool:
-        """Check whether this loader handles the given format.
+    def supports(self, codec_names: Sequence[str]) -> bool:
+        """Check whether this loader decodes a band with these codecs.
+
+        An OutDb band carries a `codecs` pipeline (Zarr v3 codec JSON) shared
+        by every chunk of the band. The engine matches each band against the
+        registered loaders by the pipeline's codec names, in pipeline order,
+        most recently registered first; a pipeline no loader claims is an
+        error, so nothing guesses.
 
         Args:
-            format: The format string from the OutDb URI (e.g., "zarr", "gdal"),
-                or `None` for a catch-all loader.
+            codec_names: The codec names of the band's pipeline, e.g.
+                `["sedona.gdal"]` for a whole file decoded by GDAL,
+                `["sedona.zarr"]` for a Zarr chunk, or `["bytes", "zstd"]`
+                for a zstd-compressed raw chunk.
 
         Returns:
-            `True` if this loader can handle the format, `False` otherwise.
+            `True` if this loader decodes every codec named, `False` otherwise.
         """
         raise NotImplementedError()
 
@@ -117,12 +135,18 @@ class RasterLoader:
         """Load raster data for the given requests.
 
         This method is called to materialize OutDb raster references. Each
-        request contains the URI, shape, view, and data type information needed
-        to load the raster data.
+        request describes one band: the chunks to fetch, how to decode them,
+        the shape, the view, and the data type.
 
         Args:
             requests: A sequence of request objects, each with:
-                - `uri`: The source URI for the raster data
+                - `chunks`: The band's chunk grid in row-major order, one
+                  :class:`PyChunkRef` per position (`uri`, `offset`, `size`,
+                  `content_type`, `checksum`) or `None` for a missing chunk.
+                  A band from `RS_FromPath` or `Raster.lazy` has exactly one
+                  chunk, the whole object at its `uri`.
+                - `chunk_shape`: Pixels per chunk per dimension
+                - `codecs`: The band's codec pipeline as Zarr v3 codec JSON
                 - `dim_names`: Dimension names
                 - `source_shape`: The shape of the source array
                 - `view`: A sequence of view entries describing the slice
@@ -144,6 +168,6 @@ class RasterLoader:
         """
         return py_raster_loader(
             self.name,
-            self.supports_format,
+            self.supports,
             self.load,
         )

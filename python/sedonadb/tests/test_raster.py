@@ -20,12 +20,14 @@ import pyarrow as pa
 import pytest
 
 from sedonadb.raster import (
+    RASTER_STORAGE_TYPE,
     Raster,
     RasterArray,
     RasterScalar,
     RasterType,
     _get_binary_view_buffer,
     _iter_rasters,
+    gdal_codecs,
 )
 
 
@@ -202,7 +204,10 @@ def test_raster_accessors(con):
     assert b.name is None
     assert b.shape == (32, 64)
     assert b.source_shape == (32, 64)
-    assert b.outdb_uri is None
+    # An in-db band has none of the out-db fields.
+    assert b.chunk_shape is None
+    assert b.codecs is None
+    assert b.chunks is None
     assert b.data_type == "uint8"
     assert b.source_data_size == 32 * 64 * 1  # uint8 = 1 byte
     assert b.data_size == 32 * 64 * 1
@@ -295,10 +300,20 @@ def test_raster_zero_copy_pandas(con):
     assert np.shares_memory(arr, arr_from_df)
 
 
+def test_gdal_codecs():
+    assert gdal_codecs() == '[{"configuration":{"band":1},"name":"sedona.gdal"}]'
+    assert (
+        gdal_codecs(band=3, driver="GTiff")
+        == '[{"configuration":{"band":3,"driver":"GTiff"},"name":"sedona.gdal"}]'
+    )
+    with pytest.raises(ValueError, match="positive"):
+        gdal_codecs(band=0)
+
+
 def test_raster_lazy():
     # Basic lazy raster creation
     r = Raster.lazy(
-        uri="s3://bucket/path/to/data.zarr",
+        uri="s3://bucket/path/to/data.tif",
         shape=(512, 1024),
         dtype="float32",
     )
@@ -310,7 +325,18 @@ def test_raster_lazy():
     b = r.bands[0]
     assert b.source_shape == (512, 1024)
     assert b.data_type == "float32"
-    assert b.outdb_uri == "s3://bucket/path/to/data.zarr"
+    # One whole-object chunk the size of the band, decoded by GDAL (band 1).
+    assert b.chunk_shape == (512, 1024)
+    assert b.codecs == gdal_codecs()
+    assert b.chunks == [
+        {
+            "uri": "s3://bucket/path/to/data.tif",
+            "offset": None,
+            "size": None,
+            "content_type": None,
+            "checksum": None,
+        }
+    ]
     assert b.source_data_size == 512 * 1024 * 4  # float32 = 4 bytes
     assert b.data_size == 512 * 1024 * 4
 
@@ -321,19 +347,63 @@ def test_raster_lazy():
     with pytest.raises(ValueError, match="external data"):
         _ = b.data
 
+    # The storage is the canonical band struct, field for field.
+    band_type = RASTER_STORAGE_TYPE.field("bands").type.value_type
+    assert [f.name for f in band_type] == [
+        "name",
+        "dim_names",
+        "source_shape",
+        "data_type",
+        "nodata",
+        "view",
+        "data",
+        "chunk_shape",
+        "codecs",
+        "chunks",
+    ]
+    chunk_type = band_type.field("chunks").type.value_type
+    assert [f.name for f in chunk_type] == [
+        "uri",
+        "offset",
+        "size",
+        "content_type",
+        "checksum",
+        "inline",
+    ]
+    band_struct = r._array.field("bands").flatten()
+    assert band_struct.type == band_type
+    chunk = band_struct.field("chunks")[0].as_py()
+    assert chunk == [
+        {
+            "uri": "s3://bucket/path/to/data.tif",
+            "offset": None,
+            "size": None,
+            "content_type": None,
+            "checksum": None,
+            "inline": None,
+        }
+    ]
+    assert band_struct.field("chunk_shape")[0].as_py() == [512, 1024]
+    assert band_struct.field("codecs")[0].as_py() == gdal_codecs()
+    assert band_struct.field("data")[0].as_py() == b""
 
-def test_raster_lazy_with_crs():
+
+def test_raster_lazy_with_codecs_and_crs():
+    codecs = gdal_codecs(band=2, driver="GTiff")
     r = Raster.lazy(
-        uri="s3://bucket/path/to/data.zarr",
+        uri="s3://bucket/path/to/data.tif",
         shape=(256, 256),
         dtype="uint8",
-        format="zarr",
+        codecs=codecs,
         crs="EPSG:4326",
     )
 
     assert r.width == 256
     assert r.height == 256
     assert r.crs.to_json_dict()["id"] == {"authority": "EPSG", "code": 4326}
+    # The pipeline is stored as given.
+    assert r.bands[0].codecs == codecs
+    assert r.bands[0].chunks[0]["uri"] == "s3://bucket/path/to/data.tif"
 
 
 def test_raster_lazy_invalid_shape():
@@ -357,17 +427,18 @@ def test_raster_lazy_invalid_shape():
 
 def test_raster_lazy_nd():
     r = Raster.lazy(
-        uri="s3://bucket/cube.zarr",
+        uri="s3://bucket/cube.nc",
         shape=(12, 256, 512),
         dtype="float32",
-        format="zarr",
         dim_names=["time", "y", "x"],
     )
 
     b = r.bands[0]
     assert b.source_shape == (12, 256, 512)
     assert b.data_type == "float32"
-    assert b.outdb_uri == "s3://bucket/cube.zarr"
+    # The single chunk covers every dimension of the band.
+    assert b.chunk_shape == (12, 256, 512)
+    assert b.chunks[0]["uri"] == "s3://bucket/cube.nc"
     # Lazy rasters carry no pixel bytes until loaded.
     assert len(b.source_data) == 0
     # The trailing two axes are the spatial (y, x) pair.
@@ -482,6 +553,10 @@ def test_raster_lazy_zero_size():
     assert b.source_shape == (0, 64)
     assert b.data_size == 0
     assert b.source_data_size == 0
+    # A zero-extent band has no chunk-grid positions: chunk extents stay
+    # positive and the chunk list is empty.
+    assert b.chunk_shape == (1, 64)
+    assert b.chunks == []
     np.testing.assert_array_equal(b.data, np.empty((0, 64), dtype="float32"))
 
     arr = b.to_numpy()

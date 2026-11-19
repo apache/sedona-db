@@ -28,7 +28,8 @@ use sedona_raster::error::RasterResultExt;
 use sedona_raster::geo_transform::{GeoTransform, GeoTransformEx};
 
 use sedona_common::SedonaOptions;
-use sedona_raster::traits::{RasterRef, split_outdb_band_fragment};
+use sedona_raster::chunks::{GDAL_CODEC, GdalCodec};
+use sedona_raster::traits::{BandRef, RasterRef};
 use sedona_schema::raster::BandDataType;
 
 use crate::gdal_common::{
@@ -302,15 +303,19 @@ impl GDALDatasetCache {
                     )
                     .map_err(convert_gdal_err)?;
             } else {
-                let uri = band.outdb_uri().ok_or_else(|| {
-                    exec_datafusion_err!("Band {} is out-db but missing outdb_uri", i)
-                })?;
-                let (url, source_band_num_u32) = split_outdb_band_fragment(uri)?;
-                let source_band_num: usize = source_band_num_u32
+                let source = OutDbBandSource::of(band.as_ref(), i)?;
+                let source_band_num: usize = source
+                    .band
                     .try_into()
                     .map_err(|_| exec_datafusion_err!("Band {} out-db band_id is too large", i))?;
 
-                let source_dataset = self.get_or_create_outdb_source(gdal, &url, None)?;
+                let open_options: Vec<&str> =
+                    source.open_options.iter().map(String::as_str).collect();
+                let source_dataset = self.get_or_create_outdb_source(
+                    gdal,
+                    &source.url,
+                    (!open_options.is_empty()).then_some(open_options.as_slice()),
+                )?;
 
                 // If GDALGetGeoTransform(hdsSrc, ogt) fails, we fall back to (0, 1, 0, 0, 0, -1),
                 // which is the identity transform.
@@ -453,6 +458,53 @@ impl<'a> GDALDatasetProvider<'a> {
     }
 }
 
+/// Where an out-db band's pixels come from, read off the band's chunks and
+/// its `sedona.gdal` codec: the file (the band's one whole-object chunk), the
+/// 1-based source band and the GDAL open options.
+struct OutDbBandSource {
+    url: String,
+    band: u32,
+    open_options: Vec<String>,
+}
+
+impl OutDbBandSource {
+    /// Resolve band `index` (1-based, for messages) of a raster. Errors when
+    /// the band has no chunks, several chunks or a byte range (GDAL decodes
+    /// whole objects only), a codec other than [`GDAL_CODEC`], or a codec
+    /// subdataset, which is not supported yet.
+    fn of(band: &dyn BandRef, index: usize) -> Result<Self> {
+        let chunks = band
+            .chunks()
+            .ok_or_else(|| exec_datafusion_err!("Band {index} is out-db but has no chunks"))?;
+        let chunk = chunks.single_whole_object().map_err(|e| {
+            exec_datafusion_err!("Band {index}: GDAL reads whole objects only: {e}")
+        })?;
+        let url = chunk
+            .require_uri()
+            .map_err(|e| exec_datafusion_err!("Band {index}: {e}"))?;
+        let codecs = band
+            .codecs()
+            .ok_or_else(|| exec_datafusion_err!("Band {index} is out-db but has no codecs"))?;
+        let codec = GdalCodec::parse(codecs)
+            .map_err(|e| exec_datafusion_err!("Band {index}: {e}"))?
+            .ok_or_else(|| {
+                exec_datafusion_err!(
+                    "Band {index}: GDAL decodes the {GDAL_CODEC} codec only, got codecs {codecs}"
+                )
+            })?;
+        if let Some(subdataset) = &codec.subdataset {
+            return exec_err!(
+                "Band {index}: the {GDAL_CODEC} codec's subdataset ({subdataset:?}) is not supported yet"
+            );
+        }
+        Ok(Self {
+            url: url.to_string(),
+            band: codec.band,
+            open_options: codec.open_options,
+        })
+    }
+}
+
 #[derive(Hash, Eq, PartialEq)]
 struct VrtBandKey {
     is_indb: bool,
@@ -498,13 +550,17 @@ impl VrtKey {
                 (Some(bytes), _) => Some(bytes_to_f64(bytes, &band_type)?.to_bits()),
                 (None, _) => None,
             };
-            // Out-db bands recover their source path + band from the `#band=N`
-            // URI; in-db bands have no URI hint here.
-            let (outdb_url, outdb_band_id) = match band.outdb_uri() {
-                Some(uri) => {
-                    let (url, band_num) = split_outdb_band_fragment(uri)?;
-                    (Some(normalize_outdb_source_path(&url)), Some(band_num))
-                }
+            // Out-db bands are keyed by their source file and band; a band
+            // whose chunks are not a GDAL source (in-db, or another codec)
+            // carries no source here. Building the VRT reports the latter.
+            let (outdb_url, outdb_band_id) = match band.chunks() {
+                Some(_) => match OutDbBandSource::of(band.as_ref(), i + 1) {
+                    Ok(source) => (
+                        Some(normalize_outdb_source_path(&source.url)),
+                        Some(source.band),
+                    ),
+                    Err(_) => (None, None),
+                },
                 None => (None, None),
             };
             band_keys.push(VrtBandKey {
@@ -613,6 +669,7 @@ mod tests {
     use sedona_gdal::raster::types::Buffer;
     use sedona_raster::array::RasterStructArray;
     use sedona_raster::builder::{RasterBuilder, StartBandArgs};
+    use sedona_raster::chunks::{ChunkRef, GdalCodec};
     use sedona_schema::raster::BandDataType;
     use sedona_testing::rasters::{InDbTestBand, build_in_db_raster};
     use tempfile::TempDir;
@@ -643,7 +700,8 @@ mod tests {
     }
 
     /// Two-band GeoTIFF on disk: band 1 is filled with `band1_fill`, band 2
-    /// with `band2_fill`. Used to exercise `#band=2` selection end-to-end.
+    /// with `band2_fill`. Used to exercise source-band selection through the
+    /// GDAL codec's `band` end-to-end.
     fn create_two_band_source_tiff(temp_dir: &TempDir, band1_fill: u8, band2_fill: u8) -> String {
         let path = temp_dir.path().join("two_band.tif");
         let path_str = path.to_string_lossy().to_string();
@@ -668,17 +726,20 @@ mod tests {
         path_str
     }
 
-    fn build_outdb_raster(path: &str) -> arrow_array::StructArray {
+    /// One-row, one-band 8 × 8 UInt8 raster whose band is out-db: one
+    /// whole-object chunk at `path`, decoded by `codecs`.
+    fn build_outdb_raster_with_codecs(path: &str, codecs: &str) -> arrow_array::StructArray {
         let mut builder = RasterBuilder::new(1);
         builder
             .start_raster_2d(8, 8, 0.0, 8.0, 1.0, -1.0, 0.0, 0.0, None)
             .unwrap();
 
+        let chunk = [Some(ChunkRef::whole(path))];
         builder
             .start_band(StartBandArgs {
                 nodata: Some(&[0u8]),
-                outdb_uri: Some(&format!("{path}#band=1")),
                 ..StartBandArgs::new(&["y", "x"], &[8, 8], BandDataType::UInt8)
+                    .with_single_chunk(&chunk, codecs)
             })
             .unwrap();
         builder.band_data_writer().append_value([]);
@@ -686,6 +747,11 @@ mod tests {
         builder.finish_raster().unwrap();
 
         builder.finish().unwrap()
+    }
+
+    /// [`build_outdb_raster_with_codecs`] on the GDAL codec for source band 1.
+    fn build_outdb_raster(path: &str) -> arrow_array::StructArray {
+        build_outdb_raster_with_codecs(path, &GdalCodec::new(1).to_json())
     }
 
     fn build_mixed_raster(path: &str) -> StructArray {
@@ -700,11 +766,13 @@ mod tests {
         builder.band_data_writer().append_value(vec![7u8; 8 * 8]);
         builder.finish_band().unwrap();
 
+        let chunk = [Some(ChunkRef::whole(path))];
+        let codecs = GdalCodec::new(1).to_json();
         builder
             .start_band(StartBandArgs {
                 nodata: Some(&[0u8]),
-                outdb_uri: Some(&format!("{path}#band=1")),
                 ..StartBandArgs::new(&["y", "x"], &[8, 8], BandDataType::UInt8)
+                    .with_single_chunk(&chunk, &codecs)
             })
             .unwrap();
         builder.band_data_writer().append_value([]);
@@ -975,12 +1043,13 @@ mod tests {
             .band_data_writer()
             .append_value(vec![0u8; 2 * 8 * 8]);
         builder.finish_band().unwrap();
+        let chunk = [Some(ChunkRef::whole(&path))];
+        let codecs = GdalCodec::new(1).with_driver("GTiff").to_json();
         builder
             .start_band(StartBandArgs {
                 nodata: Some(&[0u8]),
-                outdb_uri: Some(&path),
-                outdb_format: Some("geotiff"),
                 ..StartBandArgs::new(&["y", "x"], &[8, 8], BandDataType::UInt8)
+                    .with_single_chunk(&chunk, &codecs)
             })
             .unwrap();
         builder.band_data_writer().append_value([]);
@@ -1001,27 +1070,37 @@ mod tests {
     }
 
     #[test]
-    fn test_provider_selects_outdb_band_via_band_fragment() {
+    fn test_provider_rejects_outdb_band_on_another_codec() {
+        // A band whose chunks decode through anything but the GDAL codec is
+        // not GDAL's to read: the error names the codec it wanted.
+        let temp_dir = TempDir::new().unwrap();
+        let path = create_source_tiff(&temp_dir);
+        let raster_struct = build_outdb_raster_with_codecs(
+            &path,
+            r#"[{"name":"bytes","configuration":{"endian":"little"}}]"#,
+        );
+        let raster_array = RasterStructArray::try_new(&raster_struct).unwrap();
+        let raster = raster_array.get(0).unwrap();
+        let cache = Rc::new(GDALDatasetCache::try_new(4, 4).unwrap());
+
+        let err = with_gdal(|gdal| {
+            let provider = GDALDatasetProvider::new(gdal, Rc::clone(&cache));
+            provider.raster_ref_to_gdal(&raster)
+        })
+        .err()
+        .unwrap();
+        assert!(err.to_string().contains("sedona.gdal"), "got: {err}");
+    }
+
+    #[test]
+    fn test_provider_selects_outdb_band_via_codec_band() {
         let temp_dir = TempDir::new().unwrap();
         // Source TIFF: band 1 filled with 7s, band 2 filled with 99s.
         let path = create_two_band_source_tiff(&temp_dir, 7u8, 99u8);
 
-        // Build a 1-band raster whose single band points at source band 2.
-        let mut builder = RasterBuilder::new(1);
-        builder
-            .start_raster_2d(8, 8, 0.0, 8.0, 1.0, -1.0, 0.0, 0.0, None)
-            .unwrap();
-        builder
-            .start_band(StartBandArgs {
-                nodata: Some(&[0u8]),
-                outdb_uri: Some(&format!("{path}#band=2")),
-                ..StartBandArgs::new(&["y", "x"], &[8, 8], BandDataType::UInt8)
-            })
-            .unwrap();
-        builder.band_data_writer().append_value([]);
-        builder.finish_band().unwrap();
-        builder.finish_raster().unwrap();
-        let raster_struct = builder.finish().unwrap();
+        // Build a 1-band raster whose single band points at source band 2
+        // through the GDAL codec's `band`.
+        let raster_struct = build_outdb_raster_with_codecs(&path, &GdalCodec::new(2).to_json());
         let raster_array = RasterStructArray::try_new(&raster_struct).unwrap();
         let raster = raster_array.get(0).unwrap();
         let cache = Rc::new(GDALDatasetCache::try_new(4, 4).unwrap());

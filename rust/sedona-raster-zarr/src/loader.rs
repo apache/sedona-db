@@ -22,11 +22,12 @@
 //! For an array stored with the `sharding_indexed` codec the grid is the
 //! inner-chunk grid, not the shard grid: a shard is only a container of
 //! inner chunks, and reading it whole would make the row size follow the
-//! shard size rather than the chunk shape the writer chose. Each row
-//! carries an `outdb_uri` chunk anchor
-//! (`zarr://<store-uri>/<array-path>#chunk=i0,i1,...`); the `data`
-//! column stays empty until the async resolver lands and dereferences
-//! the anchor to bytes on demand.
+//! shard size rather than the chunk shape the writer chose. Each band is
+//! one out-db chunk: its `chunks` entry names the chunk object (the shard
+//! object for a sharded array) and its `codecs` is the transitional
+//! [`crate::ZARR_CODEC`] pipeline naming the group, array and chunk
+//! indices; the `data` column stays empty until the byte loader
+//! dereferences the reference on demand.
 
 use std::sync::Arc;
 
@@ -34,13 +35,14 @@ use arrow_array::{RecordBatch, RecordBatchReader};
 use arrow_schema::{ArrowError, Schema, SchemaRef};
 use sedona_common::sedona_internal_datafusion_err;
 use sedona_raster::builder::{RasterBuilder, StartBandArgs};
+use sedona_raster::chunks::ChunkRef;
 use sedona_raster::geo_transform::geotransform_from_bbox_and_spatial_shape;
 use sedona_raster::traits::is_spatial_dim_pair;
 use sedona_schema::datatypes::SedonaType;
 use sedona_schema::raster::BandDataType;
 #[cfg(test)]
 use zarrs::array::ArrayBytes;
-use zarrs::array::{Array, ArrayShardedExt};
+use zarrs::array::{Array, ArrayShardedExt, ChunkGrid};
 use zarrs::group::Group;
 use zarrs::node::NodeMetadata;
 use zarrs::storage::{AsyncReadableListableStorage, AsyncReadableListableStorageTraits};
@@ -48,7 +50,7 @@ use zarrs::storage::{AsyncReadableListableStorage, AsyncReadableListableStorageT
 use crate::coords;
 use crate::dtype::zarr_to_band_data_type;
 use crate::geozarr::{GroupGeoMetadata, crs_from_cf_attributes, geotransform_from_cf_attributes};
-use crate::source_uri::build_chunk_anchor;
+use crate::source_uri::{ZarrCodec, chunk_object_uri};
 
 /// Streaming reader over the chunk grid of a Zarr group.
 ///
@@ -56,12 +58,12 @@ use crate::source_uri::build_chunk_anchor;
 /// `batch_size` rows; one row per chunk position. The reader holds the
 /// open group, parsed metadata, and the current chunk-grid position —
 /// metadata parsing happens once in [`ZarrChunkReader::try_new`] and
-/// the per-row work is just transform arithmetic + anchor URI
+/// the per-row work is just transform arithmetic + chunk reference
 /// formatting.
 ///
-/// Rows always emit OutDb-style: `data` is empty, `outdb_uri` carries
-/// a chunk anchor that the async raster byte loader (registered separately)
-/// resolves to bytes on demand.
+/// Rows always emit OutDb-style: `data` is empty, and each band's one
+/// `chunks` entry and its `codecs` name the chunk that the async raster
+/// byte loader (registered separately) resolves to bytes on demand.
 pub struct ZarrChunkReader {
     schema: SchemaRef,
     group_uri: String,
@@ -175,24 +177,74 @@ impl ZarrChunkReader {
         for info in &self.array_infos {
             let dim_names_ref: Vec<&str> = info.dim_names.iter().map(String::as_str).collect();
             let nodata_ref = info.nodata.as_deref();
-            // Every band gets its chunk-anchor URI populated as
-            // provenance metadata. `data.is_empty()` is the InDb/OutDb
-            // discriminator; this reader always emits empty `data` and
-            // defers pixel-byte resolution to the raster byte loader.
-            let anchor = build_chunk_anchor(&self.group_uri, &info.path, &self.chunk_indices);
+            // Every band is one out-db chunk: the codec names the group,
+            // array and chunk indices the byte loader reads, and the chunk's
+            // uri names the object those bytes live in. `data.is_empty()` is
+            // the InDb/OutDb discriminator; this reader always emits empty
+            // `data` and defers pixel-byte resolution to the raster byte
+            // loader.
+            let codecs = ZarrCodec::new(&self.group_uri, &info.path, &self.chunk_indices).to_json();
+            let object_uri = chunk_object_uri(
+                &self.group_uri,
+                &chunk_store_key(info, &self.chunk_indices)?,
+            );
+            let chunk = [Some(ChunkRef::whole(&object_uri))];
             let source_shape: Vec<i64> = info.chunk_shape.iter().map(|&n| n as i64).collect();
             builder.start_band(StartBandArgs {
                 name: Some(info.path.as_str()),
                 nodata: nodata_ref,
-                outdb_uri: Some(anchor.as_str()),
-                outdb_format: Some("zarr"),
                 ..StartBandArgs::new(&dim_names_ref, &source_shape, info.data_type)
+                    .with_single_chunk(&chunk, &codecs)
             })?;
             builder.band_data_writer().append_value([0u8; 0]);
             builder.finish_band()?;
         }
         Ok(builder.finish_raster()?)
     }
+}
+
+/// The store key of the object holding the chunk at `chunk_indices` (on the
+/// grid the reader walks): the chunk's own key for an unsharded array, and
+/// for a sharded array the key of the shard the inner chunk sits in, since
+/// the shard is the object actually read. Relative to the group, as
+/// `Array::chunk_key` returns it (`<array path>/<encoded indices>`).
+fn chunk_store_key(info: &ArrayInfo, chunk_indices: &[u64]) -> Result<String, ArrowError> {
+    let object_indices: Vec<u64> = match &info.subchunk_grid {
+        Some(grid) => {
+            let subset = grid
+                .subset(chunk_indices)
+                .map_err(|e| {
+                    ArrowError::ExternalError(Box::new(sedona_internal_datafusion_err!(
+                        "array {}: inner chunk {chunk_indices:?} is not on the inner-chunk grid: {e}",
+                        info.path
+                    )))
+                })?
+                .ok_or_else(|| {
+                    ArrowError::ExternalError(Box::new(sedona_internal_datafusion_err!(
+                        "array {}: inner chunk {chunk_indices:?} is outside the array",
+                        info.path
+                    )))
+                })?;
+            let shards = info
+                .array
+                .chunks_in_array_subset(&subset)
+                .map_err(|e| {
+                    ArrowError::ExternalError(Box::new(sedona_internal_datafusion_err!(
+                        "array {}: failed to find the shard of inner chunk {chunk_indices:?}: {e}",
+                        info.path
+                    )))
+                })?
+                .ok_or_else(|| {
+                    ArrowError::ExternalError(Box::new(sedona_internal_datafusion_err!(
+                        "array {}: inner chunk {chunk_indices:?} is outside the shard grid",
+                        info.path
+                    )))
+                })?;
+            shards.start().to_vec()
+        }
+        None => chunk_indices.to_vec(),
+    };
+    Ok(info.array.chunk_key(&object_indices).as_str().to_string())
 }
 
 impl Iterator for ZarrChunkReader {
@@ -242,9 +294,15 @@ impl RecordBatchReader for ZarrChunkReader {
 /// chunk position. Caching this avoids re-reading Zarr metadata for each
 /// of the (potentially thousands of) chunk rows.
 struct ArrayInfo {
-    /// Array path within the store, used to build chunk anchor URIs and
-    /// surface in band names.
+    /// Array path within the store, used in the chunk codec's configuration
+    /// and surfaced in band names.
     path: String,
+    /// The open array, kept to compute each row's chunk (or shard) object
+    /// key with the array's own chunk key encoding.
+    array: Array<dyn AsyncReadableListableStorageTraits>,
+    /// The inner-chunk grid, for finding the shard an inner chunk is in;
+    /// `None` for an unsharded array.
+    subchunk_grid: Option<ChunkGrid>,
     /// SedonaDB BandDataType corresponding to this array's zarrs dtype.
     data_type: BandDataType,
     /// Dimension names in array order. Required to be `Some(_)` for every
@@ -788,8 +846,11 @@ fn collect_array_infos(
         } else {
             Some(fill_bytes.to_vec())
         };
+        let subchunk_grid = array.is_sharded().then(|| array.subchunk_grid());
         out.push(ArrayInfo {
             path,
+            array,
+            subchunk_grid,
             data_type,
             dim_names,
             chunk_grid_shape,
@@ -1161,8 +1222,43 @@ mod tests {
                 .unwrap();
             assert_eq!(reader.array_infos[0].chunk_grid_shape, [2, 2], "{name}");
             assert_eq!(reader.array_infos[0].chunk_shape, [2, 2], "{name}");
-            let rows: usize = reader.map(|batch| batch.unwrap().num_rows()).sum();
+            let batches: Vec<RecordBatch> = reader.map(|batch| batch.unwrap()).collect();
+            let rows: usize = batches.iter().map(|batch| batch.num_rows()).sum();
             assert_eq!(rows, 4, "{name}");
+
+            // Every row is one chunk reference. The codec names the inner
+            // chunk the loader reads; the uri names the object holding it:
+            // the one shard for every row of the sharded array, a chunk
+            // object of its own for each row of the plain array.
+            use arrow_array::cast::AsArray;
+            use sedona_raster::array::RasterStructArray;
+            use sedona_raster::traits::RasterRef;
+            assert_eq!(batches.len(), 1);
+            let rasters = RasterStructArray::try_new(batches[0].column(0).as_struct()).unwrap();
+            let expected_chunks = [[0u64, 0], [0, 1], [1, 0], [1, 1]];
+            for (row, expected_chunk) in expected_chunks.iter().enumerate() {
+                let raster = rasters.get(row).unwrap();
+                let band = raster.band(0).unwrap();
+                assert!(!band.is_indb(), "{name} row {row}");
+                assert_eq!(band.chunk_shape(), Some(&[2i64, 2][..]), "{name} row {row}");
+                let codec = ZarrCodec::parse(band.codecs().unwrap()).unwrap().unwrap();
+                assert_eq!(
+                    codec,
+                    ZarrCodec::new(&uri, name, expected_chunk),
+                    "{name} row {row}"
+                );
+                let chunks = band.chunks().unwrap();
+                assert_eq!(chunks.len(), 1, "{name} row {row}");
+                let expected_object = match name {
+                    "sharded" => format!("{uri}/sharded/c/0/0"),
+                    _ => format!("{uri}/plain/c/{}/{}", expected_chunk[0], expected_chunk[1]),
+                };
+                assert_eq!(
+                    chunks.get(0).unwrap().uri,
+                    Some(expected_object.as_str()),
+                    "{name} row {row}"
+                );
+            }
         }
     }
 

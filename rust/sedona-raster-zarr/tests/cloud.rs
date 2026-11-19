@@ -118,8 +118,11 @@ async fn load_first_band(array: &StructArray) -> Vec<u8> {
     let raster = rasters.get(0).unwrap();
     let band = raster.band(0).unwrap();
     let dim_names = band.dim_names();
+    let chunks = band.chunks().expect("out-db band").to_vec();
     let request = RasterLoadRequest {
-        uri: band.outdb_uri().unwrap(),
+        chunks: &chunks,
+        chunk_shape: band.chunk_shape().expect("chunk_shape"),
+        codecs: band.codecs().expect("codecs"),
         dim_names: &dim_names,
         source_shape: band.raw_source_shape(),
         view: band.view(),
@@ -210,8 +213,8 @@ async fn reads_v3_lon_lat_coordinates_from_local_filesystem() {
 ///
 /// The local filesystem tests cover Zarr parsing, while these HTTP tests also
 /// verify metadata discovery through the remote object-store path. The v2
-/// test additionally dereferences one emitted chunk anchor, covering payload
-/// and byte-range reads.
+/// test additionally dereferences one emitted chunk reference, covering
+/// payload and byte-range reads.
 struct StaticHttpServer {
     address: SocketAddr,
     task: JoinHandle<()>,

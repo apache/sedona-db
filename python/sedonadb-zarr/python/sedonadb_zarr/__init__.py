@@ -146,8 +146,10 @@ class ZarrRasterLoader(RasterLoader):
     def name(self):
         return self._impl.name()
 
-    def supports_format(self, format):
-        return self._impl.supports_format(format)
+    def supports(self, codec_names):
+        """True only for the one-codec ``["sedona.zarr"]`` pipeline the Zarr
+        reader writes on every band; other pipelines belong to other loaders."""
+        return self._impl.supports(list(codec_names))
 
     def load(self, requests):
         return self._impl.load(requests)

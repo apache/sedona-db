@@ -19,8 +19,8 @@
 //!
 //! `sedona-raster` deliberately knows nothing about GDAL, Zarr, or any
 //! other backend. Backends implement [`AsyncRasterLoader`] — declaring which
-//! `outdb_format` values they handle — and register themselves against an
-//! [`RasterLoaderRegistry`]. The
+//! codec pipelines they decode, by codec name — and register themselves
+//! against an [`RasterLoaderRegistry`]. The
 //! `RS_EnsureLoaded` UDF in the `sedona` crate consumes the registry to
 //! materialise OutDb bands at query time; band accessors
 //! (`BandRef::nd_buffer()` / `contiguous_data()`) do **not** invoke the
@@ -39,6 +39,7 @@ use sedona_common::option::SedonaOptions;
 use sedona_schema::raster::BandDataType;
 
 use crate::chunk_cache::{NoChunkCache, RasterChunkCache};
+use crate::chunks::ChunkRef;
 use crate::io_budget::RasterIoBudget;
 use crate::view_entries::ViewEntries;
 
@@ -59,9 +60,18 @@ use crate::view_entries::ViewEntries;
 /// view is tracked in <https://github.com/apache/sedona-db/issues/897>.
 #[derive(Debug, Clone, Copy)]
 pub struct RasterLoadRequest<'a> {
-    /// Anchor URI from the band's `outdb_uri` column. Bare paths and
-    /// scheme'd URIs both allowed; backend is responsible for parsing.
-    pub uri: &'a str,
+    /// The band's `chunks` list in grid (row-major) order; `None` entries
+    /// are missing chunks. A container codec such as
+    /// [`GDAL_CODEC`](crate::chunks::GDAL_CODEC) reads bands of exactly one
+    /// whole-object chunk ([`Self::single_chunk`]); stitching several chunks
+    /// into one band is the generic loader's job.
+    pub chunks: &'a [Option<ChunkRef<'a>>],
+    /// Pixels per chunk per dimension, parallel to `source_shape`.
+    pub chunk_shape: &'a [i64],
+    /// The band's codec pipeline as JSON, shared by every chunk. Loaders
+    /// parse it with [`crate::chunks::CodecPipeline::parse`] for their
+    /// configuration; the registry already matched it by name.
+    pub codecs: &'a str,
     /// Per-axis names parallel to `source_shape`. Backends use this to
     /// map their native axis order onto the band's.
     pub dim_names: &'a [&'a str],
@@ -77,6 +87,45 @@ pub struct RasterLoadRequest<'a> {
     /// Pixel type the band claims. The loader returns bytes encoding this
     /// type and errors if the source disagrees (e.g. file's dtype differs).
     pub data_type: BandDataType,
+}
+
+impl<'a> RasterLoadRequest<'a> {
+    /// The one whole-object chunk of a band on a container codec: `chunks`
+    /// has exactly one entry, it is present, and it is not a byte range.
+    /// Loaders that decode whole objects (GDAL, the transitional Zarr codec)
+    /// call this; a band of several chunks is an error for them.
+    pub fn single_chunk(&self) -> Result<ChunkRef<'a>, ArrowError> {
+        let chunk = match self.chunks {
+            [Some(chunk)] => *chunk,
+            [None] => {
+                return Err(ArrowError::InvalidArgumentError(
+                    "the band's only chunk is missing".to_string(),
+                ));
+            }
+            _ => {
+                return Err(ArrowError::InvalidArgumentError(format!(
+                    "this loader reads single-chunk bands only, got {} chunks (codecs {})",
+                    self.chunks.len(),
+                    self.codecs
+                )));
+            }
+        };
+        if !chunk.is_whole_object() {
+            return Err(ArrowError::InvalidArgumentError(format!(
+                "this loader reads whole objects only, got a byte range of {} (codecs {})",
+                chunk.uri.unwrap_or("<no uri>"),
+                self.codecs
+            )));
+        }
+        Ok(chunk)
+    }
+
+    /// [`Self::single_chunk`]'s URI.
+    pub fn single_chunk_uri(&self) -> Result<&'a str, ArrowError> {
+        self.single_chunk()?
+            .uri
+            .ok_or_else(|| ArrowError::InvalidArgumentError("chunk has no uri".to_string()))
+    }
 }
 
 /// What [`AsyncRasterLoader::load`] returns: the bytes plus the layout they
@@ -114,8 +163,8 @@ impl RasterLoadResult {
 
 /// Backend trait. Implementers live in format-specific crates
 /// (`sedona-raster-gdal`, `sedona-raster-zarr`, …) and are registered
-/// against an [`RasterLoaderRegistry`]; each declares the band
-/// `outdb_format` values it handles via [`AsyncRasterLoader::supports_format`].
+/// against an [`RasterLoaderRegistry`]; each declares the codec pipelines
+/// it decodes, by codec name, via [`AsyncRasterLoader::supports`].
 ///
 /// Synchronous backends (e.g. GDAL) wrap their I/O in
 /// `tokio::task::spawn_blocking` inside the impl — the trait itself stays
@@ -132,12 +181,12 @@ pub trait AsyncRasterLoader: Send + Sync + std::fmt::Debug {
     /// `"zarr"`).
     fn name(&self) -> &str;
 
-    /// Whether this loader will attempt a band with the given
-    /// `outdb_format`. `format` is the band's `outdb_format` column value —
-    /// `None` when unset (as `RS_FromPath` emits). A catch-all backend
-    /// (e.g. GDAL) returns `true` for any input; a format-specific backend
-    /// (e.g. Zarr) returns `true` only for its own format.
-    fn supports_format(&self, format: Option<&str>) -> bool;
+    /// Whether this loader decodes a band whose `codecs` pipeline has these
+    /// codec names, in pipeline order. A container-codec backend returns
+    /// `true` for exactly its one name (GDAL for `["sedona.gdal"]`); a
+    /// generic backend returns `true` when every name is in its decoder
+    /// table. Nothing guesses: a pipeline no loader claims is an error.
+    fn supports(&self, codec_names: &[&str]) -> bool;
 
     /// Fetch the band's bytes, returning a [`RasterLoadResult`] that
     /// describes the layout produced. A loader that doesn't prune by the
@@ -154,11 +203,11 @@ pub trait AsyncRasterLoader: Send + Sync + std::fmt::Debug {
 /// Icechunk / …) can register their loaders post-construction via a
 /// public `SedonaContext::register_raster_loader` API.
 ///
-/// Loaders are held in registration order. A band's `outdb_format` is
-/// matched against each loader's [`AsyncRasterLoader::supports_format`],
-/// scanning **most-recently-registered first** — so a format-specific
-/// loader registered after a catch-all (GDAL) wins for the formats it
-/// claims, while everything else falls through to the catch-all.
+/// Loaders are held in registration order. A band's codec names are
+/// matched against each loader's [`AsyncRasterLoader::supports`], scanning
+/// **most-recently-registered first** — so a loader registered later wins
+/// for any pipeline both claim (an extension can take over a codec from a
+/// compiled-in loader).
 #[derive(Debug, Default)]
 pub struct RasterLoaderRegistry {
     loaders: Vec<Arc<dyn AsyncRasterLoader>>,
@@ -172,36 +221,35 @@ impl RasterLoaderRegistry {
         Self::default()
     }
 
-    /// Register a loader. Each loader declares the formats it handles via
-    /// [`AsyncRasterLoader::supports_format`]; lookup scans in reverse, so a
+    /// Register a loader. Each loader declares the codec names it decodes
+    /// via [`AsyncRasterLoader::supports`]; lookup scans in reverse, so a
     /// loader registered later takes precedence over an earlier one for any
-    /// format both accept. The catch-all (GDAL) is registered first so
-    /// specific backends registered afterward win for their own formats.
+    /// pipeline both accept.
     pub fn register(&mut self, loader: Arc<dyn AsyncRasterLoader>) {
         self.loaders.push(loader);
     }
 
-    /// Find the loader for a band `outdb_format` (`None` when unset, as
-    /// `RS_FromPath` emits). Scans most-recently-registered first and
-    /// returns the first loader whose [`AsyncRasterLoader::supports_format`]
-    /// accepts it, or `None` when nothing does.
-    pub fn get(&self, format: Option<&str>) -> Option<Arc<dyn AsyncRasterLoader>> {
+    /// Find the loader for a band whose `codecs` pipeline has these codec
+    /// names. Scans most-recently-registered first and returns the first
+    /// loader whose [`AsyncRasterLoader::supports`] accepts them, or `None`
+    /// when nothing does.
+    pub fn get(&self, codec_names: &[&str]) -> Option<Arc<dyn AsyncRasterLoader>> {
         self.loaders
             .iter()
             .rev()
-            .find(|l| l.supports_format(format))
+            .find(|l| l.supports(codec_names))
             .cloned()
     }
 
-    /// Like [`Self::get`], but returns a planner error naming the format and
-    /// the registered loaders when nothing accepts it. `RS_EnsureLoaded`
+    /// Like [`Self::get`], but returns a planner error naming the codecs and
+    /// the registered loaders when nothing accepts them. `RS_EnsureLoaded`
     /// dispatches through this so the diagnostic points users at the
     /// install/register step.
     pub fn get_or_error(
         &self,
-        format: Option<&str>,
+        codec_names: &[&str],
     ) -> datafusion_common::Result<Arc<dyn AsyncRasterLoader>> {
-        if let Some(loader) = self.get(format) {
+        if let Some(loader) = self.get(codec_names) {
             return Ok(loader);
         }
         let registered = self.loader_names();
@@ -211,7 +259,7 @@ impl RasterLoaderRegistry {
             format!("registered loaders: {}", registered.join(", "))
         };
         datafusion_common::plan_err!(
-            "no raster loader accepts raster format {format:?} — {registered_msg}"
+            "no raster loader decodes the codec pipeline {codec_names:?} — {registered_msg}"
         )
     }
 
@@ -536,19 +584,19 @@ mod tests {
 
     /// Minimal in-test loader: records the request and returns a buffer
     /// of `Π source_shape × byte_size` zeros. Carries a name and the set
-    /// of formats it claims so registry dispatch can be exercised.
+    /// of codec names it decodes so registry dispatch can be exercised.
     #[derive(Debug, Default)]
     struct MockLoader {
         name: String,
-        formats: Vec<String>,
+        codecs: Vec<String>,
         seen: Mutex<Vec<(String, Vec<i64>)>>,
     }
 
     impl MockLoader {
-        fn new(name: &str, formats: &[&str]) -> Self {
+        fn new(name: &str, codecs: &[&str]) -> Self {
             Self {
                 name: name.to_string(),
-                formats: formats.iter().map(|s| s.to_string()).collect(),
+                codecs: codecs.iter().map(|s| s.to_string()).collect(),
                 seen: Mutex::default(),
             }
         }
@@ -560,8 +608,11 @@ mod tests {
             &self.name
         }
 
-        fn supports_format(&self, format: Option<&str>) -> bool {
-            matches!(format, Some(f) if self.formats.iter().any(|s| s == f))
+        fn supports(&self, codec_names: &[&str]) -> bool {
+            !codec_names.is_empty()
+                && codec_names
+                    .iter()
+                    .all(|name| self.codecs.iter().any(|s| s == name))
         }
 
         async fn load(
@@ -570,10 +621,10 @@ mod tests {
         ) -> Result<Vec<RasterLoadResult>, ArrowError> {
             // This mock loader only supports a single request at a time
             assert_eq!(req.len(), 1);
-            self.seen
-                .lock()
-                .unwrap()
-                .push((req[0].uri.to_string(), req[0].source_shape.to_vec()));
+            self.seen.lock().unwrap().push((
+                req[0].single_chunk_uri()?.to_string(),
+                req[0].source_shape.to_vec(),
+            ));
             let elements: i64 = req[0].source_shape.iter().copied().product();
             let len = elements as usize * req[0].data_type.byte_size();
             Ok(vec![RasterLoadResult::unresolved(
@@ -587,18 +638,21 @@ mod tests {
     fn registry_starts_empty_and_reports_no_loaders() {
         let r = RasterLoaderRegistry::new();
         assert!(r.is_empty());
-        assert!(r.get(Some("gdal")).is_none());
+        assert!(r.get(&["sedona.gdal"]).is_none());
         assert!(r.loader_names().is_empty());
     }
 
     #[test]
-    fn registry_get_returns_loader_that_supports_the_format() {
+    fn registry_get_returns_loader_that_supports_the_codecs() {
         let mut r = RasterLoaderRegistry::new();
-        r.register(Arc::new(MockLoader::new("mock", &["mock"])));
+        r.register(Arc::new(MockLoader::new("mock", &["mock", "bytes"])));
         assert!(!r.is_empty());
-        assert!(r.get(Some("mock")).is_some());
-        assert!(r.get(Some("gdal")).is_none());
-        assert!(r.get(None).is_none());
+        assert!(r.get(&["mock"]).is_some());
+        // Every name in the pipeline has to be claimed.
+        assert!(r.get(&["bytes", "mock"]).is_some());
+        assert!(r.get(&["bytes", "zstd"]).is_none());
+        assert!(r.get(&["sedona.gdal"]).is_none());
+        assert!(r.get(&[]).is_none());
     }
 
     #[test]
@@ -609,7 +663,7 @@ mod tests {
         r.register(first.clone());
         r.register(second.clone());
         // Both claim "mock"; the reverse scan returns the later registration.
-        let resolved = r.get(Some("mock")).unwrap();
+        let resolved = r.get(&["mock"]).unwrap();
         assert!(Arc::ptr_eq(
             &(resolved as Arc<dyn AsyncRasterLoader>),
             &(second as Arc<dyn AsyncRasterLoader>)
@@ -618,8 +672,8 @@ mod tests {
 
     #[test]
     fn registry_catch_all_yields_to_later_specific_loader() {
-        // Catch-all registered first (accepts everything, including None);
-        // a specific loader registered after wins for its own format.
+        // Catch-all registered first (accepts every pipeline); a specific
+        // loader registered after wins for the codecs it claims.
         #[derive(Debug)]
         struct CatchAll;
         #[async_trait::async_trait]
@@ -627,7 +681,7 @@ mod tests {
             fn name(&self) -> &str {
                 "catch-all"
             }
-            fn supports_format(&self, _format: Option<&str>) -> bool {
+            fn supports(&self, _codec_names: &[&str]) -> bool {
                 true
             }
             async fn load(
@@ -646,9 +700,9 @@ mod tests {
         let mut r = RasterLoaderRegistry::new();
         r.register(Arc::new(CatchAll));
         r.register(Arc::new(MockLoader::new("zarr", &["zarr"])));
-        assert_eq!(r.get(Some("zarr")).unwrap().name(), "zarr");
-        assert_eq!(r.get(Some("geotiff")).unwrap().name(), "catch-all");
-        assert_eq!(r.get(None).unwrap().name(), "catch-all");
+        assert_eq!(r.get(&["zarr"]).unwrap().name(), "zarr");
+        assert_eq!(r.get(&["bytes", "zstd"]).unwrap().name(), "catch-all");
+        assert_eq!(r.get(&[]).unwrap().name(), "catch-all");
     }
 
     #[test]
@@ -663,7 +717,9 @@ mod tests {
     async fn loader_load_returns_buffer_of_expected_size() {
         let loader = MockLoader::default();
         let req = RasterLoadRequest {
-            uri: "file:///tmp/foo.tif",
+            chunks: &[Some(ChunkRef::whole("file:///tmp/foo.tif"))],
+            chunk_shape: &[3, 4],
+            codecs: r#"[{"name":"mock"}]"#,
             dim_names: &["y", "x"],
             source_shape: &[3, 4],
             view: &ViewEntries::identity_for_shape(&[3, 4]),
@@ -687,13 +743,15 @@ mod tests {
         r.register(zarr.clone());
 
         let req = RasterLoadRequest {
-            uri: "s3://bucket/cube.zarr",
+            chunks: &[Some(ChunkRef::whole("s3://bucket/cube.zarr/a/c/0/0/0"))],
+            chunk_shape: &[2, 3, 4],
+            codecs: r#"[{"name":"zarr"}]"#,
             dim_names: &["t", "y", "x"],
             source_shape: &[2, 3, 4],
             view: &ViewEntries::identity_for_shape(&[2, 3, 4]),
             data_type: BandDataType::Float32,
         };
-        let loader = r.get(Some("zarr")).unwrap();
+        let loader = r.get(&["zarr"]).unwrap();
         let result = loader.load(&[&req]).await.unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].bytes.len(), 2 * 3 * 4 * 4); // Float32 = 4 bytes
@@ -704,11 +762,56 @@ mod tests {
     }
 
     #[test]
-    fn registry_get_missing_format_returns_none_for_diagnostic_message() {
+    fn registry_get_missing_codec_returns_none_for_diagnostic_message() {
         let r = RasterLoaderRegistry::new();
         // Caller (RS_EnsureLoaded) sees None and can build a diagnostic
         // listing the registered loaders.
-        assert!(r.get(Some("nonexistent")).is_none());
+        assert!(r.get(&["nonexistent"]).is_none());
+        let err = r.get_or_error(&["nonexistent"]).unwrap_err().to_string();
+        assert!(err.contains("nonexistent"), "{err}");
+        assert!(err.contains("no raster loaders are registered"), "{err}");
+    }
+
+    #[test]
+    fn single_chunk_accepts_one_whole_object_only() {
+        fn request<'a>(
+            chunks: &'a [Option<ChunkRef<'a>>],
+            view: &'a ViewEntries,
+        ) -> RasterLoadRequest<'a> {
+            RasterLoadRequest {
+                chunks,
+                chunk_shape: &[3, 4],
+                codecs: r#"[{"name":"mock"}]"#,
+                dim_names: &["y", "x"],
+                source_shape: &[3, 4],
+                view,
+                data_type: BandDataType::UInt8,
+            }
+        }
+        let view = ViewEntries::identity_for_shape(&[3, 4]);
+
+        let whole = [Some(ChunkRef::whole("file:///tmp/foo.tif"))];
+        assert_eq!(
+            request(&whole, &view).single_chunk_uri().unwrap(),
+            "file:///tmp/foo.tif"
+        );
+
+        let missing = [None];
+        assert!(request(&missing, &view).single_chunk().is_err());
+
+        let range = [Some(ChunkRef::range("file:///tmp/foo.tif", 0, 12))];
+        let err = request(&range, &view)
+            .single_chunk()
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("whole objects only"), "{err}");
+
+        let two = [
+            Some(ChunkRef::whole("file:///tmp/a.tif")),
+            Some(ChunkRef::whole("file:///tmp/b.tif")),
+        ];
+        let err = request(&two, &view).single_chunk().unwrap_err().to_string();
+        assert!(err.contains("got 2 chunks"), "{err}");
     }
 
     #[test]

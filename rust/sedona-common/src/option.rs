@@ -118,8 +118,8 @@ config_namespace! {
         pub max_batch_bytes: usize, default = DEFAULT_RASTER_MAX_BATCH_BYTES
 
         /// Budget, in bytes, for the session's cache of loaded OutDb band
-        /// bytes (`RS_EnsureLoaded` results, one entry per `outdb_uri` and
-        /// data type). The budget counts only entries no in-flight batch
+        /// bytes (`RS_EnsureLoaded` results, one entry per chunk location,
+        /// codecs and data type). The budget counts only entries no in-flight batch
         /// still references; bytes shared with a running query are the
         /// query's cost, not the cache's, and are given back once the query
         /// drops them. When a memory limit is configured the session lowers

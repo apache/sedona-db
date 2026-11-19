@@ -58,10 +58,15 @@ def test_rs_function(raster_con, expr, expected):
     assert query_values(raster_con, expr) == expected
 
 
-def test_rs_bandpath_returns_chunk_anchor(raster_con):
-    # Zarr chunks are OutDb rows; RS_BandPath surfaces the chunk anchor URI.
-    for path in query_values(raster_con, "RS_BandPath(raster, 1)"):
-        assert path is not None and "#array=temperature" in path
+def test_rs_bandpath_returns_chunk_object_uri(raster_con):
+    # Zarr chunks are OutDb rows; RS_BandPath surfaces the chunk object's URI,
+    # the chunk key under the array in the group.
+    paths = query_values(raster_con, "RS_BandPath(raster, 1)")
+    assert all(path is not None for path in paths), paths
+    assert sorted(path.rsplit("/temperature/", 1)[1] for path in paths) == [
+        "c/0/0",
+        "c/1/0",
+    ], paths
 
 
 def test_rs_ensureloaded_materializes_zarr_chunks(raster_con):

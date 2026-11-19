@@ -27,6 +27,7 @@ use arrow_array::ffi_stream::FFI_ArrowArrayStream;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyBytesMethods, PyCapsule, PyDict};
+use sedona_raster::chunks::ChunkRef;
 use sedona_raster::view_entries::{ViewEntries, ViewEntry};
 use sedona_raster_zarr::{
     object_store_for_uri, open_storage_from_uri, ZarrChunkReader, ZarrLoader,
@@ -199,13 +200,15 @@ impl PyZarrRasterLoader {
         self.loader.name()
     }
 
-    /// Check if this loader supports a given format.
+    /// Whether this loader decodes a band whose `codecs` pipeline has these
+    /// codec names, in order.
     ///
-    /// Returns True only for "zarr" format; None and other formats
-    /// fall through to GDAL.
-    fn supports_format(&self, format: Option<&str>) -> bool {
+    /// True only for the one-codec `["sedona.zarr"]` pipeline the Zarr
+    /// reader writes; every other pipeline is some other loader's.
+    fn supports(&self, codec_names: Vec<String>) -> bool {
         use sedona_raster::raster_loader::AsyncRasterLoader;
-        self.loader.supports_format(format)
+        let names: Vec<&str> = codec_names.iter().map(String::as_str).collect();
+        self.loader.supports(&names)
     }
 
     /// Hit and miss counters for the handles kept across `load` calls: the
@@ -225,7 +228,10 @@ impl PyZarrRasterLoader {
     /// Load raster data from Zarr stores.
     ///
     /// Takes a list of request objects with attributes:
-    /// - uri: str
+    /// - chunks: list of None (a missing chunk) or objects with attributes
+    ///   uri, offset, size, content_type, checksum (each optional)
+    /// - chunk_shape: list[int]
+    /// - codecs: str (the band's codec pipeline as JSON)
     /// - dim_names: list[str]
     /// - source_shape: list[int]
     /// - view: list[ViewEntry-like]
@@ -243,7 +249,23 @@ impl PyZarrRasterLoader {
         // Extract data from Python request objects into owned structures
         let mut owned_requests: Vec<OwnedLoadRequest> = Vec::with_capacity(requests.len());
         for req in &requests {
-            let uri: String = req.getattr("uri")?.extract()?;
+            let codecs: String = req.getattr("codecs")?.extract()?;
+            let chunk_shape: Vec<i64> = req.getattr("chunk_shape")?.extract()?;
+            let mut chunks = Vec::new();
+            for chunk in req.getattr("chunks")?.try_iter()? {
+                let chunk = chunk?;
+                if chunk.is_none() {
+                    chunks.push(None);
+                    continue;
+                }
+                chunks.push(Some(OwnedChunk {
+                    uri: chunk.getattr("uri")?.extract()?,
+                    offset: chunk.getattr("offset")?.extract()?,
+                    size: chunk.getattr("size")?.extract()?,
+                    content_type: chunk.getattr("content_type")?.extract()?,
+                    checksum: chunk.getattr("checksum")?.extract()?,
+                }));
+            }
             let dim_names: Vec<String> = req.getattr("dim_names")?.extract()?;
             let source_shape: Vec<i64> = req.getattr("source_shape")?.extract()?;
 
@@ -282,7 +304,9 @@ impl PyZarrRasterLoader {
             };
 
             owned_requests.push(OwnedLoadRequest {
-                uri,
+                chunks,
+                chunk_shape,
+                codecs,
                 dim_names,
                 source_shape,
                 view: ViewEntries::new(view),
@@ -295,13 +319,25 @@ impl PyZarrRasterLoader {
             .iter()
             .map(|r| r.dim_names.iter().map(|s| s.as_str()).collect())
             .collect();
+        let chunk_refs: Vec<Vec<Option<ChunkRef<'_>>>> = owned_requests
+            .iter()
+            .map(|r| {
+                r.chunks
+                    .iter()
+                    .map(|c| c.as_ref().map(OwnedChunk::as_ref))
+                    .collect()
+            })
+            .collect();
         let rust_requests: Vec<sedona_raster::raster_loader::RasterLoadRequest<'_>> =
             owned_requests
                 .iter()
                 .zip(dim_names_refs.iter())
+                .zip(chunk_refs.iter())
                 .map(
-                    |(req, dim_refs)| sedona_raster::raster_loader::RasterLoadRequest {
-                        uri: &req.uri,
+                    |((req, dim_refs), chunks)| sedona_raster::raster_loader::RasterLoadRequest {
+                        chunks,
+                        chunk_shape: &req.chunk_shape,
+                        codecs: &req.codecs,
                         dim_names: dim_refs,
                         source_shape: &req.source_shape,
                         view: &req.view,
@@ -353,11 +389,34 @@ impl PyZarrRasterLoader {
 
 /// Owned version of RasterLoadRequest for temporary storage.
 struct OwnedLoadRequest {
-    uri: String,
+    chunks: Vec<Option<OwnedChunk>>,
+    chunk_shape: Vec<i64>,
+    codecs: String,
     dim_names: Vec<String>,
     source_shape: Vec<i64>,
     view: ViewEntries,
     data_type: sedona_schema::raster::BandDataType,
+}
+
+/// Owned version of one `chunks` entry.
+struct OwnedChunk {
+    uri: Option<String>,
+    offset: Option<i64>,
+    size: Option<i64>,
+    content_type: Option<String>,
+    checksum: Option<String>,
+}
+
+impl OwnedChunk {
+    fn as_ref(&self) -> ChunkRef<'_> {
+        ChunkRef {
+            uri: self.uri.as_deref(),
+            offset: self.offset,
+            size: self.size,
+            content_type: self.content_type.as_deref(),
+            checksum: self.checksum.as_deref(),
+        }
+    }
 }
 
 #[pymodule(gil_used = false)]

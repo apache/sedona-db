@@ -130,17 +130,19 @@ fn get_band_path(
                 // `band_index` is 1-based (validated >= 1 above); `band` is 0-based.
                 let band = raster.band(band_index as usize - 1)?;
 
-                if !band.is_indb() {
-                    match band.outdb_uri() {
-                        Some(uri) => {
-                            let (base_url, _band_id) =
-                                sedona_raster::traits::split_outdb_band_fragment(uri)?;
-                            builder.append_value(base_url)
-                        }
-                        None => builder.append_null(),
-                    }
-                } else {
-                    builder.append_null()
+                // The object the band's first chunk reads from: every band of
+                // a GDAL file names that file (the source band lives in the
+                // codec), and a Zarr row names its chunk object. Null for an
+                // in-db band, a band without chunks, or a missing first chunk.
+                let path = (!band.is_indb())
+                    .then(|| band.chunks())
+                    .flatten()
+                    .filter(|chunks| !chunks.is_empty())
+                    .and_then(|chunks| chunks.get(0))
+                    .and_then(|chunk| chunk.uri);
+                match path {
+                    Some(path) => builder.append_value(path),
+                    None => builder.append_null(),
                 }
             }
         }
@@ -271,14 +273,14 @@ mod tests {
             Some(
                 RasterSpec::d2(4, 4)
                     .band(BandDataType::Float32)
-                    .outdb("s3://bucket/raster_0.tif#band=1", None),
+                    .outdb_gdal("s3://bucket/raster_0.tif", 1),
             ),
             None,
             Some(
                 RasterSpec::d2(4, 4)
                     .band(BandDataType::UInt8)
                     .band(BandDataType::Float32)
-                    .outdb("s3://bucket/raster_2.tif#band=3", None),
+                    .outdb_gdal("s3://bucket/raster_2.tif", 3),
             ),
         ]
     }
@@ -330,7 +332,7 @@ mod tests {
 
         let spec = RasterSpec::d2(4, 4)
             .band(BandDataType::Float32)
-            .outdb("s3://bucket/raster_0.tif#band=1", None);
+            .outdb_gdal("s3://bucket/raster_0.tif", 1);
         let result = tester.invoke_raster_scalar(&spec).unwrap();
         tester.assert_scalar_result_equals(result, "s3://bucket/raster_0.tif");
     }

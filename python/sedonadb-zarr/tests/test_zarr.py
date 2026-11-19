@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-import re
+import json
 import sys
 
 import numpy as np
@@ -57,12 +57,20 @@ def test_format_spec_via_read(zarr_group):
     assert raster.transform is not None
     assert len(raster.bands) >= 1
     band = raster.bands[0]
-    # `source_data` is empty (OutDb scan); `outdb_uri` points at this chunk.
+    # `source_data` is empty (OutDb scan); the band is one chunk whose codec
+    # names the array and chunk and whose uri is the chunk object.
     assert len(band.source_data) == 0, (
         f"OutDb band should have empty data; got {len(band.source_data)} bytes"
     )
-    assert band.outdb_uri is not None and "#array=temperature" in band.outdb_uri, (
-        f"unexpected anchor: {band.outdb_uri!r}"
+    (codec,) = json.loads(band.codecs)
+    assert codec["name"] == "sedona.zarr", band.codecs
+    assert codec["configuration"]["array"] == "temperature", band.codecs
+    assert codec["configuration"]["chunk"] == [0, 0], band.codecs
+    assert codec["configuration"]["store"] == f"file://{zarr_group}", band.codecs
+    assert band.chunk_shape == (1, 2)
+    assert len(band.chunks) == 1
+    assert band.chunks[0]["uri"] == f"file://{zarr_group}/temperature/c/0/0", (
+        f"unexpected chunk: {band.chunks!r}"
     )
 
 
@@ -263,7 +271,9 @@ def test_arrays_option_order_is_band_order(tmp_path):
         fmt = sedonadb_zarr.Zarr({"arrays": names}) if names else sedonadb_zarr.Zarr()
         tab = con.read(f"file://{tmp_path}", format=fmt).to_arrow_table()
         raster = Raster(tab["raster"], 0)
-        return [b.outdb_uri.split("#array=")[1].split("&")[0] for b in raster.bands]
+        return [
+            json.loads(b.codecs)[0]["configuration"]["array"] for b in raster.bands
+        ]
 
     assert band_arrays(["a1", "a0"]) == ["a1", "a0"]
     assert band_arrays(["b2", "a0", "a1"]) == ["b2", "a0", "a1"]
@@ -285,12 +295,13 @@ def test_format_spec_class_invariants():
     assert spec2 is not spec
 
 
-def test_zarr_loader_supports_format():
-    """Test format support checking."""
+def test_zarr_loader_supports():
+    """The loader claims exactly the one-codec sedona.zarr pipeline."""
     loader = sedonadb_zarr.ZarrRasterLoader()
-    assert loader.supports_format("zarr") is True
-    assert loader.supports_format(None) is False
-    assert loader.supports_format("gdal") is False
+    assert loader.supports(["sedona.zarr"]) is True
+    assert loader.supports([]) is False
+    assert loader.supports(["sedona.gdal"]) is False
+    assert loader.supports(["sedona.zarr", "zstd"]) is False
     assert "ZarrRasterLoader" in repr(loader)
 
 
@@ -423,7 +434,7 @@ def test_sharded_array_reads_one_row_per_inner_chunk(tmp_path):
     the pixels of each inner chunk (fill value past the array edge). Reading
     per shard would give two 4x4 rows instead. The rows come back in no
     particular order once the loads are spread over partitions, so each is
-    matched to its inner chunk by its chunk anchor.
+    matched to its inner chunk by the chunk indices in its codec.
     """
     values = np.arange(15, dtype=np.uint8).reshape(3, 5) + 1
     root = zarr.open_group(str(tmp_path), mode="w")
@@ -448,9 +459,15 @@ def test_sharded_array_reads_one_row_per_inner_chunk(tmp_path):
     chunks = {}
     for i in range(tab.num_rows):
         band = tab["raster"][i].as_py().bands[0]
-        anchor = re.search(r"&chunk=(\d+),(\d+)$", band.outdb_uri)
-        assert anchor, band.outdb_uri
-        chunks[(int(anchor.group(1)), int(anchor.group(2)))] = band.to_numpy()
+        (codec,) = json.loads(band.codecs)
+        assert codec["name"] == "sedona.zarr", band.codecs
+        cy, cx = codec["configuration"]["chunk"]
+        # Every inner chunk lives in one of the two shards, and the chunk's
+        # uri names that shard object, not the inner chunk.
+        assert band.chunks[0]["uri"].endswith(f"/temperature/c/0/{cx // 2}"), (
+            band.chunks
+        )
+        chunks[(int(cy), int(cx))] = band.to_numpy()
     assert sorted(chunks) == [(0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (1, 2)]
     for (cy, cx), chunk in chunks.items():
         assert chunk.shape == (2, 2)

@@ -18,10 +18,10 @@
 //! End-to-end fixture test: build a small Zarr group on disk with the
 //! `zarrs` crate, then read it back through `read_all` and
 //! verify the resulting raster `StructArray`. The loader always emits
-//! OutDb-style rows (empty `data`, populated `outdb_uri`), so these
-//! tests assert on metadata and chunk-anchor URIs rather than pixel
-//! bytes. Pixel-byte coverage lives in the loader's unit tests against
-//! `retrieve_chunk_bytes`.
+//! OutDb-style rows (empty `data`, one chunk per band with the Zarr codec),
+//! so these tests assert on metadata and chunk references rather than
+//! pixel bytes. Pixel-byte coverage lives in the loader's unit tests
+//! against `retrieve_chunk_bytes`.
 
 use std::sync::Arc;
 
@@ -30,7 +30,7 @@ use arrow_array::cast::AsArray;
 use arrow_schema::ArrowError;
 use sedona_raster::array::RasterStructArray;
 use sedona_raster::traits::RasterRef;
-use sedona_raster_zarr::{ZarrChunkReader, open_storage_from_uri};
+use sedona_raster_zarr::{ZarrChunkReader, ZarrCodec, open_storage_from_uri};
 
 /// Drain a `ZarrChunkReader` into a single `StructArray`. Fixtures in
 /// this file are small (≤8 chunk rows) so they fit in one batch with a
@@ -178,7 +178,7 @@ async fn discovers_child_arrays_from_consolidated_metadata() {
 }
 
 #[tokio::test]
-async fn round_trip_emits_one_row_per_chunk_position_with_outdb_anchors() {
+async fn round_trip_emits_one_row_per_chunk_position_with_outdb_chunks() {
     let tmp = build_fixture();
     let uri = format!("file://{}", tmp.path().display());
     let arr = read_all(&uri, None).await.unwrap();
@@ -206,25 +206,35 @@ async fn round_trip_emits_one_row_per_chunk_position_with_outdb_anchors() {
         !pressure.is_indb(),
         "loader emits OutDb rows — is_indb() must be false"
     );
-    assert_eq!(pressure.outdb_format(), Some("zarr"));
-    let anchor = pressure.outdb_uri().expect("outdb_uri set");
-    // Anchor is the group URI verbatim plus a fragment carrying array
-    // path + chunk indices. No `zarr://` prefix.
-    assert!(anchor.starts_with("file://"), "got: {anchor}");
-    assert!(!anchor.starts_with("zarr://"), "got: {anchor}");
-    assert!(anchor.contains("#array=pressure"), "got: {anchor}");
-    assert!(anchor.contains("&chunk=0,0,0"), "got: {anchor}");
+    // The band is one chunk: the codec names the group URI verbatim, the
+    // array path and the chunk indices; the chunk's uri is the chunk
+    // object under the group. No `zarr://` prefix anywhere.
+    assert_eq!(pressure.chunk_shape(), Some(&[1i64, 2, 2][..]));
+    let codec = ZarrCodec::parse(pressure.codecs().expect("codecs set"))
+        .unwrap()
+        .expect("the Zarr codec");
+    assert_eq!(codec, ZarrCodec::new(&uri, "pressure", &[0, 0, 0]));
+    let chunks = pressure.chunks().expect("chunks set");
+    assert_eq!(chunks.len(), 1);
+    let object = chunks.get(0).unwrap().uri.unwrap();
+    assert!(object.starts_with("file://"), "got: {object}");
+    assert_eq!(object, format!("{uri}/pressure/c/0/0/0"));
 
-    // Last row corresponds to chunk (t=1, y=1, x=1). Anchor + transform
-    // both reflect the translation.
+    // Last row corresponds to chunk (t=1, y=1, x=1). Chunk reference +
+    // transform both reflect the translation.
     let last = rasters.get(7).unwrap();
     let last_transform: Vec<f64> = last.transform().to_vec();
     assert_eq!(last_transform[0], 100.0 + 2.0); // x_off = 2
     assert_eq!(last_transform[3], 200.0 - 2.0); // y_off = 2, sy = -1
     let temp = last.band(1).unwrap();
-    let anchor = temp.outdb_uri().expect("outdb_uri set");
-    assert!(anchor.contains("#array=temperature"), "got: {anchor}");
-    assert!(anchor.contains("&chunk=1,1,1"), "got: {anchor}");
+    let codec = ZarrCodec::parse(temp.codecs().expect("codecs set"))
+        .unwrap()
+        .expect("the Zarr codec");
+    assert_eq!(codec, ZarrCodec::new(&uri, "temperature", &[1, 1, 1]));
+    assert_eq!(
+        temp.chunks().unwrap().get(0).unwrap().uri,
+        Some(format!("{uri}/temperature/c/1/1/1").as_str())
+    );
 }
 
 #[tokio::test]
@@ -408,10 +418,20 @@ async fn falls_back_to_array_dimensions_attribute() {
     assert_eq!(rasters.len(), 2);
     let r0 = rasters.get(0).unwrap();
     let band = r0.band(0).unwrap();
-    // Anchor URI populated even though the array used the v2 dim-name
+    // Chunk reference populated even though the array used the v2 dim-name
     // fallback — proves the fallback feeds the rest of the pipeline.
-    assert_eq!(band.outdb_format(), Some("zarr"));
-    assert!(band.outdb_uri().unwrap().contains("#array=temperature"));
+    let codec = ZarrCodec::parse(band.codecs().unwrap()).unwrap().unwrap();
+    assert_eq!(codec.array, "temperature");
+    assert_eq!(codec.chunk, vec![0, 0]);
+    assert!(
+        band.chunks()
+            .unwrap()
+            .get(0)
+            .unwrap()
+            .uri
+            .unwrap()
+            .ends_with("/temperature/c/0/0")
+    );
 }
 
 #[tokio::test]

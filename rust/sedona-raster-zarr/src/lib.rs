@@ -21,11 +21,13 @@
 //! group's chunk grid lazily, emitting one raster row per chunk
 //! position with one band per array. A sharded array's grid is its
 //! inner-chunk grid, so its rows are inner chunks, never whole shards.
-//! Each row carries a chunk-anchor
-//! URI in `outdb_uri`; the `data` column stays empty. Metadata-only
-//! operations (`count(*)`, `RS_Envelope`, `RS_Width`, …) work directly
-//! against these rows; byte-consuming kernels need an async resolver
-//! that's not part of this crate.
+//! Each band is one out-db chunk: its `chunks` entry names the chunk (or
+//! shard) object and its `codecs` is the transitional [`ZARR_CODEC`]
+//! pipeline naming the group, array and chunk indices; the `data` column
+//! stays empty. Metadata-only operations (`count(*)`, `RS_Envelope`,
+//! `RS_Width`, …) work directly against these rows; byte-consuming
+//! kernels go through [`ZarrLoader`], registered as the loader for that
+//! codec.
 //!
 //! Local filesystem stores only — `file://` URIs or bare paths.
 
@@ -39,6 +41,8 @@ mod source_uri;
 pub use loader::ZarrChunkReader;
 pub use raster_loader::{
     DEFAULT_ARRAY_HANDLE_CAPACITY, DEFAULT_ARRAY_HANDLE_TTL, DEFAULT_LOAD_CONCURRENCY, HandleStats,
-    ZARR_FORMAT, ZarrLoader,
+    ZarrLoader,
 };
-pub use source_uri::{object_store_for_uri, open_storage_from_uri};
+pub use source_uri::{
+    ZARR_CODEC, ZarrCodec, chunk_object_uri, object_store_for_uri, open_storage_from_uri,
+};

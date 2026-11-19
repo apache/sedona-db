@@ -17,7 +17,8 @@
 
 """Tests for Python-backed raster loaders."""
 
-from typing import List, Optional
+import json
+from typing import List, Optional, Sequence
 
 import numpy as np
 import pyarrow as pa
@@ -27,21 +28,33 @@ from sedonadb.raster import Raster
 from sedonadb.raster_loader import RasterLoader, RasterLoadResult
 
 
+def test_codecs(band: int = 1) -> str:
+    """A one-codec pipeline under a name only the mock loader claims. The
+    band index rides in the configuration, as it does for the GDAL codec."""
+    return json.dumps(
+        [{"name": "test_codec", "configuration": {"band": band}}],
+        separators=(",", ":"),
+    )
+
+
 class MockRasterLoader(RasterLoader):
     """A mock raster loader for testing."""
 
     def __init__(
-        self, name: str = "mock", supported_formats: List[Optional[str]] = None
+        self, name: str = "mock", supported_codecs: Optional[List[str]] = None
     ):
         self._name = name
-        self._supported_formats = supported_formats or [None]  # Default: catch-all
+        # `None` is a catch-all that decodes any pipeline.
+        self._supported_codecs = supported_codecs
         self._load_calls = []
 
     def name(self) -> str:
         return self._name
 
-    def supports_format(self, format: Optional[str]) -> bool:
-        return format in self._supported_formats
+    def supports(self, codec_names: Sequence[str]) -> bool:
+        if self._supported_codecs is None:
+            return True
+        return all(name in self._supported_codecs for name in codec_names)
 
     def load(self, requests):
         """Load raster data - returns mock bytes for testing."""
@@ -66,36 +79,39 @@ def test_py_raster_loader_creation():
     wrapper = loader.__sedonadb_raster_loader__()
 
     assert wrapper.name() == "test_loader"
-    assert wrapper.supports_format(None) is True
-    assert wrapper.supports_format("zarr") is False
+    # A catch-all decodes any pipeline.
+    assert wrapper.supports(["sedona.gdal"]) is True
+    assert wrapper.supports(["bytes", "zstd"]) is True
 
 
-def test_py_raster_loader_supports_format():
-    """Test format support checking."""
-    loader = MockRasterLoader(name="zarr_loader", supported_formats=["zarr", "zarr-v3"])
+def test_py_raster_loader_supports():
+    """Test codec support checking: every name in the pipeline must be claimed."""
+    loader = MockRasterLoader(
+        name="zarr_loader", supported_codecs=["sedona.zarr", "bytes", "zstd"]
+    )
     wrapper = loader.__sedonadb_raster_loader__()
 
     assert wrapper.name() == "zarr_loader"
-    assert wrapper.supports_format("zarr") is True
-    assert wrapper.supports_format("zarr-v3") is True
-    assert wrapper.supports_format(None) is False
-    assert wrapper.supports_format("gdal") is False
+    assert wrapper.supports(["sedona.zarr"]) is True
+    assert wrapper.supports(["bytes", "zstd"]) is True
+    assert wrapper.supports(["bytes", "gzip"]) is False
+    assert wrapper.supports(["sedona.gdal"]) is False
 
 
 def test_py_raster_loader_registration():
     """Test that rs_ensureloaded invokes a registered Python raster loader."""
-    loader = MockRasterLoader(name="mock_loader", supported_formats=["test_format"])
+    loader = MockRasterLoader(name="mock_loader", supported_codecs=["test_codec"])
 
     # Connect and register our mock loader
     sd = sedonadb.connect()
     sd.register(loader)
 
-    # Create an OutDb raster with our custom format
+    # Create an OutDb raster on a codec only our loader claims
     raster = Raster.lazy(
         uri="test://mock/data",
         shape=(4, 4),
         dtype="UInt8",
-        format="test_format",
+        codecs=test_codecs(),
     )
 
     # Create a table with the OutDb raster
@@ -113,9 +129,22 @@ def test_py_raster_loader_registration():
     requests = loader._load_calls[0]
     assert len(requests) == 1
     req = requests[0]
-    assert req.uri == "test://mock/data"
+    assert len(req.chunks) == 1
+    assert req.chunks[0].uri == "test://mock/data"
+    assert req.chunks[0].offset is None
+    assert req.chunks[0].size is None
+    assert req.chunks[0].checksum is None
+    assert req.chunk_shape == [4, 4]
+    assert req.codecs == test_codecs()
     assert req.source_shape == [4, 4]
     assert req.data_type.name == "uint8"
+    assert "test://mock/data" in repr(req)
+
+    # A loaded band keeps its chunks as provenance beside its pixels.
+    band = Raster(loaded_tab["raster"], 0).bands[0]
+    assert band.chunks[0]["uri"] == "test://mock/data"
+    assert band.codecs == test_codecs()
+    assert len(band.source_data) == 16
 
 
 def test_rs_ensureloaded_input_is_partitioned_by_raster_source():
@@ -124,15 +153,16 @@ def test_rs_ensureloaded_input_is_partitioned_by_raster_source():
     partitions a whole-batch round-robin reaches, rows of one raster stay
     together (each raster loaded once), and results match a single-partition
     run."""
-    # 32 rows reading two bands of 8 files (URIs that differ only by
-    # `#band=`), plus in-db and null rows that have no file to group by. One
-    # batch, which a round-robin would deal to a single partition.
+    # 32 rows reading two bands of 8 files (the same chunk URI, codecs that
+    # differ only by the band they select), plus in-db and null rows that
+    # have no file to group by. One batch, which a round-robin would deal to
+    # a single partition.
     lazy = [
         Raster.lazy(
-            uri=f"test://mock/r{i % 8}.tif#band={i // 8 % 2 + 1}",
+            uri=f"test://mock/r{i % 8}.tif",
             shape=(4, 4),
             dtype="UInt8",
-            format="test_format",
+            codecs=test_codecs(band=i // 8 % 2 + 1),
         )._array
         for i in range(32)
     ]
@@ -147,7 +177,7 @@ def test_rs_ensureloaded_input_is_partitioned_by_raster_source():
 
     results = {}
     for target_partitions in (1, 4):
-        loader = MockRasterLoader(name="mock_loader", supported_formats=["test_format"])
+        loader = MockRasterLoader(name="mock_loader", supported_codecs=["test_codec"])
         sd = sedonadb.connect()
         sd.register(loader)
         sd.sql(
@@ -172,9 +202,17 @@ def test_rs_ensureloaded_input_is_partitioned_by_raster_source():
         results[target_partitions] = sorted(rows, key=lambda row: row["id"])
         assert len(rows) == 35
         assert results[target_partitions][-1]["raster"] is None
-        uris = [req.uri for requests in loader._load_calls for req in requests]
-        assert sorted(uris) == sorted(
-            f"test://mock/r{i}.tif#band={band}" for i in range(8) for band in (1, 2)
+        # Every (file, band) pair is loaded once: rows of one file land in one
+        # partition, and identical requests within a batch share one load.
+        sources = [
+            (req.chunks[0].uri, req.codecs)
+            for requests in loader._load_calls
+            for req in requests
+        ]
+        assert sorted(sources) == sorted(
+            (f"test://mock/r{i}.tif", test_codecs(band=band))
+            for i in range(8)
+            for band in (1, 2)
         )
 
     assert results[4] == results[1]
@@ -182,12 +220,28 @@ def test_rs_ensureloaded_input_is_partitioned_by_raster_source():
 
 def test_raster_loader_sedonadb_raster_loader_method():
     """Test that the __sedonadb_raster_loader__ method works correctly."""
-    loader = MockRasterLoader(name="test_loader", supported_formats=["zarr"])
+    loader = MockRasterLoader(name="test_loader", supported_codecs=["sedona.zarr"])
     wrapper = loader.__sedonadb_raster_loader__()
 
     assert wrapper.name() == "test_loader"
-    assert wrapper.supports_format("zarr") is True
-    assert wrapper.supports_format(None) is False
+    assert wrapper.supports(["sedona.zarr"]) is True
+    assert wrapper.supports(["sedona.gdal"]) is False
+
+
+def test_chunk_ref_creation():
+    """Test PyChunkRef creation and attributes."""
+    from sedonadb._lib import PyChunkRef
+
+    chunk = PyChunkRef("s3://bucket/a.tif")
+    assert chunk.uri == "s3://bucket/a.tif"
+    assert chunk.offset is None
+    assert chunk.size is None
+    assert chunk.content_type is None
+    assert chunk.checksum is None
+
+    tile = PyChunkRef("s3://bucket/a.tif", offset=4096, size=512, checksum="ETAG:abc")
+    assert (tile.offset, tile.size, tile.checksum) == (4096, 512, "ETAG:abc")
+    assert "ETAG:abc" in repr(tile)
 
 
 def test_view_entry_creation():

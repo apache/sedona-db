@@ -17,8 +17,9 @@
 
 //! GDAL backend implementing [`sedona_raster::raster_loader::AsyncRasterLoader`].
 //!
-//! Reads OutDb raster bands identified by a `#band=N` URI fragment via
-//! GDAL's blocking API. The blocking work runs on the runtime's blocking
+//! Reads OutDb raster bands on the `sedona.gdal` container codec: one
+//! whole-object chunk per band, decoded by GDAL for the source band named in
+//! the codec's configuration. The blocking work runs on the runtime's blocking
 //! pool, as `SpawnedTask`s, so the caller's async runtime is not stalled. Each read opens its file, reads the requested bands, and closes
 //! it again; the loader keeps no datasets open between calls. Repeat loads
 //! are served before they reach the loader, by `RS_EnsureLoaded`'s session
@@ -102,18 +103,19 @@ use datafusion_common_runtime::SpawnedTask;
 use futures::StreamExt;
 use futures::stream::FuturesOrdered;
 use sedona_gdal::raster::rasterband::RasterBand;
+use sedona_raster::chunks::{GDAL_CODEC, GdalCodec};
 use sedona_raster::io_budget::RasterIoBudget;
 use sedona_raster::raster_loader::{AsyncRasterLoader, RasterLoadRequest, RasterLoadResult};
-use sedona_raster::traits::{is_spatial_dim_pair, split_outdb_band_fragment};
+use sedona_raster::traits::is_spatial_dim_pair;
 use sedona_schema::raster::BandDataType;
 use tokio::sync::oneshot;
 
 use crate::gdal_common::{convert_gdal_err, gdal_to_band_data_type, open_gdal_dataset, with_gdal};
 
 /// Diagnostic name for the GDAL raster loader (reported via
-/// [`AsyncRasterLoader::name`]). GDAL is a catch-all loader — it doesn't key
-/// off a specific `outdb_format` — so this is an identity label, not a
-/// dispatch key.
+/// [`AsyncRasterLoader::name`]). The loader dispatches on the
+/// [`GDAL_CODEC`] codec name, so this is an identity label, not a dispatch
+/// key.
 pub const GDAL_FORMAT: &str = "gdal";
 
 /// Maximum bytes a single OutDb load request will produce.
@@ -232,13 +234,12 @@ impl AsyncRasterLoader for GdalLoader {
         GDAL_FORMAT
     }
 
-    /// GDAL is the catch-all byte loader: it attempts any band format,
-    /// including the `None` that `RS_FromPath` emits — it opens the file
-    /// with GDAL regardless of the declared format. Registered first so
-    /// format-specific loaders (e.g. Zarr) registered later win for the
-    /// formats they claim.
-    fn supports_format(&self, _format: Option<&str>) -> bool {
-        true
+    /// GDAL decodes exactly one pipeline: the single [`GDAL_CODEC`] container
+    /// codec that `RS_FromPath` writes. Every other pipeline (Zarr's, or a
+    /// standard chunk pipeline) belongs to another loader; nothing falls
+    /// through to GDAL by default.
+    fn supports(&self, codec_names: &[&str]) -> bool {
+        codec_names == [GDAL_CODEC]
     }
 
     async fn load(&self, reqs: &[&RasterLoadRequest]) -> Result<Vec<RasterLoadResult>, ArrowError> {
@@ -255,12 +256,14 @@ impl AsyncRasterLoader for GdalLoader {
     }
 }
 
+#[derive(Debug)]
 struct OwnedGdalLoadRequest {
-    uri: String,
-    /// `uri` without its `#band=N` fragment: the file to open.
+    /// The file to open: the band's one whole-object chunk.
     path: String,
-    /// The fragment's band, 1 if it has none.
+    /// The 1-based source band, from the codec's configuration.
     band: usize,
+    /// GDAL open options from the codec's configuration; empty for none.
+    open_options: Vec<String>,
     height: usize,
     width: usize,
     expected_bytes: usize,
@@ -327,13 +330,27 @@ impl GdalLoader {
             )));
         }
 
-        let (path, band) = split_outdb_band_fragment(req.uri)
-            .map_err(|e| ArrowError::ExternalError(Box::new(e)))?;
+        // The file is the band's one whole-object chunk; the source band and
+        // open options are the GDAL codec's configuration.
+        let path = req.single_chunk_uri()?.to_string();
+        let codec = GdalCodec::parse(req.codecs)
+            .map_err(|e| ArrowError::ExternalError(Box::new(e)))?
+            .ok_or_else(|| {
+                ArrowError::InvalidArgumentError(format!(
+                    "GDAL raster loader decodes the {GDAL_CODEC} codec only; got codecs {}",
+                    req.codecs
+                ))
+            })?;
+        if let Some(subdataset) = &codec.subdataset {
+            return Err(ArrowError::NotYetImplemented(format!(
+                "the {GDAL_CODEC} codec's subdataset ({subdataset:?}) is not supported yet"
+            )));
+        }
 
         Ok(OwnedGdalLoadRequest {
-            uri: req.uri.to_string(),
             path,
-            band: band as usize,
+            band: codec.band as usize,
+            open_options: codec.open_options,
             height,
             width,
             expected_bytes: expected_bytes_u64 as usize,
@@ -354,16 +371,19 @@ impl GdalLoader {
         let cancel: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
         let _guard = CancelOnDrop(Arc::clone(&cancel));
 
-        // Group requests by file, keeping first-appearance order, so that a
-        // file named once per band is opened once, by one thread.
+        // Group requests by file (and open options, which change how a file
+        // opens), keeping first-appearance order, so that a file named once
+        // per band is opened once, by one thread.
         let num_reqs = reqs.len();
         let mut files: Vec<Vec<(usize, OwnedGdalLoadRequest)>> = Vec::new();
-        let mut file_index: HashMap<String, usize> = HashMap::new();
+        let mut file_index: HashMap<(String, Vec<String>), usize> = HashMap::new();
         for (req_idx, req) in reqs.into_iter().enumerate() {
-            let idx = *file_index.entry(req.path.clone()).or_insert_with(|| {
-                files.push(Vec::new());
-                files.len() - 1
-            });
+            let idx = *file_index
+                .entry((req.path.clone(), req.open_options.clone()))
+                .or_insert_with(|| {
+                    files.push(Vec::new());
+                    files.len() - 1
+                });
             files[idx].push((req_idx, req));
         }
 
@@ -469,7 +489,12 @@ fn read_file(
     };
     with_gdal(|gdal| {
         // The file's bands share one open dataset, closed when this returns.
-        let dataset = open_gdal_dataset(gdal, &first.path, None)?;
+        let open_options: Vec<&str> = first.open_options.iter().map(String::as_str).collect();
+        let dataset = open_gdal_dataset(
+            gdal,
+            &first.path,
+            (!open_options.is_empty()).then_some(open_options.as_slice()),
+        )?;
         let mut buffers = Vec::with_capacity(reqs.len());
         for (req_idx, req) in &reqs {
             if cancel.load(Ordering::Acquire) {
@@ -488,7 +513,7 @@ fn read_file(
                 return sedona_common::sedona_internal_err!(
                     "GDAL OutDb band metadata claims {:?} but file {} band {} is {:?}",
                     req.expected_dtype,
-                    req.uri,
+                    req.path,
                     req.band,
                     file_dtype
                 );
@@ -582,10 +607,34 @@ mod tests {
     use super::*;
     use crate::gdal_common::with_gdal;
     use sedona_gdal::raster::types::Buffer as GdalBuffer;
+    use sedona_raster::chunks::ChunkRef;
     use sedona_raster::io_budget::DEFAULT_RASTER_IO_CONCURRENCY;
     use sedona_raster::view_entries::ViewEntries;
     use sedona_schema::raster::BandDataType;
     use tempfile::TempDir;
+
+    /// Bind `$req` to a request for one whole-object chunk at `$path` on the
+    /// GDAL codec for source band `$band`, over an identity view. The
+    /// request's backing storage lands in the enclosing scope, so `$req`
+    /// outlives the statement.
+    macro_rules! gdal_request {
+        ($req:ident, $path:expr, $band:expr, $dims:expr, $shape:expr, $dtype:expr) => {
+            let chunk = [Some(ChunkRef::whole($path))];
+            let codecs = GdalCodec::new($band).to_json();
+            let dims: &[&str] = &$dims;
+            let shape: &[i64] = &$shape;
+            let view = ViewEntries::identity_for_shape(shape);
+            let $req = RasterLoadRequest {
+                chunks: &chunk,
+                chunk_shape: shape,
+                codecs: &codecs,
+                dim_names: dims,
+                source_shape: shape,
+                view: &view,
+                data_type: $dtype,
+            };
+        };
+    }
 
     /// Write a 2-row × 3-col UInt8 GeoTIFF and return its path. Pixels
     /// `0..6` in row-major C-order.
@@ -637,50 +686,145 @@ mod tests {
     async fn gdal_loader_reads_2d_uint8_geotiff() {
         let tmp = TempDir::new().unwrap();
         let path = write_uint8_geotiff(&tmp, "fixture.tif");
-        let uri = format!("{path}#band=1");
 
         let loader = GdalLoader::new();
-        let req = RasterLoadRequest {
-            uri: &uri,
-            dim_names: &["y", "x"],
-            source_shape: &[2, 3],
-            view: &ViewEntries::identity_for_shape(&[2, 3]),
-            data_type: BandDataType::UInt8,
-        };
+        gdal_request!(req, &path, 1, ["y", "x"], [2, 3], BandDataType::UInt8);
 
         let result = loader.load(&[&req]).await.unwrap();
         assert_eq!(result[0].bytes.len(), 6);
         assert_eq!(result[0].bytes.as_slice(), &[0u8, 1, 2, 3, 4, 5]);
     }
 
-    #[tokio::test]
-    async fn gdal_loader_defaults_to_band_1_when_fragment_missing() {
-        let tmp = TempDir::new().unwrap();
-        let path = write_uint8_geotiff(&tmp, "no_fragment.tif");
-        let uri = path;
-
+    #[test]
+    fn gdal_loader_supports_only_the_gdal_codec() {
+        // No catch-all any more: the loader claims exactly the one container
+        // codec, so nothing falls through to GDAL by accident.
         let loader = GdalLoader::new();
+        assert!(loader.supports(&[GDAL_CODEC]));
+        assert!(!loader.supports(&[]));
+        assert!(!loader.supports(&["bytes"]));
+        assert!(!loader.supports(&["bytes", "zstd"]));
+        assert!(!loader.supports(&[GDAL_CODEC, "zstd"]));
+        assert!(!loader.supports(&["sedona.zarr"]));
+    }
+
+    #[tokio::test]
+    async fn gdal_loader_rejects_a_pipeline_that_is_not_the_gdal_codec() {
+        // Dispatch should never send such a band here, but a direct caller
+        // gets a clear error naming the codec rather than a GDAL open.
+        let tmp = TempDir::new().unwrap();
+        let path = write_uint8_geotiff(&tmp, "other_codec.tif");
+        let chunk = [Some(ChunkRef::whole(&path))];
+        let shape = [2i64, 3];
+        let view = ViewEntries::identity_for_shape(&shape);
         let req = RasterLoadRequest {
-            uri: &uri,
+            chunks: &chunk,
+            chunk_shape: &shape,
+            codecs: r#"[{"name":"bytes","configuration":{"endian":"little"}}]"#,
             dim_names: &["y", "x"],
-            source_shape: &[2, 3],
-            view: &ViewEntries::identity_for_shape(&[2, 3]),
+            source_shape: &shape,
+            view: &view,
             data_type: BandDataType::UInt8,
         };
-        let result = loader.load(&[&req]).await.unwrap();
-        assert_eq!(result[0].bytes.len(), 6);
+        let err = GdalLoader::new().load(&[&req]).await.unwrap_err();
+        assert!(
+            err.to_string().contains(GDAL_CODEC),
+            "expected the codec name in the diagnostic, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn gdal_loader_rejects_multi_chunk_and_byte_range_bands() {
+        // GDAL decodes whole objects: a band split into several chunks, or a
+        // byte range of a file, is the generic loader's business.
+        let tmp = TempDir::new().unwrap();
+        let path = write_uint8_geotiff(&tmp, "tiles.tif");
+        let codecs = GdalCodec::new(1).to_json();
+        let shape = [2i64, 3];
+        let view = ViewEntries::identity_for_shape(&shape);
+
+        let two = [Some(ChunkRef::whole(&path)), Some(ChunkRef::whole(&path))];
+        let req = RasterLoadRequest {
+            chunks: &two,
+            chunk_shape: &[1, 3],
+            codecs: &codecs,
+            dim_names: &["y", "x"],
+            source_shape: &shape,
+            view: &view,
+            data_type: BandDataType::UInt8,
+        };
+        let err = GdalLoader::new().load(&[&req]).await.unwrap_err();
+        assert!(
+            err.to_string().contains("single-chunk"),
+            "expected a single-chunk diagnostic, got: {err}"
+        );
+
+        let range = [Some(ChunkRef::range(&path, 0, 6))];
+        let req = RasterLoadRequest {
+            chunks: &range,
+            chunk_shape: &shape,
+            codecs: &codecs,
+            dim_names: &["y", "x"],
+            source_shape: &shape,
+            view: &view,
+            data_type: BandDataType::UInt8,
+        };
+        let err = GdalLoader::new().load(&[&req]).await.unwrap_err();
+        assert!(
+            err.to_string().contains("whole objects only"),
+            "expected a whole-object diagnostic, got: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_one_carries_the_codec_configuration() {
+        // The source band and open options ride along into the owned
+        // request; a subdataset is refused until GDAL container formats are
+        // supported.
+        let chunk = [Some(ChunkRef::whole("/tmp/x.tif"))];
+        let shape = [2i64, 3];
+        let view = ViewEntries::identity_for_shape(&shape);
+        let mut codec = GdalCodec::new(3).with_driver("GTiff");
+        codec.open_options = vec!["NUM_THREADS=2".to_string()];
+        let codecs = codec.to_json();
+        let req = RasterLoadRequest {
+            chunks: &chunk,
+            chunk_shape: &shape,
+            codecs: &codecs,
+            dim_names: &["y", "x"],
+            source_shape: &shape,
+            view: &view,
+            data_type: BandDataType::UInt8,
+        };
+        let owned = GdalLoader::new().validate_one(&req).unwrap();
+        assert_eq!(owned.path, "/tmp/x.tif");
+        assert_eq!(owned.band, 3);
+        assert_eq!(owned.open_options, vec!["NUM_THREADS=2".to_string()]);
+
+        codec.subdataset = Some("tas".to_string());
+        let codecs = codec.to_json();
+        let req = RasterLoadRequest {
+            codecs: &codecs,
+            ..req
+        };
+        let err = GdalLoader::new().validate_one(&req).unwrap_err();
+        assert!(
+            err.to_string().contains("subdataset"),
+            "expected a subdataset diagnostic, got: {err}"
+        );
     }
 
     #[tokio::test]
     async fn gdal_loader_rejects_non_2d_source_shape() {
         let loader = GdalLoader::new();
-        let req = RasterLoadRequest {
-            uri: "ignored",
-            dim_names: &["t", "y", "x"],
-            source_shape: &[2, 3, 4],
-            view: &ViewEntries::identity_for_shape(&[2, 3, 4]),
-            data_type: BandDataType::UInt8,
-        };
+        gdal_request!(
+            req,
+            "ignored",
+            1,
+            ["t", "y", "x"],
+            [2, 3, 4],
+            BandDataType::UInt8
+        );
         let err = loader.load(&[&req]).await.unwrap_err();
         assert!(
             err.to_string().contains("2-D"),
@@ -691,13 +835,8 @@ mod tests {
     #[tokio::test]
     async fn gdal_loader_rejects_unrecognized_dim_names() {
         let loader = GdalLoader::new();
-        let req = RasterLoadRequest {
-            uri: "ignored",
-            dim_names: &["x", "y"], // transposed — not a recognized (y, x) pair
-            source_shape: &[2, 3],
-            view: &ViewEntries::identity_for_shape(&[2, 3]),
-            data_type: BandDataType::UInt8,
-        };
+        // transposed — not a recognized (y, x) pair
+        gdal_request!(req, "ignored", 1, ["x", "y"], [2, 3], BandDataType::UInt8);
         let err = loader.load(&[&req]).await.unwrap_err();
         assert!(
             err.to_string().contains("spatial dim pair"),
@@ -709,16 +848,9 @@ mod tests {
     async fn gdal_loader_accepts_latlon_dim_names() {
         let tmp = TempDir::new().unwrap();
         let path = write_uint8_geotiff(&tmp, "latlon.tif");
-        let uri = format!("{path}#band=1");
 
         let loader = GdalLoader::new();
-        let req = RasterLoadRequest {
-            uri: &uri,
-            dim_names: &["lat", "lon"],
-            source_shape: &[2, 3],
-            view: &ViewEntries::identity_for_shape(&[2, 3]),
-            data_type: BandDataType::UInt8,
-        };
+        gdal_request!(req, &path, 1, ["lat", "lon"], [2, 3], BandDataType::UInt8);
         // lat/lon is a recognized spatial pair, so the request is accepted and
         // the GeoTIFF is read just like a ["y", "x"] band.
         let result = loader.load(&[&req]).await.unwrap();
@@ -729,17 +861,11 @@ mod tests {
     async fn gdal_loader_errors_when_dtype_disagrees_with_file() {
         let tmp = TempDir::new().unwrap();
         let path = write_uint8_geotiff(&tmp, "dtype_mismatch.tif");
-        let uri = format!("{path}#band=1");
 
         let loader = GdalLoader::new();
-        let req = RasterLoadRequest {
-            uri: &uri,
-            dim_names: &["y", "x"],
-            source_shape: &[2, 3],
-            view: &ViewEntries::identity_for_shape(&[2, 3]), // File is UInt8 but we claim Int16 — should fail with a
-            // clear dtype-mismatch message, not garbled bytes.
-            data_type: BandDataType::Int16,
-        };
+        // File is UInt8 but we claim Int16 — should fail with a clear
+        // dtype-mismatch message, not garbled bytes.
+        gdal_request!(req, &path, 1, ["y", "x"], [2, 3], BandDataType::Int16);
         let err = loader.load(&[&req]).await.unwrap_err();
         let msg = err.to_string();
         assert!(
@@ -751,13 +877,14 @@ mod tests {
     #[tokio::test]
     async fn gdal_loader_errors_on_missing_file() {
         let loader = GdalLoader::new();
-        let req = RasterLoadRequest {
-            uri: "/nonexistent/path/to/file.tif#band=1",
-            dim_names: &["y", "x"],
-            source_shape: &[2, 3],
-            view: &ViewEntries::identity_for_shape(&[2, 3]),
-            data_type: BandDataType::UInt8,
-        };
+        gdal_request!(
+            req,
+            "/nonexistent/path/to/file.tif",
+            1,
+            ["y", "x"],
+            [2, 3],
+            BandDataType::UInt8
+        );
         let err = loader.load(&[&req]).await.unwrap_err();
         // GDAL's "no such file" error message wraps through our convert.
         assert!(err.to_string().to_lowercase().contains("nonexistent"));
@@ -767,17 +894,9 @@ mod tests {
     async fn gdal_loader_errors_on_band_index_out_of_range() {
         let tmp = TempDir::new().unwrap();
         let path = write_uint8_geotiff(&tmp, "oob_band.tif");
-        // File has 1 band; ask for band 5.
-        let uri = format!("{path}#band=5");
-
+        // File has 1 band; the codec asks for band 5.
         let loader = GdalLoader::new();
-        let req = RasterLoadRequest {
-            uri: &uri,
-            dim_names: &["y", "x"],
-            source_shape: &[2, 3],
-            view: &ViewEntries::identity_for_shape(&[2, 3]),
-            data_type: BandDataType::UInt8,
-        };
+        gdal_request!(req, &path, 5, ["y", "x"], [2, 3], BandDataType::UInt8);
         let err = loader.load(&[&req]).await.unwrap_err();
         let msg = err.to_string();
         // GDAL surfaces this as a band-index error; just verify the
@@ -795,13 +914,14 @@ mod tests {
         // 2^31 elements × 4 bytes = 8 GiB, well over the 4 GiB cap.
         // (Source shape values are u64, so this fits the request
         // struct; only the cap should reject it.)
-        let req = RasterLoadRequest {
-            uri: "ignored",
-            dim_names: &["y", "x"],
-            source_shape: &[1 << 16, 1 << 16],
-            view: &ViewEntries::identity_for_shape(&[1 << 16, 1 << 16]),
-            data_type: BandDataType::Float32,
-        };
+        gdal_request!(
+            req,
+            "ignored",
+            1,
+            ["y", "x"],
+            [1 << 16, 1 << 16],
+            BandDataType::Float32
+        );
         let err = loader.load(&[&req]).await.unwrap_err();
         let msg = err.to_string();
         assert!(
@@ -816,16 +936,9 @@ mod tests {
         // multiple strips, exercising the block-iter loop.
         let tmp = TempDir::new().unwrap();
         let path = write_pattern_geotiff(&tmp, "multistrip.tif", 16, 64);
-        let uri = format!("{path}#band=1");
 
         let loader = GdalLoader::new();
-        let req = RasterLoadRequest {
-            uri: &uri,
-            dim_names: &["y", "x"],
-            source_shape: &[64, 16],
-            view: &ViewEntries::identity_for_shape(&[64, 16]),
-            data_type: BandDataType::UInt8,
-        };
+        gdal_request!(req, &path, 1, ["y", "x"], [64, 16], BandDataType::UInt8);
         let result = loader.load(&[&req]).await.unwrap();
         let expected: Vec<u8> = (0..16 * 64).map(|i| (i % 251) as u8).collect();
         assert_eq!(result[0].bytes.as_slice(), expected.as_slice());
@@ -882,23 +995,30 @@ mod tests {
         path_str
     }
 
-    /// `n` distinct 2 × 3 UInt8 GeoTIFFs, returned as `#band=1` URIs.
+    /// `n` distinct 2 × 3 UInt8 GeoTIFFs, returned as their paths.
     fn write_many_geotiffs(dir: &TempDir, n: usize) -> Vec<String> {
         (0..n)
-            .map(|i| format!("{}#band=1", write_uint8_geotiff(dir, &format!("f{i}.tif"))))
+            .map(|i| write_uint8_geotiff(dir, &format!("f{i}.tif")))
             .collect()
     }
 
-    /// Load every URI as a 2 × 3 UInt8 band in one call.
-    async fn load_uris(
+    /// Load every path's band 1 as a 2 × 3 UInt8 band in one call.
+    async fn load_paths(
         loader: &GdalLoader,
-        uris: &[String],
+        paths: &[String],
     ) -> Result<Vec<RasterLoadResult>, ArrowError> {
         let view = ViewEntries::identity_for_shape(&[2, 3]);
-        let reqs: Vec<RasterLoadRequest> = uris
+        let codecs = GdalCodec::new(1).to_json();
+        let chunks: Vec<[Option<ChunkRef<'_>>; 1]> = paths
             .iter()
-            .map(|uri| RasterLoadRequest {
-                uri,
+            .map(|path| [Some(ChunkRef::whole(path))])
+            .collect();
+        let reqs: Vec<RasterLoadRequest> = chunks
+            .iter()
+            .map(|chunk| RasterLoadRequest {
+                chunks: chunk,
+                chunk_shape: &[2, 3],
+                codecs: &codecs,
                 dim_names: &["y", "x"],
                 source_shape: &[2, 3],
                 view: &view,
@@ -933,23 +1053,26 @@ mod tests {
         let a = write_uint8_geotiff(&tmp, "a.tif"); // 2 × 3, pixels 0..6
         let b = write_pattern_geotiff(&tmp, "b.tif", 4, 2); // 2 × 4, pixels 0..8
         let c = write_two_band_geotiff(&tmp, "c.tif"); // 2 × 3, bands 10.. and 20..
-        let a_uri = format!("{a}#band=1");
-        let b_uri = format!("{b}#band=1");
-        let c1_uri = format!("{c}#band=1");
-        let c2_uri = format!("{c}#band=2");
+        let a_chunk = [Some(ChunkRef::whole(&a))];
+        let b_chunk = [Some(ChunkRef::whole(&b))];
+        let c_chunk = [Some(ChunkRef::whole(&c))];
+        let band1 = GdalCodec::new(1).to_json();
+        let band2 = GdalCodec::new(2).to_json();
         let view_a = ViewEntries::identity_for_shape(&[2, 3]);
         let view_b = ViewEntries::identity_for_shape(&[2, 4]);
-        let req = |uri, shape, view| RasterLoadRequest {
-            uri,
+        let req = |chunks, codecs, shape, view| RasterLoadRequest {
+            chunks,
+            chunk_shape: shape,
+            codecs,
             dim_names: &["y", "x"],
             source_shape: shape,
             view,
             data_type: BandDataType::UInt8,
         };
-        let req_a = req(&a_uri, &[2, 3], &view_a);
-        let req_b = req(&b_uri, &[2, 4], &view_b);
-        let req_c1 = req(&c1_uri, &[2, 3], &view_a);
-        let req_c2 = req(&c2_uri, &[2, 3], &view_a);
+        let req_a = req(&a_chunk, &band1, &[2, 3], &view_a);
+        let req_b = req(&b_chunk, &band1, &[2, 4], &view_b);
+        let req_c1 = req(&c_chunk, &band1, &[2, 3], &view_a);
+        let req_c2 = req(&c_chunk, &band2, &[2, 3], &view_a);
 
         // Serial and fanned-out must agree, and both must preserve request
         // order, including two bands of one file split around other files.
@@ -973,19 +1096,23 @@ mod tests {
     async fn gdal_loader_fan_out_preserves_order_across_many_files() {
         let tmp = TempDir::new().unwrap();
         // Distinct contents per file so a misplaced result is observable.
-        let uris: Vec<String> = (0..48)
-            .map(|i| {
-                let path = write_pattern_geotiff(&tmp, &format!("p{i}.tif"), 3, 2 + i);
-                format!("{path}#band=1")
-            })
+        let paths: Vec<String> = (0..48)
+            .map(|i| write_pattern_geotiff(&tmp, &format!("p{i}.tif"), 3, 2 + i))
             .collect();
+        let chunks: Vec<[Option<ChunkRef<'_>>; 1]> = paths
+            .iter()
+            .map(|path| [Some(ChunkRef::whole(path))])
+            .collect();
+        let codecs = GdalCodec::new(1).to_json();
         let views: Vec<ViewEntries> = (0..48)
             .map(|i| ViewEntries::identity_for_shape(&[2 + i as i64, 3]))
             .collect();
         let shapes: Vec<[i64; 2]> = (0..48).map(|i| [2 + i as i64, 3]).collect();
         let reqs: Vec<RasterLoadRequest> = (0..48)
             .map(|i| RasterLoadRequest {
-                uri: &uris[i],
+                chunks: &chunks[i],
+                chunk_shape: &shapes[i],
+                codecs: &codecs,
                 dim_names: &["y", "x"],
                 source_shape: &shapes[i],
                 view: &views[i],
@@ -1007,15 +1134,15 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn concurrent_loads_share_one_io_budget() {
         let tmp = TempDir::new().unwrap();
-        let uris = Arc::new(write_many_geotiffs(&tmp, 16));
+        let paths = Arc::new(write_many_geotiffs(&tmp, 16));
         let loader = GdalLoader::new().with_concurrency(2);
 
         let mut tasks = Vec::new();
         for _ in 0..8 {
             let loader = loader.clone();
-            let uris = Arc::clone(&uris);
+            let paths = Arc::clone(&paths);
             tasks.push(tokio::spawn(async move {
-                load_uris(&loader, &uris).await.unwrap().len()
+                load_paths(&loader, &paths).await.unwrap().len()
             }));
         }
         for task in tasks {
@@ -1032,11 +1159,11 @@ mod tests {
         // One unreadable file among good ones fails the whole call with that
         // file's error, at any budget, and leaves the budget intact.
         let tmp = TempDir::new().unwrap();
-        let mut uris = write_many_geotiffs(&tmp, 12);
-        uris.insert(5, "/nonexistent/path/to/file.tif#band=1".to_string());
+        let mut paths = write_many_geotiffs(&tmp, 12);
+        paths.insert(5, "/nonexistent/path/to/file.tif".to_string());
         for concurrency in [1, 4, DEFAULT_RASTER_IO_CONCURRENCY] {
             let loader = GdalLoader::new().with_concurrency(concurrency);
-            let err = load_uris(&loader, &uris).await.unwrap_err();
+            let err = load_paths(&loader, &paths).await.unwrap_err();
             assert!(
                 err.to_string().to_lowercase().contains("nonexistent"),
                 "concurrency {concurrency}: {err}"
@@ -1061,13 +1188,13 @@ mod tests {
         // takes the permit when it frees, sees the call is gone, and gives
         // it back without opening anything.
         let tmp = TempDir::new().unwrap();
-        let uris = write_many_geotiffs(&tmp, 4);
+        let paths = write_many_geotiffs(&tmp, 4);
         let loader = GdalLoader::new().with_concurrency(1);
         let held = loader.budget().try_acquire().unwrap();
 
         let timed_out = tokio::time::timeout(
             std::time::Duration::from_millis(50),
-            load_uris(&loader, &uris),
+            load_paths(&loader, &paths),
         )
         .await;
         assert!(timed_out.is_err(), "load should wait on the held budget");
@@ -1084,7 +1211,7 @@ mod tests {
         assert_eq!(loader.budget().in_use(), 0);
         assert_eq!(loader.peak_in_flight(), 0, "no file should have started");
         // The loader is still usable after the abandoned call.
-        assert_eq!(load_uris(&loader, &uris).await.unwrap().len(), 4);
+        assert_eq!(load_paths(&loader, &paths).await.unwrap().len(), 4);
     }
 
     /// Pixel reads and `RS_FromPath` opens drawing on one session budget
@@ -1107,11 +1234,7 @@ mod tests {
         use std::sync::RwLock;
 
         let tmp = TempDir::new().unwrap();
-        let uris = Arc::new(write_many_geotiffs(&tmp, 24));
-        let paths: Vec<String> = uris
-            .iter()
-            .map(|uri| uri.trim_end_matches("#band=1").to_string())
-            .collect();
+        let paths = Arc::new(write_many_geotiffs(&tmp, 24));
 
         for limit in [1, 3] {
             // A session's wiring: one budget, handed to the loader and to
@@ -1135,14 +1258,15 @@ mod tests {
             let mut tasks = Vec::new();
             for _ in 0..4 {
                 let loader = loader.clone();
-                let uris = Arc::clone(&uris);
+                let loader_paths = Arc::clone(&paths);
                 tasks.push(tokio::spawn(async move {
-                    load_uris(&loader, &uris).await.unwrap().len()
+                    load_paths(&loader, &loader_paths).await.unwrap().len()
                 }));
 
                 let kernel = Arc::clone(&kernel);
                 let config = Arc::clone(&config);
-                let input = ColumnarValue::Array(Arc::new(StringArray::from(paths.clone())));
+                let input =
+                    ColumnarValue::Array(Arc::new(StringArray::from(paths.as_ref().clone())));
                 tasks.push(tokio::spawn(async move {
                     match kernel
                         .invoke_batch_from_args(
@@ -1200,11 +1324,7 @@ mod tests {
         use std::time::Duration;
 
         let tmp = TempDir::new().unwrap();
-        let uris = write_many_geotiffs(&tmp, 4);
-        let paths: Vec<String> = uris
-            .iter()
-            .map(|uri| uri.trim_end_matches("#band=1").to_string())
-            .collect();
+        let paths = write_many_geotiffs(&tmp, 4);
         let budget = RasterIoBudget::new(1);
         let loader = GdalLoader::new().with_budget(budget.clone());
         let mut config = ConfigOptions::new();
@@ -1232,8 +1352,8 @@ mod tests {
                         std::thread::sleep(Duration::from_millis(50));
                         drop(held);
                     });
-                    let input = ColumnarValue::Array(Arc::new(StringArray::from(paths)));
-                    let (loaded, opened) = tokio::join!(load_uris(&loader, &uris), async {
+                    let input = ColumnarValue::Array(Arc::new(StringArray::from(paths.clone())));
+                    let (loaded, opened) = tokio::join!(load_paths(&loader, &paths), async {
                         RsFromPath::default().invoke_batch_from_args(
                             &[],
                             &[input],

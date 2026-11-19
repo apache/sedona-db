@@ -44,6 +44,7 @@ use axum::middleware::{self, Next};
 use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use sedona_gdal::global::with_global_gdal;
 use sedona_gdal::raster::types::{Buffer as GdalBuffer, GdalDataType};
+use sedona_raster::chunks::{ChunkRef, GdalCodec};
 use sedona_raster::raster_loader::{AsyncRasterLoader, RasterLoadRequest};
 use sedona_raster::view_entries::ViewEntries;
 use sedona_raster_gdal::GdalLoader;
@@ -110,15 +111,22 @@ async fn load_all(prefix: &str, generation: &str, loader: &GdalLoader, callers: 
         .map(|c| {
             let loader = loader.clone();
             let uris: Vec<String> = (c * per_caller..(c + 1) * per_caller)
-                .map(|i| format!("{prefix}/{generation}/cog{i}.tif#band=1"))
+                .map(|i| format!("{prefix}/{generation}/cog{i}.tif"))
                 .collect();
             tokio::spawn(async move {
                 let shape = [SIDE as i64, SIDE as i64];
                 let view = ViewEntries::identity_for_shape(&shape);
-                let reqs: Vec<RasterLoadRequest> = uris
+                let codecs = GdalCodec::new(1).to_json();
+                let chunks: Vec<[Option<ChunkRef>; 1]> = uris
                     .iter()
-                    .map(|uri| RasterLoadRequest {
-                        uri,
+                    .map(|uri| [Some(ChunkRef::whole(uri))])
+                    .collect();
+                let reqs: Vec<RasterLoadRequest> = chunks
+                    .iter()
+                    .map(|chunk| RasterLoadRequest {
+                        chunks: chunk,
+                        chunk_shape: &shape,
+                        codecs: &codecs,
                         dim_names: &["y", "x"],
                         source_shape: &shape,
                         view: &view,

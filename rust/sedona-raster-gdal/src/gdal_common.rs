@@ -575,6 +575,7 @@ mod tests {
     use crate::utils::Grid;
     use sedona_raster::array::RasterStructArray;
     use sedona_raster::builder::{RasterBuilder, StartBandArgs};
+    use sedona_raster::chunks::{ChunkRef, GdalCodec};
     use sedona_testing::rasters::{InDbTestBand, build_in_db_raster};
 
     fn single_raster<'a>(
@@ -960,11 +961,13 @@ mod tests {
         builder
             .start_raster_2d(1, 1, 0.0, 1.0, 1.0, -1.0, 0.0, 0.0, None)
             .unwrap();
+        let chunk = [Some(ChunkRef::whole("/tmp/test.tif"))];
+        let codecs = GdalCodec::new(1).to_json();
         builder
             .start_band(StartBandArgs {
                 nodata: Some(&[0u8]),
-                outdb_uri: Some("/tmp/test.tif#band=1"),
                 ..StartBandArgs::new(&["y", "x"], &[1, 1], BandDataType::UInt8)
+                    .with_single_chunk(&chunk, &codecs)
             })
             .unwrap();
         builder.band_data_writer().append_value([]);

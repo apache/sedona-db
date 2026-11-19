@@ -242,6 +242,7 @@ fn _lib(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<expr::PyExpr>()?;
     m.add_class::<expr::PySortExpr>()?;
     m.add_class::<raster_loader::PyBandDataType>()?;
+    m.add_class::<raster_loader::PyChunkRef>()?;
     m.add_class::<raster_loader::PyRasterLoaderWrapper>()?;
     m.add_class::<raster_loader::PyRasterLoadRequest>()?;
     m.add_class::<raster_loader::PyRasterLoadResult>()?;

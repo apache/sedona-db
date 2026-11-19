@@ -27,6 +27,7 @@ use pyo3::{
     Py, PyAny, Python,
 };
 use sedona_raster::{
+    chunks::ChunkRef,
     raster_loader::{AsyncRasterLoader, RasterLoadRequest, RasterLoadResult},
     view_entries::{ViewEntries, ViewEntry},
 };
@@ -37,20 +38,21 @@ use sedona_schema::raster::BandDataType;
 /// This struct wraps Python callables that implement the raster loading logic.
 /// The Python class should provide:
 /// - `name() -> str`: Returns the loader name for diagnostics
-/// - `supports_format(format: Optional[str]) -> bool`: Whether this loader handles the format
+/// - `supports(codec_names: List[str]) -> bool`: Whether this loader decodes a
+///   band whose `codecs` pipeline has these codec names
 /// - `load(requests: List[PyRasterLoadRequest]) -> List[PyRasterLoadResult]`: Load the raster data
 #[derive(Debug)]
 pub struct PyRasterLoader {
     /// Cached loader name (called once at construction)
     name: String,
-    /// Python callable that checks if a format is supported
-    py_supports_format: Py<PyAny>,
+    /// Python callable that checks whether a codec pipeline is supported
+    py_supports: Py<PyAny>,
     /// Python callable that loads raster data
     py_load: Py<PyAny>,
 }
 
 impl PyRasterLoader {
-    pub fn new(py_name: Py<PyAny>, py_supports_format: Py<PyAny>, py_load: Py<PyAny>) -> Self {
+    pub fn new(py_name: Py<PyAny>, py_supports: Py<PyAny>, py_load: Py<PyAny>) -> Self {
         // Call py_name() once and cache the result
         let name = Python::attach(|py| {
             py_name
@@ -61,7 +63,7 @@ impl PyRasterLoader {
 
         Self {
             name,
-            py_supports_format,
+            py_supports,
             py_load,
         }
     }
@@ -73,11 +75,11 @@ impl AsyncRasterLoader for PyRasterLoader {
         &self.name
     }
 
-    fn supports_format(&self, format: Option<&str>) -> bool {
+    fn supports(&self, codec_names: &[&str]) -> bool {
         Python::attach(|py| {
             let result = self
-                .py_supports_format
-                .call(py, (format,), None)
+                .py_supports
+                .call(py, (codec_names.to_vec(),), None)
                 .and_then(|obj| obj.extract::<bool>(py));
             result.unwrap_or(false)
         })
@@ -88,7 +90,13 @@ impl AsyncRasterLoader for PyRasterLoader {
         let owned_requests: Vec<OwnedPyLoadRequest> = reqs
             .iter()
             .map(|req| OwnedPyLoadRequest {
-                uri: req.uri.to_string(),
+                chunks: req
+                    .chunks
+                    .iter()
+                    .map(|chunk| chunk.as_ref().map(OwnedChunk::from))
+                    .collect(),
+                chunk_shape: req.chunk_shape.to_vec(),
+                codecs: req.codecs.to_string(),
                 dim_names: req.dim_names.iter().map(|s| s.to_string()).collect(),
                 source_shape: req.source_shape.to_vec(),
                 view: req.view.as_slice().to_vec(),
@@ -110,7 +118,13 @@ impl AsyncRasterLoader for PyRasterLoader {
                 let py_requests: Vec<PyRasterLoadRequest> = owned_requests
                     .iter()
                     .map(|req| PyRasterLoadRequest {
-                        uri: req.uri.clone(),
+                        chunks: req
+                            .chunks
+                            .iter()
+                            .map(|chunk| chunk.as_ref().map(PyChunkRef::from))
+                            .collect(),
+                        chunk_shape: req.chunk_shape.clone(),
+                        codecs: req.codecs.clone(),
                         dim_names: req.dim_names.clone(),
                         source_shape: req.source_shape.clone(),
                         view: req.view.iter().map(|v| PyViewEntry::from(*v)).collect(),
@@ -225,11 +239,100 @@ impl AsyncRasterLoader for PyRasterLoader {
 
 /// Owned version of RasterLoadRequest for passing to blocking task
 struct OwnedPyLoadRequest {
-    uri: String,
+    /// The band's chunk grid in row-major order; `None` is a missing chunk.
+    chunks: Vec<Option<OwnedChunk>>,
+    chunk_shape: Vec<i64>,
+    codecs: String,
     dim_names: Vec<String>,
     source_shape: Vec<i64>,
     view: Vec<ViewEntry>,
     data_type: BandDataType,
+}
+
+/// Owned version of one [`ChunkRef`]: the chunk's location fields, copied
+/// out of the input batch so a request can outlive it.
+struct OwnedChunk {
+    uri: Option<String>,
+    offset: Option<i64>,
+    size: Option<i64>,
+    content_type: Option<String>,
+    checksum: Option<String>,
+}
+
+impl From<&ChunkRef<'_>> for OwnedChunk {
+    fn from(chunk: &ChunkRef<'_>) -> Self {
+        Self {
+            uri: chunk.uri.map(str::to_string),
+            offset: chunk.offset,
+            size: chunk.size,
+            content_type: chunk.content_type.map(str::to_string),
+            checksum: chunk.checksum.map(str::to_string),
+        }
+    }
+}
+
+/// Python-visible chunk reference: one element of a band's `chunks` list,
+/// shaped like the Iceberg V4 `file` type. `uri` names the object; `offset`
+/// and `size` select a byte range of it (`offset` requires `size`; neither
+/// means the whole object); `checksum` is `ETAG:<etag>` of the object the
+/// chunk was anchored against; `content_type` is carried but unused, since
+/// the band's `codecs` decide decoding. `inline` is always null and is not
+/// exposed.
+// Clone only: from_py_object clones the chunk, which clippy flags as
+// clone_on_copy if the type is also Copy.
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub struct PyChunkRef {
+    #[pyo3(get)]
+    pub uri: Option<String>,
+    #[pyo3(get)]
+    pub offset: Option<i64>,
+    #[pyo3(get)]
+    pub size: Option<i64>,
+    #[pyo3(get)]
+    pub content_type: Option<String>,
+    #[pyo3(get)]
+    pub checksum: Option<String>,
+}
+
+#[pymethods]
+impl PyChunkRef {
+    #[new]
+    #[pyo3(signature = (uri, offset=None, size=None, content_type=None, checksum=None))]
+    fn new(
+        uri: Option<String>,
+        offset: Option<i64>,
+        size: Option<i64>,
+        content_type: Option<String>,
+        checksum: Option<String>,
+    ) -> Self {
+        Self {
+            uri,
+            offset,
+            size,
+            content_type,
+            checksum,
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "PyChunkRef(uri={:?}, offset={:?}, size={:?}, content_type={:?}, checksum={:?})",
+            self.uri, self.offset, self.size, self.content_type, self.checksum
+        )
+    }
+}
+
+impl From<&OwnedChunk> for PyChunkRef {
+    fn from(chunk: &OwnedChunk) -> Self {
+        Self {
+            uri: chunk.uri.clone(),
+            offset: chunk.offset,
+            size: chunk.size,
+            content_type: chunk.content_type.clone(),
+            checksum: chunk.checksum.clone(),
+        }
+    }
 }
 
 /// Intermediate result data extracted from Python.
@@ -239,11 +342,20 @@ struct PyRasterLoadResultData {
     view: Vec<ViewEntry>,
 }
 
-/// Python-visible raster load request
+/// Python-visible raster load request: one OutDb band to materialise.
+///
+/// `chunks` is the band's chunk grid in row-major order (`None` entries are
+/// missing chunks), each chunk `chunk_shape` pixels, every one decoded by the
+/// `codecs` pipeline (Zarr v3 codec JSON). A band created by `RS_FromPath` or
+/// `Raster.lazy` has exactly one chunk, the whole object.
 #[pyclass]
 pub struct PyRasterLoadRequest {
     #[pyo3(get)]
-    pub uri: String,
+    pub chunks: Vec<Option<PyChunkRef>>,
+    #[pyo3(get)]
+    pub chunk_shape: Vec<i64>,
+    #[pyo3(get)]
+    pub codecs: String,
     #[pyo3(get)]
     pub dim_names: Vec<String>,
     #[pyo3(get)]
@@ -257,9 +369,17 @@ pub struct PyRasterLoadRequest {
 #[pymethods]
 impl PyRasterLoadRequest {
     fn __repr__(&self) -> String {
+        let first_uri = self
+            .chunks
+            .first()
+            .and_then(|chunk| chunk.as_ref())
+            .and_then(|chunk| chunk.uri.as_deref());
         format!(
-            "PyRasterLoadRequest(uri={:?}, source_shape={:?})",
-            self.uri, self.source_shape
+            "PyRasterLoadRequest(chunks={}, first_uri={:?}, codecs={:?}, source_shape={:?})",
+            self.chunks.len(),
+            first_uri,
+            self.codecs,
+            self.source_shape
         )
     }
 }
@@ -400,11 +520,11 @@ impl PyRasterLoadResult {
 #[pyfunction]
 pub fn py_raster_loader(
     py_name: Py<PyAny>,
-    py_supports_format: Py<PyAny>,
+    py_supports: Py<PyAny>,
     py_load: Py<PyAny>,
 ) -> PyRasterLoaderWrapper {
     PyRasterLoaderWrapper {
-        inner: Arc::new(PyRasterLoader::new(py_name, py_supports_format, py_load)),
+        inner: Arc::new(PyRasterLoader::new(py_name, py_supports, py_load)),
     }
 }
 
@@ -421,8 +541,9 @@ impl PyRasterLoaderWrapper {
         self.inner.name()
     }
 
-    fn supports_format(&self, format: Option<&str>) -> bool {
-        self.inner.supports_format(format)
+    fn supports(&self, codec_names: Vec<String>) -> bool {
+        let names: Vec<&str> = codec_names.iter().map(String::as_str).collect();
+        self.inner.supports(&names)
     }
 
     fn __repr__(&self) -> String {

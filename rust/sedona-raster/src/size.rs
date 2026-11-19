@@ -101,10 +101,12 @@ pub fn estimated_row_bytes(rasters: &RasterStructArray<'_>) -> Result<Vec<u64>, 
 mod tests {
     use super::*;
     use crate::builder::{RasterBuilder, StartBandArgs};
+    use crate::chunks::ChunkRef;
     use crate::view_entries::{ViewEntries, ViewEntry};
     use arrow_array::StructArray;
 
     const TRANSFORM: [f64; 6] = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+    const MOCK_CODECS: &str = r#"[{"name":"mock"}]"#;
 
     enum Storage {
         InDb(Vec<u8>),
@@ -123,14 +125,13 @@ mod tests {
         let mut b = RasterBuilder::new(1);
         b.start_raster_nd(&TRANSFORM, &["y", "x"], spatial_shape, None)
             .unwrap();
-        let outdb = matches!(storage, Storage::OutDb);
-        b.start_band(StartBandArgs {
-            view,
-            outdb_uri: outdb.then_some("mock://band"),
-            outdb_format: outdb.then_some("mock"),
-            ..StartBandArgs::new(&["y", "x"], source_shape, data_type)
-        })
-        .unwrap();
+        let chunk = [Some(ChunkRef::whole("mock://band"))];
+        let base = StartBandArgs::new(&["y", "x"], source_shape, data_type);
+        let base = match storage {
+            Storage::InDb(_) => base,
+            Storage::OutDb => base.with_single_chunk(&chunk, MOCK_CODECS),
+        };
+        b.start_band(StartBandArgs { view, ..base }).unwrap();
         match storage {
             Storage::InDb(bytes) => b.band_data_writer().append_value(bytes),
             Storage::OutDb => b.band_data_writer().append_value([0u8; 0]),
@@ -215,12 +216,11 @@ mod tests {
         // Row 0: two bands, 2×3 UInt8 + 2×3 Int16 = 6 + 12.
         b.start_raster_nd(&TRANSFORM, &["y", "x"], &[2, 3], None)
             .unwrap();
+        let chunk = [Some(ChunkRef::whole("mock://band"))];
         for dt in [BandDataType::UInt8, BandDataType::Int16] {
-            b.start_band(StartBandArgs {
-                outdb_uri: Some("mock://band"),
-                outdb_format: Some("mock"),
-                ..StartBandArgs::new(&["y", "x"], &[2, 3], dt)
-            })
+            b.start_band(
+                StartBandArgs::new(&["y", "x"], &[2, 3], dt).with_single_chunk(&chunk, MOCK_CODECS),
+            )
             .unwrap();
             b.band_data_writer().append_value([0u8; 0]);
             b.finish_band().unwrap();
@@ -246,12 +246,11 @@ mod tests {
         let mut b = RasterBuilder::new(4);
         b.start_raster_nd(&TRANSFORM, &["y", "x"], &[2, 3], None)
             .unwrap();
+        let chunk = [Some(ChunkRef::whole("mock://band"))];
         for dt in [BandDataType::UInt8, BandDataType::Float64] {
-            b.start_band(StartBandArgs {
-                outdb_uri: Some("mock://band"),
-                outdb_format: Some("mock"),
-                ..StartBandArgs::new(&["y", "x"], &[2, 3], dt)
-            })
+            b.start_band(
+                StartBandArgs::new(&["y", "x"], &[2, 3], dt).with_single_chunk(&chunk, MOCK_CODECS),
+            )
             .unwrap();
             b.band_data_writer().append_value([0u8; 0]);
             b.finish_band().unwrap();

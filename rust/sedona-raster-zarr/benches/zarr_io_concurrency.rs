@@ -36,9 +36,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use sedona_raster::chunks::ChunkRef;
 use sedona_raster::raster_loader::{AsyncRasterLoader, RasterLoadRequest};
 use sedona_raster::view_entries::ViewEntries;
-use sedona_raster_zarr::ZarrLoader;
+use sedona_raster_zarr::{ZarrCodec, ZarrLoader, chunk_object_uri};
 use sedona_schema::raster::BandDataType;
 use tempfile::TempDir;
 use zarrs::array::{ArrayBuilder, FillValue, data_type as zarr_dtype};
@@ -81,7 +82,9 @@ fn build_store(dir: &TempDir) {
 /// Owned request data, so callers can be spawned as tasks and rebuild the
 /// borrowed `RasterLoadRequest`s per call.
 struct Owned {
-    uris: Vec<String>,
+    /// Per chunk: the band's `codecs` JSON and the chunk object's uri, as
+    /// the Zarr reader emits them.
+    anchors: Vec<(String, String)>,
     shape: [i64; 2],
     view: ViewEntries,
 }
@@ -90,9 +93,14 @@ impl Owned {
     fn new(store_uri: &str) -> Self {
         let shape = [CHUNK_SIDE as i64, CHUNK_SIDE as i64];
         Self {
-            uris: (0..ARRAYS)
+            anchors: (0..ARRAYS)
                 .flat_map(|a| (0..CHUNKS_PER_ARRAY).map(move |j| (a, j)))
-                .map(|(a, j)| format!("{store_uri}#array=band{a}&chunk=0,{j}"))
+                .map(|(a, j)| {
+                    (
+                        ZarrCodec::new(store_uri, &format!("band{a}"), &[0, j]).to_json(),
+                        chunk_object_uri(store_uri, &format!("band{a}/c/0/{j}")),
+                    )
+                })
                 .collect(),
             view: ViewEntries::identity_for_shape(&shape),
             shape,
@@ -100,10 +108,17 @@ impl Owned {
     }
 
     async fn load(&self, loader: &ZarrLoader, range: std::ops::Range<usize>) {
-        let reqs: Vec<RasterLoadRequest> = self.uris[range]
+        let chunks: Vec<[Option<ChunkRef>; 1]> = self.anchors[range.clone()]
             .iter()
-            .map(|uri| RasterLoadRequest {
-                uri,
+            .map(|(_, uri)| [Some(ChunkRef::whole(uri))])
+            .collect();
+        let reqs: Vec<RasterLoadRequest> = self.anchors[range]
+            .iter()
+            .zip(&chunks)
+            .map(|((codecs, _), chunk)| RasterLoadRequest {
+                chunks: chunk,
+                chunk_shape: &self.shape,
+                codecs,
                 dim_names: &["y", "x"],
                 source_shape: &self.shape,
                 view: &self.view,
@@ -119,7 +134,7 @@ impl Owned {
 /// one loader, so they share its budget like partitions share the
 /// registered loader.
 async fn load_all(owned: &Arc<Owned>, loader: &ZarrLoader, callers: usize) {
-    let per_caller = owned.uris.len() / callers;
+    let per_caller = owned.anchors.len() / callers;
     let tasks: Vec<_> = (0..callers)
         .map(|c| {
             let owned = Arc::clone(owned);

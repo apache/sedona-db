@@ -19,11 +19,13 @@
 //! the pixel bytes of any OutDb bands in the input raster column.
 //!
 //! Walks every input row, identifies bands whose `data` column is empty
-//! (the schema-OutDb discriminator), groups them by `outdb_format`,
-//! dispatches each via the [`RasterLoaderRegistry`] held on `SedonaContext`,
-//! and assembles an output `RecordBatch` of the same row count whose
-//! `data` columns are populated with the loaded bytes. InDb bands pass
-//! through unchanged. Other band/raster metadata is preserved verbatim.
+//! (the schema-OutDb discriminator), groups them by the loader their
+//! `codecs` pipeline resolves to, dispatches each via the
+//! [`RasterLoaderRegistry`] held on `SedonaContext`, and assembles an output
+//! `RecordBatch` of the same row count whose `data` columns are populated
+//! with the loaded bytes. InDb bands pass through unchanged. Other
+//! band/raster metadata is preserved verbatim: a loaded band keeps its
+//! `chunks`, `chunk_shape` and `codecs` as provenance.
 //!
 //! The loaders are async ([`AsyncRasterLoader`]), but the UDF is an
 //! ordinary synchronous `ScalarUDFImpl`: it runs the load on a dedicated
@@ -53,6 +55,7 @@ use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use sedona_raster::array::RasterStructArray;
 use sedona_raster::builder::{RasterBuilder, RasterOverrides};
 use sedona_raster::chunk_cache::{CachedChunk, ChunkKey, NoChunkCache, RasterChunkCache};
+use sedona_raster::chunks::{ChunkRef, CodecPipeline};
 use sedona_raster::raster_loader::{
     AsyncRasterLoader, RasterLoadRequest, RasterLoadResult, RasterLoaderConfig,
     RasterLoaderRegistry, io_budget_from_config,
@@ -243,13 +246,13 @@ fn registry_handle_from_config(
 
 fn lookup_loader(
     registry: &Arc<RwLock<RasterLoaderRegistry>>,
-    format: Option<&str>,
+    codec_names: &[&str],
 ) -> Result<Arc<dyn AsyncRasterLoader>> {
     let guard = registry.read().map_err(|e| {
         sedona_internal_datafusion_err!("raster loader registry lock poisoned: {e}")
     })?;
-    // The registry owns format resolution + the missing-loader diagnostic.
-    guard.get_or_error(format)
+    // The registry owns codec resolution + the missing-loader diagnostic.
+    guard.get_or_error(codec_names)
 }
 
 /// The session's chunk cache, with `sedona.raster.cache_max_bytes` applied
@@ -363,7 +366,7 @@ impl ScalarUDFImpl for RsEnsureLoaded {
         let output = block_on_loader_runtime(async move {
             ensure_loaded(
                 &input_array,
-                |format| lookup_loader(&registry, format),
+                |codec_names| lookup_loader(&registry, codec_names),
                 cache.as_ref(),
             )
             .await
@@ -385,22 +388,40 @@ enum BandBytes {
     Cached(CachedChunk),
 }
 
-/// One OutDb band's load request, owned so it can be assembled before any
-/// `await` (keeping the future straightforwardly `Send`) and borrowed by
-/// the [`RasterLoadRequest`] slice for the duration of the loader call.
-struct LoadRequestPlan {
-    uri: String,
+/// One OutDb band's load request, assembled before any `await` (keeping the
+/// future straightforwardly `Send`) and borrowed by the [`RasterLoadRequest`]
+/// slice for the duration of the loader call. The chunk references, codecs
+/// and chunk shape borrow the input batch's arrays (`'a`); only the
+/// per-band dimension names, shape and view are owned.
+struct LoadRequestPlan<'a> {
+    chunks: Vec<Option<ChunkRef<'a>>>,
+    chunk_shape: &'a [i64],
+    codecs: &'a str,
     dim_names: Vec<String>,
     source_shape: Vec<i64>,
     view: ViewEntries,
     data_type: BandDataType,
 }
 
-/// One bundled `load()` call: every OutDb band of the batch whose
-/// `outdb_format` resolved to `loader`, in `(raster_idx, band_idx)` order.
-struct LoaderGroup {
+/// One bundled `load()` call: every OutDb band of the batch whose `codecs`
+/// resolved to `loader`, in `(raster_idx, band_idx)` order.
+struct LoaderGroup<'a> {
     loader: Arc<dyn AsyncRasterLoader>,
-    requests: Vec<LoadRequestPlan>,
+    requests: Vec<LoadRequestPlan<'a>>,
+}
+
+/// The cache key of a band that is one present chunk. Bands of several
+/// chunks are neither cached nor deduplicated: the cache holds whole-source
+/// loads, and one chunk is the whole source only when it is the only one.
+fn single_chunk_key(
+    chunks: &[Option<ChunkRef<'_>>],
+    codecs: &str,
+    data_type: BandDataType,
+) -> Option<ChunkKey> {
+    match chunks {
+        [Some(chunk)] => Some(ChunkKey::new(chunk, codecs, data_type)),
+        _ => None,
+    }
 }
 
 /// `RasterLoadRequest::dim_names` is parallel to the *source* shape, while
@@ -434,13 +455,15 @@ fn source_order_dim_names(visible: &[&str], view: &ViewEntries) -> Vec<String> {
 ///
 /// Three passes:
 ///
-/// 1. **Plan.** Walk every raster/band. An OutDb band is first looked up
-///    in `cache` by `(outdb_uri, data_type)`; a hit needs no loader. A
-///    miss is assigned to a loader group — one group per distinct
-///    `outdb_format` (a batch can mix `None` → GDAL, `"zarr"`, and
-///    extension loaders), each format resolved through `lookup` once per
-///    call — unless an identical request (same key, source shape and
-///    view) is already planned, in which case it shares that slot.
+/// 1. **Plan.** Walk every raster/band. An OutDb band of one chunk is first
+///    looked up in `cache` by its [`ChunkKey`] (location, codecs, data
+///    type); a hit needs no loader. A miss is assigned to a loader group —
+///    one group per loader (a batch can mix GDAL, Zarr and extension
+///    codecs), each distinct `codecs` pipeline resolved through `lookup` by
+///    its codec names once per call — unless an identical request (same
+///    key, source shape and view) is already planned, in which case it
+///    shares that slot. Bands of several chunks always get their own
+///    request.
 /// 2. **Load.** Issue **one** [`AsyncRasterLoader::load`] per group carrying
 ///    every request for that loader. Backends that batch (one blocking
 ///    hop, one store/array open, one Python call) only see the win when
@@ -462,7 +485,7 @@ async fn ensure_loaded<F>(
     cache: &dyn RasterChunkCache,
 ) -> Result<ArrayRef>
 where
-    F: FnMut(Option<&str>) -> Result<Arc<dyn AsyncRasterLoader>>,
+    F: FnMut(&[&str]) -> Result<Arc<dyn AsyncRasterLoader>>,
 {
     let input_struct = input_array
         .as_any()
@@ -478,12 +501,12 @@ where
 
     // ---- Pass 1: plan -------------------------------------------------
     let mut bands_by_raster: Vec<Option<Vec<BandBytes>>> = Vec::with_capacity(rasters.len());
-    let mut groups: Vec<LoaderGroup> = Vec::new();
-    // Each distinct `outdb_format` is resolved through the registry once per
-    // call, and groups are keyed on the *resolved loader*: two formats that
-    // resolve to the same backend (e.g. `None` and "geotiff" both landing on
-    // the GDAL catch-all) share one `load()`.
-    let mut loader_by_format: HashMap<Option<String>, Arc<dyn AsyncRasterLoader>> = HashMap::new();
+    let mut groups: Vec<LoaderGroup<'_>> = Vec::new();
+    // Each distinct `codecs` pipeline is parsed and resolved through the
+    // registry once per call, and groups are keyed on the *resolved loader*:
+    // two pipelines that resolve to the same backend (GDAL for band 1 and
+    // for band 2 of a file) share one `load()`.
+    let mut loader_by_codecs: HashMap<&str, Arc<dyn AsyncRasterLoader>> = HashMap::new();
     let mut group_by_loader: HashMap<usize, usize> = HashMap::new();
     // Requests already planned in this batch, by cache key. A later band
     // naming the same bytes shares the first's slot instead of asking the
@@ -516,45 +539,70 @@ where
                 continue;
             }
 
-            let uri = band.outdb_uri().ok_or_else(|| {
+            // The out-db fields are read from the batch's arrays rather than
+            // through the band, so the chunk references borrow the input and
+            // the plan copies none of their strings.
+            let band_row = rasters.band_data_row(raster_idx, band_idx);
+            let chunks = rasters.band_chunks_at(band_row).ok_or_else(|| {
                 sedona_internal_datafusion_err!(
                     "RS_EnsureLoaded: OutDb band ({raster_idx},{band_idx}) has empty data \
-                     but no outdb_uri set"
+                     but no chunks"
                 )
             })?;
-            // `outdb_format` may be unset (None) — e.g. RS_FromPath emits
-            // null and relies on the catch-all GDAL loader. The registry
-            // resolves None against each loader's `supports_format`.
-            let key = ChunkKey {
-                uri: uri.to_string(),
-                data_type: band.data_type(),
-            };
-            let dim_names = source_order_dim_names(&band.dim_names(), band.view());
-            if let Some(chunk) = cache.get(&key) {
-                // A stale entry whose layout no longer matches the band's
-                // metadata is treated as a miss rather than trusted.
-                if chunk.source_shape == band.raw_source_shape() && chunk.dim_names == dim_names {
-                    bands.push(BandBytes::Cached(chunk));
-                    continue;
-                }
+            let codecs = rasters.band_codecs_at(band_row).ok_or_else(|| {
+                sedona_internal_datafusion_err!(
+                    "RS_EnsureLoaded: OutDb band ({raster_idx},{band_idx}) has chunks but \
+                     no codecs"
+                )
+            })?;
+            let chunk_shape = rasters.band_chunk_shape_at(band_row).ok_or_else(|| {
+                sedona_internal_datafusion_err!(
+                    "RS_EnsureLoaded: OutDb band ({raster_idx},{band_idx}) has chunks but \
+                     no chunk_shape"
+                )
+            })?;
+            if let Some(i) = (0..chunks.len()).find(|&i| chunks.inline_is_set(i)) {
+                return sedona_internal_err!(
+                    "RS_EnsureLoaded: OutDb band ({raster_idx},{band_idx}) chunk {i} sets \
+                     `inline`; in-db pixels belong in `data`"
+                );
             }
-            if let Some(&(group, pos)) = planned.get(&key) {
-                let first = &groups[group].requests[pos];
-                if first.source_shape == band.raw_source_shape()
-                    && first.dim_names == dim_names
-                    && &first.view == band.view()
-                {
-                    bands.push(BandBytes::OutDb { group, pos });
-                    continue;
+            let chunks = chunks.to_vec();
+            let key = single_chunk_key(&chunks, codecs, band.data_type());
+            let dim_names = source_order_dim_names(&band.dim_names(), band.view());
+            if let Some(key) = &key {
+                if let Some(chunk) = cache.get(key) {
+                    // A stale entry whose layout no longer matches the band's
+                    // metadata is treated as a miss rather than trusted.
+                    if chunk.source_shape == band.raw_source_shape() && chunk.dim_names == dim_names
+                    {
+                        bands.push(BandBytes::Cached(chunk));
+                        continue;
+                    }
+                }
+                if let Some(&(group, pos)) = planned.get(key) {
+                    let first = &groups[group].requests[pos];
+                    if first.source_shape == band.raw_source_shape()
+                        && first.dim_names == dim_names
+                        && &first.view == band.view()
+                    {
+                        bands.push(BandBytes::OutDb { group, pos });
+                        continue;
+                    }
                 }
             }
 
-            let outdb_format = band.outdb_format().map(str::to_string);
-            let loader = match loader_by_format.get(&outdb_format) {
+            let loader = match loader_by_codecs.get(codecs) {
                 Some(loader) => Arc::clone(loader),
                 None => {
-                    let loader = lookup(outdb_format.as_deref())?;
-                    loader_by_format.insert(outdb_format, Arc::clone(&loader));
+                    let pipeline = CodecPipeline::parse(codecs).map_err(|e| {
+                        sedona_internal_datafusion_err!(
+                            "RS_EnsureLoaded: OutDb band ({raster_idx},{band_idx}) has invalid \
+                             codecs: {e}"
+                        )
+                    })?;
+                    let loader = lookup(&pipeline.names())?;
+                    loader_by_codecs.insert(codecs, Arc::clone(&loader));
                     loader
                 }
             };
@@ -568,10 +616,14 @@ where
             });
             let requests = &mut groups[group].requests;
             let pos = requests.len();
-            planned.entry(key).or_insert((group, pos));
+            if let Some(key) = key {
+                planned.entry(key).or_insert((group, pos));
+            }
             bands.push(BandBytes::OutDb { group, pos });
             requests.push(LoadRequestPlan {
-                uri: uri.to_string(),
+                chunks,
+                chunk_shape,
+                codecs,
                 dim_names,
                 // Raw source extent plus the band's view: a loader may honour
                 // the view and return only the visible region, or ignore it
@@ -600,7 +652,9 @@ where
             .iter()
             .zip(&dim_name_refs)
             .map(|(plan, dim_names)| RasterLoadRequest {
-                uri: &plan.uri,
+                chunks: &plan.chunks,
+                chunk_shape: plan.chunk_shape,
+                codecs: plan.codecs,
                 dim_names,
                 source_shape: &plan.source_shape,
                 view: &plan.view,
@@ -789,16 +843,20 @@ fn expected_bytes(shape: &[i64], data_type: BandDataType) -> Option<usize> {
 /// buffer, so the output batch and the cache share one allocation. A
 /// result whose layout differs from its request (a loader that resolved
 /// the view) is not the full source and is left alone; so is one whose
-/// byte count is wrong, which pass 3 then reports. All of a load's
-/// results go in as one batch so the cache scans its idle bytes once.
+/// byte count is wrong, which pass 3 then reports, and so is a band of
+/// several chunks, which has no cache key. All of a load's results go in as
+/// one batch so the cache scans its idle bytes once.
 fn cache_results(
     cache: &dyn RasterChunkCache,
-    requests: &[LoadRequestPlan],
+    requests: &[LoadRequestPlan<'_>],
     mut results: Vec<RasterLoadResult>,
 ) -> Vec<RasterLoadResult> {
     let mut positions = Vec::new();
     let mut entries = Vec::new();
     for (pos, (result, plan)) in results.iter_mut().zip(requests).enumerate() {
+        let Some(key) = single_chunk_key(&plan.chunks, plan.codecs, plan.data_type) else {
+            continue;
+        };
         let whole_source = result.source_shape == plan.source_shape && result.view == plan.view;
         let sized = expected_bytes(&plan.source_shape, plan.data_type) == Some(result.bytes.len());
         if !(whole_source && sized) {
@@ -807,10 +865,7 @@ fn cache_results(
         let bytes = std::mem::replace(&mut result.bytes, Buffer::from_vec(Vec::<u8>::new()));
         positions.push(pos);
         entries.push((
-            ChunkKey {
-                uri: plan.uri.clone(),
-                data_type: plan.data_type,
-            },
+            key,
             CachedChunk {
                 bytes,
                 source_shape: result.source_shape.clone(),
@@ -840,8 +895,26 @@ mod tests {
     use sedona_raster::traits::RasterRef;
     use sedona_schema::raster::BandDataType;
 
-    /// `(uri, source_shape, data_type, dim_names)` of one recorded request.
+    /// `(uris, source_shape, data_type, dim_names)` of one recorded request,
+    /// where `uris` joins the request's present chunk URIs with `,` (so a
+    /// single-chunk band records its one URI).
     type SeenRequest = (String, Vec<i64>, BandDataType, Vec<String>);
+
+    /// The present chunk URIs of a request, joined with `,`.
+    fn request_uris(req: &RasterLoadRequest<'_>) -> String {
+        req.chunks
+            .iter()
+            .flatten()
+            .filter_map(|chunk| chunk.uri)
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    /// The `codecs` JSON of a one-codec pipeline named `codec`, which the test
+    /// loaders claim by name.
+    fn codecs(codec: &str) -> String {
+        format!(r#"[{{"name":"{codec}"}}]"#)
+    }
 
     /// Records load requests and returns a deterministic byte pattern.
     #[derive(Debug, Default)]
@@ -854,7 +927,7 @@ mod tests {
         fn name(&self) -> &str {
             "recording"
         }
-        fn supports_format(&self, _format: Option<&str>) -> bool {
+        fn supports(&self, _codec_names: &[&str]) -> bool {
             true
         }
         async fn load(
@@ -864,7 +937,7 @@ mod tests {
             let mut results = Vec::with_capacity(reqs.len());
             for req in reqs {
                 self.seen.lock().unwrap().push((
-                    req.uri.to_string(),
+                    request_uris(req),
                     req.source_shape.to_vec(),
                     req.data_type,
                     req.dim_names.iter().map(|s| s.to_string()).collect(),
@@ -879,9 +952,10 @@ mod tests {
         }
     }
 
-    /// Build a 1-row raster with one OutDb band ready for the loader to
-    /// materialise.
-    fn build_outdb_input(uri: &str, format: &str, source_shape: &[i64]) -> StructArray {
+    /// Build a 1-row raster with one OutDb band of one whole-object chunk at
+    /// `uri`, decoded by the one-codec pipeline `codec`, ready for the
+    /// loader to materialise.
+    fn build_outdb_input(uri: &str, codec: &str, source_shape: &[i64]) -> StructArray {
         let mut b = RasterBuilder::new(1);
         b.start_raster_nd(
             &[0.0, 1.0, 0.0, 0.0, 0.0, -1.0],
@@ -890,11 +964,12 @@ mod tests {
             None,
         )
         .unwrap();
+        let chunk = [Some(ChunkRef::whole(uri))];
+        let codecs = codecs(codec);
         b.start_band(StartBandArgs {
             name: Some("band0"),
-            outdb_uri: Some(uri),
-            outdb_format: Some(format),
             ..StartBandArgs::new(&["y", "x"], source_shape, BandDataType::UInt8)
+                .with_single_chunk(&chunk, &codecs)
         })
         .unwrap();
         // OutDb bands write empty data.
@@ -904,8 +979,8 @@ mod tests {
         b.finish().unwrap()
     }
 
-    /// Build a 1-row raster with one InDb band — bytes are inline,
-    /// `outdb_uri`/`outdb_format` are null.
+    /// Build a 1-row raster with one InDb band — bytes are inline, the
+    /// out-db fields are null.
     fn build_indb_input(source_shape: &[i64], data: &[u8]) -> StructArray {
         let mut b = RasterBuilder::new(1);
         b.start_raster_nd(
@@ -1004,9 +1079,13 @@ mod tests {
             band.nd_buffer().unwrap().as_contiguous().unwrap(),
             &[0, 1, 2, 3, 4, 5]
         );
-        // outdb_uri / outdb_format are preserved as provenance.
-        assert_eq!(band.outdb_uri(), Some("file:///tmp/foo.tif"));
-        assert_eq!(band.outdb_format(), Some("mock"));
+        // The out-db fields are preserved as provenance.
+        assert_eq!(band.chunk_shape(), Some(&[2i64, 3][..]));
+        assert_eq!(band.codecs(), Some(codecs("mock").as_str()));
+        assert_eq!(
+            band.chunks().unwrap().to_vec(),
+            vec![Some(ChunkRef::whole("file:///tmp/foo.tif"))]
+        );
 
         // Loader saw one request.
         let seen = loader.seen.lock().unwrap();
@@ -1103,7 +1182,7 @@ mod tests {
             fn name(&self) -> &str {
                 "stable"
             }
-            fn supports_format(&self, _format: Option<&str>) -> bool {
+            fn supports(&self, _codec_names: &[&str]) -> bool {
                 true
             }
             async fn load(
@@ -1151,8 +1230,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ensure_loaded_errors_when_format_not_registered() {
-        let input_struct = build_outdb_input("s3://bucket/foo.zarr", "zarr", &[2, 3]);
+    async fn ensure_loaded_errors_when_codec_not_registered() {
+        let input_struct = build_outdb_input("s3://bucket/foo.zarr/a/c/0/0", "zarr", &[2, 3]);
         let input: ArrayRef = Arc::new(input_struct);
 
         let reg: Arc<RwLock<RasterLoaderRegistry>> =
@@ -1160,7 +1239,7 @@ mod tests {
 
         let err = ensure_loaded(
             &input,
-            |fmt| reg.read().unwrap().get_or_error(fmt),
+            |names| reg.read().unwrap().get_or_error(names),
             &NoChunkCache,
         )
         .await
@@ -1168,8 +1247,103 @@ mod tests {
         let msg = err.to_string();
         assert!(
             msg.contains("zarr"),
-            "expected error to mention missing format 'zarr', got: {msg}"
+            "expected error to mention the unclaimed codec 'zarr', got: {msg}"
         );
+    }
+
+    #[tokio::test]
+    async fn ensure_loaded_errors_on_outdb_band_without_chunks() {
+        // Empty `data` over a non-empty region and no `chunks`: nothing says
+        // where the pixels are, so the row is an error that names the band.
+        let mut b = RasterBuilder::new(1);
+        b.start_raster_nd(&[0.0, 1.0, 0.0, 0.0, 0.0, -1.0], &["y", "x"], &[2, 3], None)
+            .unwrap();
+        b.start_band(StartBandArgs::new(
+            &["y", "x"],
+            &[2, 3],
+            BandDataType::UInt8,
+        ))
+        .unwrap();
+        b.band_data_writer().append_value([0u8; 0]);
+        b.finish_band().unwrap();
+        b.finish_raster().unwrap();
+        let input: ArrayRef = Arc::new(b.finish().unwrap());
+
+        let loader: Arc<RecordingLoader> = Arc::new(RecordingLoader::default());
+        let reg = registry_with(loader.clone());
+        let err = ensure_loaded(
+            &input,
+            |names| reg.read().unwrap().get_or_error(names),
+            &NoChunkCache,
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("OutDb band (0,0) has empty data but no chunks"),
+            "{err}"
+        );
+        assert!(loader.seen.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn ensure_loaded_errors_on_invalid_codecs() {
+        let mut b = RasterBuilder::new(1);
+        b.start_raster_nd(&[0.0, 1.0, 0.0, 0.0, 0.0, -1.0], &["y", "x"], &[2, 3], None)
+            .unwrap();
+        let chunk = [Some(ChunkRef::whole("mock://a"))];
+        b.start_band(
+            StartBandArgs::new(&["y", "x"], &[2, 3], BandDataType::UInt8)
+                .with_single_chunk(&chunk, r#"[{"name":"mock"}]"#),
+        )
+        .unwrap();
+        b.band_data_writer().append_value([0u8; 0]);
+        b.finish_band().unwrap();
+        b.finish_raster().unwrap();
+        let input: ArrayRef = Arc::new(b.finish().unwrap());
+        // The builder validates codecs, so corrupt the column afterwards.
+        let input_struct = input.as_any().downcast_ref::<StructArray>().unwrap();
+        let bands_list = input_struct
+            .column(sedona_schema::raster::raster_indices::BANDS)
+            .as_any()
+            .downcast_ref::<arrow_array::ListArray>()
+            .unwrap();
+        let bands = bands_list
+            .values()
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let mut band_columns = bands.columns().to_vec();
+        band_columns[sedona_schema::raster::band_indices::CODECS] =
+            Arc::new(arrow_array::StringViewArray::from(vec!["not json"]));
+        let bands = StructArray::new(bands.fields().clone(), band_columns, bands.nulls().cloned());
+        let bands_list = arrow_array::ListArray::new(
+            match bands_list.data_type() {
+                DataType::List(field) => Arc::clone(field),
+                _ => unreachable!(),
+            },
+            bands_list.offsets().clone(),
+            Arc::new(bands),
+            bands_list.nulls().cloned(),
+        );
+        let mut columns = input_struct.columns().to_vec();
+        columns[sedona_schema::raster::raster_indices::BANDS] = Arc::new(bands_list);
+        let input: ArrayRef = Arc::new(StructArray::new(
+            input_struct.fields().clone(),
+            columns,
+            input_struct.nulls().cloned(),
+        ));
+
+        let reg = registry_with(Arc::new(RecordingLoader::default()));
+        let err = ensure_loaded(
+            &input,
+            |names| reg.read().unwrap().get_or_error(names),
+            &NoChunkCache,
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("OutDb band (0,0) has invalid codecs"), "{err}");
     }
 
     #[tokio::test]
@@ -1185,7 +1359,7 @@ mod tests {
             fn name(&self) -> &str {
                 "short"
             }
-            fn supports_format(&self, _format: Option<&str>) -> bool {
+            fn supports(&self, _codec_names: &[&str]) -> bool {
                 true
             }
             async fn load(
@@ -1244,12 +1418,17 @@ mod tests {
         let mut b = RasterBuilder::new(1);
         b.start_raster_nd(&[0.0, 1.0, 0.0, 0.0, 0.0, -1.0], &["y", "x"], &[1, 8], None)
             .unwrap();
+        let chunk = [Some(ChunkRef::whole("file:///tmp/foo.tif"))];
+        let codecs = codecs("mock");
+        let args = StartBandArgs::new(&["y", "x"], &[4, 8], BandDataType::UInt8);
+        let args = match data {
+            Some(_) => args,
+            None => args.with_single_chunk(&chunk, &codecs),
+        };
         b.start_band(StartBandArgs {
             name: Some("band0"),
             view: Some(&view),
-            outdb_uri: data.is_none().then_some("file:///tmp/foo.tif"),
-            outdb_format: data.is_none().then_some("mock"),
-            ..StartBandArgs::new(&["y", "x"], &[4, 8], BandDataType::UInt8)
+            ..args
         })
         .unwrap();
         b.band_data_writer().append_value(data.unwrap_or(&[]));
@@ -1306,7 +1485,7 @@ mod tests {
             fn name(&self) -> &str {
                 "resolving"
             }
-            fn supports_format(&self, _format: Option<&str>) -> bool {
+            fn supports(&self, _codec_names: &[&str]) -> bool {
                 true
             }
             async fn load(
@@ -1399,11 +1578,12 @@ mod tests {
         let mut b = RasterBuilder::new(2);
         b.start_raster_nd(&[0.0, 1.0, 0.0, 0.0, 0.0, -1.0], &["y", "x"], &[2, 3], None)
             .unwrap();
+        let chunk = [Some(ChunkRef::whole("file:///tmp/foo.tif"))];
+        let codecs = codecs("mock");
         b.start_band(StartBandArgs {
             name: Some("band0"),
-            outdb_uri: Some("file:///tmp/foo.tif"),
-            outdb_format: Some("mock"),
             ..StartBandArgs::new(&["y", "x"], &[2, 3], BandDataType::UInt8)
+                .with_single_chunk(&chunk, &codecs)
         })
         .unwrap();
         b.band_data_writer().append_value([0u8; 0]);
@@ -1436,21 +1616,23 @@ mod tests {
     #[derive(Debug)]
     struct MarkerLoader {
         name: String,
-        formats: Vec<String>,
+        /// Codec names this loader decodes.
+        codecs: Vec<String>,
         calls: Mutex<Vec<Vec<String>>>,
     }
 
     impl MarkerLoader {
-        fn new(name: &str, formats: &[&str]) -> Self {
+        fn new(name: &str, codecs: &[&str]) -> Self {
             Self {
                 name: name.to_string(),
-                formats: formats.iter().map(|s| s.to_string()).collect(),
+                codecs: codecs.iter().map(|s| s.to_string()).collect(),
                 calls: Mutex::default(),
             }
         }
 
+        /// The marker byte a `mock://<codec>/<marker>` chunk URI asks for.
         fn marker(uri: &str) -> u8 {
-            uri.rsplit('#').next().unwrap().parse().unwrap()
+            uri.rsplit('/').next().unwrap().parse().unwrap()
         }
     }
 
@@ -1459,8 +1641,11 @@ mod tests {
         fn name(&self) -> &str {
             &self.name
         }
-        fn supports_format(&self, format: Option<&str>) -> bool {
-            format.is_some_and(|f| self.formats.iter().any(|x| x == f))
+        fn supports(&self, codec_names: &[&str]) -> bool {
+            !codec_names.is_empty()
+                && codec_names
+                    .iter()
+                    .all(|name| self.codecs.iter().any(|x| x == name))
         }
         async fn load(
             &self,
@@ -1469,14 +1654,14 @@ mod tests {
             self.calls
                 .lock()
                 .unwrap()
-                .push(reqs.iter().map(|r| r.uri.to_string()).collect());
+                .push(reqs.iter().map(|r| request_uris(r)).collect());
             Ok(reqs
                 .iter()
                 .map(|req| {
                     let elements: i64 = req.source_shape.iter().product();
                     let len = elements as usize * req.data_type.byte_size();
                     RasterLoadResult::unresolved(
-                        Buffer::from_vec(vec![Self::marker(req.uri); len]),
+                        Buffer::from_vec(vec![Self::marker(&request_uris(req)); len]),
                         req,
                     )
                 })
@@ -1486,13 +1671,16 @@ mod tests {
 
     enum BandSpec {
         InDb(Vec<u8>),
-        OutDb { uri: String, format: String },
+        OutDb { uri: String, codecs: String },
     }
 
-    fn outdb(format: &str, marker: u8) -> BandSpec {
+    /// An OutDb band of one chunk at `mock://<codec>/<marker>` on the
+    /// one-codec pipeline `codec`, which a [`MarkerLoader`] claiming that
+    /// codec fills with `marker`.
+    fn outdb(codec: &str, marker: u8) -> BandSpec {
         BandSpec::OutDb {
-            uri: format!("mock://{format}#{marker}"),
-            format: format.to_string(),
+            uri: format!("mock://{codec}/{marker}"),
+            codecs: codecs(codec),
         }
     }
 
@@ -1519,12 +1707,11 @@ mod tests {
                         .unwrap();
                         b.band_data_writer().append_value(pixels);
                     }
-                    BandSpec::OutDb { uri, format } => {
+                    BandSpec::OutDb { uri, codecs } => {
+                        let chunk = [Some(ChunkRef::whole(uri))];
                         b.start_band(StartBandArgs {
                             name: Some(&name),
-                            outdb_uri: Some(uri),
-                            outdb_format: Some(format),
-                            ..base
+                            ..base.with_single_chunk(&chunk, codecs)
                         })
                         .unwrap();
                         b.band_data_writer().append_value([0u8; 0]);
@@ -1575,7 +1762,7 @@ mod tests {
         assert_eq!(
             calls[0],
             (1..=6)
-                .map(|m| format!("mock://mock#{m}"))
+                .map(|m| format!("mock://mock/{m}"))
                 .collect::<Vec<_>>()
         );
         drop(calls);
@@ -1626,15 +1813,15 @@ mod tests {
         assert_eq!(
             *alpha.calls.lock().unwrap(),
             vec![vec![
-                "mock://a#1".to_string(),
-                "mock://a#4".to_string(),
-                "mock://c#5".to_string()
+                "mock://a/1".to_string(),
+                "mock://a/4".to_string(),
+                "mock://c/5".to_string()
             ]],
             "two formats resolving to one loader must share a single load()"
         );
         assert_eq!(
             *beta.calls.lock().unwrap(),
-            vec![vec!["mock://b#2".to_string(), "mock://b#3".to_string()]]
+            vec![vec!["mock://b/2".to_string(), "mock://b/3".to_string()]]
         );
         assert!(out.is_null(1));
         for (r, b, m) in [(0, 0, 1u8), (0, 1, 2), (2, 0, 3), (2, 1, 4), (3, 0, 5)] {
@@ -1663,7 +1850,7 @@ mod tests {
 
         assert_eq!(
             *loader.calls.lock().unwrap(),
-            vec![vec!["mock://mock#9".to_string()]]
+            vec![vec!["mock://mock/9".to_string()]]
         );
         assert_eq!(band_bytes(&out, 0, 0), pixels);
         assert_eq!(band_bytes(&out, 0, 1), vec![9u8; 6]);
@@ -1679,7 +1866,7 @@ mod tests {
             fn name(&self) -> &str {
                 "extra"
             }
-            fn supports_format(&self, _format: Option<&str>) -> bool {
+            fn supports(&self, _codec_names: &[&str]) -> bool {
                 true
             }
             async fn load(
@@ -1720,7 +1907,7 @@ mod tests {
             fn name(&self) -> &str {
                 "failing"
             }
-            fn supports_format(&self, _format: Option<&str>) -> bool {
+            fn supports(&self, _codec_names: &[&str]) -> bool {
                 true
             }
             async fn load(
@@ -1776,11 +1963,12 @@ mod tests {
         let mut b = RasterBuilder::new(1);
         b.start_raster_nd(&[0.0, 1.0, 0.0, 0.0, 0.0, -1.0], &["y", "x"], &[1, 8], None)
             .unwrap();
+        let chunk = [Some(ChunkRef::whole("file:///tmp/cube.zarr/v/c/0/0/0"))];
+        let codecs = codecs("mock");
         b.start_band(StartBandArgs {
             view: Some(&view),
-            outdb_uri: Some("file:///tmp/cube.zarr"),
-            outdb_format: Some("mock"),
             ..StartBandArgs::new(&["t", "y", "x"], &[3, 1, 8], BandDataType::UInt8)
+                .with_single_chunk(&chunk, &codecs)
         })
         .unwrap();
         b.band_data_writer().append_value([0u8; 0]);
@@ -1795,7 +1983,7 @@ mod tests {
             fn name(&self) -> &str {
                 "identity-view"
             }
-            fn supports_format(&self, _format: Option<&str>) -> bool {
+            fn supports(&self, _codec_names: &[&str]) -> bool {
                 true
             }
             async fn load(
@@ -1850,11 +2038,12 @@ mod tests {
         let mut b = RasterBuilder::new(1);
         b.start_raster_nd(&[0.0, 1.0, 0.0, 0.0, 0.0, -1.0], &["y", "x"], &[4, 8], None)
             .unwrap();
+        let chunk = [Some(ChunkRef::whole("file:///tmp/foo.tif"))];
+        let codecs = codecs("mock");
         b.start_band(StartBandArgs {
             view: Some(&transposed),
-            outdb_uri: Some("file:///tmp/foo.tif"),
-            outdb_format: Some("mock"),
             ..StartBandArgs::new(&["x", "y"], &[4, 8], BandDataType::UInt8)
+                .with_single_chunk(&chunk, &codecs)
         })
         .unwrap();
         b.band_data_writer().append_value([0u8; 0]);
@@ -1956,7 +2145,7 @@ mod tests {
     }
 
     /// `uris.len()` rows, each one OutDb `UInt8` band of `source_shape`
-    /// under the `"mock"` format.
+    /// on the one-codec `"mock"` pipeline.
     fn build_outdb_rows(uris: &[&str], source_shape: &[i64]) -> ArrayRef {
         build_outdb_rows_typed(uris, source_shape, BandDataType::UInt8)
     }
@@ -1975,11 +2164,12 @@ mod tests {
                 None,
             )
             .unwrap();
+            let chunk = [Some(ChunkRef::whole(uri))];
+            let codecs = codecs("mock");
             b.start_band(StartBandArgs {
                 name: Some("band0"),
-                outdb_uri: Some(uri),
-                outdb_format: Some("mock"),
                 ..StartBandArgs::new(&["y", "x"], source_shape, dtype)
+                    .with_single_chunk(&chunk, &codecs)
             })
             .unwrap();
             b.band_data_writer().append_value([0u8; 0]);
@@ -2030,6 +2220,67 @@ mod tests {
         drop(first);
         drop(second);
         assert_eq!(cache.stats().idle_bytes, 32);
+    }
+
+    #[tokio::test]
+    async fn ensure_loaded_sends_a_multi_chunk_band_to_the_loader_uncached() {
+        // A `[2, 6]` band in two `[2, 3]` chunks reaches the loader as one
+        // request carrying both chunks, and neither the cache nor the
+        // in-batch dedupe applies: the cache holds whole-source loads, which
+        // one chunk of several is not.
+        let mut b = RasterBuilder::new(2);
+        let chunks = [
+            Some(ChunkRef::range("mock://tiled", 0, 6)),
+            Some(ChunkRef::range("mock://tiled", 6, 6)),
+        ];
+        let codecs = codecs("mock");
+        for _ in 0..2 {
+            b.start_raster_nd(&[0.0, 1.0, 0.0, 0.0, 0.0, -1.0], &["y", "x"], &[2, 6], None)
+                .unwrap();
+            b.start_band(StartBandArgs {
+                name: Some("band0"),
+                chunk_shape: Some(&[2, 3]),
+                codecs: Some(&codecs),
+                chunks: Some(&chunks),
+                ..StartBandArgs::new(&["y", "x"], &[2, 6], BandDataType::UInt8)
+            })
+            .unwrap();
+            b.band_data_writer().append_value([0u8; 0]);
+            b.finish_band().unwrap();
+            b.finish_raster().unwrap();
+        }
+        let input: ArrayRef = Arc::new(b.finish().unwrap());
+
+        let loader: Arc<RecordingLoader> = Arc::new(RecordingLoader::default());
+        let reg = registry_with(loader.clone());
+        let cache = InMemoryChunkCache::new(1 << 20);
+        for _ in 0..2 {
+            let out = ensure_loaded(
+                &input,
+                |names| reg.read().unwrap().get_or_error(names),
+                &cache,
+            )
+            .await
+            .unwrap();
+            assert_eq!(band_bytes(&out, 0, 0).len(), 12);
+            let out_struct = out.as_any().downcast_ref::<StructArray>().unwrap();
+            let rasters = RasterStructArray::try_new(out_struct).unwrap();
+            let raster = rasters.get(1).unwrap();
+            let band = raster.band(0).unwrap();
+            assert!(band.is_indb());
+            // The chunk grid rides along as provenance.
+            assert_eq!(band.chunks().unwrap().to_vec(), chunks.to_vec());
+        }
+        // Two identical rows, two calls: four requests, each with both chunks.
+        let seen = loader.seen.lock().unwrap();
+        assert_eq!(seen.len(), 4);
+        assert!(
+            seen.iter()
+                .all(|(uris, ..)| uris == "mock://tiled,mock://tiled"),
+            "{seen:?}"
+        );
+        let stats = cache.stats();
+        assert_eq!((stats.inserts, stats.hits), (0, 0));
     }
 
     #[tokio::test]
@@ -2088,12 +2339,13 @@ mod tests {
         for view in views {
             b.start_raster_nd(&[0.0, 1.0, 0.0, 0.0, 0.0, -1.0], &["y", "x"], &[1, 8], None)
                 .unwrap();
+            let chunk = [Some(ChunkRef::whole("mock://v"))];
+            let codecs = codecs("mock");
             b.start_band(StartBandArgs {
                 name: Some("band0"),
                 view: Some(view),
-                outdb_uri: Some("mock://v"),
-                outdb_format: Some("mock"),
                 ..StartBandArgs::new(&["y", "x"], &[4, 8], BandDataType::UInt8)
+                    .with_single_chunk(&chunk, &codecs)
             })
             .unwrap();
             b.band_data_writer().append_value([0u8; 0]);
@@ -2166,7 +2418,7 @@ mod tests {
             fn name(&self) -> &str {
                 "resolving"
             }
-            fn supports_format(&self, _format: Option<&str>) -> bool {
+            fn supports(&self, _codec_names: &[&str]) -> bool {
                 true
             }
             async fn load(
@@ -2350,7 +2602,7 @@ mod tests {
             fn name(&self) -> &str {
                 "gated"
             }
-            fn supports_format(&self, _format: Option<&str>) -> bool {
+            fn supports(&self, _codec_names: &[&str]) -> bool {
                 true
             }
             async fn load(
@@ -2436,7 +2688,7 @@ mod tests {
             fn name(&self) -> &str {
                 "failing"
             }
-            fn supports_format(&self, _format: Option<&str>) -> bool {
+            fn supports(&self, _codec_names: &[&str]) -> bool {
                 true
             }
             async fn load(

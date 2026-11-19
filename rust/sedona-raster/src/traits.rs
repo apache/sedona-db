@@ -21,6 +21,7 @@ use sedona_schema::raster::BandDataType;
 use crate::band_builder::BandWriter;
 use crate::band_builder::MAX_BAND_DATA_LEN;
 use crate::builder::StartBandArgs;
+use crate::chunks::{ChunkRef, Chunks};
 use crate::error::RasterError;
 use crate::view_entries::ViewEntries;
 
@@ -124,57 +125,6 @@ impl<'a> NdBuffer<'a> {
     }
 }
 
-/// Parse the SedonaDB `#band=N` fragment out of an out-DB URI into the base
-/// URL and 1-based source band index.
-///
-/// Behaviour:
-///
-/// - `<uri>#band=N` where `N` parses as a `u32` in `1..=u32::MAX`: strips the
-///   fragment and returns `(<uri>, N)`. `rsplit_once` lets a trailing
-///   `#band=N` win over any earlier `#anchor` already in the URI.
-/// - `<uri>#band=...` with a value that is not a positive `u32` (zero,
-///   negative, non-numeric, empty, or overflowing `u32`): returns an error.
-///   The user explicitly asked for a band; we refuse to silently substitute a
-///   default.
-/// - Any URI whose fragment is not `band=...` (including GDAL-native
-///   subdataset URIs like `HDF5:"x.h5":/var`) and plain URIs without a
-///   fragment: pass through verbatim with default band index 1.
-///
-/// This is the shared convention consumers use to recover the source path and
-/// band from a band's `outdb_uri()`.
-pub fn split_outdb_band_fragment(uri: &str) -> Result<(String, u32), RasterError> {
-    if let Some((prefix, band_str)) = band_fragment(uri) {
-        return match band_str.parse::<u32>() {
-            Ok(band) if band >= 1 => Ok((prefix.to_string(), band)),
-            _ => Err(RasterError::Invalid(format!(
-                "Invalid band index in outdb URI fragment '#band={band_str}': expected a positive integer in 1..=u32::MAX"
-            ))),
-        };
-    }
-    Ok((uri.to_string(), 1))
-}
-
-/// The source an out-DB band reads from: `uri` without a trailing
-/// `#band=...` fragment, borrowed from `uri`.
-///
-/// Every band of one file shares this value, so it is the key to group rows
-/// by when they should be loaded together. Only the fragment
-/// [`split_outdb_band_fragment`] consumes is stripped: an earlier `#anchor`
-/// and any other fragment stay, so `x.zarr#var=a` and `x.zarr#var=b` remain
-/// distinct sources and `p#anchor#band=1` is `p#anchor`. The band value is
-/// not validated here; loading the band reports a malformed one.
-pub fn outdb_source(uri: &str) -> &str {
-    band_fragment(uri).map_or(uri, |(prefix, _)| prefix)
-}
-
-/// `(prefix, value)` when `uri` ends in a `#band=value` fragment. The one
-/// place the band-fragment convention is parsed, shared by
-/// [`split_outdb_band_fragment`] and [`outdb_source`] so they cannot drift.
-fn band_fragment(uri: &str) -> Option<(&str, &str)> {
-    let (prefix, fragment) = uri.rsplit_once('#')?;
-    Some((prefix, fragment.strip_prefix("band=")?))
-}
-
 /// Trait for accessing an N-dimensional raster (top level).
 ///
 /// A single flat interface: raster-level geometry (`width`/`height`/
@@ -208,29 +158,29 @@ pub trait RasterRef {
         self.band(index).ok().map(|b| b.data_type())
     }
 
-    /// Fast path for band outdb URI — reads the `outdb_uri` column without
-    /// materialising a `BandRef`. Returns None if the band has no URI or
-    /// if `index` is out of range.
+    /// Fast path for a band's `codecs` — reads the column without
+    /// materialising a `BandRef`. Returns None if the band has no codecs (it
+    /// is in-db) or if `index` is out of range.
     ///
     /// The default implementation must allocate a `Box<dyn BandRef>`; the
     /// raster-array backend overrides it to read the column directly.
     /// Default returns None because the borrow can't outlive the boxed band.
-    fn band_outdb_uri(&self, index: usize) -> Option<&str> {
+    fn band_codecs(&self, index: usize) -> Option<&str> {
         let _ = index;
         None
     }
 
-    /// Fast path for band outdb format — reads the `outdb_format` column
-    /// without materialising a `BandRef`. Default returns None for the
-    /// same lifetime reason as `band_outdb_uri`.
-    fn band_outdb_format(&self, index: usize) -> Option<&str> {
+    /// Fast path for a band's `chunks` — a view over the chunk list without
+    /// materialising a `BandRef`. Default returns None for the same
+    /// lifetime reason as `band_codecs`.
+    fn band_chunks(&self, index: usize) -> Option<Chunks<'_>> {
         let _ = index;
         None
     }
 
     /// Fast path for band nodata bytes — reads the `nodata` column without
     /// materialising a `BandRef`. Default returns None for the same
-    /// lifetime reason as `band_outdb_uri`.
+    /// lifetime reason as `band_codecs`.
     fn band_nodata(&self, index: usize) -> Option<&[u8]> {
         let _ = index;
         None
@@ -301,8 +251,8 @@ pub trait RasterRef {
 /// `Set(T)` sets it to `T`. `Keep` is the default, so `..Default::default()`
 /// on `BandOverrides` inherits everything.
 ///
-/// The three-way distinction matters for clearable fields (nodata, outdb
-/// hints, the view): with a plain `Option` there is no way to say "drop the
+/// The three-way distinction matters for clearable fields (nodata, the out-db
+/// chunks, the view): with a plain `Option` there is no way to say "drop the
 /// source's value" as distinct from "inherit it". `RS_SetBandNoDataValue`
 /// relies on this to clear a band's nodata on a `NULL` argument rather than
 /// nulling the whole raster row.
@@ -315,6 +265,19 @@ pub enum Override<T> {
     Clear,
     /// Set the field to this value.
     Set(T),
+}
+
+/// A band's out-db fields, set together through
+/// [`BandOverrides::chunks`]: they are validated against each other, so one
+/// cannot change without the others.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BandChunks<'a> {
+    /// Pixels per chunk per dimension, parallel to the band's `dim_names`.
+    pub chunk_shape: &'a [i64],
+    /// The band's codec pipeline as JSON.
+    pub codecs: &'a str,
+    /// The chunk grid in row-major order; `None` entries are missing chunks.
+    pub chunks: &'a [Option<ChunkRef<'a>>],
 }
 
 /// Field overrides for [`BandRef::copy_into`]. Each field defaults to
@@ -331,12 +294,10 @@ pub struct BandOverrides<'a> {
     /// Override the nodata value. `Keep` inherits the source's, `Clear` drops
     /// it (the derived band has no nodata), `Set(b)` sets it to `b`.
     pub nodata: Override<&'a [u8]>,
-    /// Override the OutDb URI. `Keep` inherits, `Clear` drops it, `Set(u)` sets
-    /// it.
-    pub outdb_uri: Override<&'a str>,
-    /// Override the OutDb format. `Keep` inherits, `Clear` drops it, `Set(f)`
-    /// sets it.
-    pub outdb_format: Override<&'a str>,
+    /// Override the out-db fields (`chunk_shape`, `codecs`, `chunks`) as one.
+    /// `Keep` inherits the source's, `Clear` makes an in-db band with none of
+    /// them, `Set(c)` sets all three from `c`.
+    pub chunks: Override<BandChunks<'a>>,
     /// View for the derived band. [`BandRef::copy_into`] **never composes** it:
     /// - `Keep` inherits the source's view unchanged.
     /// - `Clear` gives the derived band the canonical identity view — the bytes
@@ -360,7 +321,7 @@ pub struct BandOverrides<'a> {
     /// over (zero-copy where the implementation supports it, see
     /// [`BandRef::append_data_into`]); `Set(b)` shares `b` zero-copy as the
     /// derived band's data; `Clear` writes empty data, i.e. an OutDb-style
-    /// band whose bytes live behind `outdb_uri`.
+    /// band whose bytes live behind its `chunks`.
     pub data: Override<&'a Buffer>,
 }
 
@@ -448,27 +409,32 @@ pub trait BandRef {
     /// Nodata value as raw bytes (None if not set)
     fn nodata(&self) -> Option<&[u8]>;
 
-    /// OutDb URI — location of the external resource (e.g.
-    /// `"s3://bucket/file.tif"`, `"file:///…"`, `"mem://…"`). None for
-    /// in-memory bands. Scheme resolution is delegated to an
-    /// `ObjectStoreRegistry`; it does *not* imply a format.
-    fn outdb_uri(&self) -> Option<&str> {
+    /// Pixels per chunk per dimension, parallel to `dim_names` in source
+    /// order. None for an in-db band.
+    fn chunk_shape(&self) -> Option<&[i64]> {
         None
     }
 
-    /// OutDb format — how to interpret the bytes at `outdb_uri`
-    /// (e.g. `"geotiff"`, `"zarr"`). None means in-memory — the band's
-    /// `contiguous_data()` / `nd_buffer()` is authoritative.
-    fn outdb_format(&self) -> Option<&str> {
+    /// The band's codec pipeline as JSON (see [`crate::chunks`]): how the
+    /// bytes its chunks reference decode into pixels. None for an in-db band.
+    fn codecs(&self) -> Option<&str> {
+        None
+    }
+
+    /// The band's chunk grid: one entry per grid position in row-major
+    /// order, each an object or a byte range of one. None for an in-db band.
+    /// A loaded out-db band keeps its chunks as provenance beside its `data`.
+    fn chunks(&self) -> Option<Chunks<'_>> {
         None
     }
 
     /// True if this band's bytes live in the `data` buffer (in-database).
-    /// False if the bytes must be fetched from `outdb_uri` (out-of-database).
+    /// False if the bytes must be fetched through its `chunks`
+    /// (out-of-database).
     ///
-    /// The discriminator is whether the `data` buffer is non-empty —
-    /// `outdb_uri` and `outdb_format` are orthogonal location/format hints
-    /// that may be set on either kind of band.
+    /// The discriminator is whether the `data` buffer is non-empty — a
+    /// loaded band keeps its `chunks` as provenance, so their presence alone
+    /// does not say whether a load is needed.
     /// A band whose visible region is empty (`Π shape() == 0`) holds no
     /// readable bytes and is always InDb — there is nothing to load. This is
     /// what separates a legitimately-empty InDb band from the OutDb empty-`data`
@@ -574,22 +540,38 @@ pub trait BandRef {
             Override::Clear => None,
             Override::Set(b) => Some(b),
         };
-        let outdb_uri = match overrides.outdb_uri {
-            Override::Keep => self.outdb_uri(),
-            Override::Clear => None,
-            Override::Set(u) => Some(u),
-        };
-        let outdb_format = match overrides.outdb_format {
-            Override::Keep => self.outdb_format(),
-            Override::Clear => None,
-            Override::Set(f) => Some(f),
-        };
+        // The out-db fields move as one. `Keep` materialises the source's
+        // chunk list (a Vec of borrowed refs; the strings stay in the source
+        // arrays), `Clear` makes an in-db band, `Set` takes the caller's.
+        let inherited_chunks: Option<Vec<Option<ChunkRef<'_>>>>;
+        let chunk_shape: Option<&[i64]>;
+        let codecs: Option<&str>;
+        let chunks: Option<&[Option<ChunkRef<'_>>]>;
+        match overrides.chunks {
+            Override::Keep => {
+                inherited_chunks = self.chunks().map(|c| c.to_vec());
+                chunk_shape = self.chunk_shape();
+                codecs = self.codecs();
+                chunks = inherited_chunks.as_deref();
+            }
+            Override::Clear => {
+                chunk_shape = None;
+                codecs = None;
+                chunks = None;
+            }
+            Override::Set(c) => {
+                chunk_shape = Some(c.chunk_shape);
+                codecs = Some(c.codecs);
+                chunks = Some(c.chunks);
+            }
+        }
         builder.start_band(StartBandArgs {
             name,
             view: Some(&effective_view),
             nodata,
-            outdb_uri,
-            outdb_format,
+            chunk_shape,
+            codecs,
+            chunks,
             ..StartBandArgs::new(&dim_names, &source_shape, self.data_type())
         })?;
         match overrides.data {
@@ -961,45 +943,6 @@ mod tests {
         assert_eq!(val, -2.0);
     }
 
-    #[test]
-    fn test_outdb_source_strips_only_a_trailing_band_fragment() {
-        assert_eq!(outdb_source("s3://b/a.tif#band=2"), "s3://b/a.tif");
-        assert_eq!(outdb_source("s3://b/a.tif"), "s3://b/a.tif");
-        assert_eq!(outdb_source("p#anchor#band=1"), "p#anchor");
-        // A non-band fragment names a different source and is kept.
-        assert_eq!(outdb_source("x.zarr#var=a"), "x.zarr#var=a");
-        assert_ne!(outdb_source("x.zarr#var=a"), outdb_source("x.zarr#var=b"));
-        assert_eq!(outdb_source("x.zarr#var=a#band=3"), "x.zarr#var=a");
-        // Agrees with the parser on every well-formed URI.
-        for uri in ["s3://b/a.tif#band=7", "p#anchor#band=1", "x.zarr#var=a"] {
-            assert_eq!(split_outdb_band_fragment(uri).unwrap().0, outdb_source(uri));
-        }
-    }
-
-    #[test]
-    fn test_split_outdb_band_fragment_with_band() {
-        let (base, n) = split_outdb_band_fragment("s3://bucket/file.tif#band=42").unwrap();
-        assert_eq!(base, "s3://bucket/file.tif");
-        assert_eq!(n, 42);
-    }
-
-    #[test]
-    fn test_split_outdb_band_fragment_without_band_defaults_to_1() {
-        let (base, n) = split_outdb_band_fragment("s3://bucket/file.tif").unwrap();
-        assert_eq!(base, "s3://bucket/file.tif");
-        assert_eq!(n, 1);
-    }
-
-    #[test]
-    fn test_split_outdb_band_fragment_malformed_fragment_errors() {
-        // `#band=abc` explicitly requests a band but is not a positive integer;
-        // reject it rather than silently substituting the default band 1.
-        let msg = split_outdb_band_fragment("s3://bucket/file.tif#band=abc")
-            .unwrap_err()
-            .to_string();
-        assert!(msg.contains("band=abc"), "msg was: {msg}");
-    }
-
     fn ve(source_axis: i64, start: i64, step: i64, steps: i64) -> ViewEntry {
         ViewEntry {
             source_axis,
@@ -1368,156 +1311,5 @@ mod tests {
     fn is_contiguous_broadcast_is_false() {
         // Zero stride (broadcast) is not packed.
         assert!(!ndbuf(&[2, 3], &[0, 1], 0).is_contiguous());
-    }
-
-    #[test]
-    fn split_outdb_band_one_fragment_round_trips() {
-        assert_eq!(
-            split_outdb_band_fragment("s3://bucket/file.tif#band=1").unwrap(),
-            ("s3://bucket/file.tif".to_string(), 1),
-        );
-    }
-
-    #[test]
-    fn split_outdb_band_max_u32_accepted() {
-        let max = u32::MAX;
-        let uri = format!("s3://bucket/file.tif#band={max}");
-        assert_eq!(
-            split_outdb_band_fragment(&uri).unwrap(),
-            ("s3://bucket/file.tif".to_string(), max),
-        );
-    }
-
-    #[test]
-    fn split_outdb_band_zero_errors() {
-        let msg = split_outdb_band_fragment("s3://bucket/file.tif#band=0")
-            .unwrap_err()
-            .to_string();
-        assert!(msg.contains("band=0"), "msg was: {msg}");
-        assert!(msg.contains("positive integer"), "msg was: {msg}");
-    }
-
-    #[test]
-    fn split_outdb_negative_band_errors() {
-        let msg = split_outdb_band_fragment("s3://bucket/file.tif#band=-2")
-            .unwrap_err()
-            .to_string();
-        assert!(msg.contains("band=-2"), "msg was: {msg}");
-    }
-
-    #[test]
-    fn split_outdb_band_overflow_errors() {
-        // 4294967296 = u32::MAX + 1
-        let msg = split_outdb_band_fragment("s3://bucket/file.tif#band=4294967296")
-            .unwrap_err()
-            .to_string();
-        assert!(msg.contains("band=4294967296"), "msg was: {msg}");
-    }
-
-    #[test]
-    fn split_outdb_empty_band_value_errors() {
-        let msg = split_outdb_band_fragment("s3://bucket/file.tif#band=")
-            .unwrap_err()
-            .to_string();
-        assert!(msg.contains("band="), "msg was: {msg}");
-    }
-
-    #[test]
-    fn split_outdb_non_band_fragment_passes_through() {
-        let uri = "s3://bucket/file.tif#section";
-        assert_eq!(
-            split_outdb_band_fragment(uri).unwrap(),
-            (uri.to_string(), 1)
-        );
-    }
-
-    #[test]
-    fn split_outdb_empty_fragment_passes_through() {
-        let uri = "s3://bucket/file.tif#";
-        assert_eq!(
-            split_outdb_band_fragment(uri).unwrap(),
-            (uri.to_string(), 1)
-        );
-    }
-
-    #[test]
-    fn split_outdb_url_query_string_preserved_with_band_fragment() {
-        assert_eq!(
-            split_outdb_band_fragment("https://example.com/r.tif?token=abc#band=3").unwrap(),
-            ("https://example.com/r.tif?token=abc".to_string(), 3),
-        );
-    }
-
-    #[test]
-    fn split_outdb_url_query_string_with_non_band_fragment_passes_through() {
-        let uri = "https://example.com/r.tif?token=abc#anchor";
-        assert_eq!(
-            split_outdb_band_fragment(uri).unwrap(),
-            (uri.to_string(), 1)
-        );
-    }
-
-    #[test]
-    fn split_outdb_local_path_with_band_fragment() {
-        assert_eq!(
-            split_outdb_band_fragment("/tmp/file.tif#band=5").unwrap(),
-            ("/tmp/file.tif".to_string(), 5),
-        );
-    }
-
-    #[test]
-    fn split_outdb_local_path_without_fragment() {
-        assert_eq!(
-            split_outdb_band_fragment("/tmp/file.tif").unwrap(),
-            ("/tmp/file.tif".to_string(), 1),
-        );
-    }
-
-    #[test]
-    fn split_outdb_gdal_subdataset_hdf5_passthrough() {
-        let uri = r#"HDF5:"/path/x.h5"://temperature"#;
-        assert_eq!(
-            split_outdb_band_fragment(uri).unwrap(),
-            (uri.to_string(), 1)
-        );
-    }
-
-    #[test]
-    fn split_outdb_gdal_subdataset_netcdf_passthrough() {
-        let uri = r#"NETCDF:"/path/file.nc":variable"#;
-        assert_eq!(
-            split_outdb_band_fragment(uri).unwrap(),
-            (uri.to_string(), 1)
-        );
-    }
-
-    #[test]
-    fn split_outdb_gdal_subdataset_gtiff_dir_passthrough() {
-        let uri = "GTIFF_DIR:1:/path/multi.tif";
-        assert_eq!(
-            split_outdb_band_fragment(uri).unwrap(),
-            (uri.to_string(), 1)
-        );
-    }
-
-    #[test]
-    fn split_outdb_gdal_subdataset_with_band_fragment_extracts_band() {
-        let uri = r#"HDF5:"/path/x.h5":/var#band=3"#;
-        let (gdal_uri, band) = split_outdb_band_fragment(uri).unwrap();
-        assert_eq!(gdal_uri, r#"HDF5:"/path/x.h5":/var"#);
-        assert_eq!(band, 3);
-    }
-
-    #[test]
-    fn split_outdb_trailing_band_wins_over_earlier_anchor() {
-        assert_eq!(
-            split_outdb_band_fragment("https://example.com/r.tif#anchor#band=7").unwrap(),
-            ("https://example.com/r.tif#anchor".to_string(), 7),
-        );
-    }
-
-    #[test]
-    fn split_outdb_empty_uri() {
-        assert_eq!(split_outdb_band_fragment("").unwrap(), (String::new(), 1));
     }
 }

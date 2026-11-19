@@ -27,8 +27,14 @@ kernels:
 
 ## Description
 
-Loads raster metadata from the file at `path` and returns a raster whose bands
-reference the source file as out-db bands.
+Reads the header of the file at `path` and returns a raster whose bands
+reference the source file as out-db bands. No pixels are read.
+
+Each band becomes one whole-object chunk pointing at the file, decoded by the
+`sedona.gdal` codec. The codec's configuration carries the 1-based source band
+within the file, so every band of the raster shares one `RS_BandPath` and
+differs only in its codecs. Pixels are read on demand (for example by
+`RS_EnsureLoaded` or a function that needs them).
 
 This is useful when you want to work with rasters stored on disk without copying
 their pixel data into the raster value itself.

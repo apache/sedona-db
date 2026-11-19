@@ -926,6 +926,7 @@ pub(crate) mod tests {
     use datafusion_physical_plan::common::collect;
     use sedona_common::option::RasterOptions;
     use sedona_raster::builder::{RasterBuilder, StartBandArgs};
+    use sedona_raster::chunks::ChunkRef;
     use sedona_schema::raster::BandDataType;
 
     /// Stand-in for `RS_EnsureLoaded`: same name, identity on its argument,
@@ -995,11 +996,11 @@ pub(crate) mod tests {
                 None,
             )
             .unwrap();
-            b.start_band(StartBandArgs {
-                outdb_uri: Some("mock://tile"),
-                outdb_format: Some("mock"),
-                ..StartBandArgs::new(&["y", "x"], &[*side, *side], BandDataType::UInt8)
-            })
+            let chunk = [Some(ChunkRef::whole("mock://tile"))];
+            b.start_band(
+                StartBandArgs::new(&["y", "x"], &[*side, *side], BandDataType::UInt8)
+                    .with_single_chunk(&chunk, r#"[{"name":"mock"}]"#),
+            )
             .unwrap();
             b.band_data_writer().append_value([0u8; 0]);
             b.finish_band().unwrap();

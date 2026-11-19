@@ -31,6 +31,7 @@ use arrow_schema::DataType;
 use sedona_schema::raster::RasterSchema;
 
 use crate::builder::StartBandArgs;
+use crate::chunks::{ChunkRef, validate_band_chunks};
 use crate::error::RasterError;
 
 /// Maximum byte length of an inline `BinaryViewArray` view. Views this short
@@ -123,9 +124,27 @@ pub struct BandArrayBuilder {
     // the canonical representation of an identity view. `true` means the row
     // carries an explicit view in the four parallel value builders.
     view_validity: Vec<bool>,
-    outdb_uri: StringBuilder,
-    outdb_format: StringViewBuilder,
     data: BinaryViewBuilder,
+    // CHUNK_SHAPE field — a nullable `List<Int64>` per band, null for an
+    // in-db band. Values + offsets + per-band validity, like `view`.
+    chunk_shape_values: Int64Builder,
+    chunk_shape_offsets: Vec<i32>,
+    chunk_shape_validity: Vec<bool>,
+    // CODECS field — the band's pipeline JSON, null for an in-db band.
+    codecs: StringViewBuilder,
+    // CHUNKS field — a nullable `List<Struct<…>>` per band whose *entries*
+    // are nullable too (a null entry is a missing chunk). Six parallel child
+    // builders plus per-entry validity, a list offset vector and per-band
+    // list validity; assembled in `finish()`.
+    chunk_uri: StringViewBuilder,
+    chunk_offset: Int64Builder,
+    chunk_size: Int64Builder,
+    chunk_content_type: StringViewBuilder,
+    chunk_checksum: StringViewBuilder,
+    chunk_inline: BinaryViewBuilder,
+    chunk_validity: Vec<bool>,
+    chunks_offsets: Vec<i32>,
+    chunks_validity: Vec<bool>,
 
     // Track band data count at the start of each band for finish_band validation.
     data_count_at_start: usize,
@@ -154,9 +173,20 @@ impl BandArrayBuilder {
             view_steps_values: Int64Builder::with_capacity(capacity * 2),
             view_offsets: vec![0],
             view_validity: Vec::with_capacity(capacity),
-            outdb_uri: StringBuilder::with_capacity(capacity, capacity),
-            outdb_format: StringViewBuilder::with_capacity(capacity),
             data: BinaryViewBuilder::with_capacity(capacity),
+            chunk_shape_values: Int64Builder::with_capacity(capacity * 2),
+            chunk_shape_offsets: vec![0],
+            chunk_shape_validity: Vec::with_capacity(capacity),
+            codecs: StringViewBuilder::with_capacity(capacity),
+            chunk_uri: StringViewBuilder::with_capacity(capacity),
+            chunk_offset: Int64Builder::with_capacity(capacity),
+            chunk_size: Int64Builder::with_capacity(capacity),
+            chunk_content_type: StringViewBuilder::with_capacity(capacity),
+            chunk_checksum: StringViewBuilder::with_capacity(capacity),
+            chunk_inline: BinaryViewBuilder::with_capacity(capacity),
+            chunk_validity: Vec::with_capacity(capacity),
+            chunks_offsets: vec![0],
+            chunks_validity: Vec::with_capacity(capacity),
 
             data_count_at_start: 0,
             data_blocks: HashMap::new(),
@@ -192,9 +222,14 @@ impl BandArrayBuilder {
             view,
             data_type,
             nodata,
-            outdb_uri,
-            outdb_format,
+            chunk_shape,
+            codecs,
+            chunks,
         } = args;
+
+        // The out-db fields are checked together before anything is appended,
+        // so an invalid band leaves the builder untouched.
+        validate_band_chunks(source_shape, chunk_shape, codecs, chunks)?;
 
         // A caller-supplied view is validated against source_shape. An identity
         // view falls through to the null-sentinel storage path below (identical
@@ -261,14 +296,7 @@ impl BandArrayBuilder {
                 self.view_offsets.push(next);
                 self.view_validity.push(true);
 
-                match outdb_uri {
-                    Some(uri) => self.outdb_uri.append_value(uri),
-                    None => self.outdb_uri.append_null(),
-                }
-                match outdb_format {
-                    Some(format) => self.outdb_format.append_value(format),
-                    None => self.outdb_format.append_null(),
-                }
+                self.append_chunk_fields(chunk_shape, codecs, chunks);
 
                 self.data_count_at_start = self.data.len();
 
@@ -328,17 +356,7 @@ impl BandArrayBuilder {
         self.view_offsets.push(next);
         self.view_validity.push(false);
 
-        // OutDb URI
-        match outdb_uri {
-            Some(uri) => self.outdb_uri.append_value(uri),
-            None => self.outdb_uri.append_null(),
-        }
-
-        // OutDb format
-        match outdb_format {
-            Some(format) => self.outdb_format.append_value(format),
-            None => self.outdb_format.append_null(),
-        }
+        self.append_chunk_fields(chunk_shape, codecs, chunks);
 
         self.data_count_at_start = self.data.len();
 
@@ -347,6 +365,84 @@ impl BandArrayBuilder {
             dim_names.iter().map(|s| s.to_string()).collect(),
             source_shape.to_vec(),
         ))
+    }
+
+    /// Append one band's `chunk_shape`, `codecs` and `chunks` rows. Already
+    /// validated together by `validate_band_chunks` in `start_band_impl`;
+    /// an in-db band (all `None`) appends three nulls.
+    fn append_chunk_fields(
+        &mut self,
+        chunk_shape: Option<&[i64]>,
+        codecs: Option<&str>,
+        chunks: Option<&[Option<ChunkRef<'_>>]>,
+    ) {
+        match chunk_shape {
+            Some(shape) => {
+                for &extent in shape {
+                    self.chunk_shape_values.append_value(extent);
+                }
+                let next = *self.chunk_shape_offsets.last().unwrap() + shape.len() as i32;
+                self.chunk_shape_offsets.push(next);
+                self.chunk_shape_validity.push(true);
+            }
+            None => {
+                let next = *self.chunk_shape_offsets.last().unwrap();
+                self.chunk_shape_offsets.push(next);
+                self.chunk_shape_validity.push(false);
+            }
+        }
+
+        match codecs {
+            Some(codecs) => self.codecs.append_value(codecs),
+            None => self.codecs.append_null(),
+        }
+
+        match chunks {
+            Some(chunks) => {
+                for chunk in chunks {
+                    match chunk {
+                        Some(chunk) => {
+                            match chunk.uri {
+                                Some(uri) => self.chunk_uri.append_value(uri),
+                                None => self.chunk_uri.append_null(),
+                            }
+                            self.chunk_offset.append_option(chunk.offset);
+                            self.chunk_size.append_option(chunk.size);
+                            match chunk.content_type {
+                                Some(ct) => self.chunk_content_type.append_value(ct),
+                                None => self.chunk_content_type.append_null(),
+                            }
+                            match chunk.checksum {
+                                Some(checksum) => self.chunk_checksum.append_value(checksum),
+                                None => self.chunk_checksum.append_null(),
+                            }
+                            // `inline` is always null: in-db pixels live in `data`.
+                            self.chunk_inline.append_null();
+                            self.chunk_validity.push(true);
+                        }
+                        None => {
+                            // A missing chunk: a null struct entry, with a null
+                            // slot in every child so the arrays stay aligned.
+                            self.chunk_uri.append_null();
+                            self.chunk_offset.append_null();
+                            self.chunk_size.append_null();
+                            self.chunk_content_type.append_null();
+                            self.chunk_checksum.append_null();
+                            self.chunk_inline.append_null();
+                            self.chunk_validity.push(false);
+                        }
+                    }
+                }
+                let next = *self.chunks_offsets.last().unwrap() + chunks.len() as i32;
+                self.chunks_offsets.push(next);
+                self.chunks_validity.push(true);
+            }
+            None => {
+                let next = *self.chunks_offsets.last().unwrap();
+                self.chunks_offsets.push(next);
+                self.chunks_validity.push(false);
+            }
+        }
     }
 
     /// Append the current band's data as a **zero-copy** view into an
@@ -465,6 +561,70 @@ impl BandArrayBuilder {
             view_nulls,
         );
 
+        // Build band chunk_shape nested list (nullable per band).
+        let chunk_shape_values = self.chunk_shape_values.finish();
+        let chunk_shape_offsets = OffsetBuffer::new(ScalarBuffer::from(self.chunk_shape_offsets));
+        let DataType::List(chunk_shape_field) = RasterSchema::chunk_shape_type() else {
+            return Err(RasterError::Invalid(
+                "Expected list type for chunk_shape".to_string(),
+            ));
+        };
+        let chunk_shape_nulls = if self.chunk_shape_validity.iter().all(|&b| b) {
+            None
+        } else {
+            Some(NullBuffer::from_iter(
+                self.chunk_shape_validity.iter().copied(),
+            ))
+        };
+        let chunk_shape_list = ListArray::new(
+            chunk_shape_field,
+            chunk_shape_offsets,
+            Arc::new(chunk_shape_values),
+            chunk_shape_nulls,
+        );
+
+        // Build band chunks nested list (List<Struct<…>>, nullable at both
+        // the band and the entry level).
+        let DataType::List(chunks_list_field) = RasterSchema::chunks_type() else {
+            return Err(RasterError::Invalid(
+                "Expected list type for chunks".to_string(),
+            ));
+        };
+        let DataType::Struct(chunk_struct_fields) = chunks_list_field.data_type().clone() else {
+            return Err(RasterError::Invalid(
+                "Expected struct type inside chunks list".to_string(),
+            ));
+        };
+        let chunk_nulls = if self.chunk_validity.iter().all(|&b| b) {
+            None
+        } else {
+            Some(NullBuffer::from_iter(self.chunk_validity.iter().copied()))
+        };
+        let chunk_struct = StructArray::new(
+            chunk_struct_fields,
+            vec![
+                Arc::new(self.chunk_uri.finish()) as ArrayRef,
+                Arc::new(self.chunk_offset.finish()),
+                Arc::new(self.chunk_size.finish()),
+                Arc::new(self.chunk_content_type.finish()),
+                Arc::new(self.chunk_checksum.finish()),
+                Arc::new(self.chunk_inline.finish()),
+            ],
+            chunk_nulls,
+        );
+        let chunks_offsets = OffsetBuffer::new(ScalarBuffer::from(self.chunks_offsets));
+        let chunks_nulls = if self.chunks_validity.iter().all(|&b| b) {
+            None
+        } else {
+            Some(NullBuffer::from_iter(self.chunks_validity.iter().copied()))
+        };
+        let chunks_list = ListArray::new(
+            chunks_list_field,
+            chunks_offsets,
+            Arc::new(chunk_struct),
+            chunks_nulls,
+        );
+
         // Build band struct
         let DataType::Struct(band_fields) = RasterSchema::band_type() else {
             return Err(RasterError::Invalid(
@@ -479,9 +639,10 @@ impl BandArrayBuilder {
             Arc::new(self.datatype.finish()),
             Arc::new(self.nodata.finish()),
             Arc::new(view_list),
-            Arc::new(self.outdb_uri.finish()),
-            Arc::new(self.outdb_format.finish()),
             Arc::new(self.data.finish()),
+            Arc::new(chunk_shape_list),
+            Arc::new(self.codecs.finish()),
+            Arc::new(chunks_list),
         ];
         Ok(StructArray::new(band_fields, band_arrays, None))
     }

@@ -15,29 +15,31 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! Zarr URI helpers — store resolution and per-chunk OutDb anchors.
+//! Zarr URI helpers — store resolution and the transitional per-chunk codec.
 //!
-//! Two URI shapes flow through the loader:
+//! Two kinds of reference flow through the loader:
 //!
 //! 1. **Group URI** (the loader entry-point argument). Identifies a Zarr
 //!    group on a backend. Supported schemes: `file://`, bare local path,
 //!    `s3://`, `http://`, `https://` (the `object_store` `aws`/`http`
 //!    features). Other schemes (e.g. `gs://`, `az://`) error as
 //!    unsupported until their backends are wired in.
-//! 2. **Chunk anchor URI** (written into a band's `outdb_uri`). Addresses
-//!    one chunk in one array within a group:
-//!    `<store-uri>#array=<array-path>&chunk=<i0>,<i1>,...`. The store URI
-//!    is the original group URI verbatim (whatever scheme that uses);
-//!    array path and chunk indices both live in the fragment so the
-//!    store URI is unambiguous even when both contain `/` (e.g.
-//!    `s3://bucket/foo.zarr/2024` + `subgroup/B01`). For an array stored
-//!    with the `sharding_indexed` codec the indices are on the
-//!    inner-chunk grid, not the shard grid.
+//! 2. **Chunk reference** (a band's one `chunks` entry plus its `codecs`).
+//!    The chunk's `uri` is the chunk object's URL, `<group-uri>/<store
+//!    key>` ([`chunk_object_uri`]); for an array stored with the
+//!    `sharding_indexed` codec it is the shard object, the object actually
+//!    read. The band's `codecs` is the one-entry [`ZARR_CODEC`] pipeline
+//!    whose configuration names the group (`store`, the group URI
+//!    verbatim), the `array` path and the `chunk` indices — on the
+//!    inner-chunk grid for a sharded array — which is what the byte loader
+//!    opens and reads. The store URI stays unambiguous even when it and
+//!    the array path both contain `/` (e.g. `s3://bucket/foo.zarr/2024` +
+//!    `subgroup/B01`), because they are separate configuration fields.
 //!
-//!    The "this is a zarr anchor" signal lives in the band's
-//!    `outdb_format = "zarr"` field, not in a URI scheme prefix — matches
-//!    the GDAL OutDb convention and lets the format-keyed dispatcher
-//!    route without parsing URI schemes.
+//!    This codec is transitional: it keeps today's zarrs-based loader
+//!    working behind the codec dispatch. The generic chunk loader replaces
+//!    it with real Zarr v3 pipelines per chunk object, at which point the
+//!    `uri` alone is what gets read and this codec goes away.
 
 use std::sync::Arc;
 
@@ -45,92 +47,134 @@ use arrow_schema::ArrowError;
 use object_store::ObjectStore;
 use object_store::path::Path as ObjectPath;
 use object_store::prefix::PrefixStore;
+use sedona_raster::chunks::{CodecPipeline, CodecSpec};
+use serde_json::{Map, Value, json};
 use url::Url;
 use zarrs::storage::AsyncReadableListableStorage;
 use zarrs_object_store::AsyncObjectStore;
 
-/// Parts of a chunk-anchor URI. The async raster byte loader parses
-/// `outdb_uri` values back into this struct.
+/// Name of the transitional container codec that reads one Zarr chunk
+/// through zarrs. Configuration: `{"store": …, "array": …, "chunk": [...]}`,
+/// see [`ZarrCodec`]. Loaders dispatch on this name.
+pub const ZARR_CODEC: &str = "sedona.zarr";
+
+/// Configuration of the [`ZARR_CODEC`] codec: which chunk of which array
+/// in which group a band reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ChunkAnchor {
-    pub store_uri: String,
-    pub array_path: String,
-    pub chunk_indices: Vec<u64>,
+pub struct ZarrCodec {
+    /// The group URI verbatim, as the reader was opened with.
+    pub store: String,
+    /// The array path within the group, without a leading slash.
+    pub array: String,
+    /// Chunk indices on the grid the reader walks: the inner-chunk grid
+    /// of a sharded array, the chunk grid of any other.
+    pub chunk: Vec<u64>,
 }
 
-/// Build a chunk anchor URI from its parts.
-///
-/// Format: `<store_uri>#array=<array_path>&chunk=<i0>,<i1>,...`. The
-/// store URI is the original group URI verbatim; array path and chunk
-/// indices live in the fragment so the store URI is unambiguous even
-/// when path components themselves contain `/`. "This is zarr" lives
-/// in the band's `outdb_format` field rather than in a URI scheme.
-pub fn build_chunk_anchor(store_uri: &str, array_path: &str, chunk_indices: &[u64]) -> String {
-    let indices = chunk_indices
-        .iter()
-        .map(|i| i.to_string())
-        .collect::<Vec<_>>()
-        .join(",");
-    let array = array_path.trim_start_matches('/');
-    format!("{store_uri}#array={array}&chunk={indices}")
-}
-
-/// Parse a chunk-anchor URI back into its parts.
-///
-/// Strict: rejects URIs that don't carry both `array=` and `chunk=`
-/// fragment parameters with valid values.
-pub fn parse_chunk_anchor(uri: &str) -> Result<ChunkAnchor, ArrowError> {
-    let (store_uri, fragment) = uri.split_once('#').ok_or_else(|| {
-        ArrowError::InvalidArgumentError(format!(
-            "chunk anchor URI missing `#array=...&chunk=...` fragment: {uri}"
-        ))
-    })?;
-
-    let mut array_path: Option<&str> = None;
-    let mut chunk_str: Option<&str> = None;
-    for pair in fragment.split('&') {
-        if let Some(v) = pair.strip_prefix("array=") {
-            array_path = Some(v);
-        } else if let Some(v) = pair.strip_prefix("chunk=") {
-            chunk_str = Some(v);
+impl ZarrCodec {
+    pub fn new(store: &str, array: &str, chunk: &[u64]) -> Self {
+        Self {
+            store: store.to_string(),
+            array: array.trim_start_matches('/').to_string(),
+            chunk: chunk.to_vec(),
         }
-        // Unknown fragment params are ignored — forward-compatible for
-        // future per-anchor extensions (e.g. version pins).
     }
 
-    let array_path = array_path
-        .ok_or_else(|| {
+    /// The array path with its leading slash, as `Array::async_open` takes it.
+    pub fn array_path(&self) -> String {
+        format!("/{}", self.array)
+    }
+
+    /// This codec as a one-entry pipeline.
+    pub fn to_pipeline(&self) -> CodecPipeline {
+        let mut configuration = Map::new();
+        configuration.insert("store".to_string(), Value::String(self.store.clone()));
+        configuration.insert("array".to_string(), Value::String(self.array.clone()));
+        configuration.insert("chunk".to_string(), json!(self.chunk));
+        CodecPipeline::new(vec![CodecSpec::new(ZARR_CODEC, Some(configuration))])
+    }
+
+    /// The JSON a band stores in `codecs` for this codec.
+    pub fn to_json(&self) -> String {
+        self.to_pipeline().to_json()
+    }
+
+    /// Read this codec out of a pipeline. `Ok(None)` when the pipeline is
+    /// not a single [`ZARR_CODEC`]; an error when it is but its
+    /// configuration is malformed.
+    pub fn from_pipeline(pipeline: &CodecPipeline) -> Result<Option<Self>, ArrowError> {
+        let Some(codec) = pipeline.single() else {
+            return Ok(None);
+        };
+        if codec.name != ZARR_CODEC {
+            return Ok(None);
+        }
+        let configuration = codec.configuration.as_ref().ok_or_else(|| {
             ArrowError::InvalidArgumentError(format!(
-                "chunk anchor URI fragment missing `array=` parameter: {uri}"
+                "{ZARR_CODEC} needs a configuration with \"store\", \"array\" and \"chunk\""
             ))
-        })?
-        .to_string();
-    let indices_str = chunk_str.ok_or_else(|| {
-        ArrowError::InvalidArgumentError(format!(
-            "chunk anchor URI fragment missing `chunk=` parameter: {uri}"
-        ))
-    })?;
-    if indices_str.is_empty() {
-        return Err(ArrowError::InvalidArgumentError(format!(
-            "chunk anchor URI has empty index list: {uri}"
-        )));
+        })?;
+        let string = |key: &str| -> Result<String, ArrowError> {
+            match configuration.get(key) {
+                Some(Value::String(s)) if !s.is_empty() => Ok(s.clone()),
+                _ => Err(ArrowError::InvalidArgumentError(format!(
+                    "{ZARR_CODEC}: \"{key}\" must be a non-empty string"
+                ))),
+            }
+        };
+        let store = string("store")?;
+        let array = string("array")?.trim_start_matches('/').to_string();
+        let chunk = match configuration.get("chunk") {
+            Some(Value::Array(items)) if !items.is_empty() => items
+                .iter()
+                .map(|item| {
+                    item.as_u64().ok_or_else(|| {
+                        ArrowError::InvalidArgumentError(format!(
+                            "{ZARR_CODEC}: chunk index {item} is not a non-negative integer"
+                        ))
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+            _ => {
+                return Err(ArrowError::InvalidArgumentError(format!(
+                    "{ZARR_CODEC}: \"chunk\" must be a non-empty array of chunk indices"
+                )));
+            }
+        };
+        Ok(Some(Self {
+            store,
+            array,
+            chunk,
+        }))
     }
-    let chunk_indices = indices_str
-        .split(',')
-        .map(|s| {
-            s.parse::<u64>().map_err(|_| {
-                ArrowError::InvalidArgumentError(format!(
-                    "chunk index `{s}` is not a non-negative integer in {uri}"
-                ))
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
 
-    Ok(ChunkAnchor {
-        store_uri: store_uri.to_string(),
-        array_path,
-        chunk_indices,
-    })
+    /// [`Self::from_pipeline`] on a band's `codecs` JSON.
+    pub fn parse(codecs: &str) -> Result<Option<Self>, ArrowError> {
+        let pipeline = CodecPipeline::parse(codecs)
+            .map_err(|e| ArrowError::InvalidArgumentError(e.to_string()))?;
+        Self::from_pipeline(&pipeline)
+    }
+
+    /// Parse a band's `codecs`, failing when they are not this codec.
+    pub fn parse_required(codecs: &str) -> Result<Self, ArrowError> {
+        Self::parse(codecs)?.ok_or_else(|| {
+            ArrowError::InvalidArgumentError(format!(
+                "band codecs {codecs} are not the {ZARR_CODEC} codec; the Zarr loader reads \
+                 only bands written by the Zarr reader"
+            ))
+        })
+    }
+}
+
+/// The URL of the object holding `store_key` (an array's chunk or shard
+/// key, as `Array::chunk_key` returns it) in the group at `group_uri`:
+/// `<group_uri>/<store_key>`.
+pub fn chunk_object_uri(group_uri: &str, store_key: &str) -> String {
+    format!(
+        "{}/{}",
+        group_uri.trim_end_matches('/'),
+        store_key.trim_start_matches('/')
+    )
 }
 
 /// Resolve a group URI into an async zarrs storage handle rooted at
@@ -256,26 +300,89 @@ mod tests {
     use super::*;
 
     #[test]
-    fn build_anchor_basic() {
-        let uri = build_chunk_anchor("file:///tmp/datacube.zarr", "temperature", &[47, 2, 3]);
+    fn zarr_codec_round_trips_through_json() {
+        let codec = ZarrCodec::new("file:///tmp/datacube.zarr", "temperature", &[47, 2, 3]);
+        let json = codec.to_json();
+        // Compared as values: serde_json's key order depends on whether the
+        // build unifies its `preserve_order` feature.
+        let value: Value = serde_json::from_str(&json).unwrap();
         assert_eq!(
-            uri,
-            "file:///tmp/datacube.zarr#array=temperature&chunk=47,2,3"
+            value,
+            json!([{
+                "name": "sedona.zarr",
+                "configuration": {
+                    "store": "file:///tmp/datacube.zarr",
+                    "array": "temperature",
+                    "chunk": [47, 2, 3],
+                },
+            }])
         );
+        assert_eq!(ZarrCodec::parse(&json).unwrap(), Some(codec));
     }
 
     #[test]
-    fn build_anchor_strips_leading_slash_on_array_path() {
-        let uri = build_chunk_anchor("file:///tmp/foo.zarr", "/array", &[0]);
-        assert_eq!(uri, "file:///tmp/foo.zarr#array=array&chunk=0");
+    fn zarr_codec_strips_leading_slash_on_array_path() {
+        let codec = ZarrCodec::new("file:///tmp/foo.zarr", "/array", &[0]);
+        assert_eq!(codec.array, "array");
+        assert_eq!(codec.array_path(), "/array");
+        // A leading slash in stored JSON is tolerated on read too.
+        let parsed = ZarrCodec::parse(
+            r#"[{"name":"sedona.zarr","configuration":{"store":"s3://b/x.zarr","array":"/sub/B01","chunk":[1,5]}}]"#,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(parsed.array, "sub/B01");
+        assert_eq!(parsed.store, "s3://b/x.zarr");
+        assert_eq!(parsed.chunk, vec![1, 5]);
     }
 
     #[test]
-    fn build_anchor_with_nested_array_path() {
-        let uri = build_chunk_anchor("s3://bucket/foo.zarr/2024", "subgroup/B01", &[1, 5]);
+    fn zarr_codec_is_none_for_other_pipelines() {
+        assert_eq!(ZarrCodec::parse(r#"[{"name":"bytes"}]"#).unwrap(), None);
         assert_eq!(
-            uri,
-            "s3://bucket/foo.zarr/2024#array=subgroup/B01&chunk=1,5"
+            ZarrCodec::parse(r#"[{"name":"sedona.gdal","configuration":{"band":1}}]"#).unwrap(),
+            None
+        );
+        // Two codecs are never this container codec, whatever their names.
+        assert_eq!(
+            ZarrCodec::parse(r#"[{"name":"sedona.zarr"},{"name":"zstd"}]"#).unwrap(),
+            None
+        );
+        let err = ZarrCodec::parse_required(r#"[{"name":"bytes"}]"#)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("sedona.zarr"), "{err}");
+    }
+
+    #[test]
+    fn zarr_codec_rejects_malformed_configuration() {
+        for bad in [
+            r#"[{"name":"sedona.zarr"}]"#,
+            r#"[{"name":"sedona.zarr","configuration":{"array":"a","chunk":[0]}}]"#,
+            r#"[{"name":"sedona.zarr","configuration":{"store":"s3://b","chunk":[0]}}]"#,
+            r#"[{"name":"sedona.zarr","configuration":{"store":"s3://b","array":"a"}}]"#,
+            r#"[{"name":"sedona.zarr","configuration":{"store":"s3://b","array":"a","chunk":[]}}]"#,
+            r#"[{"name":"sedona.zarr","configuration":{"store":"s3://b","array":"a","chunk":[0,-1]}}]"#,
+            r#"[{"name":"sedona.zarr","configuration":{"store":"s3://b","array":"a","chunk":"0,1"}}]"#,
+            "not json",
+        ] {
+            assert!(ZarrCodec::parse(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn chunk_object_uri_joins_group_and_store_key() {
+        assert_eq!(
+            chunk_object_uri("file:///tmp/foo.zarr", "temperature/c/0/0"),
+            "file:///tmp/foo.zarr/temperature/c/0/0"
+        );
+        assert_eq!(
+            chunk_object_uri("s3://bucket/foo.zarr/2024/", "/subgroup/B01/c/1/5"),
+            "s3://bucket/foo.zarr/2024/subgroup/B01/c/1/5"
+        );
+        assert_eq!(
+            chunk_object_uri("/tmp/foo.zarr", "a/0.0"),
+            "/tmp/foo.zarr/a/0.0"
         );
     }
 
@@ -299,87 +406,6 @@ mod tests {
             store_client_key("s3://a/x.zarr").unwrap(),
             store_client_key("s3://b/x.zarr").unwrap()
         );
-    }
-
-    #[test]
-    fn parse_anchor_basic() {
-        let anchor =
-            parse_chunk_anchor("file:///tmp/datacube.zarr#array=temperature&chunk=47,2,3").unwrap();
-        assert_eq!(anchor.store_uri, "file:///tmp/datacube.zarr");
-        assert_eq!(anchor.array_path, "temperature");
-        assert_eq!(anchor.chunk_indices, vec![47, 2, 3]);
-    }
-
-    #[test]
-    fn parse_anchor_with_s3_store_and_nested_array() {
-        let anchor =
-            parse_chunk_anchor("s3://bucket/foo.zarr/2024#array=subgroup/B01&chunk=0,0,0").unwrap();
-        assert_eq!(anchor.store_uri, "s3://bucket/foo.zarr/2024");
-        assert_eq!(anchor.array_path, "subgroup/B01");
-        assert_eq!(anchor.chunk_indices, vec![0, 0, 0]);
-    }
-
-    #[test]
-    fn parse_anchor_rejects_missing_fragment() {
-        let err = parse_chunk_anchor("file:///foo.zarr")
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("fragment"), "{err}");
-    }
-
-    #[test]
-    fn parse_anchor_rejects_missing_array_param() {
-        let err = parse_chunk_anchor("file:///foo.zarr#chunk=0")
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("array="), "{err}");
-    }
-
-    #[test]
-    fn parse_anchor_rejects_missing_chunk_param() {
-        let err = parse_chunk_anchor("file:///foo.zarr#array=a")
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("chunk="), "{err}");
-    }
-
-    #[test]
-    fn parse_anchor_rejects_empty_indices() {
-        let err = parse_chunk_anchor("file:///foo.zarr#array=a&chunk=")
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("empty"), "{err}");
-    }
-
-    #[test]
-    fn parse_anchor_rejects_non_integer_index() {
-        let err = parse_chunk_anchor("file:///foo.zarr#array=a&chunk=0,abc,2")
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("abc"), "{err}");
-    }
-
-    #[test]
-    fn parse_anchor_ignores_unknown_fragment_params() {
-        let anchor = parse_chunk_anchor("file:///foo.zarr#array=t&chunk=0,0&version=v3").unwrap();
-        assert_eq!(anchor.array_path, "t");
-        assert_eq!(anchor.chunk_indices, vec![0, 0]);
-    }
-
-    #[test]
-    fn anchor_roundtrip() {
-        let original = ChunkAnchor {
-            store_uri: "file:///tmp/foo.zarr".into(),
-            array_path: "subgroup/B01".into(),
-            chunk_indices: vec![10, 20, 30],
-        };
-        let uri = build_chunk_anchor(
-            &original.store_uri,
-            &original.array_path,
-            &original.chunk_indices,
-        );
-        let parsed = parse_chunk_anchor(&uri).unwrap();
-        assert_eq!(parsed, original);
     }
 
     fn placeholder_store() -> Arc<dyn ObjectStore> {

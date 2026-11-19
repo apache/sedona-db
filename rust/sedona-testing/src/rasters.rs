@@ -462,10 +462,16 @@ pub fn assert_raster_equal(raster1: &impl RasterRef, raster2: &impl RasterRef) {
             band2.nodata(),
             "Band nodata values do not match"
         );
+        assert_eq!(band1.codecs(), band2.codecs(), "Band codecs do not match");
         assert_eq!(
-            band1.outdb_uri(),
-            band2.outdb_uri(),
-            "Band outdb URIs do not match"
+            band1.chunk_shape(),
+            band2.chunk_shape(),
+            "Band chunk shapes do not match"
+        );
+        assert_eq!(
+            band1.chunks().map(|chunks| chunks.to_vec()),
+            band2.chunks().map(|chunks| chunks.to_vec()),
+            "Band chunks do not match"
         );
 
         assert_eq!(
@@ -534,7 +540,7 @@ mod tests {
             assert_eq!(band.data_type(), BandDataType::UInt16);
             assert_eq!(band.nodata(), Some(&[0u8, 0u8][..]));
             assert!(band.is_indb());
-            assert_eq!(band.outdb_uri(), None);
+            assert!(band.chunks().is_none());
 
             let band_data = band.nd_buffer().unwrap().as_contiguous().unwrap();
             let expected_pixel_count = (i + 1) * (i + 2); // width * height

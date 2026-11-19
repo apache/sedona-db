@@ -410,13 +410,13 @@ mod tests {
     fn outdb_bands_are_carried_by_reference() {
         let outdb = RasterSpec::d2(3, 2)
             .band(BandDataType::UInt8)
-            .outdb("s3://bucket/r.tif", Some("geotiff"));
+            .outdb_gdal("s3://bucket/r.tif", 1);
         let result = tester(2)
             .invoke_arrays(arrays(vec![vec![Some(uint8(1, 0.0))], vec![Some(outdb)]]))
             .unwrap();
         let expected = uint8(1, 0.0)
             .band(BandDataType::UInt8)
-            .outdb("s3://bucket/r.tif", Some("geotiff"));
+            .outdb_gdal("s3://bucket/r.tif", 1);
         assert_rasters_equal(&result, &[Some(expected)]);
     }
 }

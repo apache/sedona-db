@@ -47,7 +47,6 @@ use datafusion_physical_plan::repartition::RepartitionExec;
 use datafusion_physical_plan::{ExecutionPlan, ExecutionPlanProperties, Partitioning};
 use sedona_common::sedona_internal_datafusion_err;
 use sedona_raster::array::RasterStructArray;
-use sedona_raster::traits::outdb_source;
 
 /// The spread of a loading node's `input` by raster source: the plan to
 /// hash (`input` itself, or what the planner's own repartitioning below the
@@ -147,18 +146,19 @@ fn spread_source(input: &Arc<dyn ExecutionPlan>) -> Arc<dyn ExecutionPlan> {
     Arc::clone(input)
 }
 
-/// Per-row partitioning key: which file a raster reads its pixels from.
+/// Per-row partitioning key: which object a raster reads its pixels from.
 ///
 /// Evaluates its child (a raster) and returns, per row, a `UInt64` hash of
-/// the `outdb_uri` of the first band that still has to be loaded (empty
-/// `data` over a non-empty visible region), reduced to its source with
-/// [`outdb_source`] (a trailing `#band=N` stripped), so every band and every
-/// row reading the same file shares a key and therefore a partition. Rows
-/// with nothing to load (InDb rasters, including loaded ones that keep their
-/// `outdb_uri` as provenance; null rasters; rasters without bands) have no
-/// file to keep together; they get values from a running counter instead,
-/// so they spread like a round-robin rather than all hashing to one
-/// partition.
+/// the first chunk URI of the first band that still has to be loaded (empty
+/// `data` over a non-empty visible region), see
+/// [`RasterStructArray::first_outdb_band_source`]. Every band of a GDAL
+/// file names that file (the source band lives in the codec) and a Zarr row
+/// names its chunk object, so every band and every row reading the same
+/// object shares a key and therefore a partition. Rows with nothing to load
+/// (InDb rasters, including loaded ones that keep their chunks as
+/// provenance; null rasters; rasters without bands) have no object to keep
+/// together; they get values from a running counter instead, so they spread
+/// like a round-robin rather than all hashing to one partition.
 ///
 /// That counter makes the expression non-deterministic: the same row can
 /// get a different key on another evaluation. It therefore reports itself
@@ -189,12 +189,9 @@ impl RasterSourceKeyExpr {
         let mut without_source = 0u64;
         // Raster rows arrive in runs (a join emits a raster's matches
         // together), so reuse the previous hash when the source repeats.
-        // The cache must stay keyed on the *stripped* source: then the
-        // bands of one file (`a.tif#band=1`, `a.tif#band=2`) share a run
-        // as well as a key.
         let mut last: Option<(&str, u64)> = None;
         for i in 0..rasters.len() {
-            let key = match rasters.first_outdb_band_uri(i).map(outdb_source) {
+            let key = match rasters.first_outdb_band_source(i) {
                 Some(source) => match last {
                     Some((prev, hash)) if prev == source => Some(hash),
                     _ => {
@@ -335,6 +332,7 @@ mod tests {
     use datafusion_physical_plan::union::UnionExec;
     use sedona_common::option::DEFAULT_RASTER_MAX_BATCH_BYTES;
     use sedona_raster::builder::{RasterBuilder, StartBandArgs};
+    use sedona_raster::chunks::{ChunkRef, GdalCodec};
     use sedona_schema::datatypes::SedonaType;
     use sedona_schema::raster::BandDataType;
 
@@ -346,17 +344,25 @@ mod tests {
     };
 
     /// `id` (the row number) and `rast`: one OutDb `[2, 2]` UInt8 band per
-    /// row, reading `uris[id]`.
+    /// row, reading band 1 of the file at `uris[id]`.
     fn outdb_raster_batch(uris: &[&str]) -> (SchemaRef, RecordBatch) {
-        let mut b = RasterBuilder::new(uris.len());
-        for uri in uris {
+        let bands: Vec<(&str, u32)> = uris.iter().map(|uri| (*uri, 1)).collect();
+        outdb_raster_batch_bands(&bands)
+    }
+
+    /// [`outdb_raster_batch`] reading, per row, the given 1-based band of
+    /// the given file through the GDAL codec.
+    fn outdb_raster_batch_bands(bands: &[(&str, u32)]) -> (SchemaRef, RecordBatch) {
+        let mut b = RasterBuilder::new(bands.len());
+        for (uri, band) in bands {
             b.start_raster_nd(&[0.0, 1.0, 0.0, 0.0, 0.0, -1.0], &["y", "x"], &[2, 2], None)
                 .unwrap();
-            b.start_band(StartBandArgs {
-                outdb_uri: Some(uri),
-                outdb_format: Some("mock"),
-                ..StartBandArgs::new(&["y", "x"], &[2, 2], BandDataType::UInt8)
-            })
+            let chunk = [Some(ChunkRef::whole(uri))];
+            let codecs = GdalCodec::new(*band).to_json();
+            b.start_band(
+                StartBandArgs::new(&["y", "x"], &[2, 2], BandDataType::UInt8)
+                    .with_single_chunk(&chunk, &codecs),
+            )
             .unwrap();
             b.band_data_writer().append_value([0u8; 0]);
             b.finish_band().unwrap();
@@ -369,7 +375,7 @@ mod tests {
             Field::new("rast", rasters.data_type().clone(), true)
                 .with_metadata(raster_field.metadata().clone()),
         ]));
-        let ids = Arc::new(Int32Array::from_iter_values(0..uris.len() as i32));
+        let ids = Arc::new(Int32Array::from_iter_values(0..bands.len() as i32));
         let batch = RecordBatch::try_new(Arc::clone(&schema), vec![ids, rasters]).unwrap();
         (schema, batch)
     }
@@ -398,28 +404,31 @@ mod tests {
     fn raster_source_key_groups_rows_by_file_and_spreads_rows_without_one() {
         // Rows 0-3 and 6-9 are OutDb, rows 4-5 InDb (row 5 loaded from
         // a.tif, which it keeps as provenance); then a null raster and a
-        // raster without bands.
+        // raster without bands. Rows 6 and 7 read two chunk objects of one
+        // Zarr store; rows 8 and 9 read bands 1 and 3 of one file.
         let mut b = RasterBuilder::new(12);
-        for (uri, loaded) in [
-            (Some("s3://b/a.tif#band=1"), false),
-            (Some("s3://b/a.tif#band=2"), false),
-            (Some("s3://b/b.tif"), false),
-            (Some("s3://b/a.tif"), false),
-            (None, true),
-            (Some("s3://b/a.tif"), true),
-            (Some("s3://b/x.zarr#var=a"), false),
-            (Some("s3://b/x.zarr#var=b"), false),
-            (Some("s3://b/p.tif#anchor#band=1"), false),
-            (Some("s3://b/p.tif#anchor"), false),
+        for (uri, band, loaded) in [
+            (Some("s3://b/a.tif"), 1, false),
+            (Some("s3://b/a.tif"), 2, false),
+            (Some("s3://b/b.tif"), 1, false),
+            (Some("s3://b/a.tif"), 1, false),
+            (None, 1, true),
+            (Some("s3://b/a.tif"), 1, true),
+            (Some("s3://b/x.zarr/a/c/0/0"), 1, false),
+            (Some("s3://b/x.zarr/b/c/0/0"), 1, false),
+            (Some("s3://b/p.tif"), 1, false),
+            (Some("s3://b/p.tif"), 3, false),
         ] {
             b.start_raster_nd(&[0.0, 1.0, 0.0, 0.0, 0.0, -1.0], &["y", "x"], &[2, 2], None)
                 .unwrap();
-            b.start_band(StartBandArgs {
-                outdb_uri: uri,
-                outdb_format: uri.map(|_| "mock"),
-                ..StartBandArgs::new(&["y", "x"], &[2, 2], BandDataType::UInt8)
-            })
-            .unwrap();
+            let chunk = uri.map(|uri| [Some(ChunkRef::whole(uri))]);
+            let codecs = GdalCodec::new(band).to_json();
+            let args = StartBandArgs::new(&["y", "x"], &[2, 2], BandDataType::UInt8);
+            let args = match &chunk {
+                Some(chunk) => args.with_single_chunk(chunk, &codecs),
+                None => args,
+            };
+            b.start_band(args).unwrap();
             if loaded {
                 b.band_data_writer().append_value([0u8; 4]);
             } else {
@@ -449,12 +458,12 @@ mod tests {
         assert_eq!(keys[0], keys[1]);
         assert_eq!(keys[0], keys[3]);
         assert_ne!(keys[0], keys[2]);
-        // Only a trailing `#band=N` is stripped: other fragments name
-        // different sources, and an earlier `#anchor` stays.
+        // Two chunk objects of one Zarr store are two sources; two bands of
+        // one file (the band lives in the codec, not the URI) are one.
         assert_ne!(keys[6], keys[7]);
         assert_eq!(keys[8], keys[9]);
         // Rows with nothing to load draw consecutive counter values, one
-        // batch at a time, even when they carry a URI.
+        // batch at a time, even when they carry chunks.
         let mut fallback = vec![keys[4], keys[5], keys[10], keys[11]];
         fallback.sort();
         assert_eq!(fallback, (fallback[0]..fallback[0] + 4).collect::<Vec<_>>());
@@ -486,12 +495,14 @@ mod tests {
         // Sixteen rasters, four rows each, interleaved over two input
         // partitions of one batch each: a whole-batch round-robin could only
         // ever keep two partitions busy.
-        let uris: Vec<String> = (0..64)
-            .map(|i| format!("s3://b/r{}.tif#band={}", i % 16, i / 16 + 1))
+        let uris: Vec<String> = (0..64).map(|i| format!("s3://b/r{}.tif", i % 16)).collect();
+        let bands: Vec<(&str, u32)> = uris
+            .iter()
+            .enumerate()
+            .map(|(i, uri)| (uri.as_str(), i as u32 / 16 + 1))
             .collect();
-        let uris: Vec<&str> = uris.iter().map(String::as_str).collect();
-        let (schema, first) = outdb_raster_batch(&uris[..32]);
-        let (_, second) = outdb_raster_batch(&uris[32..]);
+        let (schema, first) = outdb_raster_batch_bands(&bands[..32]);
+        let (_, second) = outdb_raster_batch_bands(&bands[32..]);
         let input = MemorySourceConfig::try_new_exec(
             &[vec![first], vec![second]],
             Arc::clone(&schema),
@@ -1407,11 +1418,12 @@ mod tests {
             b.start_raster_nd(&[0.0, 1.0, 0.0, 0.0, 0.0, -1.0], &["y", "x"], &[2, 2], None)
                 .unwrap();
             let uri = format!("s3://b/r{}.tif", i % 8);
-            b.start_band(StartBandArgs {
-                outdb_uri: Some(&uri),
-                outdb_format: Some("mock"),
-                ..StartBandArgs::new(&["y", "x"], &[2, 2], BandDataType::UInt8)
-            })
+            let chunk = [Some(ChunkRef::whole(&uri))];
+            let codecs = GdalCodec::new(1).to_json();
+            b.start_band(
+                StartBandArgs::new(&["y", "x"], &[2, 2], BandDataType::UInt8)
+                    .with_single_chunk(&chunk, &codecs),
+            )
             .unwrap();
             b.band_data_writer().append_value([0u8; 0]);
             b.finish_band().unwrap();
