@@ -90,7 +90,6 @@
 //! it during session bootstrap.
 
 use std::collections::HashMap;
-use std::iter::zip;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -105,6 +104,7 @@ use sedona_gdal::raster::rasterband::RasterBand;
 use sedona_raster::io_budget::RasterIoBudget;
 use sedona_raster::raster_loader::{AsyncRasterLoader, RasterLoadRequest, RasterLoadResult};
 use sedona_raster::traits::{is_spatial_dim_pair, split_outdb_band_fragment};
+use sedona_raster::view_entries::ViewEntries;
 use sedona_schema::raster::BandDataType;
 use tokio::sync::oneshot;
 
@@ -118,8 +118,9 @@ pub const GDAL_FORMAT: &str = "gdal";
 
 /// Maximum bytes a single OutDb load request will produce.
 ///
-/// Requests with `Π source_shape × data_type.byte_size()` greater than
-/// this value are rejected before spawning the blocking read task.
+/// For a loader-resolved, unit-stride 2-D view, the request produces just its
+/// window; otherwise it produces the full source. Requests whose produced
+/// bytes exceed this value are rejected before spawning the blocking read task.
 /// 4 GiB is intentionally conservative: typical satellite imagery bands
 /// (Landsat, Sentinel-2, MODIS) are under 1 GiB; anything larger usually
 /// indicates corrupt metadata or an accidentally-huge band claim. If we
@@ -247,12 +248,19 @@ impl AsyncRasterLoader for GdalLoader {
             .map(|req| self.validate_one(req))
             .collect::<Result<Vec<_>, ArrowError>>()?;
 
-        let buffers = self.load_all(load_requests).await?;
-        let results = zip(buffers, reqs)
-            .map(|(buf, req)| RasterLoadResult::unresolved(buf, req))
-            .collect::<Vec<_>>();
-        Ok(results)
+        self.load_all(load_requests).await
     }
+}
+
+/// A rectangular source window which GDAL can load directly. This is only
+/// used for a standard, unit-stride Y/X view; views involving a permutation,
+/// stride, broadcast, or reversal retain the full-source fallback.
+#[derive(Debug, Clone, Copy)]
+struct GdalWindow {
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
 }
 
 struct OwnedGdalLoadRequest {
@@ -261,11 +269,12 @@ struct OwnedGdalLoadRequest {
     path: String,
     /// The fragment's band, 1 if it has none.
     band: usize,
-    height: usize,
-    width: usize,
+    window: GdalWindow,
     expected_bytes: usize,
     byte_size: usize,
     expected_dtype: BandDataType,
+    result_source_shape: Vec<i64>,
+    result_view: ViewEntries,
 }
 
 impl GdalLoader {
@@ -289,34 +298,63 @@ impl GdalLoader {
             )));
         }
 
-        // The Y-like (row) axis is source_shape[0], the X-like (column) axis
-        // is source_shape[1] — guaranteed by the dim-pair check above.
-        let height = usize::try_from(req.source_shape[0]).map_err(|_| {
+        req.view.validate(req.source_shape).map_err(|e| {
+            ArrowError::InvalidArgumentError(format!(
+                "GDAL OutDb request has an invalid view for source_shape {:?}: {e}",
+                req.source_shape
+            ))
+        })?;
+
+        let source_height = usize::try_from(req.source_shape[0]).map_err(|_| {
             ArrowError::InvalidArgumentError(format!(
                 "GDAL OutDb source_shape[0]={} exceeds usize::MAX",
                 req.source_shape[0]
             ))
         })?;
 
-        let width = usize::try_from(req.source_shape[1]).map_err(|_| {
+        let source_width = usize::try_from(req.source_shape[1]).map_err(|_| {
             ArrowError::InvalidArgumentError(format!(
                 "GDAL OutDb source_shape[1]={} exceeds usize::MAX",
                 req.source_shape[1]
             ))
         })?;
 
+        let (window, result_source_shape, result_view) = (!req.view.is_identity(req.source_shape))
+            .then(|| native_window(req.view))
+            .flatten()
+            .map_or_else(
+                || {
+                    (
+                        GdalWindow {
+                            x: 0,
+                            y: 0,
+                            width: source_width,
+                            height: source_height,
+                        },
+                        req.source_shape.to_vec(),
+                        req.view.clone(),
+                    )
+                },
+                |window| {
+                    let shape = vec![window.height as i64, window.width as i64];
+                    let view = ViewEntries::identity_for_shape(&shape);
+                    (window, shape, view)
+                },
+            );
+
         let byte_size = req.data_type.byte_size();
 
-        // Byte-cap validation: compute Π source_shape × byte_size in u64
-        // with checked arithmetic so a hostile request can't wrap to a
-        // small accept-value. Reject before allocating.
-        let expected_bytes_u64 = (req.source_shape[0] as u64)
-            .checked_mul(req.source_shape[1] as u64)
+        // Byte-cap validation: compute the bytes actually read (the direct
+        // window for a native tile, otherwise the full source) in u64 with
+        // checked arithmetic so a hostile request can't wrap to a small
+        // accept-value. Reject before allocating.
+        let expected_bytes_u64 = (window.height as u64)
+            .checked_mul(window.width as u64)
             .and_then(|elems| elems.checked_mul(byte_size as u64))
             .ok_or_else(|| {
                 ArrowError::InvalidArgumentError(format!(
-                    "GDAL OutDb request byte count overflows u64 for source_shape {:?} × byte_size {}",
-                    req.source_shape, byte_size
+                    "GDAL OutDb request byte count overflows u64 for window {}x{} × byte_size {}",
+                    window.width, window.height, byte_size
                 ))
             })?;
         if expected_bytes_u64 > MAX_OUTDB_LOAD_BYTES {
@@ -334,15 +372,19 @@ impl GdalLoader {
             uri: req.uri.to_string(),
             path,
             band: band as usize,
-            height,
-            width,
+            window,
             expected_bytes: expected_bytes_u64 as usize,
             byte_size,
             expected_dtype: req.data_type,
+            result_source_shape,
+            result_view,
         })
     }
 
-    async fn load_all(&self, reqs: Vec<OwnedGdalLoadRequest>) -> Result<Vec<Buffer>, ArrowError> {
+    async fn load_all(
+        &self,
+        reqs: Vec<OwnedGdalLoadRequest>,
+    ) -> Result<Vec<RasterLoadResult>, ArrowError> {
         // Cancellation plumbing: the guard lives in this async fn's
         // frame. On normal completion `_guard` drops after every task has
         // returned, flipping the flag on finished work (no-op). When the
@@ -387,7 +429,7 @@ impl GdalLoader {
         let mut files = files.into_iter();
         let mut reads = FuturesOrdered::new();
         let mut waiting: Option<oneshot::Receiver<()>> = None;
-        let mut buffers: Vec<Option<Buffer>> = vec![None; num_reqs];
+        let mut results: Vec<Option<RasterLoadResult>> = vec![None; num_reqs];
         loop {
             if waiting.is_none()
                 && let Some(file_reqs) = files.next()
@@ -418,10 +460,10 @@ impl GdalLoader {
                                 ),
                             ))
                         })?;
-                        for (req_idx, buffer) in
+                        for (req_idx, result) in
                             read.map_err(|e| ArrowError::ExternalError(Box::new(e)))?
                         {
-                            buffers[req_idx] = Some(buffer);
+                            results[req_idx] = Some(result);
                         }
                     }
                     // Every task spawned so far has finished, so the one
@@ -441,11 +483,11 @@ impl GdalLoader {
 
         // Every request belongs to exactly one file, and a file's read
         // returns a buffer for each of its requests.
-        buffers
+        results
             .into_iter()
             .enumerate()
-            .map(|(req_idx, buffer)| {
-                buffer.ok_or_else(|| {
+            .map(|(req_idx, result)| {
+                result.ok_or_else(|| {
                     ArrowError::ExternalError(Box::new(
                         sedona_common::sedona_internal_datafusion_err!(
                             "GDAL loader: request {req_idx} of {num_reqs} was never read"
@@ -457,13 +499,44 @@ impl GdalLoader {
     }
 }
 
+/// Return the GDAL-readable source window for a non-identity, ordinary 2-D
+/// `[y, x]` slice. Other valid views need post-read layout operations, so
+/// loading their full source remains the compatible fallback.
+fn native_window(view: &ViewEntries) -> Option<GdalWindow> {
+    let [y_entry, x_entry] = view.as_slice() else {
+        return None;
+    };
+    if y_entry.source_axis != 0
+        || x_entry.source_axis != 1
+        || y_entry.step != 1
+        || x_entry.step != 1
+        || y_entry.start < 0
+        || x_entry.start < 0
+        || y_entry.steps < 0
+        || x_entry.steps < 0
+    {
+        return None;
+    }
+
+    let y = usize::try_from(y_entry.start).ok()?;
+    let x = usize::try_from(x_entry.start).ok()?;
+    let height = usize::try_from(y_entry.steps).ok()?;
+    let width = usize::try_from(x_entry.steps).ok()?;
+    Some(GdalWindow {
+        x,
+        y,
+        width,
+        height,
+    })
+}
+
 /// Read every requested band of one file, in request order, on the calling
 /// (blocking) thread. Returns each band's bytes tagged with its request
 /// index.
 fn read_file(
     reqs: Vec<(usize, OwnedGdalLoadRequest)>,
     cancel: &AtomicBool,
-) -> DFResult<Vec<(usize, Buffer)>> {
+) -> DFResult<Vec<(usize, RasterLoadResult)>> {
     let Some((_, first)) = reqs.first() else {
         return Ok(Vec::new());
     };
@@ -473,7 +546,7 @@ fn read_file(
         let mut buffers = Vec::with_capacity(reqs.len());
         for (req_idx, req) in &reqs {
             if cancel.load(Ordering::Acquire) {
-                return Err(cancelled_err(0, req.height));
+                return Err(cancelled_err(0, req.window.height));
             }
             let band = dataset.rasterband(req.band).map_err(convert_gdal_err)?;
 
@@ -497,21 +570,21 @@ fn read_file(
             // Pre-allocate the output buffer once; each strip read
             // writes into a contiguous slice.
             let mut output = vec![0u8; req.expected_bytes];
-            read_band_blockwise(
-                &band,
-                &mut output,
-                req.width,
-                req.height,
-                req.byte_size,
-                cancel,
-            )?;
-            buffers.push((*req_idx, Buffer::from_vec(output)));
+            read_band_window_blockwise(&band, &mut output, req.window, req.byte_size, cancel)?;
+            buffers.push((
+                *req_idx,
+                RasterLoadResult {
+                    bytes: Buffer::from_vec(output),
+                    source_shape: req.result_source_shape.clone(),
+                    view: req.result_view.clone(),
+                },
+            ));
         }
         Ok(buffers)
     })
 }
 
-/// Read a band's full extent into `output` in row-major order, looping
+/// Read a band's source `window` into `output` in row-major order, looping
 /// over block-height-aligned horizontal strips.
 ///
 /// The cancellation flag is checked between strips. Each iteration
@@ -522,17 +595,16 @@ fn read_file(
 /// block cache amortises decompression cost so the per-iteration
 /// overhead is small.
 ///
-/// `output` must have length `width * height * byte_size`; assumed by
-/// the caller.
-fn read_band_blockwise(
+/// `output` must have length `window.width * window.height * byte_size`;
+/// assumed by the caller.
+fn read_band_window_blockwise(
     band: &RasterBand<'_>,
     output: &mut [u8],
-    width: usize,
-    height: usize,
+    window: GdalWindow,
     byte_size: usize,
     cancel: &AtomicBool,
 ) -> DFResult<()> {
-    let row_bytes = width.saturating_mul(byte_size);
+    let row_bytes = window.width.saturating_mul(byte_size);
     // `block_size().1` is the band's natural strip / tile height. Edge
     // bands sometimes report `0` for degenerate inputs; clamp to >=1
     // so the loop always makes progress.
@@ -540,12 +612,12 @@ fn read_band_blockwise(
     let block_h = block_h.max(1);
 
     let mut y_start: usize = 0;
-    while y_start < height {
+    while y_start < window.height {
         // Also stop at process exit, which waits for in-flight GDAL calls.
         if cancel.load(Ordering::Acquire) || sedona_gdal::global::is_gdal_exiting() {
-            return Err(cancelled_err(y_start, height));
+            return Err(cancelled_err(y_start, window.height));
         }
-        let chunk_h = (height - y_start).min(block_h);
+        let chunk_h = (window.height - y_start).min(block_h);
         let byte_off = y_start.saturating_mul(row_bytes);
         let byte_end = byte_off.saturating_add(chunk_h.saturating_mul(row_bytes));
         // Sanity: should always hold given the caller's pre-allocated
@@ -559,9 +631,9 @@ fn read_band_blockwise(
             );
         }
         band.read_into_bytes(
-            (0, y_start as isize),
-            (width, chunk_h),
-            (width, chunk_h),
+            (window.x as isize, (window.y + y_start) as isize),
+            (window.width, chunk_h),
+            (window.width, chunk_h),
             &mut output[byte_off..byte_end],
             None,
         )
@@ -583,7 +655,7 @@ mod tests {
     use crate::gdal_common::with_gdal;
     use sedona_gdal::raster::types::Buffer as GdalBuffer;
     use sedona_raster::io_budget::DEFAULT_RASTER_IO_CONCURRENCY;
-    use sedona_raster::view_entries::ViewEntries;
+    use sedona_raster::view_entries::{ViewEntries, ViewEntry};
     use sedona_schema::raster::BandDataType;
     use tempfile::TempDir;
 
@@ -651,6 +723,76 @@ mod tests {
         let result = loader.load(&[&req]).await.unwrap();
         assert_eq!(result[0].bytes.len(), 6);
         assert_eq!(result[0].bytes.as_slice(), &[0u8, 1, 2, 3, 4, 5]);
+    }
+
+    #[tokio::test]
+    async fn gdal_loader_reads_only_a_native_tile_window() {
+        let tmp = TempDir::new().unwrap();
+        let path = write_pattern_geotiff(&tmp, "tile-window.tif", 8, 8);
+        let uri = format!("{path}#band=1");
+        let view = ViewEntries::new(vec![
+            ViewEntry {
+                source_axis: 0,
+                start: 2,
+                step: 1,
+                steps: 3,
+            },
+            ViewEntry {
+                source_axis: 1,
+                start: 4,
+                step: 1,
+                steps: 2,
+            },
+        ]);
+        let req = RasterLoadRequest {
+            uri: &uri,
+            dim_names: &["y", "x"],
+            source_shape: &[8, 8],
+            view: &view,
+            data_type: BandDataType::UInt8,
+        };
+
+        let result = GdalLoader::new().load(&[&req]).await.unwrap();
+        let tile = &result[0];
+        assert_eq!(
+            tile.bytes.len(),
+            3 * 2,
+            "must allocate only the tile window"
+        );
+        assert_eq!(tile.bytes.as_slice(), &[20, 21, 28, 29, 36, 37]);
+        assert_eq!(tile.source_shape, vec![3, 2]);
+        assert!(tile.view.is_identity(&[3, 2]));
+    }
+
+    #[test]
+    fn gdal_loader_applies_byte_cap_to_native_tile_window() {
+        // A full 65_536² Float32 source is 16 GiB, but its 1 × 1 tile is
+        // four bytes. Validation must admit the tile before opening the file.
+        let view = ViewEntries::new(vec![
+            ViewEntry {
+                source_axis: 0,
+                start: 65_535,
+                step: 1,
+                steps: 1,
+            },
+            ViewEntry {
+                source_axis: 1,
+                start: 65_535,
+                step: 1,
+                steps: 1,
+            },
+        ]);
+        let req = RasterLoadRequest {
+            uri: "ignored",
+            dim_names: &["y", "x"],
+            source_shape: &[1 << 16, 1 << 16],
+            view: &view,
+            data_type: BandDataType::Float32,
+        };
+
+        let planned = GdalLoader::new().validate_one(&req).unwrap();
+        assert_eq!(planned.expected_bytes, 4);
+        assert_eq!(planned.result_source_shape, vec![1, 1]);
     }
 
     #[tokio::test]
@@ -831,11 +973,11 @@ mod tests {
         assert_eq!(result[0].bytes.as_slice(), expected.as_slice());
     }
 
-    /// Pre-arm the cancellation flag, then drive `read_band_blockwise`
+    /// Pre-arm the cancellation flag, then drive `read_band_window_blockwise`
     /// directly against a real band. The loop should bail before
     /// reading anything.
     #[test]
-    fn read_band_blockwise_honours_pre_cancelled_flag() {
+    fn read_band_window_blockwise_honours_pre_cancelled_flag() {
         let tmp = TempDir::new().unwrap();
         let path = write_pattern_geotiff(&tmp, "cancel.tif", 16, 64);
         with_gdal(|gdal| {
@@ -843,8 +985,19 @@ mod tests {
             let band = dataset.rasterband(1).map_err(convert_gdal_err)?;
             let cancel = AtomicBool::new(true);
             let mut out = vec![0u8; 16 * 64];
-            let err = read_band_blockwise(&band, &mut out, 16, 64, 1, &cancel)
-                .expect_err("pre-armed cancel flag should short-circuit the loop");
+            let err = read_band_window_blockwise(
+                &band,
+                &mut out,
+                GdalWindow {
+                    x: 0,
+                    y: 0,
+                    width: 16,
+                    height: 64,
+                },
+                1,
+                &cancel,
+            )
+            .expect_err("pre-armed cancel flag should short-circuit the loop");
             let msg = err.to_string();
             assert!(
                 msg.contains("cancelled"),
