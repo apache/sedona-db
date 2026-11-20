@@ -219,7 +219,7 @@ impl GdalLoader {
 /// flag between unit-of-work iterations: dropping the outer future
 /// signals every blocking task of the call to exit at its next
 /// checkpoint.
-struct CancelOnDrop(Arc<AtomicBool>);
+pub(crate) struct CancelOnDrop(pub(crate) Arc<AtomicBool>);
 
 impl Drop for CancelOnDrop {
     fn drop(&mut self) {

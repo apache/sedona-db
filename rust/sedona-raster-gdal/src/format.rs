@@ -17,7 +17,13 @@
 
 //! GDAL-backed raster file formats.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use arrow_array::{ArrayRef, RecordBatch};
 use arrow_schema::{Schema, SchemaRef};
@@ -51,6 +57,7 @@ use sedona_schema::datatypes::SedonaType;
 
 use crate::{
     gdal_common::{gdal_path_from_object_store_location, with_gdal},
+    raster_loader::CancelOnDrop,
     utils::read_outdb_header,
 };
 
@@ -366,6 +373,8 @@ impl FileOpener for GdalRasterFileOpener {
         let file_projection = self.file_projection.clone();
 
         Ok(Box::pin(async move {
+            let cancel = Arc::new(AtomicBool::new(false));
+            let _guard = CancelOnDrop(Arc::clone(&cancel));
             // Opening and reading the header is mandatory even though the schema is
             // fixed: this populates the raster's grid, CRS, bands, and nodata. GDAL
             // is synchronous, so keep the open off DataFusion's async worker. The
@@ -375,6 +384,11 @@ impl FileOpener for GdalRasterFileOpener {
             let batches = tokio::task::spawn_blocking(move || {
                 let header = {
                     let _permit = budget.acquire_blocking();
+                    // Dropping the future cannot stop a running blocking task.
+                    // Check after waiting so cancelled opens never start I/O.
+                    if cancel.load(Ordering::Acquire) {
+                        return Err(exec_datafusion_err!("GDAL raster header open cancelled"));
+                    }
                     with_gdal(|gdal| read_outdb_header(gdal, &path))?
                 };
                 let capacity = if tile { header.tile_count()? } else { 1 };
@@ -419,6 +433,84 @@ mod tests {
     };
     use sedona_raster::raster_loader::{RasterLoaderConfig, RasterLoaderRegistry};
     use std::sync::RwLock;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn dropping_queued_header_opens_sends_no_http_requests() {
+        use axum::{Router, extract::Request, middleware, middleware::Next};
+        use std::{
+            sync::atomic::{AtomicUsize, Ordering},
+            time::Duration,
+        };
+        use tower_http::services::ServeDir;
+
+        let raster = sedona_testing::data::test_raster("test4.tiff").unwrap();
+        let requests = Arc::new(AtomicUsize::new(0));
+        let request_count = Arc::clone(&requests);
+        let app = Router::new()
+            .fallback_service(ServeDir::new(
+                std::path::Path::new(&raster).parent().unwrap(),
+            ))
+            .layer(middleware::from_fn(move |req: Request, next: Next| {
+                let request_count = Arc::clone(&request_count);
+                async move {
+                    request_count.fetch_add(1, Ordering::SeqCst);
+                    next.run(req).await
+                }
+            }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://{}/", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let budget = RasterIoBudget::new(1);
+        let held = budget.try_acquire().unwrap();
+        let opener = GdalRasterFileOpener {
+            base_url,
+            tile: false,
+            budget: budget.clone(),
+            batch_size: 1024,
+            file_projection: vec![0],
+        };
+        let mut opens =
+            Box::pin(futures::future::join_all((0..4).map(|_| {
+                opener.open(PartitionedFile::new("test4.tiff", 0)).unwrap()
+            })));
+        // Wait for every blocking task to actually queue, rather than relying
+        // on a delay to guess whether the futures have started.
+        tokio::select! {
+            _ = &mut opens => panic!("opens should wait on the held budget"),
+            result = tokio::time::timeout(Duration::from_secs(5), async {
+                while budget.waiting() != 4 {
+                    tokio::task::yield_now().await;
+                }
+            }) => result.expect("all four header opens should queue"),
+        }
+        assert_eq!(requests.load(Ordering::SeqCst), 0);
+        drop(opens);
+        drop(held);
+
+        // Wait until every cancelled task has acquired and returned its
+        // permit, so the request count cannot pass before the tasks run.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while budget.waiting() != 0 || budget.in_use() != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("cancelled opens should release the budget");
+        assert_eq!(requests.load(Ordering::SeqCst), 0);
+        assert_eq!(budget.available(), 1);
+
+        // Live work still opens the file and proves the HTTP counter works.
+        let mut stream = opener
+            .open(PartitionedFile::new("test4.tiff", 0))
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(stream.next().await.unwrap().unwrap().num_rows(), 1);
+        assert!(requests.load(Ordering::SeqCst) > 0);
+        assert_eq!(budget.available(), 1);
+        server.abort();
+    }
 
     #[test]
     fn fixed_schema_is_one_raster_column() {
