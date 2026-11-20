@@ -25,6 +25,7 @@ import pytest
 
 import sedonadb
 from sedonadb.datasource import ExternalFormatSpec
+from sedonadb.raster import RasterType
 
 
 class ReaderLifecycleState:
@@ -158,6 +159,22 @@ def test_read_parquet_guessed(con, geoarrow_data):
     geopandas.testing.assert_geodataframe_equal(
         df.to_pandas(), con.read_parquet(parquet_path).sort("quadrangle_id").to_pandas()
     )
+
+
+def test_read_geotiff_registered_format_and_native_tiles(con, sedona_testing):
+    path = sedona_testing / "data/raster/landsat8.tif"
+
+    raster = con.read(path)
+    assert raster.schema.names == ["raster"]
+    raster_table = raster.to_arrow_table()
+    assert isinstance(raster_table.schema.field("raster").type, RasterType)
+    assert raster_table.num_rows == 1
+
+    tiled = con.read(path, format="tif", options={"tile": True})
+    assert tiled.schema.names == ["raster"]
+    tiled_table = tiled.to_arrow_table()
+    assert isinstance(tiled_table.schema.field("raster").type, RasterType)
+    assert tiled_table.num_rows == 4
 
 
 class TestFormatSpec(ExternalFormatSpec):

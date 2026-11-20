@@ -15,7 +15,20 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use std::sync::Arc;
+
+use datafusion_datasource::file_format::FileFormatFactory;
 use sedona_expr::function_set::FunctionSet;
+
+use crate::GdalRasterFileFormatFactory;
+
+/// Export the GDAL-backed file formats registered by default.
+pub fn default_file_format_factories() -> Vec<Arc<dyn FileFormatFactory>> {
+    vec![
+        Arc::new(GdalRasterFileFormatFactory::new("tif")),
+        Arc::new(GdalRasterFileFormatFactory::new("tiff")),
+    ]
+}
 
 /// Export the set of GDAL-backed functions defined in this crate.
 pub fn default_function_set() -> FunctionSet {
@@ -33,4 +46,18 @@ pub fn default_function_set() -> FunctionSet {
     function_set.insert_scalar_udf(crate::rs_zonal_stats::rs_zonal_stats_udf());
     function_set.insert_scalar_udf(crate::rs_zonal_stats::rs_zonal_stats_all_udf());
     function_set
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_file_formats_include_tiff_extensions() {
+        let extensions: Vec<_> = default_file_format_factories()
+            .into_iter()
+            .map(|factory| factory.get_ext())
+            .collect();
+        assert_eq!(extensions, ["tif", "tiff"]);
+    }
 }

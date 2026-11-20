@@ -37,9 +37,14 @@ arrow-schema = { workspace = true }
 async-trait = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-common-runtime = { workspace = true }
+datafusion-catalog = { workspace = true }
+datafusion-datasource = { workspace = true }
 datafusion-expr = { workspace = true }
+datafusion-physical-expr = { workspace = true }
+datafusion-physical-plan = { workspace = true }
 futures = { workspace = true }
 lru = { workspace = true }
+object_store = { workspace = true }
 sedona-common = { workspace = true }
 sedona-expr = { workspace = true }
 sedona-functions = { workspace = true }
@@ -48,6 +53,7 @@ sedona-raster = { workspace = true }
 sedona-raster-functions = { workspace = true }
 sedona-schema = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
+url = { workspace = true }
 
 [features]
 # Enable bindgen for GDAL versions without pre-built bindings (e.g., GDAL 3.13+).
@@ -56,6 +62,8 @@ bindgen = ["sedona-gdal/bindgen"]
 [dev-dependencies]
 axum = { workspace = true }
 criterion = { workspace = true }
+datafusion = { workspace = true, features = ["sql"] }
+object_store = { workspace = true, features = ["http"] }
 sedona-gdal = { workspace = true, features = ["gdal-sys"] }
 sedona-proj = { workspace = true, features = ["proj-sys"] }
 sedona-testing = { workspace = true, features = ["criterion"] }

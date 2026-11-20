@@ -27,6 +27,7 @@ use sedona_raster::geo_transform::GeoTransform;
 
 use sedona_raster::traits::{RasterRef, is_spatial_dim_pair, nodata_f64_to_bytes};
 use sedona_schema::raster::BandDataType;
+use url::Url;
 
 use datafusion_common::{DataFusionError, Result, exec_datafusion_err, exec_err};
 
@@ -487,9 +488,46 @@ pub fn open_gdal_dataset(gdal: &Gdal, url: &str, open_options: Option<&[&str]>) 
     .map_err(convert_gdal_err)
 }
 
+/// Reconstruct a GDAL source URI from an object store URL and its decoded object path.
+///
+/// Object store paths are decoded, whereas remote GDAL sources must be valid URLs. Use
+/// [`Url::set_path`] so URL delimiters in object names (for example `#` and `?`) remain
+/// path data instead of becoming URL fragments or queries. Local `file://` sources keep
+/// their filesystem spelling because GDAL receives those as filesystem paths after
+/// normalization.
+///
+/// Every GDAL-backed file source that starts with [`object_store::ObjectMeta::location`]
+/// should use this function rather than concatenating strings.
+pub(crate) fn gdal_path_from_object_store_location(
+    base_url: &str,
+    location: &str,
+) -> Result<String> {
+    let mut url = Url::parse(base_url).map_err(|error| {
+        exec_datafusion_err!("Invalid object store URL '{base_url}' for GDAL raster: {error}")
+    })?;
+
+    if url.scheme().eq_ignore_ascii_case("file") {
+        return Ok(format!("{base_url}{location}"));
+    }
+
+    let base_path = url.path().trim_end_matches('/');
+    // `Url::set_path` preserves `%` under the assumption it is already an
+    // escape. Object store locations are decoded, so restore a literal `%` to
+    // `%25` before asking `Url` to encode the remaining URL delimiters.
+    let location = location.trim_start_matches('/').replace('%', "%25");
+    let path = if base_path.is_empty() {
+        format!("/{location}")
+    } else {
+        format!("{base_path}/{location}")
+    };
+    url.set_path(&path);
+    Ok(url.into())
+}
+
 /// Normalize out-db raster URLs to GDAL VSI paths.
 ///
 /// Supported translations:
+/// - `file://...` -> `/...` (or local Windows path)
 /// - `s3://bucket/key` -> `/vsis3/bucket/key`
 /// - `s3a://bucket/key` -> `/vsis3/bucket/key`
 /// - `gs://bucket/key` -> `/vsigs/bucket/key`
@@ -510,6 +548,22 @@ pub(crate) fn normalize_outdb_source_path(path: &str) -> String {
         .is_some_and(|prefix| prefix.eq_ignore_ascii_case("/vsi"))
     {
         return path.to_string();
+    }
+
+    if let Some(rest) = strip_scheme_prefix(path, "file://") {
+        let rest = rest.strip_prefix("localhost").unwrap_or(rest);
+        #[cfg(windows)]
+        {
+            return rest.trim_start_matches('/').to_string();
+        }
+        #[cfg(not(windows))]
+        {
+            return if rest.starts_with('/') {
+                rest.to_string()
+            } else {
+                format!("/{rest}")
+            };
+        }
     }
 
     if let Some(rest) = strip_scheme_prefix(path, "s3://") {
@@ -771,6 +825,17 @@ mod tests {
             normalize_outdb_source_path("/tmp/test.tif"),
             "/tmp/test.tif"
         );
+        #[cfg(not(windows))]
+        {
+            assert_eq!(
+                normalize_outdb_source_path("file:///tmp/test.tif"),
+                "/tmp/test.tif"
+            );
+            assert_eq!(
+                normalize_outdb_source_path("file://localhost/tmp/test.tif"),
+                "/tmp/test.tif"
+            );
+        }
         assert_eq!(
             normalize_outdb_source_path("relative/path/test.tif"),
             "relative/path/test.tif"
@@ -866,6 +931,10 @@ mod tests {
         assert_eq!(
             normalize_outdb_source_path("HTTPS://example.com/raster.tif"),
             "/vsicurl/HTTPS://example.com/raster.tif"
+        );
+        assert_eq!(
+            normalize_outdb_source_path("http://example.com/a%23b.tif"),
+            "/vsicurl/http://example.com/a%23b.tif"
         );
     }
 

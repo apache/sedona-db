@@ -36,6 +36,7 @@ use sedona_raster::array::RasterRefImpl;
 use sedona_raster::builder::{RasterBuilder, StartBandArgs};
 use sedona_raster::error::RasterResultExt;
 use sedona_raster::traits::RasterRef;
+use sedona_raster::view_entries::{ViewEntries, ViewEntry};
 use sedona_schema::raster::BandDataType;
 
 use crate::gdal_common::{
@@ -113,6 +114,7 @@ pub(crate) struct OutDbHeader {
     grid: Grid,
     crs: Option<String>,
     bands: Vec<OutDbBandHeader>,
+    block_size: (usize, usize),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -149,10 +151,16 @@ pub(crate) fn read_outdb_header(gdal: &Gdal, path: &str) -> Result<OutDbHeader> 
 
     let band_count = dataset.raster_count();
     let mut bands = Vec::with_capacity(band_count);
+    let mut block_size = (width.max(1), height.max(1));
     for band_idx in 1..=band_count {
         let band = dataset
             .rasterband(band_idx)
             .with_context(|| format!("Failed to get band {band_idx}"))?;
+
+        if band_idx == 1 {
+            let (block_width, block_height) = band.block_size();
+            block_size = (block_width.max(1), block_height.max(1));
+        }
 
         let gdal_type = band.band_type();
         let data_type = gdal_to_band_data_type(gdal_type)
@@ -161,10 +169,24 @@ pub(crate) fn read_outdb_header(gdal: &Gdal, path: &str) -> Result<OutDbHeader> 
         bands.push(OutDbBandHeader { data_type, nodata });
     }
 
-    Ok(OutDbHeader { grid, crs, bands })
+    Ok(OutDbHeader {
+        grid,
+        crs,
+        bands,
+        block_size,
+    })
 }
 
 impl OutDbHeader {
+    pub(crate) fn tile_count(&self) -> Result<usize> {
+        let width = self.grid.width.max(0) as usize;
+        let height = self.grid.height.max(0) as usize;
+        width
+            .div_ceil(self.block_size.0)
+            .checked_mul(height.div_ceil(self.block_size.1))
+            .ok_or_else(|| exec_datafusion_err!("GDAL raster tile count overflows usize"))
+    }
+
     /// Append one out-db raster referencing `path` (the path as the user gave
     /// it, before GDAL path normalization) to `builder`.
     pub(crate) fn append_to(&self, path: &str, builder: &mut RasterBuilder) -> Result<()> {
@@ -184,6 +206,60 @@ impl OutDbHeader {
         }
 
         builder.finish_raster()?;
+        Ok(())
+    }
+
+    /// Append one out-db raster for every native GDAL block. Each raster has
+    /// the block's grid while its bands retain the full source shape and carry
+    /// a view selecting that block. No pixel data is read.
+    pub(crate) fn append_tiles_to(&self, path: &str, builder: &mut RasterBuilder) -> Result<()> {
+        let source_width = self.grid.width.max(0) as usize;
+        let source_height = self.grid.height.max(0) as usize;
+        let (block_width, block_height) = self.block_size;
+
+        for y in (0..source_height).step_by(block_height) {
+            for x in (0..source_width).step_by(block_width) {
+                let width = block_width.min(source_width - x);
+                let height = block_height.min(source_height - y);
+                let (origin_x, origin_y) = self.grid.transform.apply(x as f64, y as f64);
+                let mut transform = self.grid.transform;
+                transform[0] = origin_x;
+                transform[3] = origin_y;
+                Grid::from_gdal(transform, width, height)
+                    .start_raster_into(builder, self.crs.as_deref())?;
+
+                let view = ViewEntries::new(vec![
+                    ViewEntry {
+                        source_axis: 0,
+                        start: y as i64,
+                        step: 1,
+                        steps: height as i64,
+                    },
+                    ViewEntry {
+                        source_axis: 1,
+                        start: x as i64,
+                        step: 1,
+                        steps: width as i64,
+                    },
+                ]);
+                let source_shape = [self.grid.height, self.grid.width];
+
+                for (band_idx, band) in (1..).zip(&self.bands) {
+                    let outdb_uri = format!("{path}#band={band_idx}");
+                    builder.start_band(StartBandArgs {
+                        nodata: band.nodata.as_deref(),
+                        outdb_uri: Some(&outdb_uri),
+                        view: Some(&view),
+                        ..StartBandArgs::new(&["y", "x"], &source_shape, band.data_type)
+                    })?;
+                    builder.band_data_writer().append_value([]);
+                    builder.finish_band()?;
+                }
+
+                builder.finish_raster()?;
+            }
+        }
+
         Ok(())
     }
 }
