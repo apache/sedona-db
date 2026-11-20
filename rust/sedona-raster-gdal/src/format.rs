@@ -32,7 +32,7 @@ use datafusion_datasource::{
     file::FileSource,
     file_compression_type::FileCompressionType,
     file_format::{FileFormat, FileFormatFactory},
-    file_scan_config::FileScanConfig,
+    file_scan_config::{FileScanConfig, FileScanConfigBuilder},
     file_stream::{FileOpenFuture, FileOpener},
     projection::{ProjectionOpener, SplitProjection},
 };
@@ -44,6 +44,7 @@ use datafusion_physical_plan::{
 };
 use futures::StreamExt;
 use object_store::{ObjectMeta, ObjectStore};
+use sedona_common::sedona_internal_datafusion_err;
 use sedona_raster::builder::RasterBuilder;
 use sedona_raster::{io_budget::RasterIoBudget, raster_loader::io_budget_from_config};
 use sedona_schema::datatypes::SedonaType;
@@ -191,11 +192,24 @@ impl FileFormat for GdalRasterFileFormat {
         state: &dyn Session,
         conf: FileScanConfig,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        // A ListingTable keeps its file format after it is created, while
-        // `SET sedona.raster.io_concurrency` may happen before a later scan.
-        // Refresh the shared handle at planning time so existing file sources
-        // observe the new limit as well as newly created formats.
-        io_budget_from_config(state.config_options());
+        // A ListingTable keeps its format and file source after creation. The
+        // query may instead be planned by a different session (for example,
+        // through a shared catalog), so replace the source's creation-session
+        // budget with the planning session's handle. This also makes a later
+        // `SET sedona.raster.io_concurrency` effective for existing tables.
+        let conf = if let Some(budget) = io_budget_from_config(state.config_options()) {
+            let source = conf
+                .file_source()
+                .downcast_ref::<GdalRasterFileSource>()
+                .cloned()
+                .ok_or_else(|| sedona_internal_datafusion_err!("Expected GdalRasterFileSource"))?
+                .with_budget(budget);
+            FileScanConfigBuilder::from(conf)
+                .with_source(Arc::new(source))
+                .build()
+        } else {
+            conf
+        };
         Ok(DataSourceExec::from_data_source(conf))
     }
 
@@ -237,6 +251,11 @@ impl GdalRasterFileSource {
             projection,
             metrics: ExecutionPlanMetricsSet::default(),
         }
+    }
+
+    fn with_budget(mut self, budget: RasterIoBudget) -> Self {
+        self.budget = budget;
+        self
     }
 }
 
@@ -393,8 +412,11 @@ impl FileOpener for GdalRasterFileOpener {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datafusion::execution::context::SessionConfig;
     use datafusion::prelude::SessionContext;
+    use datafusion::{
+        datasource::physical_plan::FileScanConfigBuilder,
+        execution::{context::SessionConfig, object_store::ObjectStoreUrl},
+    };
     use sedona_raster::raster_loader::{RasterLoaderConfig, RasterLoaderRegistry};
     use std::sync::RwLock;
 
@@ -444,6 +466,51 @@ mod tests {
         let source = format.file_source(TableSchema::from(gdal_raster_schema()));
         let source = source.downcast_ref::<GdalRasterFileSource>().unwrap();
         assert!(source.budget.ptr_eq(&budget));
+    }
+
+    fn context_with_io_budget(budget: RasterIoBudget) -> SessionContext {
+        let mut config = ConfigOptions::new();
+        config.extensions.insert(
+            RasterLoaderConfig::from_handle(Arc::new(RwLock::new(RasterLoaderRegistry::new())))
+                .with_io_budget(budget),
+        );
+        SessionContext::new_with_config(SessionConfig::from(config))
+    }
+
+    #[tokio::test]
+    async fn shared_catalog_scan_uses_the_planning_sessions_io_budget() {
+        // A ListingTable retains this format and file source after the
+        // creating session registers it in a catalog.
+        let creating_budget = RasterIoBudget::new(4);
+        let creating_context = context_with_io_budget(creating_budget.clone());
+        let format = GdalRasterFileFormatFactory::new("tif")
+            .create(&creating_context.state(), &HashMap::new())
+            .unwrap();
+        let source = format.file_source(TableSchema::from(gdal_raster_schema()));
+        assert!(
+            source
+                .downcast_ref::<GdalRasterFileSource>()
+                .unwrap()
+                .budget
+                .ptr_eq(&creating_budget)
+        );
+
+        // A second session reads the same catalog entry with its own cap.
+        let planning_budget = RasterIoBudget::new(1);
+        let planning_context = context_with_io_budget(planning_budget.clone());
+        let conf = FileScanConfigBuilder::new(ObjectStoreUrl::local_filesystem(), source).build();
+        let plan = format
+            .create_physical_plan(&planning_context.state(), conf)
+            .await
+            .unwrap();
+
+        let exec = plan.downcast_ref::<DataSourceExec>().unwrap();
+        let conf = exec.data_source().downcast_ref::<FileScanConfig>().unwrap();
+        let source = conf
+            .file_source()
+            .downcast_ref::<GdalRasterFileSource>()
+            .unwrap();
+        assert!(source.budget.ptr_eq(&planning_budget));
     }
 
     #[test]
