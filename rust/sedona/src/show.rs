@@ -21,13 +21,17 @@ use comfy_table::{
     Cell, CellAlignment, ColumnConstraint, ContentArrangement, LineStyle, Row, Table, Width,
 };
 use datafusion::arrow::util::display::{ArrayFormatter, FormatOptions};
-use datafusion::error::Result;
+use datafusion::dataframe::DataFrame;
+use datafusion::error::{DataFusionError, Result};
 use datafusion_common::format::DEFAULT_FORMAT_OPTIONS;
-use datafusion_common::{config::ConfigOptions, ScalarValue};
-use datafusion_expr::{ColumnarValue, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDF};
+use datafusion_common::{config::ConfigOptions, Column, ScalarValue};
+use datafusion_expr::{
+    ColumnarValue, Expr, LogicalPlan, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDF,
+};
 use sedona_common::sedona_internal_datafusion_err;
 use sedona_expr::scalar_udf::SedonaScalarUDF;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
+use std::collections::HashSet;
 use std::iter::zip;
 use std::sync::Arc;
 
@@ -45,19 +49,39 @@ pub fn show_batches<'a, W: std::io::Write>(
     batches: Vec<RecordBatch>,
     options: DisplayTableOptions<'a>,
 ) -> Result<()> {
-    let format_fn = ctx
-        .scalar_udf("sd_format")?
-        .ok_or(sedona_internal_datafusion_err!(
-            "sd_format UDF does not exist"
-        ))?;
-
-    let session_config = ctx.ctx.copied_config();
-    let session_config_options = session_config.options();
-
-    let mut table = DisplayTable::try_new(schema, batches, options, session_config_options)?
-        .with_format_fn(format_fn);
+    let mut table = DisplayTable::try_new(ctx, schema, options)?;
+    table.set_batches(batches);
     table.negotiate_hidden_columns()?;
     table.write(writer)
+}
+
+pub(crate) async fn show_dataframe(
+    ctx: &SedonaContext,
+    df: DataFrame,
+    limit: Option<usize>,
+    mut options: DisplayTableOptions<'_>,
+) -> Result<String> {
+    let show_plan = matches!(
+        df.logical_plan(),
+        LogicalPlan::Explain(_) | LogicalPlan::DescribeTable(_) | LogicalPlan::Analyze(_)
+    );
+    if show_plan {
+        options.max_row_height = usize::MAX;
+    }
+
+    let mut table = DisplayTable::try_new(ctx, df.schema().as_arrow(), options)?;
+    // Keep plan output at the root, as required by DataFusion.
+    let df = if show_plan {
+        df
+    } else {
+        table.project(df.limit(0, limit)?)?
+    };
+
+    table.set_batches(df.collect().await?);
+    table.negotiate_hidden_columns()?;
+    let mut out = Vec::new();
+    table.write(&mut out)?;
+    String::from_utf8(out).map_err(|e| DataFusionError::External(Box::new(e)))
 }
 
 /// Options for displaying tables
@@ -148,48 +172,75 @@ struct DisplayTable<'a> {
 }
 
 impl<'a> DisplayTable<'a> {
-    pub fn try_new<'b: 'a>(
+    fn try_new(
+        ctx: &SedonaContext,
         schema: &Schema,
-        batches: Vec<RecordBatch>,
         options: DisplayTableOptions<'a>,
-        session_config_options: &Arc<ConfigOptions>,
     ) -> Result<Self> {
-        let num_rows = batches.iter().map(|batch| batch.num_rows()).sum();
+        let format_fn = ctx
+            .scalar_udf("sd_format")?
+            .ok_or(sedona_internal_datafusion_err!(
+                "sd_format UDF does not exist"
+            ))?;
+        let session_config = ctx.ctx.copied_config();
 
         let columns = schema
             .fields()
             .iter()
-            .enumerate()
-            .map(|(i, f)| {
+            .map(|field| {
                 DisplayColumn::try_new(
-                    f,
-                    batches
-                        .iter()
-                        .map(|batch| batch.column(i).clone())
-                        .collect(),
-                    Arc::clone(session_config_options),
+                    field,
+                    format_fn.clone(),
+                    Arc::clone(session_config.options()),
                 )
             })
             .collect::<Result<Vec<_>>>()?;
 
         Ok(Self {
             columns,
-            num_rows,
+            num_rows: 0,
             options,
         })
     }
 
-    pub fn with_format_fn(self, format_fn: SedonaScalarUDF) -> Self {
-        Self {
-            columns: self
-                .columns
-                .into_iter()
-                .map(|col| DisplayColumn {
-                    format_fn: Some(format_fn.clone()),
-                    ..col
-                })
-                .collect(),
-            ..self
+    fn project(&mut self, df: DataFrame) -> Result<DataFrame> {
+        // Joins can repeat field names. A qualified name can also collide
+        // with a literal dotted name in DataFusion's projection.
+        let mut field_names = HashSet::new();
+        let mut projection_names = HashSet::new();
+        if !df.schema().iter().all(|(qualifier, field)| {
+            field_names.insert(field.name())
+                && projection_names.insert(Column::from((qualifier, field)).flat_name())
+        }) {
+            return Ok(df);
+        }
+
+        // With no values, the constraints use the header widths and the
+        // minimum padding. Loading values can only increase these widths.
+        self.negotiate_hidden_columns()?;
+        if self.count_visible_columns() == self.columns.len() {
+            return Ok(df);
+        }
+
+        let projection: Vec<_> = zip(df.schema().iter(), &self.columns)
+            .filter(|(_, column)| !column.hidden)
+            .map(|((qualifier, field), _)| Expr::Column(Column::from((qualifier, field))))
+            .collect();
+        df.select(projection)
+    }
+
+    fn set_batches(&mut self, batches: Vec<RecordBatch>) {
+        self.num_rows = batches.iter().map(|batch| batch.num_rows()).sum();
+        for (i, column) in self
+            .columns
+            .iter_mut()
+            .filter(|col| !col.hidden)
+            .enumerate()
+        {
+            column.raw_values = batches
+                .iter()
+                .map(|batch| batch.column(i).clone())
+                .collect();
         }
     }
 
@@ -205,14 +256,15 @@ impl<'a> DisplayTable<'a> {
     /// The output width still might not be respected if the width of the last
     /// remaining column is wider than the allotted output.
     pub fn negotiate_hidden_columns(&mut self) -> Result<()> {
-        let mut iterations = 0;
+        // Continue the same sequence if columns were hidden before loading values.
+        let mut iterations = self.columns.len() - self.count_visible_columns();
         while self.count_visible_columns() > 1 && self.minimum_width()? > self.options.table_width {
             // If there are no hidden columns, hide the middle one. Otherwise, alternate hiding
             // the right and left columns.
             if self.count_visible_columns() == self.columns.len() {
                 let middle_index = self.columns.len() / 2;
                 self.columns[middle_index].hidden = true;
-            } else if iterations % 2 == 0 {
+            } else if iterations.is_multiple_of(2) {
                 let (i, _) = self
                     .columns
                     .iter()
@@ -379,14 +431,14 @@ impl DisplayColumn {
     /// Create a new display column
     pub fn try_new(
         field: &Field,
-        raw_values: Vec<ArrayRef>,
+        format_fn: SedonaScalarUDF,
         session_config_options: Arc<ConfigOptions>,
     ) -> Result<Self> {
         Ok(Self {
             name: field.name().to_string(),
             sedona_type: SedonaType::from_storage_field(field)?,
-            raw_values,
-            format_fn: None,
+            raw_values: Vec::new(),
+            format_fn: Some(format_fn),
             hidden: false,
             session_config_options,
         })
