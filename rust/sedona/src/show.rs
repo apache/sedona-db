@@ -31,6 +31,7 @@ use datafusion_expr::{
 use sedona_common::sedona_internal_datafusion_err;
 use sedona_expr::scalar_udf::SedonaScalarUDF;
 use sedona_schema::{datatypes::SedonaType, matchers::ArgMatcher};
+use std::collections::HashSet;
 use std::iter::zip;
 use std::sync::Arc;
 
@@ -203,6 +204,17 @@ impl<'a> DisplayTable<'a> {
     }
 
     fn project(&mut self, df: DataFrame) -> Result<DataFrame> {
+        // Joins can repeat field names. A qualified name can also collide
+        // with a literal dotted name in DataFusion's projection.
+        let mut field_names = HashSet::new();
+        let mut projection_names = HashSet::new();
+        if !df.schema().iter().all(|(qualifier, field)| {
+            field_names.insert(field.name())
+                && projection_names.insert(Column::from((qualifier, field)).flat_name())
+        }) {
+            return Ok(df);
+        }
+
         // With no values, the constraints use the header widths and the
         // minimum padding. Loading values can only increase these widths.
         self.negotiate_hidden_columns()?;

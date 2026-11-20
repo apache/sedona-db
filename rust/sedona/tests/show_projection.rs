@@ -24,7 +24,7 @@ use datafusion::catalog::{Session, TableProvider};
 use datafusion::datasource::{MemTable, TableType};
 use datafusion::error::Result;
 use datafusion::physical_plan::ExecutionPlan;
-use datafusion_expr::Expr;
+use datafusion_expr::{Expr, JoinType};
 use sedona::context::{SedonaContext, SedonaDataFrame};
 use sedona::show::{show_batches, DisplayTableOptions};
 
@@ -93,5 +93,42 @@ async fn show_projects_hidden_columns() -> Result<()> {
         .show_sedona(&ctx, Some(1), options)
         .await?;
     assert_eq!(actual, String::from_utf8(expected).unwrap());
+    Ok(())
+}
+
+#[tokio::test]
+async fn show_joins_with_repeated_column_names() -> Result<()> {
+    let ctx = SedonaContext::new();
+    let padding = (2..20)
+        .map(|i| format!(", {i} AS c{i}"))
+        .collect::<String>();
+    for right_name in ["id", "lhs.id"] {
+        let left = ctx
+            .ctx
+            .sql(&format!("SELECT 1 AS id{padding}"))
+            .await?
+            .alias("lhs")?;
+        let right = ctx
+            .ctx
+            .sql(&format!("SELECT 20 AS \"{right_name}\""))
+            .await?;
+        let right = if right_name == "id" {
+            right.alias("rhs")?
+        } else {
+            right
+        };
+        let joined = left.join(right, JoinType::Inner, &[], &[], None)?;
+        let mut expected = Vec::new();
+        let options = DisplayTableOptions::new();
+        show_batches(
+            &ctx,
+            &mut expected,
+            joined.schema().as_arrow(),
+            joined.clone().collect().await?,
+            options.clone(),
+        )?;
+        let actual = joined.show_sedona(&ctx, Some(1), options).await?;
+        assert_eq!(actual, String::from_utf8(expected).unwrap());
+    }
     Ok(())
 }
