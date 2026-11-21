@@ -879,6 +879,7 @@ def test_st_buildarea_non_linework(eng, geom, expected):
         ("MULTILINESTRING EMPTY", "POINT EMPTY"),
         ("MULTIPOLYGON EMPTY", "POINT EMPTY"),
         ("GEOMETRYCOLLECTION EMPTY", "POINT EMPTY"),
+        ("GEOMETRYCOLLECTION (POINT EMPTY)", "POINT EMPTY"),
     ],
 )
 def test_st_centroid(eng, geom, expected):
@@ -3045,6 +3046,13 @@ def test_st_haszm_of_a_later_member(geom, has_z, has_m):
             "GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1), POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0)))",
             False,
         ),
+        ("MULTILINESTRING (EMPTY)", True),
+        ("MULTIPOLYGON (EMPTY)", True),
+        ("GEOMETRYCOLLECTION (POINT EMPTY)", True),
+        ("GEOMETRYCOLLECTION (POINT EMPTY, LINESTRING EMPTY)", True),
+        ("GEOMETRYCOLLECTION (GEOMETRYCOLLECTION (POINT EMPTY))", True),
+        ("MULTILINESTRING (EMPTY, (0 0, 1 1))", False),
+        ("GEOMETRYCOLLECTION (POINT EMPTY, POINT (1 2))", False),
     ],
 )
 def test_st_isempty(eng, geom, expected):

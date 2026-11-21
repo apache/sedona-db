@@ -27,18 +27,25 @@ pub fn is_geometry_empty<G: GeometryTrait<T = f64>>(
     match geometry.as_type() {
         geo_traits::GeometryType::Point(point) => Ok(point.coord().is_none()),
         geo_traits::GeometryType::LineString(linestring) => Ok(linestring.num_coords() == 0),
-        geo_traits::GeometryType::Polygon(polygon) => {
-            Ok(polygon.num_interiors() == 0 && polygon.exterior().is_none())
+        geo_traits::GeometryType::Polygon(polygon) => Ok(is_polygon_empty(polygon)),
+        // A multi-geometry or collection is empty when all of its members are empty
+        // (e.g. MULTIPOINT (EMPTY) or GEOMETRYCOLLECTION (POINT EMPTY)), as in PostGIS
+        geo_traits::GeometryType::MultiPoint(multipoint) => {
+            Ok(multipoint.points().all(|point| point.coord().is_none()))
         }
-        geo_traits::GeometryType::MultiPoint(multipoint) => Ok(multipoint.num_points() == 0),
-        geo_traits::GeometryType::MultiLineString(multilinestring) => {
-            Ok(multilinestring.num_line_strings() == 0)
-        }
-        geo_traits::GeometryType::MultiPolygon(multipolygon) => {
-            Ok(multipolygon.num_polygons() == 0)
-        }
+        geo_traits::GeometryType::MultiLineString(multilinestring) => Ok(multilinestring
+            .line_strings()
+            .all(|linestring| linestring.num_coords() == 0)),
+        geo_traits::GeometryType::MultiPolygon(multipolygon) => Ok(multipolygon
+            .polygons()
+            .all(|polygon| is_polygon_empty(&polygon))),
         geo_traits::GeometryType::GeometryCollection(geometrycollection) => {
-            Ok(geometrycollection.num_geometries() == 0)
+            for geometry in geometrycollection.geometries() {
+                if !is_geometry_empty(&geometry)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
         }
         _ => Err(SedonaGeometryError::Invalid(
             "Invalid geometry type".to_string(),
@@ -46,9 +53,15 @@ pub fn is_geometry_empty<G: GeometryTrait<T = f64>>(
     }
 }
 
+fn is_polygon_empty<P: PolygonTrait<T = f64>>(polygon: &P) -> bool {
+    polygon.num_interiors() == 0 && polygon.exterior().is_none()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::wkb_factory::{write_wkb_empty_point, write_wkb_multipoint_header, write_wkb_point};
+    use geo_traits::Dimensions;
     use std::str::FromStr;
     use wkb::Endianness;
     use wkb::reader::read_wkb;
@@ -155,5 +168,55 @@ mod tests {
             create_wkb_bytes_from_wkt("GEOMETRYCOLLECTION (POINT (1 2), LINESTRING (1 2, 2 2))");
         let collection = read_wkb(&collection_bytes).unwrap();
         assert!(!is_geometry_empty(&collection).unwrap());
+    }
+
+    #[test]
+    fn test_is_geometry_empty_all_members_empty() {
+        // A multi-geometry or collection whose members are all empty is empty (as in PostGIS)
+        for wkt in [
+            "MULTILINESTRING (EMPTY)",
+            "MULTIPOLYGON (EMPTY)",
+            "GEOMETRYCOLLECTION (POINT EMPTY)",
+            "GEOMETRYCOLLECTION (POINT EMPTY, LINESTRING EMPTY)",
+            "GEOMETRYCOLLECTION (MULTIPOINT EMPTY, POLYGON EMPTY)",
+            "GEOMETRYCOLLECTION (GEOMETRYCOLLECTION EMPTY)",
+            "GEOMETRYCOLLECTION (GEOMETRYCOLLECTION (POINT EMPTY))",
+        ] {
+            let bytes = create_wkb_bytes_from_wkt(wkt);
+            let geometry = read_wkb(&bytes).unwrap();
+            assert!(is_geometry_empty(&geometry).unwrap(), "{wkt}");
+        }
+
+        // One non-empty member makes it non-empty
+        for wkt in [
+            "MULTILINESTRING (EMPTY, (0 0, 1 1))",
+            "MULTIPOLYGON (EMPTY, ((0 0, 1 0, 1 1, 0 0)))",
+            "GEOMETRYCOLLECTION (POINT EMPTY, POINT (1 2))",
+            "GEOMETRYCOLLECTION (GEOMETRYCOLLECTION (POINT EMPTY), POINT (1 2))",
+        ] {
+            let bytes = create_wkb_bytes_from_wkt(wkt);
+            let geometry = read_wkb(&bytes).unwrap();
+            assert!(!is_geometry_empty(&geometry).unwrap(), "{wkt}");
+        }
+    }
+
+    #[test]
+    fn test_is_geometry_empty_multipoint_with_empty_members() {
+        // Written as WKB because the WKT parser does not accept an empty MULTIPOINT member
+
+        // MULTIPOINT (EMPTY)
+        let mut bytes = vec![];
+        write_wkb_multipoint_header(&mut bytes, Dimensions::Xy, 1).unwrap();
+        write_wkb_empty_point(&mut bytes, Dimensions::Xy).unwrap();
+        let multipoint = read_wkb(&bytes).unwrap();
+        assert!(is_geometry_empty(&multipoint).unwrap());
+
+        // MULTIPOINT (EMPTY, (1 2))
+        let mut bytes = vec![];
+        write_wkb_multipoint_header(&mut bytes, Dimensions::Xy, 2).unwrap();
+        write_wkb_empty_point(&mut bytes, Dimensions::Xy).unwrap();
+        write_wkb_point(&mut bytes, (1.0, 2.0)).unwrap();
+        let multipoint = read_wkb(&bytes).unwrap();
+        assert!(!is_geometry_empty(&multipoint).unwrap());
     }
 }

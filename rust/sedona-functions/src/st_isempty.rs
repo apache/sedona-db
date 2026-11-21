@@ -130,6 +130,10 @@ mod tests {
             Some("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"),
             Some("MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)))"),
             Some("GEOMETRYCOLLECTION (POINT (1 2), LINESTRING (1 2, 2 2))"),
+            Some("MULTILINESTRING (EMPTY)"),
+            Some("MULTIPOLYGON (EMPTY)"),
+            Some("GEOMETRYCOLLECTION (POINT EMPTY)"),
+            Some("GEOMETRYCOLLECTION (POINT EMPTY, POINT (1 2))"),
         ];
         let expected: ArrayRef = arrow_array!(
             Boolean,
@@ -147,6 +151,10 @@ mod tests {
                 Some(false),
                 Some(false),
                 Some(false),
+                Some(false),
+                Some(true),
+                Some(true),
+                Some(true),
                 Some(false)
             ]
         );

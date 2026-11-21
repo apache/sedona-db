@@ -128,6 +128,12 @@ mod tests {
             .unwrap();
         tester.assert_scalar_result_equals(result, "POINT (1 1)");
 
+        // A collection whose members are all empty has an empty centroid
+        let result = tester
+            .invoke_scalar("GEOMETRYCOLLECTION (POINT EMPTY)")
+            .unwrap();
+        tester.assert_scalar_result_equals(result, "POINT EMPTY");
+
         // Test with array
         let input_wkt = vec![
             Some("POINT(1 2)"),
