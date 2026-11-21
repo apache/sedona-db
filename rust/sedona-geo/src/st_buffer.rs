@@ -229,6 +229,7 @@ mod tests {
             Some("MULTILINESTRING EMPTY"),
             Some("MULTIPOLYGON EMPTY"),
             Some("GEOMETRYCOLLECTION EMPTY"),
+            Some("GEOMETRYCOLLECTION (POINT EMPTY)"),
         ];
         let input_dist = 2;
 
@@ -237,6 +238,7 @@ mod tests {
             .unwrap();
         let expected: ArrayRef = create_array(
             &[
+                Some("POLYGON EMPTY"),
                 Some("POLYGON EMPTY"),
                 Some("POLYGON EMPTY"),
                 Some("POLYGON EMPTY"),
