@@ -149,7 +149,7 @@ tokio-stream = "0.1"
 tower-http = "0.7"
 url = "2.5.7"
 wkb = "0.9.2"
-wkt = "0.14.0"
+wkt = "0.15.0"
 zarrs = { version = "0.23", default-features = false }
 zarrs_filesystem = "0.3"
 zarrs_object_store = "0.6"

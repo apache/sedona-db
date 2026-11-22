@@ -5950,7 +5950,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "wkb",
- "wkt 0.14.0",
+ "wkt 0.15.0",
 ]
 
 [[package]]
@@ -5988,7 +5988,7 @@ dependencies = [
  "sedona-testing",
  "serde_json",
  "wkb",
- "wkt 0.14.0",
+ "wkt 0.15.0",
 ]
 
 [[package]]
@@ -6012,7 +6012,7 @@ dependencies = [
  "sedona-geo-traits-ext",
  "sedona-testing",
  "wkb",
- "wkt 0.14.0",
+ "wkt 0.15.0",
 ]
 
 [[package]]
@@ -6025,7 +6025,7 @@ dependencies = [
  "num-traits",
  "rstest",
  "wkb",
- "wkt 0.14.0",
+ "wkt 0.15.0",
 ]
 
 [[package]]
@@ -6062,7 +6062,7 @@ dependencies = [
  "serde_with",
  "thiserror 2.0.20",
  "wkb",
- "wkt 0.14.0",
+ "wkt 0.15.0",
 ]
 
 [[package]]
@@ -6147,7 +6147,7 @@ dependencies = [
  "sedona-testing",
  "thiserror 2.0.20",
  "which",
- "wkt 0.14.0",
+ "wkt 0.15.0",
 ]
 
 [[package]]
@@ -6417,7 +6417,7 @@ dependencies = [
  "sedona-tg",
  "tokio",
  "wkb",
- "wkt 0.14.0",
+ "wkt 0.15.0",
 ]
 
 [[package]]
@@ -6480,7 +6480,7 @@ dependencies = [
  "sedona-testing",
  "tokio",
  "wkb",
- "wkt 0.14.0",
+ "wkt 0.15.0",
 ]
 
 [[package]]
@@ -6532,7 +6532,7 @@ dependencies = [
  "sedona-raster",
  "sedona-schema",
  "wkb",
- "wkt 0.14.0",
+ "wkt 0.15.0",
 ]
 
 [[package]]
@@ -8065,6 +8065,19 @@ name = "wkt"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "efb2b923ccc882312e559ffaa832a055ba9d1ac0cc8e86b3e25453247e4b81d7"
+dependencies = [
+ "geo-traits",
+ "geo-types",
+ "log",
+ "num-traits",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "wkt"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c9ea54d13e287a50e6e6535389106d309fdbdc491a33a1b570260c4ee7f5b61b"
 dependencies = [
  "geo-traits",
  "geo-types",
