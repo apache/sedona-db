@@ -6620,19 +6620,19 @@ static GeoArrowErrorCode WKTWriterWriteGeometryType(
   return GEOARROW_OK;
 }
 
+static int64_t WKTWriterMaxCharsPerCoord(int n_values) {
+  return 2 +               // comma and space before a coordinate
+         (n_values - 1) +  // spaces between ordinates
+         (40 * n_values);  // writable bytes required by GeoArrowPrintDouble()
+}
+
 static GeoArrowErrorCode WKTWriterReserveCoords(struct WKTWriterPrivate* private_data,
                                                 int64_t n_coords, int n_values) {
   int max_chars_estimated_per_value =
       private_data->precision == WKT_WRITER_PRECISION_UNLIMITED
           ? 24
           : private_data->precision + 1 + 8;
-  int64_t max_chars_per_coord_theoretical =
-      // space + comma after coordinate
-      (n_coords * 2) +
-      // spaces between ordinates
-      (n_coords * (n_values - 1)) +
-      // GeoArrowPrintDouble might require up to 40 accessible bytes per call
-      (40 * n_values);
+  int64_t max_chars_per_coord_theoretical = WKTWriterMaxCharsPerCoord(n_values);
 
   // Use a heuristic to estimate the number of characters we are about to write
   // to avoid more then one allocation for this call. This is normally substantially
@@ -6647,6 +6647,11 @@ static GeoArrowErrorCode WKTWriterReserveCoords(struct WKTWriterPrivate* private
 
   GEOARROW_RETURN_NOT_OK(ArrowBufferReserve(&private_data->values, max_chars_estimated));
   return GEOARROW_OK;
+}
+
+static GeoArrowErrorCode WKTWriterReserveOneCoord(struct WKTWriterPrivate* private_data,
+                                                  int n_values) {
+  return ArrowBufferReserve(&private_data->values, WKTWriterMaxCharsPerCoord(n_values));
 }
 
 static GeoArrowErrorCode WKTWriterCheckElementOutputSize(
@@ -6798,30 +6803,6 @@ static int coords_wkt(struct GeoArrowVisitor* v, const struct GeoArrowCoordView*
 
   GEOARROW_RETURN_NOT_OK(WKTWriterReserveCoords(private, n_coords, n_dims));
 
-  int max_chars_estimated_per_value = private->precision == WKT_WRITER_PRECISION_UNLIMITED
-                                          ? 24
-                                          : private->precision + 1 + 8;
-
-  int64_t max_chars_per_coord_theoretical =
-      // space + comma after coordinate
-      (n_coords * 2) +
-      // spaces between ordinates
-      (n_coords * (n_dims - 1)) +
-      // GeoArrowPrintDouble might require up to 40 accessible bytes per call
-      (40 * n_dims);
-
-  // Use a heuristic to estimate the number of characters we are about to write
-  // to avoid more then one allocation for this call. This is normally substantially
-  // less than the theoretical amount.
-  int64_t max_chars_estimated =
-      (n_coords * 2) +             // space + comma after coordinate
-      (n_coords * (n_dims - 1)) +  // spaces between ordinates
-      // Estimate of formatted coordinate value length
-      (max_chars_estimated_per_value * n_coords * n_dims) +
-      // Ensure that the last reserve() call doesn't trigger an allocation
-      max_chars_per_coord_theoretical;
-  NANOARROW_RETURN_NOT_OK(ArrowBufferReserve(&private->values, max_chars_estimated));
-
   // Write the first coordinate, possibly with a leading comma if there was
   // a previous call to coords, or the opening (if it wasn't). Special case
   // for the flat multipoint output MULTIPOINT (1 2, 3 4, ...) which doesn't
@@ -6834,12 +6815,8 @@ static int coords_wkt(struct GeoArrowVisitor* v, const struct GeoArrowCoordView*
     ArrowBufferAppendUnsafe(&private->values, "(", 1);
   }
 
-  // Actually write the first coordinate (no leading comma)
-  // Reserve the theoretical amount for each coordinate because we need this to guarantee
-  // that there won't be a segfault when writing a coordinate. This probably results in
-  // a few dozen bytes of of overallocation.
-  NANOARROW_RETURN_NOT_OK(
-      ArrowBufferReserve(&private->values, max_chars_per_coord_theoretical));
+  // Reserve for each coordinate because the batch reservation is an estimate.
+  NANOARROW_RETURN_NOT_OK(WKTWriterReserveOneCoord(private, n_dims));
   WKTWriterWriteDoubleUnsafe(private, GEOARROW_COORD_VIEW_VALUE(coords, 0, 0));
   for (int32_t j = 1; j < n_dims; j++) {
     ArrowBufferAppendUnsafe(&private->values, " ", 1);
@@ -6855,8 +6832,7 @@ static int coords_wkt(struct GeoArrowVisitor* v, const struct GeoArrowCoordView*
       return EAGAIN;
     }
 
-    NANOARROW_RETURN_NOT_OK(
-        ArrowBufferReserve(&private->values, max_chars_per_coord_theoretical));
+    NANOARROW_RETURN_NOT_OK(WKTWriterReserveOneCoord(private, n_dims));
     ArrowBufferAppendUnsafe(&private->values, ", ", 2);
     WKTWriterWriteDoubleUnsafe(private, GEOARROW_COORD_VIEW_VALUE(coords, i, 0));
     for (int32_t j = 1; j < n_dims; j++) {
@@ -6971,11 +6947,13 @@ static GeoArrowErrorCode GeoArrowWKTWriterAppendCoordsUnsafe(
   memcpy(stride, node->coord_stride, sizeof(stride));
 
   // Append the first coord
+  GEOARROW_RETURN_NOT_OK(WKTWriterReserveOneCoord(private_data, n_values));
   GeoArrowWKTWriterAppendCoordUnsafe(private_data, cursor, stride, n_values);
 
   // Append the rest of the coords
   for (uint32_t i = 1; i < node->size; i++) {
     GEOARROW_RETURN_NOT_OK(WKTWriterCheckElementOutputSize(private_data));
+    GEOARROW_RETURN_NOT_OK(WKTWriterReserveOneCoord(private_data, n_values));
     ArrowBufferAppendUnsafe(&private_data->values, ", ", 2);
     GeoArrowWKTWriterAppendCoordUnsafe(private_data, cursor, stride, n_values);
   }
