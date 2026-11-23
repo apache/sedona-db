@@ -27,6 +27,7 @@
 
 pub mod register;
 
+mod format;
 mod gdal_common;
 mod gdal_dataset_provider;
 
@@ -46,6 +47,7 @@ mod rs_zonal_stats;
 mod utils;
 
 // Re-export main dataset conversion functions
+pub use format::{GdalRasterFileFormat, GdalRasterFileFormatFactory, gdal_raster_schema};
 pub use gdal_common::{
     GdalBandLayout, GdalBandPlan, band_data_type_to_gdal, bytes_to_f64, gdal_to_band_data_type,
     gdal_type_byte_size, nodata_bytes_to_f64,
