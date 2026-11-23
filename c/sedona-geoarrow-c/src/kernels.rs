@@ -387,7 +387,10 @@ mod tests {
     #[case("", "100000000000000000 -100000000000000000")]
     #[case(" Z", "100000000000000000 -100000000000000000 100000000000000000")]
     #[case(" M", "100000000000000000 -100000000000000000 100000000000000000")]
-    #[case(" ZM", "100000000000000000 -100000000000000000 100000000000000000 -100000000000000000")]
+    #[case(
+        " ZM",
+        "100000000000000000 -100000000000000000 100000000000000000 -100000000000000000"
+    )]
     fn astext_precision_large_coordinates(
         #[values(WKB_GEOMETRY, WKB_LARGE_GEOMETRY, WKB_VIEW_GEOMETRY)] data_type: SedonaType,
         #[values(0, 3, 16)] precision: i64,
@@ -397,13 +400,18 @@ mod tests {
         // These coordinates exceed the direct writer's initial buffer estimate,
         // especially at precision 0. Each coordinate must reserve enough space.
         // https://github.com/apache/sedona-db/pull/1448#discussion_r4595840408
-        let wkt = format!("LINESTRING{dimensions} ({})", vec![coordinate; 100].join(", "));
+        let wkt = format!(
+            "LINESTRING{dimensions} ({})",
+            vec![coordinate; 100].join(", ")
+        );
         let udf = SedonaScalarUDF::from_impl("st_astext", st_astext_precision_impl());
         let tester = ScalarUdfTester::new(
             udf.into(),
             vec![data_type, SedonaType::Arrow(DataType::Int64)],
         );
-        let result = tester.invoke_scalar_scalar(wkt.as_str(), precision).unwrap();
+        let result = tester
+            .invoke_scalar_scalar(wkt.as_str(), precision)
+            .unwrap();
         assert_eq!(result, ScalarValue::Utf8(Some(wkt)));
     }
 
