@@ -16,13 +16,13 @@
 // under the License.
 use arrow_array::builder::BinaryBuilder;
 use arrow_schema::DataType;
-use datafusion_common::{DataFusionError, error::Result};
+use datafusion_common::{error::Result, DataFusionError};
 use datafusion_expr::{ColumnarValue, Volatility};
 use sedona_expr::{
     item_crs::ItemCrsKernel,
     scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
 };
-use sedona_geometry::{transform::transform};
+use sedona_geometry::transform::transform;
 use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOMETRY},
     matchers::ArgMatcher,
@@ -30,7 +30,7 @@ use sedona_schema::{
 use std::sync::Arc;
 
 use crate::{
-    executor::{WkbExecutor, visible_wkb_bytes},
+    executor::{visible_wkb_bytes, WkbExecutor},
     st_affine_helpers::{self, RotateAxis},
 };
 
@@ -96,7 +96,7 @@ impl SedonaScalarKernel for STRotate {
         let executor = WkbExecutor::new(arg_types, args);
         let mut builder = BinaryBuilder::with_capacity(
             executor.num_iterations(),
-            visible_wkb_bytes(&arg_types[0], &args[0])?
+            visible_wkb_bytes(&arg_types[0], &args[0])?,
         );
 
         let angle = args[1]
