@@ -3586,9 +3586,9 @@ dependencies = [
 
 [[package]]
 name = "i_overlay"
-version = "9.1.0"
+version = "9.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "913fd692c02408adc76cead636f8e7e07c705f8b995a8b54b454b995e8e197d5"
+checksum = "e19f30f6631721dcdfdd424da135bde0ffb0f6aca1036947eff2137527f5e926"
 dependencies = [
  "i_float 5.0.0",
  "i_key_sort 0.12.0",
@@ -6001,7 +6001,7 @@ dependencies = [
  "geo",
  "geo-traits",
  "geo-types",
- "i_overlay 9.1.0",
+ "i_overlay 9.2.0",
  "log",
  "num-traits",
  "pretty_env_logger",
