@@ -22,7 +22,7 @@ use sedona_expr::{
     item_crs::ItemCrsKernel,
     scalar_udf::{SedonaScalarKernel, SedonaScalarUDF},
 };
-use sedona_geometry::{transform::transform, wkb_factory::WKB_MIN_PROBABLE_BYTES};
+use sedona_geometry::{transform::transform};
 use sedona_schema::{
     datatypes::{SedonaType, WKB_GEOMETRY},
     matchers::ArgMatcher,
@@ -30,7 +30,7 @@ use sedona_schema::{
 use std::sync::Arc;
 
 use crate::{
-    executor::WkbExecutor,
+    executor::{WkbExecutor, visible_wkb_bytes},
     st_affine_helpers::{self, RotateAxis},
 };
 
@@ -96,7 +96,7 @@ impl SedonaScalarKernel for STRotate {
         let executor = WkbExecutor::new(arg_types, args);
         let mut builder = BinaryBuilder::with_capacity(
             executor.num_iterations(),
-            WKB_MIN_PROBABLE_BYTES * executor.num_iterations(),
+            visible_wkb_bytes(&arg_types[0], &args[0])?
         );
 
         let angle = args[1]
@@ -149,6 +149,26 @@ mod tests {
         let st_rotate_y_udf: ScalarUDF = st_rotate_y_udf().into();
         assert_eq!(st_rotate_y_udf.name(), "st_rotatey");
         assert!(st_rotate_y_udf.documentation().is_none());
+    }
+
+    #[test]
+    fn udf_preserves_byte_size() {
+        use arrow_array::BinaryArray;
+
+        let tester = ScalarUdfTester::new(
+            st_rotate_udf().into(),
+            vec![WKB_GEOMETRY, SedonaType::Arrow(DataType::Float64)],
+        );
+        let wkt = "MULTIPOLYGON (((0 0,0 1,1 1,1 0,0 0)),((10 10,10 20,20 20,20 10,10 10)))";
+        let geoms = create_array(&[Some(wkt)], &WKB_GEOMETRY);
+
+        let result = tester
+            .invoke_arrays(prepare_args(geoms.clone(), &[Some(1.0f64)]))
+            .unwrap();
+
+        let in_bin = geoms.as_any().downcast_ref::<BinaryArray>().unwrap();
+        let out_bin = result.as_any().downcast_ref::<BinaryArray>().unwrap();
+        assert_eq!(in_bin.value(0).len(), out_bin.value(0).len());
     }
 
     #[rstest]
