@@ -83,6 +83,20 @@ fn invoke_scalar(item: &Wkb) -> Result<bool> {
 }
 
 fn is_geometry_closed(item: &Wkb) -> Result<bool> {
+    // Collections are checked member by member instead of with is_geometry_empty(), which can
+    // search through every nested level and would repeat that search at each level. An empty
+    // member is not closed, so a collection whose members are all empty is not closed either.
+    if let geo_traits::GeometryType::GeometryCollection(geometry_collection) = item.as_type() {
+        if geometry_collection.num_geometries() == 0 {
+            return Ok(false);
+        }
+        return geometry_collection
+            .geometries()
+            .try_fold(true, |acc, item| {
+                is_geometry_closed(item).map(|is_closed| acc && is_closed)
+            });
+    }
+
     if is_geometry_empty(&item).map_err(|e| {
         datafusion_common::error::DataFusionError::Execution(format!(
             "Failed to check if geometry is empty: {e}"
@@ -97,11 +111,6 @@ fn is_geometry_closed(item: &Wkb) -> Result<bool> {
         geo_traits::GeometryType::MultiLineString(multilinestring) => {
             Ok(multilinestring.to_multi_line_string().is_closed())
         }
-        geo_traits::GeometryType::GeometryCollection(geometry_collection) => geometry_collection
-            .geometries()
-            .try_fold(true, |acc, item| {
-                is_geometry_closed(item).map(|is_closed| acc && is_closed)
-            }),
         geo_traits::GeometryType::Point(_)
         | geo_traits::GeometryType::MultiPoint(_)
         | geo_traits::GeometryType::Polygon(_)
@@ -168,6 +177,36 @@ mod tests {
                 Some(true),
                 Some(false),
                 Some(false)
+            ]
+        );
+        assert_array_equal(&tester.invoke_wkb_array(input_wkt).unwrap(), &expected);
+    }
+
+    #[test]
+    fn udf_collections() {
+        let tester = ScalarUdfTester::new(st_isclosed_udf().into(), vec![WKB_GEOMETRY]);
+
+        // A collection is closed when it has members and all of them are closed. An empty
+        // member is not closed, so neither is a collection whose members are all empty.
+        let input_wkt = vec![
+            Some("GEOMETRYCOLLECTION EMPTY"),
+            Some("GEOMETRYCOLLECTION (POINT EMPTY)"),
+            Some("GEOMETRYCOLLECTION (GEOMETRYCOLLECTION EMPTY)"),
+            Some("GEOMETRYCOLLECTION (POINT EMPTY, POINT (0 0))"),
+            Some("GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1))"),
+            Some("GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 0 1, 1 1, 0 0))"),
+            Some("GEOMETRYCOLLECTION (GEOMETRYCOLLECTION (LINESTRING (0 0, 0 1, 1 1, 0 0)))"),
+        ];
+        let expected: ArrayRef = arrow_array!(
+            Boolean,
+            [
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(true),
+                Some(true)
             ]
         );
         assert_array_equal(&tester.invoke_wkb_array(input_wkt).unwrap(), &expected);
