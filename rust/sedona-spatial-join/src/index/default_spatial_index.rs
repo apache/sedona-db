@@ -52,6 +52,7 @@ use crate::{
     operand_evaluator::distance_value_at,
     refine::IndexQueryResultRefiner,
     spatial_predicate::SpatialPredicate,
+    utils::yield_timer::{YieldTimer, yield_interval},
 };
 use arrow::array::BooleanBufferBuilder;
 use async_trait::async_trait;
@@ -554,6 +555,7 @@ impl SpatialIndex for DefaultSpatialIndex {
         let mut total_candidates_count = 0;
         let mut total_count = 0;
         let mut current_row_idx = range.start;
+        let mut yield_timer = YieldTimer::new(yield_interval(&self.inner.options));
         for row_idx in range {
             current_row_idx = row_idx;
             let probe_rect = &rects[row_idx];
@@ -643,6 +645,13 @@ impl SpatialIndex for DefaultSpatialIndex {
                 probe_indices.extend(std::iter::repeat_n(row_idx as u32, metrics.count));
                 total_count += metrics.count;
                 total_candidates_count += metrics.candidate_count;
+            }
+
+            // Refining can take a long time when the predicate is slow and few candidates
+            // match, with no output to pause at. Yield regularly so that a cancelled query
+            // stops.
+            if yield_timer.step() {
+                tokio::task::yield_now().await;
             }
 
             if total_count >= max_result_size {

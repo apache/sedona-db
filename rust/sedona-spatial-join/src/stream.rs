@@ -40,6 +40,7 @@ use std::collections::HashMap;
 use std::iter::zip;
 use std::ops::Range;
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::evaluated_batch::EvaluatedBatch;
 use crate::evaluated_batch::evaluated_batch_stream::SendableEvaluatedBatchStream;
@@ -60,6 +61,7 @@ use crate::utils::join_utils::{
     need_probe_multi_partition_bitmap, need_produce_result_in_final,
 };
 use crate::utils::once_fut::{OnceAsync, OnceFut};
+use crate::utils::yield_timer::{YieldTimer, yield_interval};
 use arrow::array::RecordBatch;
 use arrow::datatypes::{Schema, SchemaRef};
 use sedona_common::option::SpatialJoinOptions;
@@ -126,6 +128,10 @@ pub(crate) struct SpatialJoinStream {
     knn_results_merger: Option<Box<KNNResultsMerger>>,
     /// Current offset in the probe side partition
     probe_offset: usize,
+    /// When the current call to `poll_next` started. The iterator of a probe batch
+    /// starts its yield timer from it, so that many small probe batches in one poll
+    /// add up to one interval.
+    poll_started_at: Instant,
 }
 
 impl SpatialJoinStream {
@@ -181,6 +187,7 @@ impl SpatialJoinStream {
             join_metrics,
             state: SpatialJoinStreamState::WaitPrepareSpatialJoinComponents,
             runtime_env,
+            poll_started_at: Instant::now(),
             options: sedona_options.spatial_join,
             metrics_set: metrics.clone(),
             target_output_batch_size,
@@ -335,6 +342,7 @@ impl SpatialJoinStream {
         &mut self,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Option<Result<RecordBatch>>> {
+        self.poll_started_at = Instant::now();
         loop {
             return match &self.state {
                 SpatialJoinStreamState::WaitPrepareSpatialJoinComponents => {
@@ -382,7 +390,7 @@ impl SpatialJoinStream {
                     handle_state!(ready!(self.setup_unmatched_build_batch_processing(*desc)))
                 }
                 SpatialJoinStreamState::ProcessUnmatchedBuildBatch(_, _) => {
-                    handle_state!(ready!(self.process_unmatched_build_batch()))
+                    handle_state!(ready!(self.process_unmatched_build_batch(cx)))
                 }
                 SpatialJoinStreamState::PrepareForNextPartition(partition_id, is_last_stream) => {
                     handle_state!(ready!(
@@ -708,7 +716,13 @@ impl SpatialJoinStream {
 
     fn process_unmatched_build_batch(
         &mut self,
+        cx: &mut std::task::Context<'_>,
     ) -> Poll<Result<StatefulStreamResult<Option<RecordBatch>>>> {
+        // This pass produces output without reading input, so nothing else consumes task
+        // budget while it runs. Consume one unit per batch so that the join yields to the
+        // scheduler regularly and a cancelled query stops.
+        let coop = ready!(tokio::task::coop::poll_proceed(cx));
+
         let (partition_desc, batch_opt, is_complete) = match &mut self.state {
             SpatialJoinStreamState::ProcessUnmatchedBuildBatch(desc, iterator) => {
                 let build_side = build_side_for_predicate(&self.spatial_predicate);
@@ -734,6 +748,8 @@ impl SpatialJoinStream {
 
         match batch_opt {
             Some(batch) => {
+                coop.made_progress();
+
                 // Update metrics
                 self.join_metrics.output_batches.add(1);
                 self.join_metrics.output_rows.add(batch.num_rows());
@@ -872,6 +888,7 @@ impl SpatialJoinStream {
             produce_unmatched_probe_rows,
             probe_evaluated_batch: Arc::new(probe_evaluated_batch),
             knn_results_merger,
+            poll_started_at: self.poll_started_at,
         })?;
         Ok(Box::new(iterator))
     }
@@ -946,6 +963,11 @@ pub(crate) struct SpatialJoinBatchIterator {
 }
 
 struct ProbeProgress {
+    /// When to yield to the scheduler. It starts with the poll of the stream that fetched
+    /// this probe batch, and is checked once per pass of
+    /// [SpatialJoinBatchIterator::next_batch_inner] and after each KNN probe row. Range
+    /// probe rows are timed by the spatial index's own timer.
+    yield_timer: YieldTimer,
     /// Index of the probe row to be probed by [SpatialJoinBatchIterator::probe_range] or
     /// [SpatialJoinBatchIterator::probe_knn].
     current_probe_idx: usize,
@@ -1104,10 +1126,15 @@ pub(crate) struct SpatialJoinBatchIteratorParams {
     /// The KNN result merger for merging KNN results across partitions.
     /// Only available when running KNN join with multiple build partitions.
     pub knn_results_merger: Option<Box<KNNResultsMerger>>,
+    /// When the poll of the stream that fetched this probe batch started: the iterator's
+    /// yield timer starts from it.
+    pub poll_started_at: Instant,
 }
 
 impl SpatialJoinBatchIterator {
     pub(crate) fn new(params: SpatialJoinBatchIteratorParams) -> Result<Self> {
+        let yield_timer =
+            YieldTimer::starting_at(yield_interval(&params.options), params.poll_started_at);
         Ok(Self {
             schema: params.schema,
             filter: params.filter,
@@ -1125,6 +1152,7 @@ impl SpatialJoinBatchIterator {
             offset_in_partition: params.probe_offset,
             produce_unmatched_probe_rows: params.produce_unmatched_probe_rows,
             progress: Some(ProbeProgress {
+                yield_timer,
                 current_probe_idx: 0,
                 last_produced_probe_idx: -1,
                 build_batch_positions: Vec::new(),
@@ -1158,12 +1186,21 @@ impl SpatialJoinBatchIterator {
                 return Ok(None);
             }
 
+            // Each pass of this loop probes up to `max_batch_size` results, which a join
+            // filter may then drop, so a whole probe batch can go by without output, and a
+            // poll can go through many probe batches without output. Yield once the stream
+            // has worked for the yield interval: the timer started with the poll that
+            // fetched this batch, so this also yields between small probe batches.
+            if progress.yield_timer.due() {
+                tokio::task::yield_now().await;
+            }
+
             // Check if we need to probe more rows
             if progress.current_probe_idx < num_rows
                 && progress.probe_indices.len() < self.max_batch_size
             {
                 match &self.spatial_predicate {
-                    SpatialPredicate::KNearestNeighbors(_) => self.probe_knn(progress)?,
+                    SpatialPredicate::KNearestNeighbors(_) => self.probe_knn(progress).await?,
                     _ => self.probe_range(progress).await?,
                 }
             }
@@ -1225,7 +1262,10 @@ impl SpatialJoinBatchIterator {
 
     /// Process more probe rows and fill in the build_batch_positions and probe_indices
     /// until we have filled in enough results or processed all probe rows.
-    fn probe_knn(&self, progress: &mut ProbeProgress) -> Result<()> {
+    ///
+    /// This only reads `self`, but takes `&mut self`: the future awaiting it must be
+    /// `Send`, and holding `&self` across an await would need `Self: Sync`.
+    async fn probe_knn(&mut self, progress: &mut ProbeProgress) -> Result<()> {
         let geom_array = &self.probe_evaluated_batch.geom_array;
         let wkbs = geom_array.wkbs();
 
@@ -1307,6 +1347,12 @@ impl SpatialJoinBatchIterator {
                 );
             }
             progress.current_probe_idx += 1;
+
+            // When a join filter drops most neighbors, this loop can run for a long time
+            // without output. Yield regularly so that a cancelled query stops.
+            if progress.yield_timer.step() {
+                tokio::task::yield_now().await;
+            }
 
             // Early exit if we have enough results
             if progress.build_batch_positions.len() >= self.max_batch_size {
@@ -2239,6 +2285,7 @@ mod tests {
     ) -> Vec<u32> {
         let build_batch_positions = vec![(0, 0); probe_indices.len()];
         let mut progress = ProbeProgress {
+            yield_timer: YieldTimer::new(yield_interval(&SpatialJoinOptions::default())),
             current_probe_idx: 0,
             last_produced_probe_idx: -1,
             build_batch_positions,
