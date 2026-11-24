@@ -94,10 +94,28 @@ impl SedonaScalarKernel for STRotate {
         args: &[ColumnarValue],
     ) -> Result<ColumnarValue> {
         let executor = WkbExecutor::new(arg_types, args);
-        let mut builder = BinaryBuilder::with_capacity(
-            executor.num_iterations(),
-            visible_wkb_bytes(&arg_types[0], &args[0])?,
-        );
+
+        let angle_array = args[1].to_array(executor.num_iterations())?;
+        let num_valid_angles = angle_array.len() - angle_array.null_count();
+
+        let geom_bytes = visible_wkb_bytes(&arg_types[0], &args[0])?;
+
+        let capacity = if num_valid_angles == 0 {
+            0
+        } else {
+            match &args[0] {
+                ColumnarValue::Scalar(_) => geom_bytes * num_valid_angles,
+                ColumnarValue::Array(_) => {
+                    if num_valid_angles == executor.num_iterations() {
+                        geom_bytes
+                    } else {
+                        (geom_bytes / executor.num_iterations().max(1)) * num_valid_angles
+                    }
+                }
+            }
+        };
+
+        let mut builder = BinaryBuilder::with_capacity(executor.num_iterations(), capacity);
 
         let angle = args[1]
             .cast_to(&DataType::Float64, None)?
@@ -169,6 +187,97 @@ mod tests {
         let in_bin = geoms.as_any().downcast_ref::<BinaryArray>().unwrap();
         let out_bin = result.as_any().downcast_ref::<BinaryArray>().unwrap();
         assert_eq!(in_bin.value(0).len(), out_bin.value(0).len());
+    }
+
+    #[test]
+    fn udf_all_null_angles_small_buffer() {
+        use arrow_array::BinaryArray;
+        use arrow_array::Float64Array;
+
+        let n = 1024;
+
+        let mut large_wkt = String::from("LINESTRING (");
+        for i in 0..2000 {
+            if i > 0 {
+                large_wkt.push_str(", ");
+            }
+            large_wkt.push_str(&format!("{i} {i}"))
+        }
+        large_wkt.push(')');
+
+        let geoms: Vec<Option<&str>> = (0..n).map(|_| Some(large_wkt.as_str())).collect();
+        let geoms = create_array(&geoms, &WKB_GEOMETRY);
+
+        let angles: Vec<Option<f64>> = vec![None; n];
+        let angles: Arc<dyn Array> = Arc::new(Float64Array::from(angles));
+
+        let tester = ScalarUdfTester::new(
+            st_rotate_udf().into(),
+            vec![WKB_GEOMETRY, SedonaType::Arrow(DataType::Float64)],
+        );
+        let result = tester.invoke_arrays(vec![geoms, angles]).unwrap();
+
+        for i in 0..n {
+            assert!(result.is_null(i), "row {i} should be null");
+        }
+
+        let result_bin = result.as_any().downcast_ref::<BinaryArray>().unwrap();
+        assert_eq!(result_bin.value_data().len(), 0);
+        assert_eq!(result_bin.values().capacity(), 0);
+
+        let physical = result.get_array_memory_size();
+        assert!(
+            physical < 100_000,
+            "all-null result should not hold a larger buffer, got {physical} bytes"
+        );
+    }
+
+    #[test]
+    fn udf_scalar_geometry_many_angles() {
+        use arrow_array::BinaryArray;
+        use arrow_array::Float64Array;
+        use datafusion_common::ScalarValue;
+
+        let n = 8192;
+
+        let geom_array = create_array(&[Some("POINT (1 0)")], &WKB_GEOMETRY);
+        let geom_scalar = ScalarValue::try_from_array(&geom_array, 0).unwrap();
+
+        let angles: Arc<dyn Array> =
+            Arc::new(Float64Array::from(vec![
+                Some(std::f64::consts::FRAC_PI_2);
+                n
+            ]));
+
+        let arg_types = [WKB_GEOMETRY, SedonaType::Arrow(DataType::Float64)];
+        let args = [
+            ColumnarValue::Scalar(geom_scalar),
+            ColumnarValue::Array(angles),
+        ];
+
+        let kernel = STRotate {
+            axis: RotateAxis::Z,
+        };
+        let result = kernel.invoke_batch(&arg_types, &args).unwrap();
+
+        let result_bin = result.to_array(n).unwrap();
+        let result_bin = result_bin.as_any().downcast_ref::<BinaryArray>().unwrap();
+
+        assert_eq!(result_bin.len(), n);
+        for i in 0..n {
+            assert!(!result_bin.is_null(i));
+        }
+
+        let expected = n * 21;
+        let capacity = result_bin.values().capacity();
+        assert!(
+            capacity >= expected,
+            "value buffer too small: {capacity} bytes (expected >= {expected})"
+        );
+        assert!(
+            capacity < expected + expected / 4,
+            "value buffer too large (likely reallocations): {capacity} bytes (expected ~{expected})"
+        );
     }
 
     #[rstest]
