@@ -336,7 +336,7 @@ impl GeoPredicateEvaluator for GeoDistance {
 
 /// Macro to generate relation evaluators that use the relate() method
 macro_rules! impl_relate_evaluator {
-    ($struct_name:ident, $geo_method:ident $(,)?) => {
+    ($struct_name:ident, $geo_method:ident, $probe_geo_method:ident $(,)?) => {
         #[derive(Debug)]
         struct $struct_name;
 
@@ -363,19 +363,20 @@ macro_rules! impl_relate_evaluator {
                     Ok(geom) => geom,
                     Err(_) => return Ok(false),
                 };
-                Ok(probe.relate(&build_geom).$geo_method())
+                // Preparing the probe reverses the operands, so use the converse relation.
+                Ok(probe.relate(&build_geom).$probe_geo_method())
             }
         }
     };
 }
 
 // Generate relate-based evaluators using the macro
-impl_relate_evaluator!(GeoTouches, is_touches);
-impl_relate_evaluator!(GeoCrosses, is_crosses);
-impl_relate_evaluator!(GeoOverlaps, is_overlaps);
-impl_relate_evaluator!(GeoCovers, is_covers);
-impl_relate_evaluator!(GeoCoveredBy, is_coveredby);
-impl_relate_evaluator!(GeoEquals, is_equal_topo);
+impl_relate_evaluator!(GeoTouches, is_touches, is_touches);
+impl_relate_evaluator!(GeoCrosses, is_crosses, is_crosses);
+impl_relate_evaluator!(GeoOverlaps, is_overlaps, is_overlaps);
+impl_relate_evaluator!(GeoCovers, is_covers, is_coveredby);
+impl_relate_evaluator!(GeoCoveredBy, is_coveredby, is_covers);
+impl_relate_evaluator!(GeoEquals, is_equal_topo, is_equal_topo);
 
 #[cfg(test)]
 mod tests {
@@ -385,7 +386,9 @@ mod tests {
     use datafusion_common::ScalarValue;
     use datafusion_physical_expr::PhysicalExpr;
     use datafusion_physical_expr::expressions::{Column, Literal};
+    use rstest::rstest;
     use sedona_common::DEFAULT_SPECULATIVE_THRESHOLD;
+    use sedona_testing::create::make_wkb;
     use std::sync::Arc;
 
     /// Helper function to create a dummy PhysicalExpr for testing
@@ -417,6 +420,55 @@ mod tests {
             Arc::new(Literal::new(ScalarValue::Float64(Some(100.0)))),
             JoinSide::None,
         ))
+    }
+
+    #[rstest]
+    #[case(SpatialRelationType::Covers, false, true)]
+    #[case(SpatialRelationType::CoveredBy, false, false)]
+    #[case(SpatialRelationType::Covers, true, false)]
+    #[case(SpatialRelationType::CoveredBy, true, true)]
+    fn test_geo_covers_direction(
+        #[case] relation_type: SpatialRelationType,
+        #[case] reverse: bool,
+        #[case] expected_inside: bool,
+        #[values("POINT(5 5)", "POINT(0 5)", "POINT(15 5)")] point: &str,
+        #[values(
+            ExecutionMode::PrepareNone,
+            ExecutionMode::PrepareBuild,
+            ExecutionMode::PrepareProbe
+        )]
+        execution_mode: ExecutionMode,
+    ) {
+        let polygon_buf = make_wkb("POLYGON((0 0, 0 10, 10 10, 10 0, 0 0))");
+        let polygon = wkb::reader::read_wkb(&polygon_buf).unwrap();
+        let point_buf = make_wkb(point);
+        let point_geom = wkb::reader::read_wkb(&point_buf).unwrap();
+        let (build, probe) = if reverse {
+            (&point_geom, &polygon)
+        } else {
+            (&polygon, &point_geom)
+        };
+        let predicate = create_relation_predicate(relation_type);
+        let refiner = GeoRefiner::new(
+            &predicate,
+            SpatialJoinOptions {
+                execution_mode,
+                ..Default::default()
+            },
+            create_geo_stats(1, 5),
+        );
+        let candidates = [IndexQueryResult {
+            wkb: build,
+            distance: None,
+            geom_idx: 0,
+            position: (0, 0),
+        }];
+        let expected = if expected_inside && point != "POINT(15 5)" {
+            vec![(0, 0)]
+        } else {
+            vec![]
+        };
+        assert_eq!(refiner.refine(probe, &candidates).unwrap(), expected);
     }
 
     #[test]
