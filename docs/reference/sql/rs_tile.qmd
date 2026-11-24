@@ -88,9 +88,17 @@ tile size with a nodata fill. When the band(s) have no nodata value,
 
 ::: callout-note
 `RS_Tile` **copies the raster**: every tile carries its own pixels, so the
-returned list materializes a full copy of the raster spread across the tiles and
+scalar result materializes a full copy of the raster spread across the tiles and
 held in memory as one list value. A small tile size produces many tiles (a
 `1 x 1` tile size yields one tile per pixel).
+
+For a single `UNNEST(RS_Tile(...))`, the optimizer can use `RasterTileExec` to
+copy and emit tiles incrementally, bounded by the execution batch size and
+`sedona.raster.max_batch_bytes`. A single tile larger than the byte budget is
+emitted on its own. The input raster is still loaded before tiling; this
+optimization avoids holding the complete output tile list in memory. Queries
+that consume the list itself or zip multiple `UNNEST` expressions retain the
+scalar behavior.
 :::
 
 ## Examples

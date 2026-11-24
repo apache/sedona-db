@@ -185,6 +185,44 @@ impl SedonaScalarKernel for RsTile {
         _num_rows: usize,
         _config_options: Option<&ConfigOptions>,
     ) -> Result<ColumnarValue> {
+        self.invoke_tiles(arg_types, args, None)
+    }
+}
+
+/// A bounded run of tiles from one input row. The scalar kernel uses the same
+/// implementation without a cursor; streaming execution resumes at `next`.
+#[derive(Debug)]
+pub(crate) struct TileCursor {
+    pub next: usize,
+    pub total: usize,
+    pub max_tiles: usize,
+    pub max_bytes: u64,
+}
+
+pub(crate) fn tile_batch(
+    arg_types: &[SedonaType],
+    args: &[ColumnarValue],
+    cursor: &mut TileCursor,
+) -> Result<ColumnarValue> {
+    let band_arg = if matches!(arg_types[1].storage_type(), DataType::List(_)) {
+        BandArg::Array
+    } else {
+        BandArg::All
+    };
+    RsTile {
+        band_arg,
+        arg_count: args.len(),
+    }
+    .invoke_tiles(arg_types, args, Some(cursor))
+}
+
+impl RsTile {
+    fn invoke_tiles(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+        mut cursor: Option<&mut TileCursor>,
+    ) -> Result<ColumnarValue> {
         let num_iterations = RasterExecutor::num_iterations_over(args);
         let layout = self.layout();
 
@@ -306,12 +344,12 @@ impl SedonaScalarKernel for RsTile {
 
             let num_tiles = explode_raster_tiles(
                 raster,
-                tile_width,
-                tile_height,
+                (tile_width, tile_height),
                 &params,
                 &mut rast_builder,
                 &mut x_builder,
                 &mut y_builder,
+                cursor.as_deref_mut(),
             )?;
 
             valid_list_items.append_non_null();
@@ -375,7 +413,8 @@ fn tile_list_type() -> Result<DataType> {
 
 /// Split one raster into a grid of tiles, appending each tile's grid position to
 /// `x_builder`/`y_builder` and its raster to `rast_builder`. Returns the number
-/// of tiles produced (`num_tile_x * num_tile_y`).
+/// of tiles appended. A cursor restricts the work to the next bounded run;
+/// without one, the whole grid is appended.
 ///
 /// Tiles are emitted row-major, matching Spark: `num_tile_x =
 /// ceil(width / tile_width)`, `num_tile_y = ceil(height / tile_height)`, and the
@@ -383,12 +422,12 @@ fn tile_list_type() -> Result<DataType> {
 /// `[x * tile_width, ..)` x `[y * tile_height, ..)`.
 fn explode_raster_tiles(
     raster: &RasterRefImpl<'_>,
-    tile_width: i64,
-    tile_height: i64,
+    (tile_width, tile_height): (i64, i64),
     params: &TileParams<'_>,
     rast_builder: &mut RasterBuilder,
     x_builder: &mut Int32Builder,
     y_builder: &mut Int32Builder,
+    cursor: Option<&mut TileCursor>,
 ) -> Result<usize> {
     if tile_width < 1 || tile_height < 1 {
         return exec_err!(
@@ -426,24 +465,65 @@ fn explode_raster_tiles(
 
     let band_indices = resolve_band_indices(params.bands, raster.num_bands())?;
 
-    for tile_y in 0..num_tile_y {
-        for tile_x in 0..num_tile_x {
-            let window = TileWindow::new(
-                tile_x,
-                tile_y,
-                tile_w,
-                tile_h,
-                width,
-                height,
-                params.pad_with_nodata,
+    let (start, end) = if let Some(cursor) = cursor {
+        cursor.total = num_tiles;
+        // Bound the copied pixels as well as the number of list items. Use the
+        // largest tile's size (including padding and all selected N-D planes).
+        // A tile larger than the budget still makes progress on its own.
+        let mut tile_bytes = 0u64;
+        for &idx in &band_indices {
+            let band = raster.band(idx - 1).context("RS_Tile")?;
+            let shape = band.shape();
+            let planes = shape[..shape.len().saturating_sub(2)]
+                .iter()
+                .fold(1u64, |n, &d| n.saturating_mul(d as u64));
+            let w = if params.pad_with_nodata {
+                tile_w
+            } else {
+                tile_w.min(width)
+            };
+            let h = if params.pad_with_nodata {
+                tile_h
+            } else {
+                tile_h.min(height)
+            };
+            tile_bytes = tile_bytes.saturating_add(
+                planes
+                    .saturating_mul(w as u64)
+                    .saturating_mul(h as u64)
+                    .saturating_mul(band.data_type().byte_size() as u64),
             );
-            append_tile(raster, &band_indices, &window, params, rast_builder)?;
-            x_builder.append_value(tile_x as i32);
-            y_builder.append_value(tile_y as i32);
         }
+        let by_bytes = usize::try_from(cursor.max_bytes / tile_bytes.max(1))
+            .unwrap_or(usize::MAX)
+            .max(1);
+        let count = cursor.max_tiles.max(1).min(by_bytes);
+        let start = cursor.next;
+        let end = start.saturating_add(count).min(num_tiles);
+        cursor.next = end;
+        (start, end)
+    } else {
+        (0, num_tiles)
+    };
+
+    for index in start..end {
+        let tile_y = index / num_tile_x;
+        let tile_x = index % num_tile_x;
+        let window = TileWindow::new(
+            tile_x,
+            tile_y,
+            tile_w,
+            tile_h,
+            width,
+            height,
+            params.pad_with_nodata,
+        );
+        append_tile(raster, &band_indices, &window, params, rast_builder)?;
+        x_builder.append_value(tile_x as i32);
+        y_builder.append_value(tile_y as i32);
     }
 
-    Ok(num_tiles)
+    Ok(end - start)
 }
 
 /// The pixel window one tile copies from the source, plus the tile's output
@@ -861,12 +941,12 @@ mod tests {
         let mut rast_builder = RasterBuilder::new(4);
         let num_tiles = explode_raster_tiles(
             &raster,
-            tile_width,
-            tile_height,
+            (tile_width, tile_height),
             &tile_params,
             &mut rast_builder,
             &mut x_builder,
             &mut y_builder,
+            None,
         )
         .unwrap();
 
@@ -1434,12 +1514,12 @@ mod tests {
         let raster = rasters.get(0).unwrap();
         explode_raster_tiles(
             &raster,
-            tile_width,
-            tile_height,
+            (tile_width, tile_height),
             &tile_params,
             &mut RasterBuilder::new(1),
             &mut Int32Builder::new(),
             &mut Int32Builder::new(),
+            None,
         )
         .unwrap_err()
         .to_string()

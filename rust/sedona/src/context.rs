@@ -296,6 +296,8 @@ impl SedonaContext {
         state_builder = register_sedona_analyzer_rules(state_builder)?;
         state_builder = register_spatial_join_logical_optimizer(state_builder)?;
         state_builder = register_ensure_loaded_optimizer(state_builder)?;
+        state_builder = state_builder
+            .with_physical_optimizer_rule(Arc::new(sedona_raster_gdal::tile_exec::RasterTileRule));
         // Plan raster materialization: byte-bounded load batches, spread by
         // raster source (see `sedona_query_planner::raster_materialization`).
         state_builder =
