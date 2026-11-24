@@ -17,14 +17,15 @@
 
 //! Streaming execution of a single `UNNEST(RS_Tile(...))`.
 //!
-//! Arguments (including RS_EnsureLoaded) and sibling expressions are evaluated
-//! once by a projection. A cursor then copies only a bounded run of tiles from
+//! Arguments and sibling expressions are evaluated once by a projection.
+//! A cursor then produces only a bounded run of tiles from
 //! one row at a time. DataFusion's UnnestExec expands those short lists, retaining
 //! its null/empty-list semantics. The intermediate lists are private to this
 //! execution node and never contain the complete tile grid unless it fits.
 //!
-//! This bounds newly copied tile pixels, not the loaded input raster. Lazy
-//! windows and source pushdown are separate optimizations. Multiple zipped
+//! OutDb tiles are lazy windows; pixel consumers load them downstream. InDb
+//! tiles are copied, and padding retains eager input loading. Source pushdown
+//! is a separate optimization. Multiple zipped
 //! unnests and scalar consumers of the list retain their existing execution.
 
 use std::{fmt, sync::Arc};
