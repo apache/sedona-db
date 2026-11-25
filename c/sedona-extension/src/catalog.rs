@@ -396,6 +396,7 @@ impl SedonaCatalogList for ImportedCatalogProviderList {
 
     async fn table(&self, identifier: &[&str]) -> Result<Option<Arc<dyn TableProvider>>> {
         let identifier = json_string(&identifier)?;
+        let runtime = self.runtime.clone();
         self.call(move |raw| {
             let mut out = SedonaCTableProvider::default();
             let mut err = SedonaCError::default();
@@ -407,7 +408,8 @@ impl SedonaCatalogList for ImportedCatalogProviderList {
                 Ok(None)
             } else {
                 Ok(Some(
-                    Arc::new(ImportedTableProvider::try_new(out)?) as Arc<dyn TableProvider>
+                    Arc::new(ImportedTableProvider::try_new(out, runtime)?)
+                        as Arc<dyn TableProvider>,
                 ))
             }
         })

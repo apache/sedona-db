@@ -136,8 +136,13 @@ impl InternalContext {
             .get::<SedonaOptions>()
             .map(|options| options.ffi.use_async)
             .unwrap_or(false);
-        let (provider, table_reference) =
-            import_table_provider_from_any(py, obj, requested_schema, use_async_execution)?;
+        let (provider, table_reference) = import_table_provider_from_any(
+            py,
+            obj,
+            requested_schema,
+            use_async_execution,
+            self.runtime.clone(),
+        )?;
         let df = if let Some(table_reference) = table_reference {
             let plan =
                 LogicalPlanBuilder::scan(table_reference, provider_as_source(provider), None)?

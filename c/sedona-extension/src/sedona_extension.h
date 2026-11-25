@@ -450,7 +450,11 @@ struct SedonaCExecutionPlanArgs {
   size_t args_len;
 
   /// \brief Optional array of execution plans
-  const struct SedonaCExecutionPlan** exec_plans;
+  ///
+  /// Callbacks document whether plans are borrowed or transferred. A callback
+  /// that takes ownership moves the plan out and replaces it with an empty
+  /// SedonaCExecutionPlan so the caller does not release it twice.
+  struct SedonaCExecutionPlan** exec_plans;
   size_t num_exec_plans;
 
   /// \brief Optional array of expression views
@@ -567,8 +571,10 @@ struct SedonaCTableProvider {
 
   /// \brief Perform an insert operation
   ///
-  /// The args parameter contains JSON-serialized insert arguments.
-  /// The exec_plans field should contain the plan providing rows to insert.
+  /// The args parameter contains {"insert_op":"Append"} (or "Overwrite" /
+  /// "Replace"). The exec_plans field must contain exactly one plan providing
+  /// rows to insert. The callback takes ownership of that plan by moving it out
+  /// and replacing it with an empty plan.
   /// Returns an execution plan that performs the insert.
   int (*insert)(const struct SedonaCTableProvider* self,
                 struct SedonaCExecutionPlanArgs* args, struct SedonaCExecutionPlan* out,

@@ -385,8 +385,12 @@ pub struct SedonaCExecutionPlanArgs {
     /// JSON-serialized arguments
     pub args: *const u8,
     pub args_len: usize,
-    /// Optional array of execution plans
-    pub exec_plans: *const *const SedonaCExecutionPlan,
+    /// Optional array of execution plans.
+    ///
+    /// Callbacks document whether plans are borrowed or transferred. A callback
+    /// that takes ownership moves the plan out and replaces it with an empty
+    /// `SedonaCExecutionPlan` so the caller does not release it twice.
+    pub exec_plans: *mut *mut SedonaCExecutionPlan,
     pub num_exec_plans: usize,
     /// Optional array of expression views
     ///
@@ -609,8 +613,10 @@ pub struct SedonaCTableProvider {
 
     /// Perform an insert operation
     ///
-    /// The args parameter contains JSON-serialized insert arguments.
-    /// The exec_plans field should contain the plan providing rows to insert.
+    /// The args parameter contains `{"insert_op":"Append"}` (or `Overwrite` /
+    /// `Replace`). The exec_plans field must contain exactly one plan providing
+    /// rows to insert. The callback takes ownership of that plan by moving it
+    /// out and replacing it with an empty plan.
     /// Returns an execution plan that performs the insert.
     pub insert: Option<
         unsafe extern "C" fn(

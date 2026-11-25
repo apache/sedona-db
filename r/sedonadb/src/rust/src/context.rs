@@ -226,7 +226,7 @@ impl InternalContext {
         &self,
         provider_xptr: savvy::Sexp,
     ) -> Result<InternalDataFrame> {
-        let provider = import_table_provider(provider_xptr)?;
+        let provider = import_table_provider(provider_xptr, self.runtime.clone())?;
         let inner = self.inner.ctx.read_table(provider)?;
         Ok(new_data_frame(inner, self.runtime.clone()))
     }
