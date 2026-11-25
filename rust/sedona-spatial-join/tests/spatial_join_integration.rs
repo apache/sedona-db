@@ -3242,6 +3242,52 @@ async fn test_unmatched_build_rows_yield() -> Result<()> {
     Ok(())
 }
 
+/// When every probe batch has output, such as an outer join that emits its unmatched probe
+/// rows, the join returns a batch after each probe batch, and the next one starts a new
+/// interval. A probe row that takes longer than the interval must be followed by a yield
+/// even when it is the last row of its batch.
+#[tokio::test]
+async fn test_outer_join_yields_after_the_last_probe_row_of_a_batch() -> Result<()> {
+    let options = SpatialJoinOptions {
+        repartition_probe_side: false,
+        spatial_join_reordering: false,
+        debug: SpatialJoinDebugOptions {
+            yield_interval_ms: Some(1),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let ctx = setup_context(Some(options), 1)?;
+    // 16 points, one per probe batch, inside 4,096 identical circles: each point has 4,096
+    // candidates and touches none of them, which takes about 40 ms in a debug build and
+    // 4 ms in a release build, well over the interval of 1 ms.
+    let circle = circle_wkt(50.0, 50.0, 45.0, 256);
+    ctx.register_table("L", wkt_table((0..4096).collect(), &vec![circle; 4096])?)?;
+    ctx.register_table(
+        "R",
+        wkt_table_in_batches((0..16).collect(), &grid_points(16), 1)?,
+    )?;
+    let plan = single_partition_plan(
+        &ctx,
+        "SELECT L.id, R.id FROM L RIGHT JOIN R ON ST_Touches(L.geometry, R.geometry)",
+    )
+    .await?;
+
+    // R stays on the right, which is the probe side, so each of its rows is emitted
+    // unmatched at the end of its probe batch.
+    assert_eq!(
+        *collect_spatial_join_exec(&plan)?[0].join_type(),
+        JoinType::Right
+    );
+
+    let stream = datafusion_physical_plan::execute_stream(plan, ctx.task_ctx())?;
+    let counts = count_pending_polls(stream).await?;
+    counts.assert_yields_are_deferred();
+    assert_eq!(counts.rows, 16);
+    assert!(counts.pending >= 16, "{counts:?}");
+    Ok(())
+}
+
 /// A range join whose join filter rejects most matches can go through a whole probe batch
 /// in many short index queries without output; it must yield between them.
 #[tokio::test]

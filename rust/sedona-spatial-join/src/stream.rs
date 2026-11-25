@@ -1186,15 +1186,6 @@ impl SpatialJoinBatchIterator {
                 return Ok(None);
             }
 
-            // Each pass of this loop probes up to `max_batch_size` results, which a join
-            // filter may then drop, so a whole probe batch can go by without output, and a
-            // poll can go through many probe batches without output. Yield once the stream
-            // has worked for the yield interval: the timer started with the poll that
-            // fetched this batch, so this also yields between small probe batches.
-            if progress.yield_timer.due() {
-                progress.yield_timer.yield_now().await;
-            }
-
             // Check if we need to probe more rows
             if progress.current_probe_idx < num_rows
                 && progress.probe_indices.len() < self.max_batch_size
@@ -1203,6 +1194,18 @@ impl SpatialJoinBatchIterator {
                     SpatialPredicate::KNearestNeighbors(_) => self.probe_knn(progress).await?,
                     _ => self.probe_range(progress).await?,
                 }
+            }
+
+            // Each pass of this loop probes up to `max_batch_size` results, which a join
+            // filter may then drop, so a whole probe batch can go by without output, and a
+            // poll can go through many probe batches without output. Yield once the stream
+            // has worked for the yield interval: the timer started with the poll that
+            // fetched this batch, so this also yields between small probe batches. The check
+            // follows the probe so that it also covers the last probe of a batch: when the
+            // batch has output, the stream returns it after this pass, and the next batch's
+            // timer starts with the next poll.
+            if progress.yield_timer.due() {
+                progress.yield_timer.yield_now().await;
             }
 
             // Produce result batch from accumulated results
