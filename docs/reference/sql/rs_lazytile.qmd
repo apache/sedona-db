@@ -62,4 +62,3 @@ OutDb tiles remain lazy.
 
 Metadata filters can discard tiles before downstream pixel-consuming functions
 load their windows. `RS_EnsureLoaded(tile)` requests loading explicitly.
-Source pushdown is not yet implemented.
