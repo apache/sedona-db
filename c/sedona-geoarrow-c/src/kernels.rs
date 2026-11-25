@@ -299,6 +299,112 @@ mod tests {
     }
 
     #[rstest]
+    fn fromwkt_parser_compatibility(
+        #[values(DataType::Utf8, DataType::LargeUtf8, DataType::Utf8View)] data_type: DataType,
+    ) {
+        for (name, kernel, output_type) in [
+            ("st_geomfromwkt", st_geomfromwkt_impl(), WKB_GEOMETRY),
+            (
+                "st_geogfromwkt",
+                st_geogfromwkt_impl(),
+                WKB_GEOGRAPHY_WGS84.clone(),
+            ),
+        ] {
+            let udf = SedonaScalarUDF::from_impl(name, kernel);
+            let tester =
+                ScalarUdfTester::new(udf.into(), vec![SedonaType::Arrow(data_type.clone())]);
+            let cases = [
+                ("POINTZ(1 2 3)", "POINT Z (1 2 3)"),
+                ("pointm (1 2 3)", "POINT M (1 2 3)"),
+                ("PoInTzM(1 2 3 4)", "POINT ZM (1 2 3 4)"),
+                ("LINESTRINGZ(0 0 0,1 1 1)", "LINESTRING Z (0 0 0, 1 1 1)"),
+                (
+                    "POLYGONM((0 0 0,1 0 1,1 1 2,0 0 0))",
+                    "POLYGON M ((0 0 0, 1 0 1, 1 1 2, 0 0 0))",
+                ),
+                ("MULTIPOINT ( \t\r\n1 2,3 4)", "MULTIPOINT ((1 2), (3 4))"),
+                (
+                    "MULTIPOINTZ( 1 2 3,4 5 6)",
+                    "MULTIPOINT Z ((1 2 3), (4 5 6))",
+                ),
+                (
+                    "MULTILINESTRINGM((1 2 3,4 5 6))",
+                    "MULTILINESTRING M ((1 2 3, 4 5 6))",
+                ),
+                (
+                    "MULTIPOLYGONZ(((0 0 0,1 0 1,1 1 2,0 0 0)))",
+                    "MULTIPOLYGON Z (((0 0 0, 1 0 1, 1 1 2, 0 0 0)))",
+                ),
+                (
+                    "GEOMETRYCOLLECTIONZM(POINTZM(1 2 3 4),GEOMETRYCOLLECTION(POINTM EMPTY))",
+                    "GEOMETRYCOLLECTION ZM (POINT ZM (1 2 3 4), GEOMETRYCOLLECTION (POINT M EMPTY))",
+                ),
+                ("POINT (1e+2 -1e+2)", "POINT (100 -100)"),
+            ];
+            // Mix dimensions and nulls in a single batch to exercise reader reuse.
+            let input: Vec<_> = cases
+                .iter()
+                .map(|(input, _)| Some(*input))
+                .chain([None])
+                .collect();
+            let expected: Vec<_> = cases
+                .iter()
+                .map(|(_, expected)| Some(*expected))
+                .chain([None])
+                .collect();
+            let result = tester
+                .invoke_array(Arc::new(StringArray::from(input)))
+                .unwrap();
+            assert_eq!(&result, &create_array(&expected, &output_type));
+
+            for geometry in [
+                "POINT",
+                "LINESTRING",
+                "POLYGON",
+                "MULTIPOINT",
+                "MULTILINESTRING",
+                "MULTIPOLYGON",
+                "GEOMETRYCOLLECTION",
+            ] {
+                for dimensions in ["Z", "M", "ZM"] {
+                    let input = format!("{geometry}{dimensions} EMPTY");
+                    let result = tester.invoke_scalar(input.clone()).unwrap();
+                    tester.assert_scalar_result_equals(
+                        result,
+                        format!("{geometry} {dimensions} EMPTY").as_str(),
+                    );
+                    for end in 0..input.len() {
+                        assert!(
+                            tester.invoke_scalar(&input[..end]).is_err(),
+                            "{}",
+                            &input[..end]
+                        );
+                    }
+                }
+                for suffix in ["ZZ", "MM", "MZ", "ZMM", "ZMZ", "ZMX", "ZM Z"] {
+                    let input = format!("{geometry}{suffix} EMPTY");
+                    assert!(tester.invoke_scalar(input.clone()).is_err(), "{input}");
+                }
+            }
+
+            // Keep fast_float's default number grammar, including exponent signs.
+            for input in [
+                "POINT (+1 2)",
+                "POINT (1 +2)",
+                "POINT (+.5 +1e+2)",
+                "POINT (++1 2)",
+                "POINT (+-1 2)",
+                "POINT (1e+ 2)",
+                "POINTZ(1 2)",
+                "POINTM(1 2 3 4)",
+                "MULTIPOINT ( )",
+            ] {
+                assert!(tester.invoke_scalar(input).is_err(), "{input}");
+            }
+        }
+    }
+
+    #[rstest]
     fn astext(#[values(WKB_GEOMETRY, WKB_VIEW_GEOMETRY)] data_type: SedonaType) {
         let udf = SedonaScalarUDF::from_impl("st_astext", st_astext_impl());
         let tester = ScalarUdfTester::new(udf.into(), vec![data_type]);
