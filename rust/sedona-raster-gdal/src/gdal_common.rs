@@ -25,6 +25,7 @@ use sedona_gdal::raster::types::DatasetOptions;
 use sedona_gdal::raster::types::GdalDataType;
 use sedona_raster::geo_transform::GeoTransform;
 
+use object_store::path::Path as ObjectStorePath;
 use sedona_raster::traits::{RasterRef, is_spatial_dim_pair, nodata_f64_to_bytes};
 use sedona_schema::raster::BandDataType;
 use url::Url;
@@ -488,39 +489,47 @@ pub fn open_gdal_dataset(gdal: &Gdal, url: &str, open_options: Option<&[&str]>) 
     .map_err(convert_gdal_err)
 }
 
-/// Reconstruct a GDAL source URI from an object store URL and its decoded object path.
+/// Reconstruct a GDAL source from an object store URL and its decoded object path.
 ///
-/// Object store paths are decoded, whereas remote GDAL sources must be valid URLs. Use
-/// [`Url::set_path`] so URL delimiters in object names (for example `#` and `?`) remain
-/// path data instead of becoming URL fragments or queries. Local `file://` sources keep
-/// their filesystem spelling because GDAL receives those as filesystem paths after
-/// normalization.
+/// The spelling GDAL needs depends on the backing store:
+///
+/// * HTTP(S) paths are URLs, so encode every decoded object-path segment.
+/// * Cloud VSI drivers take a literal bucket/container key, not a URL-encoded key.
+/// * Local files keep their filesystem spelling for the existing `file://` normalizer.
 ///
 /// Every GDAL-backed file source that starts with [`object_store::ObjectMeta::location`]
 /// should use this function rather than concatenating strings.
 pub(crate) fn gdal_path_from_object_store_location(
     base_url: &str,
-    location: &str,
+    location: &ObjectStorePath,
 ) -> Result<String> {
     let mut url = Url::parse(base_url).map_err(|error| {
         exec_datafusion_err!("Invalid object store URL '{base_url}' for GDAL raster: {error}")
     })?;
 
     if url.scheme().eq_ignore_ascii_case("file") {
-        return Ok(format!("{base_url}{location}"));
+        let separator = if base_url.ends_with('/') { "" } else { "/" };
+        return Ok(format!("{base_url}{separator}{}", location.as_ref()));
     }
 
-    let base_path = url.path().trim_end_matches('/');
-    // `Url::set_path` preserves `%` under the assumption it is already an
-    // escape. Object store locations are decoded, so restore a literal `%` to
-    // `%25` before asking `Url` to encode the remaining URL delimiters.
-    let location = location.trim_start_matches('/').replace('%', "%25");
-    let path = if base_path.is_empty() {
-        format!("/{location}")
-    } else {
-        format!("{base_path}/{location}")
-    };
-    url.set_path(&path);
+    if matches!(
+        url.scheme().to_ascii_lowercase().as_str(),
+        "s3" | "s3a" | "gs" | "gcs" | "az" | "wasb" | "wasbs" | "abfs" | "abfss"
+    ) {
+        let base_url = base_url.trim_end_matches('/');
+        return Ok(format!("{base_url}/{}", location.as_ref()));
+    }
+
+    let mut segments = url.path_segments_mut().map_err(|_| {
+        exec_datafusion_err!(
+            "Object store URL '{base_url}' cannot be used as a hierarchical GDAL URL"
+        )
+    })?;
+    segments.pop_if_empty();
+    for part in location.parts() {
+        segments.push(part.as_ref());
+    }
+    drop(segments);
     Ok(url.into())
 }
 
