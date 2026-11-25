@@ -49,7 +49,7 @@ def test_format_spec_via_read(zarr_group):
     con = sedonadb.connect()
     df = con.read(f"file://{zarr_group}", format=sedonadb_zarr.Zarr())
     arrow_tab = df.to_arrow_table()
-    assert arrow_tab.num_rows == 2
+    assert arrow_tab.num_rows == 1
     assert arrow_tab.column_names == ["raster"]
 
     raster = arrow_tab["raster"][0].as_py()
@@ -57,13 +57,15 @@ def test_format_spec_via_read(zarr_group):
     assert raster.transform is not None
     assert len(raster.bands) >= 1
     band = raster.bands[0]
-    # `source_data` is empty (OutDb scan); `outdb_uri` points at this chunk.
+    # `source_data` is empty (OutDb scan); without tile=True the anchor points
+    # at the full array.
     assert len(band.source_data) == 0, (
         f"OutDb band should have empty data; got {len(band.source_data)} bytes"
     )
     assert band.outdb_uri is not None and "#array=temperature" in band.outdb_uri, (
         f"unexpected anchor: {band.outdb_uri!r}"
     )
+    assert "&chunk=" not in band.outdb_uri
 
 
 def test_zarr_url_as_table(tmp_path):
@@ -82,8 +84,8 @@ def test_zarr_url_as_table(tmp_path):
 
     # The resolver keys off the path extension, so the group must live at a
     # `.zarr`-suffixed directory (pytest's `tmp_path` itself has no suffix).
-    # Same 2x2 UInt8 / (1, 2)-chunk layout as the `zarr_group` fixture, so it
-    # reads as two OutDb raster rows (one per chunk).
+    # Same 2x2 UInt8 / (1, 2)-chunk layout as the `zarr_group` fixture. The
+    # default scan represents the full group as one OutDb raster row.
     zarr_path = tmp_path / "temperature.zarr"
     root = zarr.open_group(str(zarr_path), mode="w")
     arr = root.create_array(
@@ -104,10 +106,10 @@ def test_zarr_url_as_table(tmp_path):
     expected = con.read(url, format="zarr").to_arrow_table()
 
     def assert_matches_expected(table):
-        # A row count of 2 already distinguishes the group resolving as a single
+        # A row count of 1 already distinguishes the group resolving as a single
         # table from a listing over its chunks (which would have a different
         # count), so matching the explicit read's row count is enough here.
-        assert table.num_rows == expected.num_rows == 2
+        assert table.num_rows == expected.num_rows == 1
         assert table.column_names == ["raster"]
 
     # The `file://` URL form is the primary SQL-text feature under test.
@@ -236,7 +238,7 @@ def test_format_spec_with_arrays_option(zarr_group):
 
     # Check via constructor options
     df = con.read(f"file://{zarr_group}", format=spec)
-    assert df.to_arrow_table().num_rows == 2
+    assert df.to_arrow_table().num_rows == 1
 
     # Check via read(..., options={...})
     df = con.read(
@@ -244,7 +246,7 @@ def test_format_spec_with_arrays_option(zarr_group):
         options={"arrays": ["temperature"]},
         format=sedonadb_zarr.Zarr(),
     )
-    assert df.to_arrow_table().num_rows == 2
+    assert df.to_arrow_table().num_rows == 1
 
 
 def test_arrays_option_order_is_band_order(tmp_path):
@@ -283,6 +285,42 @@ def test_format_spec_class_invariants():
     assert spec.extension == "zarr"
     spec2 = spec.with_options({"arrays": ["temperature"]})
     assert spec2 is not spec
+
+
+def test_tile_option_emits_one_row_per_inner_chunk(zarr_group):
+    con = sedonadb.connect()
+    full = con.read(
+        f"file://{zarr_group}", format=sedonadb_zarr.Zarr()
+    ).to_arrow_table()
+    tiled = con.read(
+        f"file://{zarr_group}",
+        options={"tile": True},
+        format=sedonadb_zarr.Zarr(),
+    ).to_arrow_table()
+
+    assert full.num_rows == 1
+    assert tiled.num_rows == 2
+    full_uri = full["raster"][0].as_py().bands[0].outdb_uri
+    assert "&chunk=" not in full_uri
+    assert all(
+        "&chunk=" in tiled["raster"][i].as_py().bands[0].outdb_uri
+        for i in range(tiled.num_rows)
+    )
+
+
+def test_full_array_materialization_assembles_multiple_chunks(zarr_group):
+    con = sedonadb.connect()
+    con.register(sedonadb_zarr.ZarrExtension())
+    source = con.read(f"file://{zarr_group}", format="zarr")
+    table = source.select(
+        raster=source.raster.funcs.rs_ensureloaded()
+    ).to_arrow_table()
+
+    assert table.num_rows == 1
+    band = table["raster"][0].as_py().bands[0]
+    np.testing.assert_array_equal(
+        band.to_numpy(), np.array([[10, 11], [20, 21]], dtype=np.uint8)
+    )
 
 
 def test_zarr_loader_supports_format():
@@ -328,7 +366,7 @@ def test_zarr_extension_reports_handle_reuse_across_calls(zarr_group):
 
     def load_all():
         tab = t.select(raster=t.raster.funcs.rs_ensureloaded()).to_arrow_table()
-        assert tab.num_rows == 2
+        assert tab.num_rows == 1
 
     load_all()
     first = ext.loader.handle_stats()
@@ -392,7 +430,9 @@ def test_rs_ensure_loaded_with_zarr(tmp_path, numpy_dtype):
     sd.register(sedonadb_zarr.ZarrExtension())
 
     # Read the Zarr group as loaded rasters
-    t = sd.read(f"file://{tmp_path}", format="zarr")
+    t = sd.read(
+        f"file://{tmp_path}", options={"tile": True}, format="zarr"
+    )
     loaded_tab = t.select(raster=t.raster.funcs.rs_ensureloaded()).to_arrow_table()
 
     # Verify we get the expected number of chunk rows
@@ -439,7 +479,9 @@ def test_sharded_array_reads_one_row_per_inner_chunk(tmp_path):
 
     sd = sedonadb.connect()
     sd.register(sedonadb_zarr.ZarrExtension())
-    t = sd.read(f"file://{tmp_path}", format="zarr")
+    t = sd.read(
+        f"file://{tmp_path}", options={"tile": True}, format="zarr"
+    )
     tab = t.select(raster=t.raster.funcs.rs_ensureloaded()).to_arrow_table()
     assert tab.num_rows == 6
 
@@ -490,7 +532,7 @@ def test_dtype_mapping_roundtrips(tmp_path, numpy_dtype):
     con = sedonadb.connect()
     df = con.read(f"file://{tmp_path}", format=sedonadb_zarr.Zarr())
     tab = df.to_arrow_table()
-    assert tab.num_rows == 2
+    assert tab.num_rows == 1
 
     # We can't extract data because these are OutDB refs
     with pytest.raises(

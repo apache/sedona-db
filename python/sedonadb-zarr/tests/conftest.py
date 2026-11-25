@@ -54,7 +54,9 @@ def raster_con(zarr_group):
     sd = sedonadb.connect()
     sd.register(sedonadb_zarr.ZarrExtension())
 
-    df = sd.read(f"file://{zarr_group}", format="zarr")
+    df = sd.read(
+        f"file://{zarr_group}", options={"tile": True}, format="zarr"
+    )
     df.to_view("rasters")
 
     return sd

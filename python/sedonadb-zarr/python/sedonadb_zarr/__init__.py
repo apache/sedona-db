@@ -92,9 +92,11 @@ class Zarr(ExternalFormatSpec):
             - `arrays` (`list[str]`) — explicit subset of group arrays to read,
               in band order: band `i` of every row is `arrays[i]`. Without it,
               discovered arrays are read as bands sorted by path.
+            - `tile` (`bool`) — emit one raster row per Zarr inner chunk. The
+              default (`False`) emits one raster row for the full group.
     """
 
-    _SUPPORTED_OPTIONS = frozenset({"arrays"})
+    _SUPPORTED_OPTIONS = frozenset({"arrays", "tile"})
 
     def __init__(self, options: Optional[Mapping[str, Any]] = None):
         self._options: dict = dict(options) if options else {}
@@ -124,8 +126,22 @@ class Zarr(ExternalFormatSpec):
         if uri is None:
             raise ValueError("Zarr: could not resolve a URL from the source object")
         arrays = self._options.get("arrays")
+        tile = self._options.get("tile", False)
+        if isinstance(tile, str):
+            normalized = tile.lower()
+            if normalized not in {"true", "false"}:
+                raise ValueError(
+                    f"Zarr: invalid value for 'tile': {tile!r} "
+                    "(expected true or false)"
+                )
+            tile = normalized == "true"
+        elif not isinstance(tile, bool):
+            raise ValueError(
+                f"Zarr: invalid value for 'tile': {tile!r} "
+                "(expected a boolean)"
+            )
         batch_size = args.batch_size if args.batch_size is not None else 8192
-        return PyZarrChunkReader(uri, arrays, batch_size)
+        return PyZarrChunkReader(uri, arrays, batch_size, tile)
 
 
 class ZarrRasterLoader(RasterLoader):

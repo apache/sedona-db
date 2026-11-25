@@ -30,7 +30,11 @@ sd.register(ZarrExtension())
 sd.read("file:///path/to/foo.zarr").show()
 ```
 
-Each raster row is one chunk of the group's arrays, with one band per array. For arrays stored with the `sharding_indexed` codec a row is one inner chunk, not a shard: the shard's index is read once and each row then fetches only its own byte range.
+By default each Zarr group is one raster row with one band per array. Pass
+`options={"tile": True}` to emit one row per inner chunk instead. For arrays
+stored with the `sharding_indexed` codec, tiled rows are inner chunks rather
+than shards. Full-array materialization and rectangular raster views load and
+assemble only the intersecting chunks.
 
 The main `sedonadb` package does not bundle Zarr support — applications that don't import `sedonadb_zarr` pay no runtime cost.
 

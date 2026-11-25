@@ -71,8 +71,13 @@ pub struct PyZarrChunkReader {
 #[pymethods]
 impl PyZarrChunkReader {
     #[new]
-    #[pyo3(signature = (uri, arrays=None, batch_size=8192))]
-    fn new(uri: &str, arrays: Option<Vec<String>>, batch_size: usize) -> PyResult<Self> {
+    #[pyo3(signature = (uri, arrays=None, batch_size=8192, tile=false))]
+    fn new(
+        uri: &str,
+        arrays: Option<Vec<String>>,
+        batch_size: usize,
+        tile: bool,
+    ) -> PyResult<Self> {
         let store = object_store_for_uri(uri).map_err(|e| PyValueError::new_err(e.to_string()))?;
         let storage =
             open_storage_from_uri(uri, store).map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -82,8 +87,8 @@ impl PyZarrChunkReader {
         // `next()` on the returned reader is pure CPU and stays synchronous.
         let arrays_ref = arrays.as_deref();
         let reader = shared_runtime()
-            .block_on(ZarrChunkReader::try_new(
-                storage, uri, arrays_ref, batch_size,
+            .block_on(ZarrChunkReader::try_new_with_tile(
+                storage, uri, arrays_ref, batch_size, tile,
             ))
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
         Ok(Self {
