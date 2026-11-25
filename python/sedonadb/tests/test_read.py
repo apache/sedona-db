@@ -20,6 +20,7 @@ import threading
 
 import geopandas
 import geopandas.testing
+import numpy as np
 import pyarrow as pa
 import pytest
 
@@ -175,6 +176,31 @@ def test_read_geotiff_registered_format_and_native_tiles(con, sedona_testing):
     tiled_table = tiled.to_arrow_table()
     assert isinstance(tiled_table.schema.field("raster").type, RasterType)
     assert tiled_table.num_rows == 4
+
+
+def test_read_geotiff_outdb_from_directory_with_spaces(con, tmp_path):
+    """The GeoTIFF datasource preserves a local path with spaces all the way
+    from object-store discovery to GDAL's lazy out-db pixel read."""
+    from sedonadb.raster_testing import write_geotiff
+
+    pixels = np.arange(6, dtype="uint16").reshape(1, 2, 3)
+    raster_dir = tmp_path / "folder with spaces"
+    raster_dir.mkdir()
+    path = raster_dir / "pixels.tif"
+    write_geotiff(path, pixels, bbox=(10.0, 20.0, 13.0, 22.0))
+
+    outdb = con.read(path)
+    outdb.to_view("geotiff_space_path", overwrite=True)
+    raster = outdb.to_arrow_table()["raster"][0].as_py()
+    band = raster.bands[0]
+    assert "folder with spaces" in band.outdb_uri
+    assert band.outdb_uri.endswith("pixels.tif#band=1")
+    assert len(band.source_data) == 0
+
+    loaded = con.sql(
+        "SELECT RS_EnsureLoaded(raster) AS raster FROM geotiff_space_path"
+    ).item()
+    np.testing.assert_array_equal(loaded.bands[0].to_numpy(), pixels[0])
 
 
 class TestFormatSpec(ExternalFormatSpec):
