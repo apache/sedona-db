@@ -567,7 +567,7 @@ impl ExecutionPlan for ImportedSedonaCExec {
         let mut ffi_args = SedonaCExecutionPlanArgs {
             args: args_bytes.as_ptr(),
             args_len: args_bytes.len(),
-            exec_plans: std::ptr::null_mut(),
+            exec_plans: std::ptr::null(),
             num_exec_plans: 0,
             exprs: std::ptr::null(),
             num_exprs: 0,

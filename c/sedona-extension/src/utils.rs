@@ -221,7 +221,7 @@ where
             args_bytes.as_ptr()
         },
         args_len: args_bytes.len(),
-        exec_plans: std::ptr::null_mut(),
+        exec_plans: std::ptr::null(),
         num_exec_plans: 0,
         exprs: std::ptr::null(),
         num_exprs: 0,
@@ -350,7 +350,7 @@ where
     let mut ffi_args = SedonaCExecutionPlanArgs {
         args: std::ptr::null(),
         args_len: 0,
-        exec_plans: std::ptr::null_mut(),
+        exec_plans: std::ptr::null(),
         num_exec_plans: 0,
         exprs: std::ptr::null(),
         num_exprs: 0,

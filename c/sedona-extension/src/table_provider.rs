@@ -19,6 +19,7 @@ use std::{
     collections::HashSet,
     ffi::{c_int, c_void},
     fmt::Debug,
+    mem::ManuallyDrop,
     ptr::null_mut,
     sync::Arc,
     time::Duration,
@@ -466,6 +467,19 @@ unsafe extern "C" fn c_table_provider_insert(
     let provider = &*(self_ref.private_data as *const ExportedTableProvider);
 
     let result = (|| {
+        if args_ref.exec_plans.is_null() || args_ref.num_exec_plans != 1 {
+            return exec_err!("Insert requires exactly one input execution plan");
+        }
+        let input_ptr = *args_ref.exec_plans;
+        if input_ptr.is_null() {
+            return exec_err!("Insert input execution plan is null");
+        }
+
+        // Ownership is transferred by the call. Move the input before parsing
+        // any other arguments so every subsequent error path releases it once.
+        let input = std::ptr::read(input_ptr);
+        let input = Arc::new(ImportedSedonaCExec::try_new(input)?) as Arc<dyn ExecutionPlan>;
+
         let args_slice = if args_ref.args.is_null() || args_ref.args_len == 0 {
             &[]
         } else {
@@ -475,18 +489,6 @@ unsafe extern "C" fn c_table_provider_insert(
             DataFusionError::External(format!("Failed to parse insert args: {e}").into())
         })?;
 
-        if args_ref.exec_plans.is_null() || args_ref.num_exec_plans != 1 {
-            return exec_err!("Insert requires exactly one input execution plan");
-        }
-        let input_ptr = *args_ref.exec_plans;
-        if input_ptr.is_null() {
-            return exec_err!("Insert input execution plan is null");
-        }
-
-        // The insert callback takes ownership. Clear the caller's value before
-        // constructing the imported wrapper so every error path releases once.
-        let input = std::mem::take(&mut *input_ptr);
-        let input = Arc::new(ImportedSedonaCExec::try_new(input)?) as Arc<dyn ExecutionPlan>;
         provider.insert_into(input, insert_args.insert_op.into())
     })();
 
@@ -719,7 +721,7 @@ impl TableProvider for ImportedTableProvider {
         let mut ffi_args = SedonaCExecutionPlanArgs {
             args: std::ptr::null(),
             args_len: 0,
-            exec_plans: std::ptr::null_mut(),
+            exec_plans: std::ptr::null(),
             num_exec_plans: 0,
             exprs: if ffi_filter_ptrs.is_empty() {
                 std::ptr::null()
@@ -813,7 +815,7 @@ impl TableProvider for ImportedTableProvider {
         let mut ffi_args = SedonaCExecutionPlanArgs {
             args: args_bytes.as_ptr(),
             args_len: args_bytes.len(),
-            exec_plans: std::ptr::null_mut(),
+            exec_plans: std::ptr::null(),
             num_exec_plans: 0,
             exprs: if ffi_filter_ptrs.is_empty() {
                 std::ptr::null()
@@ -868,13 +870,14 @@ impl TableProvider for ImportedTableProvider {
             sedona_internal_datafusion_err!("Failed to serialize insert args: {}", e)
         })?;
 
-        let mut ffi_input: SedonaCExecutionPlan =
-            ExportedExecutionPlan::new(input, state.task_ctx(), self.runtime.clone()).into();
-        let mut ffi_input_ptrs = [&mut ffi_input as *mut SedonaCExecutionPlan];
+        let ffi_input: ManuallyDrop<SedonaCExecutionPlan> = ManuallyDrop::new(
+            ExportedExecutionPlan::new(input, state.task_ctx(), self.runtime.clone()).into(),
+        );
+        let ffi_input_ptrs = [&*ffi_input as *const SedonaCExecutionPlan];
         let mut ffi_args = SedonaCExecutionPlanArgs {
             args: args_bytes.as_ptr(),
             args_len: args_bytes.len(),
-            exec_plans: ffi_input_ptrs.as_mut_ptr(),
+            exec_plans: ffi_input_ptrs.as_ptr(),
             num_exec_plans: ffi_input_ptrs.len(),
             exprs: std::ptr::null(),
             num_exprs: 0,
@@ -887,8 +890,6 @@ impl TableProvider for ImportedTableProvider {
             return datafusion_common::not_impl_err!("Failed to insert into table: {}", err);
         } else if code != ERRNO_OK {
             return exec_err!("Failed to insert into table: {}", err);
-        } else if ffi_input.release.is_some() {
-            return exec_err!("Insert callback did not take ownership of its input plan");
         }
 
         let mut exec =
