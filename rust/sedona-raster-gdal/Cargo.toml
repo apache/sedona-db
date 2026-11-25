@@ -43,7 +43,6 @@ datafusion-execution = { workspace = true }
 datafusion-expr = { workspace = true }
 datafusion-physical-expr = { workspace = true }
 datafusion-physical-plan = { workspace = true }
-datafusion-session = { workspace = true }
 futures = { workspace = true }
 lru = { workspace = true }
 object_store = { workspace = true }
@@ -68,6 +67,7 @@ datafusion = { workspace = true, features = ["sql", "nested_expressions"] }
 object_store = { workspace = true, features = ["http"] }
 sedona-gdal = { workspace = true, features = ["gdal-sys"] }
 sedona-proj = { workspace = true, features = ["proj-sys"] }
+sedona-query-planner = { workspace = true }
 sedona-testing = { workspace = true, features = ["criterion"] }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time"] }

@@ -32,14 +32,12 @@ use std::{fmt, sync::Arc};
 
 use arrow_array::RecordBatch;
 use arrow_schema::SchemaRef;
-use datafusion_common::config::ConfigOptions;
-use datafusion_common::tree_node::{Transformed, TransformedResult, TreeNode, TreeNodeRecursion};
+use datafusion_common::tree_node::TreeNodeRecursion;
 use datafusion_common::{Constraints, Result, UnnestOptions, internal_err};
 use datafusion_execution::TaskContext;
 use datafusion_expr::ColumnarValue;
+use datafusion_physical_expr::PhysicalExpr;
 use datafusion_physical_expr::expressions::Column;
-use datafusion_physical_expr::{PhysicalExpr, ScalarFunctionExpr};
-use datafusion_physical_plan::coalesce_partitions::CoalescePartitionsExec;
 use datafusion_physical_plan::execution_plan::CardinalityEffect;
 use datafusion_physical_plan::metrics::{ExecutionPlanMetricsSet, MetricBuilder, MetricsSet};
 use datafusion_physical_plan::projection::{ProjectionExec, ProjectionExpr};
@@ -48,126 +46,11 @@ use datafusion_physical_plan::unnest::{ListUnnest, UnnestExec};
 use datafusion_physical_plan::{
     DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties, SendableRecordBatchStream,
 };
-use datafusion_session::physical_optimizer::PhysicalOptimizerRule;
 use futures::{StreamExt, TryStreamExt};
 use sedona_common::option::{DEFAULT_RASTER_MAX_BATCH_BYTES, SedonaOptions};
-use sedona_expr::scalar_udf::SedonaScalarUDF;
 use sedona_schema::datatypes::SedonaType;
 
 use crate::rs_tile::{TileCursor, tile_batch};
-
-/// Replace the list-producing projection and its single unnest with a cursor.
-/// Runs before RasterMaterializationRule, so the argument projection it creates
-/// receives the usual byte-bounded input loading and source distribution.
-#[derive(Debug)]
-pub struct RasterTileRule;
-
-impl PhysicalOptimizerRule for RasterTileRule {
-    fn optimize(
-        &self,
-        plan: Arc<dyn ExecutionPlan>,
-        _config: &ConfigOptions,
-    ) -> Result<Arc<dyn ExecutionPlan>> {
-        plan.transform_up(|node| {
-            let Some(unnest) = node.downcast_ref::<UnnestExec>() else {
-                return Ok(Transformed::no(node));
-            };
-            let [list] = unnest.list_column_indices() else {
-                return Ok(Transformed::no(node));
-            };
-            if list.depth != 1 || !unnest.struct_column_indices().is_empty() {
-                return Ok(Transformed::no(node));
-            }
-            // DataFusion may merge partitions between the projection and unnest.
-            // Expand per partition instead, then merge the emitted tile batches.
-            let merge = unnest.input().downcast_ref::<CoalescePartitionsExec>();
-            if merge.is_some_and(|merge| merge.fetch().is_some()) {
-                return Ok(Transformed::no(node));
-            }
-            let input = merge.map_or(unnest.input(), |merge| merge.input());
-            let Some(projection) = input.downcast_ref::<ProjectionExec>() else {
-                return Ok(Transformed::no(node));
-            };
-            let tile_index = list.index_in_input_schema;
-            let Some(tile_expr) = projection.expr().get(tile_index) else {
-                return Ok(Transformed::no(node));
-            };
-            let Some(function) = tile_expr.expr.downcast_ref::<ScalarFunctionExpr>() else {
-                return Ok(Transformed::no(node));
-            };
-            // Do not rewrite arbitrary user functions sharing the SQL name.
-            if function.fun().name() != "rs_lazytile"
-                || function
-                    .fun()
-                    .inner()
-                    .downcast_ref::<SedonaScalarUDF>()
-                    .is_none()
-            {
-                return Ok(Transformed::no(node));
-            }
-            let mut arguments = Vec::<ProjectionExpr>::new();
-            let mut layout = Vec::<ProjectionExpr>::new();
-            let mut tile_args = Vec::new();
-            let mut passthrough = Vec::new();
-            for (i, expression) in projection.expr().iter().enumerate() {
-                if i == tile_index {
-                    let mut columns = Vec::<Arc<dyn PhysicalExpr>>::new();
-                    for arg in function.args() {
-                        let index = arguments.len();
-                        let name = format!("__tile_arg_{index}");
-                        arguments.push(ProjectionExpr {
-                            expr: Arc::clone(arg),
-                            alias: name.clone(),
-                        });
-                        columns.push(Arc::new(Column::new(&name, index)));
-                        tile_args.push(index);
-                    }
-                    layout.push(ProjectionExpr {
-                        expr: Arc::clone(&expression.expr).with_new_children(columns)?,
-                        alias: expression.alias.clone(),
-                    });
-                    passthrough.push(None);
-                } else {
-                    let index = arguments.len();
-                    arguments.push(expression.clone());
-                    layout.push(ProjectionExpr {
-                        expr: Arc::new(Column::new(&expression.alias, index)),
-                        alias: expression.alias.clone(),
-                    });
-                    passthrough.push(Some(index));
-                }
-            }
-            let arguments = Arc::new(ProjectionExec::try_new(
-                arguments,
-                Arc::clone(projection.input()),
-            )?);
-            let arg_types = tile_args
-                .iter()
-                .map(|&index| SedonaType::from_storage_field(arguments.schema().field(index)))
-                .collect::<Result<Vec<_>>>()?;
-            let lists =
-                TileListExec::try_new(arguments, layout, tile_args, arg_types, passthrough)?;
-            let mut result: Arc<dyn ExecutionPlan> = Arc::new(RasterTileExec::try_new(
-                lists,
-                tile_index,
-                unnest.schema(),
-                unnest.options().clone(),
-            )?);
-            if merge.is_some() {
-                result = Arc::new(CoalescePartitionsExec::new(result));
-            }
-            Ok(Transformed::yes(result))
-        })
-        .data()
-    }
-
-    fn name(&self) -> &str {
-        "sedona.stream_raster_tiles"
-    }
-    fn schema_check(&self) -> bool {
-        true
-    }
-}
 
 /// Streaming tile expansion with the same output schema as UNNEST(RS_LazyTile).
 #[derive(Debug)]
@@ -178,6 +61,75 @@ pub struct RasterTileExec {
 }
 
 impl RasterTileExec {
+    /// Build streaming execution for a planner-validated lazy tile projection.
+    pub fn from_unnest(
+        projection: &ProjectionExec,
+        unnest: &UnnestExec,
+    ) -> Result<Arc<dyn ExecutionPlan>> {
+        let [list] = unnest.list_column_indices() else {
+            return internal_err!("Expected one lazy tile list to unnest");
+        };
+        let tile_index = list.index_in_input_schema;
+        let function = projection
+            .expr()
+            .get(tile_index)
+            .and_then(|expr| {
+                expr.expr
+                    .downcast_ref::<datafusion_physical_expr::ScalarFunctionExpr>()
+            })
+            .ok_or_else(|| {
+                datafusion_common::internal_datafusion_err!("Expected lazy tile scalar expression")
+            })?;
+        let mut arguments = Vec::<ProjectionExpr>::new();
+        let mut layout = Vec::<ProjectionExpr>::new();
+        let mut tile_args = Vec::new();
+        let mut passthrough = Vec::new();
+        for (i, expression) in projection.expr().iter().enumerate() {
+            if i == tile_index {
+                let mut columns = Vec::<Arc<dyn PhysicalExpr>>::new();
+                for arg in function.args() {
+                    let index = arguments.len();
+                    let name = format!("__tile_arg_{index}");
+                    arguments.push(ProjectionExpr {
+                        expr: Arc::clone(arg),
+                        alias: name.clone(),
+                    });
+                    columns.push(Arc::new(Column::new(&name, index)));
+                    tile_args.push(index);
+                }
+                layout.push(ProjectionExpr {
+                    expr: Arc::clone(&expression.expr).with_new_children(columns)?,
+                    alias: expression.alias.clone(),
+                });
+                passthrough.push(None);
+            } else {
+                let index = arguments.len();
+                arguments.push(expression.clone());
+                layout.push(ProjectionExpr {
+                    expr: Arc::new(Column::new(&expression.alias, index)),
+                    alias: expression.alias.clone(),
+                });
+                passthrough.push(Some(index));
+            }
+        }
+        let arguments = Arc::new(ProjectionExec::try_new(
+            arguments,
+            Arc::clone(projection.input()),
+        )?);
+        let arg_types = tile_args
+            .iter()
+            .map(|&index| SedonaType::from_storage_field(arguments.schema().field(index)))
+            .collect::<Result<Vec<_>>>()?;
+        let lists = TileListExec::try_new(arguments, layout, tile_args, arg_types, passthrough)?;
+        let result: Arc<dyn ExecutionPlan> = Arc::new(Self::try_new(
+            lists,
+            tile_index,
+            unnest.schema(),
+            unnest.options().clone(),
+        )?);
+        Ok(result)
+    }
+
     fn try_new(
         lists: TileListExec,
         tile_index: usize,
@@ -431,8 +383,10 @@ mod tests {
     use datafusion::arrow::compute::concat_batches;
     use datafusion::execution::context::{SessionConfig, SessionContext};
     use datafusion::execution::session_state::SessionStateBuilder;
+    use datafusion_common::tree_node::TreeNode;
     use datafusion_physical_plan::{collect, displayable};
     use sedona_common::option::RasterOptions;
+    use sedona_query_planner::raster_tile::RasterTileRule;
     use sedona_schema::raster::BandDataType;
     use sedona_testing::raster_spec::{RasterSpec, raster_array};
 
@@ -456,7 +410,9 @@ mod tests {
             .with_default_features()
             .with_config(config);
         if optimized {
-            state = state.with_physical_optimizer_rule(Arc::new(RasterTileRule));
+            state = state.with_physical_optimizer_rule(Arc::new(RasterTileRule::new(
+                RasterTileExec::from_unnest,
+            )));
         }
         let ctx = SessionContext::new_with_state(state.build());
         ctx.register_udf(crate::rs_lazy_tile_udf().into());
