@@ -32,7 +32,6 @@ use std::{fmt, sync::Arc};
 
 use arrow_array::RecordBatch;
 use arrow_schema::SchemaRef;
-use datafusion::physical_optimizer::PhysicalOptimizerRule;
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::tree_node::{Transformed, TransformedResult, TreeNode, TreeNodeRecursion};
 use datafusion_common::{Constraints, Result, UnnestOptions, internal_err};
@@ -49,6 +48,7 @@ use datafusion_physical_plan::unnest::{ListUnnest, UnnestExec};
 use datafusion_physical_plan::{
     DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties, SendableRecordBatchStream,
 };
+use datafusion_session::physical_optimizer::PhysicalOptimizerRule;
 use futures::{StreamExt, TryStreamExt};
 use sedona_common::option::{DEFAULT_RASTER_MAX_BATCH_BYTES, SedonaOptions};
 use sedona_expr::scalar_udf::SedonaScalarUDF;

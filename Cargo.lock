@@ -6290,6 +6290,7 @@ dependencies = [
  "datafusion-expr",
  "datafusion-physical-expr",
  "datafusion-physical-plan",
+ "datafusion-session",
  "futures",
  "lru 0.19.0",
  "object_store",
