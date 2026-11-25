@@ -71,6 +71,7 @@ use sedona_schema::matchers::{ArgMatcher, TypeMatcher};
 pub fn rs_tile_udf() -> SedonaScalarUDF {
     let kernel = |band_arg: BandArg, arg_count: usize| {
         Arc::new(RsTile {
+            lazy: false,
             band_arg,
             arg_count,
         })
@@ -89,10 +90,28 @@ pub fn rs_tile_udf() -> SedonaScalarUDF {
         ],
         Volatility::Immutable,
     )
-    // Only padding requires input pixels: EnsureLoadedOptimizerRule skips
-    // this annotation when padding is absent or statically false/null.
-    // Ordinary OutDb tiles are composed views, with no pixel reads here.
+    // RS_Tile copies pixels; RS_LazyTile is the metadata-only alternative.
     .with_metadata(NEEDS_PIXELS_METADATA_KEY, "true")
+}
+
+/// Split a raster into unpadded tiles, preserving OutDb bands as lazy views.
+pub fn rs_lazy_tile_udf() -> SedonaScalarUDF {
+    SedonaScalarUDF::new(
+        "rs_lazytile",
+        vec![
+            Arc::new(RsTile {
+                lazy: true,
+                band_arg: BandArg::All,
+                arg_count: 3,
+            }),
+            Arc::new(RsTile {
+                lazy: true,
+                band_arg: BandArg::Array,
+                arg_count: 4,
+            }),
+        ],
+        Volatility::Immutable,
+    )
 }
 
 /// Which band-selector argument a signature carries after the raster.
@@ -119,6 +138,7 @@ struct ArgLayout {
 /// The optional arguments for one tiling call, resolved from the positional
 /// arguments for a single row.
 struct TileParams<'a> {
+    lazy: bool,
     /// 1-based band indices to include in each tile, in the given order.
     /// `None` includes every band.
     bands: Option<&'a [i64]>,
@@ -135,6 +155,7 @@ struct TileParams<'a> {
 /// Kernel implementation for RS_Tile.
 #[derive(Debug)]
 struct RsTile {
+    lazy: bool,
     /// The band-selector shape this kernel matches.
     band_arg: BandArg,
     /// Number of arguments in the matched signature.
@@ -220,6 +241,7 @@ pub(crate) fn tile_batch(
         BandArg::All
     };
     RsTile {
+        lazy: true,
         band_arg,
         arg_count: args.len(),
     }
@@ -347,6 +369,7 @@ impl RsTile {
             };
 
             let params = TileParams {
+                lazy: self.lazy,
                 bands,
                 pad_with_nodata,
                 nodata: (!nodata_array.is_null(i)).then(|| nodata_array.value(i)),
@@ -700,7 +723,7 @@ fn append_tile_band(
             "RS_Tile: band {band_idx} spatial extent {plane_w}x{plane_h} does not match the raster {width}x{height}"
         );
     }
-    if !band.is_indb() && !window.needs_padding() {
+    if params.lazy && !band.is_indb() && !window.needs_padding() {
         // Preserve source coordinates and location. Composing in the visible
         // coordinate system is essential when retiling an existing tile/view.
         let mut crop = ViewEntries::identity_for_shape(&shape).as_slice().to_vec();
@@ -947,6 +970,7 @@ mod tests {
     /// The optional tiling parameters for the core-tiling helper tests.
     fn params(bands: Option<&[i64]>, pad_with_nodata: bool, nodata: Option<f64>) -> TileParams<'_> {
         TileParams {
+            lazy: true,
             bands,
             pad_with_nodata,
             nodata,
@@ -1115,6 +1139,7 @@ mod tests {
     #[test]
     fn return_type_is_list_of_tile_structs() {
         let kernel = RsTile {
+            lazy: false,
             band_arg: BandArg::All,
             arg_count: 3,
         };
@@ -1358,6 +1383,7 @@ mod tests {
         // one NULL) with scalar tile sizes. The output is a List row per input:
         // 6 tiles for row 0, a NULL list for row 1.
         let kernel = RsTile {
+            lazy: false,
             band_arg: BandArg::All,
             arg_count: 3,
         };
@@ -1438,6 +1464,7 @@ mod tests {
         ))));
         let matches = |band_arg: BandArg, arg_count: usize, args: &[SedonaType]| {
             RsTile {
+                lazy: false,
                 band_arg,
                 arg_count,
             }
@@ -1621,6 +1648,7 @@ mod tests {
         // propagates to a NULL list row rather than erroring on the cast or the
         // offset lookup.
         let kernel = RsTile {
+            lazy: false,
             band_arg: BandArg::Array,
             arg_count: 4,
         };

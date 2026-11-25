@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! Streaming execution of a single `UNNEST(RS_Tile(...))`.
+//! Streaming execution of a single `UNNEST(RS_LazyTile(...))`.
 //!
 //! Arguments and sibling expressions are evaluated once by a projection.
 //! A cursor then produces only a bounded run of tiles from
@@ -24,7 +24,7 @@
 //! execution node and never contain the complete tile grid unless it fits.
 //!
 //! OutDb tiles are lazy windows; pixel consumers load them downstream. InDb
-//! tiles are copied, and padding retains eager input loading. Source pushdown
+//! tiles are copied. Source pushdown
 //! is a separate optimization. Multiple zipped
 //! unnests and scalar consumers of the list retain their existing execution.
 
@@ -96,7 +96,7 @@ impl PhysicalOptimizerRule for RasterTileRule {
                 return Ok(Transformed::no(node));
             };
             // Do not rewrite arbitrary user functions sharing the SQL name.
-            if function.fun().name() != "rs_tile"
+            if function.fun().name() != "rs_lazytile"
                 || function
                     .fun()
                     .inner()
@@ -169,7 +169,7 @@ impl PhysicalOptimizerRule for RasterTileRule {
     }
 }
 
-/// Streaming tile expansion with the same output schema as UNNEST(RS_Tile).
+/// Streaming tile expansion with the same output schema as UNNEST(RS_LazyTile).
 #[derive(Debug)]
 pub struct RasterTileExec {
     lists: Arc<TileListExec>,
@@ -265,7 +265,7 @@ impl ExecutionPlan for RasterTileExec {
 }
 
 /// Private adapter: one input row becomes one or more short list values. Its
-/// projection describes the column mapping for properties only; scalar RS_Tile
+/// projection describes the column mapping for properties only; scalar RS_LazyTile
 /// is never evaluated through that projection.
 #[derive(Debug)]
 struct TileListExec {
@@ -459,7 +459,7 @@ mod tests {
             state = state.with_physical_optimizer_rule(Arc::new(RasterTileRule));
         }
         let ctx = SessionContext::new_with_state(state.build());
-        ctx.register_udf(crate::rs_tile_udf().into());
+        ctx.register_udf(crate::rs_lazy_tile_udf().into());
         let rasters = raster_array(specs);
         let ids = Int64Array::from_iter_values(0..rasters.len() as i64);
         let schema = Arc::new(Schema::new(vec![
@@ -496,15 +496,9 @@ mod tests {
         // Byte budget forces one tile even though the row limit allows three.
         for args in [
             "2, 2",
-            "2, 2, false",
-            "2, 2, true, 7",
             "make_array(2, 1, 2), 2, 2",
-            "make_array(2), 2, 2, true",
-            "make_array(2, 1), 2, 2, true, 7",
             "CASE WHEN id = 0 THEN 1 ELSE 3 END, 2",
             "CAST(NULL AS BIGINT), 2",
-            "2, 2, CAST(NULL AS BOOLEAN)",
-            "2, 2, true, CAST(NULL AS DOUBLE)",
             "CAST(NULL AS BIGINT[]), 2, 2",
             "CAST(make_array() AS BIGINT[]), 2, 2",
         ] {
@@ -512,7 +506,7 @@ mod tests {
             let plain = context(false, 3, 12, specs.clone());
             let optimized = context(true, 3, 12, specs);
             let sql = format!(
-                "SELECT id, id + 100 AS other, UNNEST(RS_Tile(rast, {args})) AS t FROM rasters"
+                "SELECT id, id + 100 AS other, UNNEST(RS_LazyTile(rast, {args})) AS t FROM rasters"
             );
             let original = plan(&plain, &sql).await;
             let rewritten = plan(&optimized, &sql).await;
@@ -542,7 +536,7 @@ mod tests {
         ] {
             let plain = context(false, 3, 32, vec![Some(spec.clone())]);
             let optimized = context(true, 3, 32, vec![Some(spec)]);
-            let sql = "SELECT UNNEST(RS_Tile(rast, 2, 2, true, 0)) AS t FROM rasters";
+            let sql = "SELECT UNNEST(RS_LazyTile(rast, 2, 2)) AS t FROM rasters";
             let p = plan(&plain, sql).await;
             let o = plan(&optimized, sql).await;
             let schema = o.schema();
@@ -560,16 +554,12 @@ mod tests {
         let ctx = context(true, 100, 12, vec![Some(source())]);
         let p = plan(
             &ctx,
-            "SELECT UNNEST(RS_Tile(rast, 2, 2, true, 0)) AS t FROM rasters",
+            "SELECT UNNEST(RS_LazyTile(rast, 2, 2)) AS t FROM rasters",
         )
         .await;
         let mut stream = p.execute(0, ctx.task_ctx()).unwrap();
         let first = stream.next().await.unwrap().unwrap();
-        assert_eq!(
-            first.num_rows(),
-            1,
-            "two bands use 12 bytes per padded tile"
-        );
+        assert_eq!(first.num_rows(), 1, "two bands use 12 bytes per full tile");
         drop(stream);
         let mut generated = 0;
         p.apply(|node| {
@@ -587,7 +577,11 @@ mod tests {
         );
 
         let ctx = context(true, 2, 0, vec![Some(source())]);
-        let p = plan(&ctx, "SELECT UNNEST(RS_Tile(rast, 1, 1)) AS t FROM rasters").await;
+        let p = plan(
+            &ctx,
+            "SELECT UNNEST(RS_LazyTile(rast, 1, 1)) AS t FROM rasters",
+        )
+        .await;
         let batches = collect(p, ctx.task_ctx()).await.unwrap();
         assert!(batches.iter().all(|b| b.num_rows() <= 2));
         assert_eq!(batches.iter().map(|b| b.num_rows()).sum::<usize>(), 15);
@@ -607,7 +601,7 @@ mod tests {
         );
         let p = plan(
             &ctx,
-            "SELECT UNNEST(RS_Tile(rast, 1, 1)) AS t FROM rasters LIMIT 1",
+            "SELECT UNNEST(RS_LazyTile(rast, 1, 1)) AS t FROM rasters LIMIT 1",
         )
         .await;
         let batches = collect(Arc::clone(&p), ctx.task_ctx()).await.unwrap();
@@ -629,8 +623,8 @@ mod tests {
     async fn scalar_lists_and_zipped_unnests_are_not_rewritten() {
         let ctx = context(true, 2, 12, vec![Some(source())]);
         for sql in [
-            "SELECT RS_Tile(rast, 2, 2) FROM rasters",
-            "SELECT UNNEST(RS_Tile(rast, 2, 2)), UNNEST(make_array(id, id + 1)) FROM rasters",
+            "SELECT RS_LazyTile(rast, 2, 2) FROM rasters",
+            "SELECT UNNEST(RS_LazyTile(rast, 2, 2)), UNNEST(make_array(id, id + 1)) FROM rasters",
         ] {
             let p = plan(&ctx, sql).await;
             assert!(
@@ -655,7 +649,7 @@ mod tests {
         ] {
             for optimized in [false, true] {
                 let ctx = context(optimized, 2, 12, vec![Some(source())]);
-                let sql = format!("SELECT UNNEST(RS_Tile(rast, {args})) FROM rasters");
+                let sql = format!("SELECT UNNEST(RS_LazyTile(rast, {args})) FROM rasters");
                 let result = ctx.sql(&sql).await;
                 let result = match result {
                     Ok(df) => df.collect().await,

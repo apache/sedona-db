@@ -62,7 +62,7 @@ async fn tile_streaming_composes_with_materialization_and_multiple_partitions() 
         .unwrap();
 
     let sql = "SELECT id, t.x AS x, t.y AS y, RS_Width(t.tile) AS width
-        FROM (SELECT id, UNNEST(RS_Tile(rast, 2, 2)) AS t FROM r)
+        FROM (SELECT id, UNNEST(RS_LazyTile(rast, 2, 2)) AS t FROM r)
         ORDER BY id, y, x";
     let plan = ctx
         .sql(sql)
@@ -101,7 +101,7 @@ async fn tile_streaming_composes_with_materialization_and_multiple_partitions() 
     );
 
     let df = ctx
-        .sql("SELECT UNNEST(RS_Tile(rast, 1, 1)) AS t FROM r LIMIT 1")
+        .sql("SELECT UNNEST(RS_LazyTile(rast, 1, 1)) AS t FROM r LIMIT 1")
         .await
         .unwrap();
     let plan = df.create_physical_plan().await.unwrap();
@@ -199,13 +199,8 @@ async fn lazy_context() -> (SedonaContext, Arc<RecordingLoader>) {
 async fn scalar_lists_and_streamed_tiles_do_not_load_pixels() {
     use datafusion_common::cast::{as_list_array, as_struct_array};
     let (ctx, loader) = lazy_context().await;
-    for args in [
-        "2, 2",
-        "2, 2, false",
-        "make_array(1), 2, 2",
-        "make_array(1), 2, 2, false",
-    ] {
-        let sql = format!("SELECT RS_Tile(rast, {args}) AS tiles FROM r");
+    for args in ["2, 2", "make_array(1), 2, 2"] {
+        let sql = format!("SELECT RS_LazyTile(rast, {args}) AS tiles FROM r");
         let df = ctx.sql(&sql).await.unwrap();
         let plan = df.create_physical_plan().await.unwrap();
         let text = displayable(plan.as_ref()).indent(true).to_string();
@@ -226,8 +221,9 @@ async fn scalar_lists_and_streamed_tiles_do_not_load_pixels() {
         assert_eq!(band.view().as_slice()[1].start, 2);
         assert_eq!(band.outdb_format(), Some("tile-test"));
 
-        let sql =
-            format!("SELECT RS_Width(t.tile) FROM (SELECT UNNEST(RS_Tile(rast, {args})) t FROM r)");
+        let sql = format!(
+            "SELECT RS_Width(t.tile) FROM (SELECT UNNEST(RS_LazyTile(rast, {args})) t FROM r)"
+        );
         let df = ctx.sql(&sql).await.unwrap();
         let plan = df.create_physical_plan().await.unwrap();
         assert!(displayable(plan.as_ref())
@@ -252,7 +248,7 @@ async fn filter_before_loading_reads_only_the_selected_tile() {
     use datafusion_common::cast::as_struct_array;
     let (ctx, loader) = lazy_context().await;
     let sql = "SELECT RS_EnsureLoaded(t.tile) AS tile
-        FROM (SELECT UNNEST(RS_Tile(rast, 2, 2)) t FROM r)
+        FROM (SELECT UNNEST(RS_LazyTile(rast, 2, 2)) t FROM r)
         WHERE t.x = 1 AND t.y = 0";
     let plan = ctx
         .sql(sql)
@@ -284,8 +280,8 @@ async fn filter_before_loading_reads_only_the_selected_tile() {
 async fn retiling_composes_views_and_pixel_functions_load_downstream() {
     let (ctx, loader) = lazy_context().await;
     let sql = "SELECT RS_Value(u.tile, 1, 1, 1) AS value FROM (
-        SELECT UNNEST(RS_Tile(t.tile, 1, 1)) u FROM (
-            SELECT UNNEST(RS_Tile(rast, 3, 2)) t FROM r
+        SELECT UNNEST(RS_LazyTile(t.tile, 1, 1)) u FROM (
+            SELECT UNNEST(RS_LazyTile(rast, 3, 2)) t FROM r
         ) WHERE t.x = 1 AND t.y = 1
     ) WHERE u.x = 1";
     let batches = ctx.sql(sql).await.unwrap().collect().await.unwrap();
@@ -309,7 +305,7 @@ async fn retiling_composes_views_and_pixel_functions_load_downstream() {
 }
 
 #[tokio::test]
-async fn padding_keeps_the_eager_fallback() {
+async fn rs_tile_padding_loads_pixels() {
     use datafusion_common::cast::as_struct_array;
     for args in ["2, 2, true, 99", "make_array(1), 2, 2, true, 99"] {
         let (ctx, loader) = lazy_context().await;
@@ -350,7 +346,7 @@ async fn padding_a_lazy_tile_from_the_full_source_cache_uses_its_view() {
         .unwrap();
     let sql = "SELECT u.tile FROM (
         SELECT UNNEST(RS_Tile(t.tile, 3, 3, true, 99)) u FROM (
-            SELECT UNNEST(RS_Tile(rast, 2, 2)) t FROM r
+            SELECT UNNEST(RS_LazyTile(rast, 2, 2)) t FROM r
         ) WHERE t.x = 1 AND t.y = 0
     )";
     let batches = ctx.sql(sql).await.unwrap().collect().await.unwrap();
@@ -370,52 +366,30 @@ async fn padding_a_lazy_tile_from_the_full_source_cache_uses_its_view() {
 }
 
 #[tokio::test]
-async fn null_padding_flags_do_not_load_and_dynamic_flags_keep_the_fallback() {
-    use arrow_array::{Array, BooleanArray};
+async fn lazy_tile_rejects_padding_and_tile_still_loads_pixels() {
     let (ctx, loader) = lazy_context().await;
     for args in [
-        "2, 2, CAST(NULL AS BOOLEAN)",
-        "make_array(1), 2, 2, CAST(NULL AS BOOLEAN)",
+        "2, 2, false",
+        "2, 2, true, 99",
+        "make_array(1), 2, 2, false",
     ] {
-        let batches = ctx
-            .sql(&format!("SELECT RS_Tile(rast, {args}) FROM r"))
+        assert!(ctx
+            .sql(&format!("SELECT RS_LazyTile(rast, {args}) FROM r"))
             .await
-            .unwrap()
-            .collect()
-            .await
-            .unwrap();
-        assert!(batches[0].column(0).is_null(0));
+            .is_err());
     }
     assert!(loader.requests.lock().unwrap().is_empty());
-
-    let raster = ctx
-        .sql("SELECT rast FROM r")
-        .await
-        .unwrap()
-        .collect()
-        .await
-        .unwrap()[0]
-        .column(0)
-        .clone();
-    let schema = Arc::new(Schema::new(vec![
-        SedonaType::Raster.to_storage_field("rast", false).unwrap(),
-        Field::new("pad", DataType::Boolean, false),
-    ]));
-    ctx.ctx
-        .register_batch(
-            "dynamic_pad",
-            RecordBatch::try_new(
-                schema,
-                vec![raster, Arc::new(BooleanArray::from(vec![false]))],
-            )
-            .unwrap(),
-        )
-        .unwrap();
-    ctx.sql("SELECT UNNEST(RS_Tile(rast, 2, 2, pad)) FROM dynamic_pad")
+    let batches = ctx
+        .sql("SELECT t.tile FROM (SELECT UNNEST(RS_Tile(rast, 2, 2)) t FROM r)")
         .await
         .unwrap()
         .collect()
         .await
         .unwrap();
     assert_eq!(loader.requests.lock().unwrap().len(), 1);
+    let rasters = RasterStructArray::try_new(
+        datafusion_common::cast::as_struct_array(batches[0].column(0)).unwrap(),
+    )
+    .unwrap();
+    assert!(rasters.get(0).unwrap().band(0).unwrap().is_indb());
 }

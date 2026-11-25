@@ -41,7 +41,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use datafusion_common::tree_node::{Transformed, TreeNode};
-use datafusion_common::{Column, DFSchema, Result, ScalarValue};
+use datafusion_common::{Column, DFSchema, Result};
 use datafusion_expr::expr::{Alias, ScalarFunction};
 use datafusion_expr::expr_schema::ExprSchemable;
 use datafusion_expr::{Expr, LogicalPlan, ScalarUDF};
@@ -185,36 +185,6 @@ fn rewrite_expr_node(
     if !needs_bytes {
         return Ok(Transformed::no(expr));
     }
-    // RS_Tile can describe an OutDb crop entirely in metadata. Only calls
-    // which may pad need the eager copying fallback: views cannot represent
-    // pixels beyond the source extent. The two overload families put the
-    // padding flag at different positions, after width and height.
-    if name == "rs_tile" {
-        let has_bands = func_call
-            .args
-            .get(1)
-            .and_then(|arg| arg.get_type(schema.as_ref()).ok())
-            .is_some_and(|ty| {
-                matches!(
-                    ty,
-                    arrow_schema::DataType::List(_)
-                        | arrow_schema::DataType::LargeList(_)
-                        | arrow_schema::DataType::ListView(_)
-                        | arrow_schema::DataType::LargeListView(_)
-                        | arrow_schema::DataType::FixedSizeList(_, _)
-                )
-            });
-        let pad = func_call.args.get(if has_bands { 4 } else { 3 });
-        if pad.is_none_or(|pad| {
-            matches!(
-                pad,
-                Expr::Literal(ScalarValue::Boolean(Some(false) | None), _)
-            )
-        }) {
-            return Ok(Transformed::no(expr));
-        }
-    }
-
     // Structurally impossible: we matched `expr` as `Expr::ScalarFunction`
     // a few lines up. Surface it as an internal error rather than a panic
     // so a future refactor that breaks the invariant fails the query

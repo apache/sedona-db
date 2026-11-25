@@ -63,7 +63,7 @@ pub use rs_metadata::rs_metadata_udf;
 pub use rs_polygonize::rs_polygonize_udf;
 pub use rs_reproject_match::rs_reproject_match_udf;
 pub use rs_resample::rs_resample_udf;
-pub use rs_tile::rs_tile_udf;
+pub use rs_tile::{rs_lazy_tile_udf, rs_tile_udf};
 pub use utils::{
     append_as_indb_raster, append_as_outdb_raster, append_nd_from_dataset, dataset_to_indb_raster,
     gdal_dataset_to_nd_raster,

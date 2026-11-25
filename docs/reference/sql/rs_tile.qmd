@@ -87,24 +87,9 @@ tile size with a nodata fill. When the band(s) have no nodata value,
 `no_data_value` supplies one.
 
 ::: callout-note
-For OutDb input, ordinary tiles are **lazy raster views**: the scalar list
-contains references to source windows, without reading or copying their pixels.
-Retiling a tile composes its window with the existing view. Pixel-consuming
-functions load the selected windows downstream; `RS_EnsureLoaded(tile)` can
-request loading explicitly. Metadata-only filters can discard tiles before
-any pixel reads.
-
-InDb bands retain the copying implementation. Padding cannot be represented
-by a source window: when `pad_with_no_data` is true or is not known at planning
-time, the planner loads the input before tiling and uses the copying fallback.
-
-For a single `UNNEST(RS_Tile(...))`, the optimizer can use `RasterTileExec` to
-emit tiles incrementally, bounded by the execution batch size and estimated
-tile pixel bytes (`sedona.raster.max_batch_bytes`). A single tile larger than
-the byte budget is emitted on its own. Queries that consume the list itself
-or zip multiple `UNNEST` expressions still build the complete list, but its
-OutDb tiles remain lazy. Small tile sizes can produce substantial metadata
-(a `1 x 1` tile size yields one tile per pixel).
+`RS_Tile` loads OutDb input and copies tile pixels. For lazy OutDb windows
+and streaming `UNNEST` execution, use [RS_LazyTile](rs_lazytile.qmd), which
+does not support padding.
 :::
 
 ## Examples
