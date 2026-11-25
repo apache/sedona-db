@@ -19,7 +19,6 @@ use std::{
     collections::HashSet,
     ffi::{c_int, c_void},
     fmt::Debug,
-    mem::ManuallyDrop,
     ptr::null_mut,
     sync::Arc,
     time::Duration,
@@ -475,10 +474,10 @@ unsafe extern "C" fn c_table_provider_insert(
             return exec_err!("Insert input execution plan is null");
         }
 
-        // Ownership is transferred by the call. Move the input before parsing
-        // any other arguments so every subsequent error path releases it once.
-        let input = std::ptr::read(input_ptr);
-        let input = Arc::new(ImportedSedonaCExec::try_new(input)?) as Arc<dyn ExecutionPlan>;
+        // The input is borrowed for this callback. Clone its FFI handle before
+        // retaining it in the returned mutation plan.
+        let input =
+            Arc::new(ImportedSedonaCExec::try_clone_from(&*input_ptr)?) as Arc<dyn ExecutionPlan>;
 
         let args_slice = if args_ref.args.is_null() || args_ref.args_len == 0 {
             &[]
@@ -870,10 +869,9 @@ impl TableProvider for ImportedTableProvider {
             sedona_internal_datafusion_err!("Failed to serialize insert args: {}", e)
         })?;
 
-        let ffi_input: ManuallyDrop<SedonaCExecutionPlan> = ManuallyDrop::new(
-            ExportedExecutionPlan::new(input, state.task_ctx(), self.runtime.clone()).into(),
-        );
-        let ffi_input_ptrs = [&*ffi_input as *const SedonaCExecutionPlan];
+        let ffi_input: SedonaCExecutionPlan =
+            ExportedExecutionPlan::new(input, state.task_ctx(), self.runtime.clone()).into();
+        let ffi_input_ptrs = [&ffi_input as *const SedonaCExecutionPlan];
         let mut ffi_args = SedonaCExecutionPlanArgs {
             args: args_bytes.as_ptr(),
             args_len: args_bytes.len(),

@@ -385,7 +385,10 @@ pub struct SedonaCExecutionPlanArgs {
     /// JSON-serialized arguments
     pub args: *const u8,
     pub args_len: usize,
-    /// Optional array of execution plans
+    /// Optional array of borrowed execution plans.
+    ///
+    /// These plans are valid only for the duration of the callback invocation.
+    /// Call `with_property("clone")` to retain a plan beyond the callback.
     pub exec_plans: *const *const SedonaCExecutionPlan,
     pub num_exec_plans: usize,
     /// Optional array of expression views
@@ -427,6 +430,10 @@ pub struct SedonaCExecutionPlan {
         ) -> c_int,
     >,
 
+    /// Clone or transform this plan.
+    ///
+    /// The `"clone"` property returns a separately owned handle that shares the
+    /// same underlying immutable execution plan.
     pub with_property: Option<
         unsafe extern "C" fn(
             self_: *const SedonaCExecutionPlan,
