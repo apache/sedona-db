@@ -563,6 +563,13 @@ impl SpatialIndex for DefaultSpatialIndex {
                 continue;
             }
 
+            // Probing can take a long time with no output to pause at: a slow predicate
+            // that rarely matches, or index searches that cross many nodes and find
+            // nothing. Yield regularly so that a cancelled query stops.
+            if yield_timer.step() {
+                yield_timer.yield_now().await;
+            }
+
             let mut candidates = if let Some(wraparound) = &self.inner.wraparound {
                 let (left, right) = probe_rect.split(wraparound);
                 if left.is_empty() {
@@ -645,13 +652,6 @@ impl SpatialIndex for DefaultSpatialIndex {
                 probe_indices.extend(std::iter::repeat_n(row_idx as u32, metrics.count));
                 total_count += metrics.count;
                 total_candidates_count += metrics.candidate_count;
-            }
-
-            // Refining can take a long time when the predicate is slow and few candidates
-            // match, with no output to pause at. Yield regularly so that a cancelled query
-            // stops.
-            if yield_timer.step() {
-                tokio::task::yield_now().await;
             }
 
             if total_count >= max_result_size {

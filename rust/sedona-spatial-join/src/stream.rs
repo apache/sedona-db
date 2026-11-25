@@ -1192,7 +1192,7 @@ impl SpatialJoinBatchIterator {
             // has worked for the yield interval: the timer started with the poll that
             // fetched this batch, so this also yields between small probe batches.
             if progress.yield_timer.due() {
-                tokio::task::yield_now().await;
+                progress.yield_timer.yield_now().await;
             }
 
             // Check if we need to probe more rows
@@ -1351,7 +1351,7 @@ impl SpatialJoinBatchIterator {
             // When a join filter drops most neighbors, this loop can run for a long time
             // without output. Yield regularly so that a cancelled query stops.
             if progress.yield_timer.step() {
-                tokio::task::yield_now().await;
+                progress.yield_timer.yield_now().await;
             }
 
             // Early exit if we have enough results

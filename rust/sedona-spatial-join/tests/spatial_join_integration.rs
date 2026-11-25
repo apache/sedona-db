@@ -3079,7 +3079,7 @@ async fn test_range_join_yields_while_refining() -> Result<()> {
     let counts = count_pending_polls(stream).await?;
     counts.assert_yields_are_deferred();
     assert_eq!(counts.rows, 0);
-    // With the interval at 0, the join yields after every probe row with candidates.
+    // With the interval at 0, the join yields at every probe row.
     assert!(counts.pending >= 8192, "{counts:?}");
     Ok(())
 }
@@ -3136,6 +3136,72 @@ async fn test_range_join_yields_between_probe_batches() -> Result<()> {
     counts.assert_yields_are_deferred();
     assert_eq!(counts.rows, 0);
     assert!(counts.pending >= 64, "{counts:?}");
+    Ok(())
+}
+
+/// The check made once per index query also covers probe batches whose rows are never
+/// searched, such as empty geometries, and is the only check for indexes without a
+/// per-row loop: many such batches must still yield between batches.
+#[tokio::test]
+async fn test_range_join_yields_between_probe_batches_of_unsearched_rows() -> Result<()> {
+    let options = SpatialJoinOptions {
+        repartition_probe_side: false,
+        ..yield_at_every_check()
+    };
+    let ctx = setup_context(Some(options), 8)?;
+    ctx.register_table(
+        "L",
+        wkt_table(vec![1], &[circle_wkt(50.0, 50.0, 45.0, 64)])?,
+    )?;
+    // 512 empty points in batches of 8: an empty probe box is not searched.
+    let empty_points = vec!["POINT EMPTY".to_string(); 512];
+    ctx.register_table(
+        "R",
+        wkt_table_in_batches((0..512).collect(), &empty_points, 8)?,
+    )?;
+    let stream = single_partition_stream(
+        &ctx,
+        "SELECT L.id, R.id FROM L JOIN R ON ST_Intersects(L.geometry, R.geometry)",
+    )
+    .await?;
+    let counts = count_pending_polls(stream).await?;
+    counts.assert_yields_are_deferred();
+    assert_eq!(counts.rows, 0);
+    assert!(counts.pending >= 64, "{counts:?}");
+    Ok(())
+}
+
+/// Searching the index can take long even when it finds nothing: a probe box that
+/// crosses many index nodes without containing an entry. One probe batch of such rows
+/// must still yield while it is probed.
+#[tokio::test]
+async fn test_range_join_yields_while_searching_without_candidates() -> Result<()> {
+    let options = SpatialJoinOptions {
+        repartition_probe_side: false,
+        ..yield_at_every_check()
+    };
+    let ctx = setup_context(Some(options), 8192)?;
+    // A 64 x 64 grid of points, and lines that run between its rows: each line's box
+    // crosses the grid but contains no point.
+    let grid: Vec<String> = (0..4096)
+        .map(|i| format!("POINT ({} {})", i % 64, i / 64))
+        .collect();
+    ctx.register_table("L", wkt_table((0..4096).collect(), &grid)?)?;
+    let lines: Vec<String> = (0..1024)
+        .map(|i| format!("LINESTRING (0 {y}, 63 {y})", y = (i % 63) as f64 + 0.5))
+        .collect();
+    ctx.register_table("R", wkt_table((0..1024).collect(), &lines)?)?;
+    let stream = single_partition_stream(
+        &ctx,
+        "SELECT L.id, R.id FROM L JOIN R ON ST_Intersects(L.geometry, R.geometry)",
+    )
+    .await?;
+    let counts = count_pending_polls(stream).await?;
+    counts.assert_yields_are_deferred();
+    assert_eq!(counts.rows, 0);
+    // With the interval at 0, the join yields at every probe row, even though no search
+    // finds a candidate.
+    assert!(counts.pending >= 1024, "{counts:?}");
     Ok(())
 }
 

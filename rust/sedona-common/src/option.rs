@@ -260,8 +260,8 @@ config_namespace! {
 
         /// For testing: how long, in milliseconds, the spatial join probes before it
         /// yields to the scheduler so that a cancelled query can stop (10 when unset). The
-        /// join checks the time after probe rows that have candidates and once per index
-        /// query; 0 makes it yield at every check.
+        /// join checks the time at every probe row and once per index query; 0 makes it
+        /// yield at every check.
         pub yield_interval_ms: Option<u64>, default = None
     }
 }

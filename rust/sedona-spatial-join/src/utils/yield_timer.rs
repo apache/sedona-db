@@ -121,6 +121,16 @@ impl YieldTimer {
         self.last_yield = now;
         true
     }
+
+    /// Yields to the scheduler, then starts a new interval. The time other tasks run
+    /// before this one is resumed is not this task's work: it counts neither towards the
+    /// next interval nor towards the cost of the next steps.
+    pub(crate) async fn yield_now(&mut self) {
+        tokio::task::yield_now().await;
+        let now = Instant::now();
+        self.last_yield = now;
+        self.last_read = now;
+    }
 }
 
 #[cfg(test)]
@@ -190,5 +200,19 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(yield_interval(&options), Duration::ZERO);
+    }
+
+    /// The time other tasks run before this one is resumed is not this task's work, so
+    /// the interval starts again when a yield returns.
+    #[tokio::test]
+    async fn interval_restarts_when_a_yield_returns() {
+        let interval = Duration::from_millis(50);
+        let mut timer = YieldTimer::starting_at(interval, Instant::now() - interval);
+        assert!(timer.due());
+        // Another task holds this (current-thread) runtime for longer than the interval
+        let other = tokio::spawn(async { std::thread::sleep(Duration::from_millis(60)) });
+        timer.yield_now().await;
+        assert!(!timer.due());
+        other.await.unwrap();
     }
 }
