@@ -1196,9 +1196,7 @@ def test_cx_takes_an_x_and_a_y_range():
 
 
 def test_to_wkt_matches_geopandas():
-    gs = gpd.GeoSeries.from_wkt(
-        CORPUS + ["POINT (1.123456789 2.5)"], crs="EPSG:3857"
-    )
+    gs = gpd.GeoSeries.from_wkt(CORPUS + ["POINT (1.123456789 2.5)"], crs="EPSG:3857")
     got = sgpd.from_geopandas(gpd.GeoDataFrame(geometry=gs)).geometry.to_wkt()
     pd.testing.assert_series_equal(
         got.to_pandas().astype("string"),
