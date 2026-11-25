@@ -35,6 +35,7 @@ protobuf = ["datafusion-proto", "prost"]
 arrow-array = { workspace = true, features = ["ffi"]}
 arrow-schema = { workspace = true, features = ["ffi"]}
 async-trait = { workspace = true }
+datafusion = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-catalog = { workspace = true }
 datafusion-execution = { workspace = true }

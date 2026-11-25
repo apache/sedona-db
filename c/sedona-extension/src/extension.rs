@@ -618,9 +618,9 @@ pub struct SedonaCTableProvider {
     ///
     /// The args parameter contains `{"insert_op":"Append"}` (or `Overwrite` /
     /// `Replace`). The exec_plans field must contain exactly one plan providing
-    /// rows to insert. Ownership of that plan is transferred to the callback,
-    /// which must move it into owned storage even when returning an error. The
-    /// caller must not release or otherwise use the input after invoking insert.
+    /// rows to insert. The input plan is borrowed for the duration of the callback.
+    /// Implementations that retain it must use `with_property("clone")` and own
+    /// the returned execution plan handle.
     /// Returns an execution plan that performs the insert.
     pub insert: Option<
         unsafe extern "C" fn(

@@ -27,6 +27,7 @@ use std::{
 use arrow_array::ffi::FFI_ArrowArray;
 use arrow_schema::{ffi::FFI_ArrowSchema, DataType, Schema, SchemaRef};
 use async_trait::async_trait;
+use datafusion::physical_planner::DefaultPhysicalPlanner;
 use datafusion_catalog::{Session, TableProvider};
 use datafusion_common::{exec_err, plan_err, DataFusionError, Result, Statistics, TableReference};
 use datafusion_execution::FunctionRegistry;
@@ -77,7 +78,9 @@ impl ExportedTableProvider {
     /// Create a new ExportedTableProvider from a TableProvider.
     ///
     /// The session is used during scan operations and must support physical planning
-    /// if the inner TableProvider requires it (e.g., for Views).
+    /// if the inner TableProvider requires it (e.g., for Views). Inserts also
+    /// require the session's physical optimizer rules to enforce the writer's
+    /// distribution and ordering requirements before returning it across FFI.
     ///
     /// Takes an `Arc<RuntimeHandle>` to ensure the runtime stays alive for the
     /// lifetime of the provider, preventing "Worker thread terminated" errors.
@@ -133,9 +136,17 @@ impl ExportedTableProvider {
         let runtime = self.runtime.clone();
 
         std::thread::spawn(move || {
-            runtime
-                .handle()
-                .block_on(inner.insert_into(session.as_ref(), input, insert_op))
+            let plan =
+                runtime
+                    .handle()
+                    .block_on(inner.insert_into(session.as_ref(), input, insert_op))?;
+            // The returned plan becomes an opaque leaf in the consumer. Enforce
+            // the writer's distribution and ordering requirements before export.
+            DefaultPhysicalPlanner::default().optimize_physical_plan(
+                plan,
+                session.as_ref(),
+                |_, _| {},
+            )
         })
         .join()
         .map_err(|e| sedona_internal_datafusion_err!("Insert thread panicked {e:?}"))?
@@ -869,6 +880,11 @@ impl TableProvider for ImportedTableProvider {
             sedona_internal_datafusion_err!("Failed to serialize insert args: {}", e)
         })?;
 
+        // DataFusion calls insert_into before physical optimization. The input
+        // becomes opaque to both sessions' optimizers across FFI, so finish its
+        // physical planning while the consumer can still inspect its children.
+        let input =
+            DefaultPhysicalPlanner::default().optimize_physical_plan(input, state, |_, _| {})?;
         let ffi_input: SedonaCExecutionPlan =
             ExportedExecutionPlan::new(input, state.task_ctx(), self.runtime.clone()).into();
         let ffi_input_ptrs = [&ffi_input as *const SedonaCExecutionPlan];
