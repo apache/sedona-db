@@ -473,16 +473,13 @@ mod tests {
         assert_eq!(stream.next().await.unwrap().unwrap().num_rows(), 1);
     }
 
-    #[cfg(not(windows))]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn opens_http_raster_with_encoded_path_segments() {
+    async fn assert_http_raster_opens(object_path: &str) {
         use axum::Router;
         use tower_http::services::ServeDir;
 
         let temp_dir = TempDir::new().unwrap();
-        let raster_dir = temp_dir.path().join("folder with spaces");
-        std::fs::create_dir(&raster_dir).unwrap();
-        let raster_path = raster_dir.join("a\\b#100%.tiff");
+        let raster_path = temp_dir.path().join(object_path);
+        std::fs::create_dir_all(raster_path.parent().unwrap()).unwrap();
         write_test_geotiff(&raster_path);
 
         let app = Router::new().fallback_service(ServeDir::new(temp_dir.path()));
@@ -491,8 +488,7 @@ mod tests {
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
         let mut file = PartitionedFile::new("", std::fs::metadata(&raster_path).unwrap().len());
-        file.object_meta.location =
-            ObjectStorePath::parse("folder with spaces/a\\b#100%.tiff").unwrap();
+        file.object_meta.location = ObjectStorePath::parse(object_path).unwrap();
         let opener = GdalRasterFileOpener {
             base_url,
             tile: false,
@@ -504,6 +500,17 @@ mod tests {
         let mut stream = opener.open(file).unwrap().await.unwrap();
         assert_eq!(stream.next().await.unwrap().unwrap().num_rows(), 1);
         server.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn opens_http_raster_with_spaces_and_url_delimiters() {
+        assert_http_raster_opens("folder with spaces/a#100%.tiff").await;
+    }
+
+    #[cfg(not(windows))]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn opens_http_raster_with_backslash_in_path_segment() {
+        assert_http_raster_opens("folder/a\\b.tiff").await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
