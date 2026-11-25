@@ -513,8 +513,18 @@ mod tests {
 
     impl MutationExec {
         fn new(drop_action: impl FnOnce() -> Result<()> + Send + 'static) -> Self {
+            Self::new_with_inner(
+                Arc::new(EmptyExec::new(Arc::new(Schema::empty()))),
+                drop_action,
+            )
+        }
+
+        fn new_with_inner(
+            inner: Arc<dyn ExecutionPlan>,
+            drop_action: impl FnOnce() -> Result<()> + Send + 'static,
+        ) -> Self {
             Self {
-                inner: Arc::new(EmptyExec::new(Arc::new(Schema::empty()))),
+                inner,
                 drop_action: Mutex::new(Some(Box::new(drop_action))),
             }
         }
@@ -642,14 +652,15 @@ mod tests {
                 "create:{identifier:?}:{options:?}:{}",
                 input.is_some()
             ));
-            if let Some(input) = input {
-                return Ok(input);
-            }
             let mutations = self.mutations.clone();
-            Ok(Arc::new(MutationExec::new(move || {
+            let action = move || {
                 mutations.fetch_add(1, Ordering::SeqCst);
                 Ok(())
-            })))
+            };
+            Ok(Arc::new(match input {
+                Some(input) => MutationExec::new_with_inner(input, action),
+                None => MutationExec::new(action),
+            }))
         }
         async fn drop_object(
             &self,
@@ -734,7 +745,11 @@ mod tests {
                 Some(input),
             )
             .await?;
+        // CTAS planning crosses the DDL ABI but must not create or populate the
+        // table until the returned mutation plan is polled.
+        assert_eq!(catalog.mutations.load(Ordering::SeqCst), 1);
         let batches = datafusion_physical_plan::collect(plan, state.task_ctx()).await?;
+        assert_eq!(catalog.mutations.load(Ordering::SeqCst), 2);
         assert_eq!(
             batches.iter().map(|batch| batch.num_rows()).sum::<usize>(),
             1
@@ -748,9 +763,9 @@ mod tests {
         let plan = imported
             .drop_object(&["catalog", "new_schema"], &drop_options)
             .await?;
-        assert_eq!(catalog.mutations.load(Ordering::SeqCst), 1);
-        datafusion_physical_plan::collect(plan, state.task_ctx()).await?;
         assert_eq!(catalog.mutations.load(Ordering::SeqCst), 2);
+        datafusion_physical_plan::collect(plan, state.task_ctx()).await?;
+        assert_eq!(catalog.mutations.load(Ordering::SeqCst), 3);
         let calls = catalog.calls.lock().unwrap();
         assert_eq!(calls[0], "list:[\"catalog\"]:Some(2)");
         assert!(calls

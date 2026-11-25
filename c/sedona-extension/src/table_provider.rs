@@ -1207,11 +1207,22 @@ mod tests {
                 consumer.register_table("source", Arc::new(source))?;
                 consumer.register_table("target", Arc::new(imported))?;
 
-                consumer
+                let insert = consumer
                     .sql("INSERT INTO target SELECT id FROM source")
+                    .await?
+                    .create_physical_plan()
+                    .await?;
+
+                // Calling the insert callback builds a mutation plan but must
+                // not modify the table until that returned plan is polled.
+                let before = producer
+                    .sql("SELECT id FROM target")
                     .await?
                     .collect()
                     .await?;
+                assert_eq!(before.iter().map(RecordBatch::num_rows).sum::<usize>(), 0);
+
+                datafusion_physical_plan::collect(insert, consumer.task_ctx()).await?;
 
                 let result = producer
                     .sql("SELECT id FROM target ORDER BY id")
