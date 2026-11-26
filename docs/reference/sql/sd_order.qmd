@@ -25,6 +25,18 @@ kernels:
       type: any
 ---
 
+Geometry and geography `ORDER BY` expressions automatically use `SD_Order`,
+including aggregate ordering, DataFrame sorting, Parquet `sort_by` columns,
+and window ordering with `ROWS` frames. Sort direction and null placement are
+preserved. Window `RANGE` frames require explicit `SD_Order(geom)` because
+DataFusion validates their ordering types before logical optimization.
+
+With S2 enabled, the ordering key is an S2 cell identifier computed from the
+first coordinate, transformed to longitude/latitude when the CRS is known.
+Without a spatial ordering kernel, sorting retains the underlying Arrow storage
+order. Raster sorting currently uses storage order; no raster-specific
+`SD_Order` kernel is registered.
+
 ## Examples
 
 ```sql

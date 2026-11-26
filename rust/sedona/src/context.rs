@@ -86,7 +86,8 @@ use sedona_common::option::DEFAULT_RASTER_CACHE_MAX_BYTES;
 use sedona_query_planner::{
     optimizer::{
         register_ensure_loaded_optimizer, register_sedona_analyzer_rules,
-        register_spatial_join_logical_optimizer, register_vendored_optimizer_rules,
+        register_spatial_join_logical_optimizer, register_spatial_order_optimizer,
+        register_vendored_optimizer_rules,
     },
     query_planner::SedonaQueryPlanner,
     raster_materialization::RasterMaterializationRule,
@@ -132,6 +133,7 @@ impl SedonaContext {
         // https://github.com/apache/sedona-db/issues/1232.
         let state_builder = register_vendored_optimizer_rules(state_builder).unwrap();
         let state_builder = register_sedona_analyzer_rules(state_builder).unwrap();
+        let state_builder = register_spatial_order_optimizer(state_builder).unwrap();
         Self::finish_new(SessionContext::new_with_state(state_builder.build()), false).unwrap()
     }
 
@@ -296,6 +298,7 @@ impl SedonaContext {
         state_builder = register_sedona_analyzer_rules(state_builder)?;
         state_builder = register_spatial_join_logical_optimizer(state_builder)?;
         state_builder = register_ensure_loaded_optimizer(state_builder)?;
+        state_builder = register_spatial_order_optimizer(state_builder)?;
         // Plan raster materialization: byte-bounded load batches, spread by
         // raster source (see `sedona_query_planner::raster_materialization`).
         state_builder =

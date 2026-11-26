@@ -28,4 +28,5 @@ pub mod raster_materialization;
 pub mod raster_source_spread;
 mod spatial_expr_utils;
 pub mod spatial_join_physical_planner;
+mod spatial_order;
 pub mod spatial_predicate;

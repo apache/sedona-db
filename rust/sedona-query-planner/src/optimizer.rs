@@ -23,6 +23,7 @@ use crate::reconcile_union_crs::ReconcileUnionCrs;
 use crate::spatial_expr_utils::{
     KNNJoinQuerySide, collect_spatial_predicate_names, find_knn_query_side,
 };
+use crate::spatial_order::SpatialOrderOptimizerRule;
 use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::tree_node::{Transformed, TransformedResult};
@@ -185,6 +186,26 @@ pub fn register_ensure_loaded_optimizer(
         None => optimizer.rules.push(ensure_loaded_rule),
     }
 
+    Ok(session_state_builder)
+}
+
+/// Register spatial sort rewriting after DISTINCT ON has been lowered to
+/// aggregates and sorts, but before CSE can share the generated ordering keys.
+pub fn register_spatial_order_optimizer(
+    mut session_state_builder: SessionStateBuilder,
+) -> Result<SessionStateBuilder> {
+    let optimizer = session_state_builder
+        .optimizer()
+        .get_or_insert_with(Optimizer::new);
+    let rule = Arc::new(SpatialOrderOptimizerRule);
+    match optimizer
+        .rules
+        .iter()
+        .position(|rule| rule.name() == "common_sub_expression_eliminate")
+    {
+        Some(pos) => optimizer.rules.insert(pos, rule),
+        None => optimizer.rules.push(rule),
+    }
     Ok(session_state_builder)
 }
 

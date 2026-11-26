@@ -23,7 +23,6 @@
 import pandas as pd
 import pandas.testing as pdt
 import pytest
-
 from sedonadb.dataframe import DataFrame
 from sedonadb.expr import col, sort_expr
 
@@ -132,3 +131,40 @@ def test_sort_unknown_column_lists_valid_columns(con):
     msg = str(exc.value)
     assert "nonexistent" in msg
     assert "Valid fields" in msg or "valid fields" in msg
+
+
+@pytest.mark.parametrize("spatial_type", ["GEOMETRY", "GEOGRAPHY"])
+@pytest.mark.parametrize("asc", [True, False])
+@pytest.mark.parametrize("nulls_first", [True, False])
+def test_sort_spatial(con, spatial_type, asc, nulls_first):
+    query = f"""
+        SELECT id, CAST(ST_GeomFromText(wkt, 4326) AS {spatial_type}) AS geom
+        FROM (VALUES
+            (1, 'POINT (30 10)'), (2, 'POINT (-100 40)'),
+            (3, NULL), (4, 'POINT (10 -40)'), (5, 'POINT (30 10)'),
+            (6, 'POINT EMPTY')
+        ) t(id, wkt)
+    """
+    direction = "ASC" if asc else "DESC"
+    nulls = "FIRST" if nulls_first else "LAST"
+    options = f"{direction} NULLS {nulls}"
+    expected = (
+        con.sql(f"SELECT id FROM ({query}) ORDER BY sd_order(geom) {options}, id")
+        .to_arrow_table()["id"]
+        .to_pylist()
+    )
+    actual_sql = (
+        con.sql(f"SELECT id FROM ({query}) ORDER BY geom {options}, id")
+        .to_arrow_table()["id"]
+        .to_pylist()
+    )
+    df = con.sql(query)
+    actual = (
+        df.sort(sort_expr(col("geom"), asc=asc, nulls_first=nulls_first), "id")
+        .to_arrow_table()["id"]
+        .to_pylist()
+    )
+    assert actual == expected
+    assert actual_sql == expected
+    if asc and not nulls_first:
+        assert df.sort("geom", "id").to_arrow_table()["id"].to_pylist() == expected

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 // Licensed to the Apache Software Foundation (ASF) under one
 // or more contributor license agreements.  See the NOTICE file
 // distributed with this work for additional information
@@ -486,66 +486,9 @@ impl InternalDataFrame {
     ) -> Result<(), PySedonaError> {
         // sort_by needs to be SortExpr. A Vec<String> can unambiguously be interpreted as
         // field names (ascending), but other types of expressions aren't supported here yet.
-        // We need to special-case geometry columns until we have a logical optimizer rule or
-        // sorting for user-defined types is supported.
-        let geometry_column_indices = self.inner.schema().geometry_column_indices()?;
-        let geometry_column_names = geometry_column_indices
-            .iter()
-            .map(|i| self.inner.schema().field(*i).name().as_str())
-            .collect::<HashSet<&str>>();
-
-        #[cfg(feature = "s2geography")]
-        let has_geography = true;
-        #[cfg(not(feature = "s2geography"))]
-        let has_geography = false;
-
-        let mut sort_by_expr = Vec::with_capacity(sort_by.len());
-        let mut needs_sd_order = false;
-        for name in sort_by {
-            let column = Expr::Column(Column::new_unqualified(name.clone()));
-            if geometry_column_names.contains(name.as_str()) {
-                if has_geography {
-                    needs_sd_order = true;
-                    sort_by_expr.push((Some(name), column));
-                } else {
-                    return Err(PySedonaError::SedonaPython(
-                        "Use maturin develop --features 's2geography,pyo3/extension-module' for dev geography support"
-                            .to_string(),
-                    ));
-                }
-            } else {
-                sort_by_expr.push((None, column));
-            }
-        }
-
-        let order_udf = if needs_sd_order {
-            Some(
-                ctx.inner
-                    .ctx
-                    .state()
-                    .scalar_functions()
-                    .get("sd_order")
-                    .cloned()
-                    .ok_or_else(|| {
-                        PySedonaError::SedonaPython(
-                            "Can't order by geometry field when sd_order() is not available"
-                                .to_string(),
-                        )
-                    })?,
-            )
-        } else {
-            None
-        };
-
-        let sort_by_expr = sort_by_expr
+        let sort_by_expr = sort_by
             .into_iter()
-            .map(|(geometry_name, column)| {
-                if geometry_name.is_some() {
-                    SortExpr::new(order_udf.as_ref().unwrap().call(vec![column]), true, false)
-                } else {
-                    SortExpr::new(column, true, false)
-                }
-            })
+            .map(|name| SortExpr::new(Expr::Column(Column::new_unqualified(name)), true, false))
             .collect::<Vec<_>>();
 
         let options_map = options
