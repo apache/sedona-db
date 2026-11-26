@@ -478,6 +478,9 @@ impl SedonaContext {
         // Always register default function set
         out.register_function_set(sedona_functions::register::default_function_set());
 
+        // Use geoarrow-c's fast WKT/WKB parsers and Ryu-backed WKT writer.
+        out.register_scalar_kernels(sedona_geoarrow_c::register::scalar_kernels().into_iter())?;
+
         // Register geos scalar kernels if built with geos support
         #[cfg(feature = "geos")]
         out.register_scalar_kernels(sedona_geos::register::scalar_kernels().into_iter())?;
@@ -1535,11 +1538,11 @@ mod tests {
             .await?;
         assert_batches_eq!(
             [
-                "+--------------+",
-                "| geom         |",
-                "+--------------+",
-                "| POINT(30 10) |",
-                "+--------------+",
+                "+---------------+",
+                "| geom          |",
+                "+---------------+",
+                "| POINT (30 10) |",
+                "+---------------+",
             ],
             &batches
         );

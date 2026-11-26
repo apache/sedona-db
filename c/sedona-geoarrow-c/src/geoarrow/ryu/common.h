@@ -104,8 +104,8 @@ static inline int copy_special_str(char* const result, const bool sign,
     if (sign) {
       result[0] = '-';
     }
-    memcpy(result + sign, "Infinity", 8);
-    return sign + 8;
+    memcpy(result + sign, "inf", 3);
+    return sign + 3;
   }
   memcpy(result, "0", 1);
   return 1;

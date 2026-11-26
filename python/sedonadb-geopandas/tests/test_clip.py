@@ -329,4 +329,4 @@ def test_clip_of_geography():
         geometry="g",
     )
     kept = points.clip(shapely.box(0, 0, 3, 3)).to_wkt().to_geopandas()
-    assert sorted(kept["g"]) == ["POINT M(2 2 4)", "POINT Z(1 1 9)"]
+    assert sorted(kept["g"]) == ["POINT M (2 2 4)", "POINT Z (1 1 9)"]

@@ -3866,12 +3866,8 @@ class GeoSeries(Series):
         raise TypeError(f"astype() can't make a geometry column {dtype!r}")
 
     def to_wkt(self):
-        """Each geometry as WKT text (`ST_AsText`).
-
-        The text is equivalent to GeoPandas' but not character-identical:
-        SedonaDB writes `POINT(1 2)` where Shapely writes `POINT (1 2)`.
-        """
-        return Series(self._df, self._expr.geo.as_text(), self._name)
+        """Each geometry as WKT text, rounded to GeoPandas' default 6 places."""
+        return Series(self._df, self._expr.geo.as_text(6), self._name)
 
     def to_wkb(self, hex=False):
         """Each geometry as ISO WKB bytes (`ST_AsBinary`).

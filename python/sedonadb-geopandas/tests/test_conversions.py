@@ -160,7 +160,7 @@ def test_from_wkt_and_wkb_check_their_input():
     frame = _frame(wkt=["POINT (1"], n=[1.0])
     # Invalid text raises once computed (the frame is lazy).
     parsed = sgpd.GeoSeries.from_wkt(frame["wkt"])
-    with pytest.raises(Exception, match="WKT"):
+    with pytest.raises(Exception, match="Expected whitespace at byte 8"):
         parsed.to_pandas()
     with pytest.raises(NotImplementedError, match="on_invalid"):
         sgpd.GeoSeries.from_wkt(frame["wkt"], on_invalid="ignore")
