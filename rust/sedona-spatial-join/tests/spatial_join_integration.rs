@@ -562,6 +562,7 @@ async fn test_range_join_with_conf(
     execution_mode: ExecutionMode,
     #[values(SpatialLibrary::Geo, SpatialLibrary::Geos, SpatialLibrary::Tg)]
     spatial_library: SpatialLibrary,
+    #[values(None, Some(0))] yield_interval_ms: Option<u64>,
 ) -> Result<()> {
     let test_data = get_default_test_data().await;
     let expected_results = get_expected_range_join_results().await;
@@ -570,6 +571,10 @@ async fn test_range_join_with_conf(
     let options = SpatialJoinOptions {
         spatial_library,
         execution_mode,
+        debug: SpatialJoinDebugOptions {
+            yield_interval_ms,
+            ..Default::default()
+        },
         ..Default::default()
     };
     for (idx, sql) in RANGE_JOIN_SQLS.iter().enumerate() {
@@ -626,8 +631,17 @@ async fn test_spatial_join_with_filter() -> Result<()> {
     let ((left_schema, left_partitions), (right_schema, right_partitions)) =
         create_test_data_with_size_range((0.1, 10.0), WKB_GEOMETRY)?;
 
-    for max_batch_size in [10, 30, 100] {
-        let options = SpatialJoinOptions::default();
+    for (max_batch_size, yield_interval_ms) in [10, 30, 100]
+        .into_iter()
+        .flat_map(|size| [(size, None), (size, Some(0))])
+    {
+        let options = SpatialJoinOptions {
+            debug: SpatialJoinDebugOptions {
+                yield_interval_ms,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         test_spatial_join_query(&left_schema, &right_schema, left_partitions.clone(), right_partitions.clone(), &options, max_batch_size,
             "SELECT * FROM L JOIN R ON ST_Intersects(L.geometry, R.geometry) AND L.dist < R.dist ORDER BY L.id, R.id").await?;
         test_spatial_join_query(&left_schema, &right_schema, left_partitions.clone(), right_partitions.clone(), &options, max_batch_size,
@@ -1068,11 +1082,13 @@ async fn test_spatial_partitioned_outer_join(
         JoinType::RightAnti
     )]
     join_type: JoinType,
+    #[values(None, Some(0))] yield_interval_ms: Option<u64>,
 ) -> Result<()> {
     let debug = SpatialJoinDebugOptions {
         num_spatial_partitions: NumSpatialPartitionsConfig::Fixed(4),
         force_spill: true,
         memory_for_intermittent_usage: None,
+        yield_interval_ms,
         ..Default::default()
     };
     let options = SpatialJoinOptions {
@@ -1098,11 +1114,13 @@ async fn test_mark_joins(
 #[tokio::test]
 async fn test_spatial_partitioned_mark_joins(
     #[values(JoinType::LeftMark, JoinType::RightMark)] join_type: JoinType,
+    #[values(None, Some(0))] yield_interval_ms: Option<u64>,
 ) -> Result<()> {
     let debug = SpatialJoinDebugOptions {
         num_spatial_partitions: NumSpatialPartitionsConfig::Fixed(4),
         force_spill: true,
         memory_for_intermittent_usage: None,
+        yield_interval_ms,
         ..Default::default()
     };
     let options = SpatialJoinOptions {
@@ -1552,6 +1570,7 @@ async fn test_knn_join_correctness(
 async fn test_knn_join_with_filter_correctness(
     #[values(1, 2, 3, 4)] num_partitions: usize,
     #[values(10, 30, 1000)] max_batch_size: usize,
+    #[values(None, Some(0))] yield_interval_ms: Option<u64>,
 ) -> Result<()> {
     let ((left_schema, left_partitions), (right_schema, right_partitions)) =
         create_knn_test_data((0.1, 10.0), WKB_GEOMETRY)?;
@@ -1559,6 +1578,7 @@ async fn test_knn_join_with_filter_correctness(
     let options = SpatialJoinOptions {
         debug: SpatialJoinDebugOptions {
             num_spatial_partitions: NumSpatialPartitionsConfig::Fixed(num_partitions),
+            yield_interval_ms,
             ..Default::default()
         },
         ..Default::default()
@@ -2873,5 +2893,420 @@ async fn test_knn_left_join_partitioned_k0_all_null_candidates_keeps_unmatched()
         assert!(rids.is_null(i));
     }
 
+    Ok(())
+}
+
+// A spatial join must return `Poll::Pending` now and then while it works, even when it has
+// no output yet. A query is cancelled by dropping its stream, which only takes effect at
+// such a point (#1554).
+
+fn circle_wkt(cx: f64, cy: f64, r: f64, n: usize) -> String {
+    let mut coords: Vec<String> = (0..n)
+        .map(|i| {
+            let a = 2.0 * std::f64::consts::PI * (i as f64) / (n as f64);
+            format!("{} {}", cx + r * a.cos(), cy + r * a.sin())
+        })
+        .collect();
+    coords.push(coords[0].clone());
+    format!("POLYGON (({}))", coords.join(", "))
+}
+
+/// `n` grid points, 101 per row and 0.4 apart, all inside
+/// `circle_wkt(50.0, 50.0, 45.0, 64)` for `n` up to 15,000.
+fn grid_points(n: usize) -> Vec<String> {
+    (0..n)
+        .map(|i| {
+            let x = 30.0 + (i % 101) as f64 * 0.4;
+            let y = 30.0 + (i / 101) as f64 * 0.4;
+            format!("POINT ({x} {y})")
+        })
+        .collect()
+}
+
+/// A one-batch table with an `id` column and a `geometry` column from WKT.
+fn wkt_table(ids: Vec<i32>, wkts: &[String]) -> Result<Arc<dyn TableProvider>> {
+    wkt_table_in_batches(ids, wkts, wkts.len())
+}
+
+/// Like [`wkt_table`], in batches of `rows_per_batch` rows.
+fn wkt_table_in_batches(
+    ids: Vec<i32>,
+    wkts: &[String],
+    rows_per_batch: usize,
+) -> Result<Arc<dyn TableProvider>> {
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        WKB_GEOMETRY.to_storage_field("geometry", true)?,
+    ]));
+    let wkts: Vec<Option<&str>> = wkts.iter().map(|wkt| Some(wkt.as_str())).collect();
+    let batches = ids
+        .chunks(rows_per_batch)
+        .zip(wkts.chunks(rows_per_batch))
+        .map(|(ids, wkts)| {
+            RecordBatch::try_new(
+                Arc::clone(&schema),
+                vec![
+                    Arc::new(Int32Array::from(ids.to_vec())),
+                    sedona_testing::create::create_array_storage(wkts, &WKB_GEOMETRY),
+                ],
+            )
+        })
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(Arc::new(MemTable::try_new(schema, vec![batches])?))
+}
+
+/// Options that make the join yield at every check instead of after 10 ms of work, so
+/// that tests can count the yields.
+fn yield_at_every_check() -> SpatialJoinOptions {
+    SpatialJoinOptions {
+        debug: SpatialJoinDebugOptions {
+            yield_interval_ms: Some(0),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+#[derive(Debug, Default)]
+struct PollCounts {
+    rows: usize,
+    pending: usize,
+    pending_after_first_batch: usize,
+    /// `Pending`s for which the task was woken during the poll itself, instead of by
+    /// Tokio after its timers and IO have run.
+    woken_during_poll: usize,
+}
+
+impl PollCounts {
+    /// Checks that the join's yields leave waking the task to Tokio. Waiting for the
+    /// build side (a `futures` `Shared` future) may wake the task once during a poll.
+    fn assert_yields_are_deferred(&self) {
+        assert!(self.woken_during_poll <= 1, "{self:?}");
+    }
+}
+
+/// A waker that counts its wakes and passes them on.
+struct CountingWaker {
+    inner: std::task::Waker,
+    wakes: std::sync::atomic::AtomicUsize,
+}
+
+impl std::task::Wake for CountingWaker {
+    fn wake(self: Arc<Self>) {
+        self.wake_by_ref();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.wakes.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.inner.wake_by_ref();
+    }
+}
+
+/// Polls `stream` to completion in a spawned Tokio task and counts how often it returns
+/// `Poll::Pending`. The task is polled again only when the stream has it woken, so each
+/// count is a real return to the scheduler, with a fresh task budget after it.
+async fn count_pending_polls(stream: SendableRecordBatchStream) -> Result<PollCounts> {
+    tokio::spawn(async move {
+        let mut stream = stream;
+        let mut counts = PollCounts::default();
+        loop {
+            let next = futures::future::poll_fn(|cx| {
+                let waker = Arc::new(CountingWaker {
+                    inner: cx.waker().clone(),
+                    wakes: std::sync::atomic::AtomicUsize::new(0),
+                });
+                let poll = futures::StreamExt::poll_next_unpin(
+                    &mut stream,
+                    &mut std::task::Context::from_waker(&Arc::clone(&waker).into()),
+                );
+                if poll.is_pending() {
+                    counts.pending += 1;
+                    if counts.rows > 0 {
+                        counts.pending_after_first_batch += 1;
+                    }
+                    if waker.wakes.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+                        counts.woken_during_poll += 1;
+                    }
+                }
+                poll
+            })
+            .await;
+            match next {
+                None => return Ok(counts),
+                Some(batch) => counts.rows += batch?.num_rows(),
+            }
+        }
+    })
+    .await
+    .expect("polling task panicked")
+}
+
+/// Plans `sql` on one partition, so that the whole join runs in one stream.
+async fn single_partition_plan(ctx: &SessionContext, sql: &str) -> Result<Arc<dyn ExecutionPlan>> {
+    ctx.sql("SET datafusion.execution.target_partitions = 1")
+        .await?
+        .collect()
+        .await?;
+    let plan = ctx.sql(sql).await?.create_physical_plan().await?;
+    assert_eq!(collect_spatial_join_exec(&plan)?.len(), 1);
+    Ok(plan)
+}
+
+/// Executes the [`single_partition_plan`] of `sql`.
+async fn single_partition_stream(
+    ctx: &SessionContext,
+    sql: &str,
+) -> Result<SendableRecordBatchStream> {
+    let plan = single_partition_plan(ctx, sql).await?;
+    datafusion_physical_plan::execute_stream(plan, ctx.task_ctx())
+}
+
+/// A selective range join (every probe row has a candidate, none matches) must yield
+/// while it refines.
+#[tokio::test]
+async fn test_range_join_yields_while_refining() -> Result<()> {
+    let ctx = setup_context(Some(yield_at_every_check()), 8192)?;
+    ctx.register_table(
+        "L",
+        wkt_table(vec![1], &[circle_wkt(50.0, 50.0, 45.0, 64)])?,
+    )?;
+    ctx.register_table("R", wkt_table((0..8192).collect(), &grid_points(8192))?)?;
+    let stream = single_partition_stream(
+        &ctx,
+        "SELECT L.id, R.id FROM L JOIN R ON ST_Touches(L.geometry, R.geometry)",
+    )
+    .await?;
+    let counts = count_pending_polls(stream).await?;
+    counts.assert_yields_are_deferred();
+    assert_eq!(counts.rows, 0);
+    // With the interval at 0, the join yields at every probe row.
+    assert!(counts.pending >= 8192, "{counts:?}");
+    Ok(())
+}
+
+/// A KNN join whose join filter rejects every neighbor produces no output; it must still
+/// yield while it probes.
+#[tokio::test]
+async fn test_knn_join_yields_while_probing() -> Result<()> {
+    let ctx = setup_context(Some(yield_at_every_check()), 8192)?;
+    ctx.register_table("L", wkt_table((0..16).collect(), &grid_points(16))?)?;
+    ctx.register_table("R", wkt_table((0..8192).collect(), &grid_points(8192))?)?;
+    let stream = single_partition_stream(
+        &ctx,
+        "SELECT L.id, R.id FROM L JOIN R ON ST_KNN(R.geometry, L.geometry, 1, false) AND L.id > R.id + 100000",
+    )
+    .await?;
+    let counts = count_pending_polls(stream).await?;
+    counts.assert_yields_are_deferred();
+    assert_eq!(counts.rows, 0);
+    // With the interval at 0, the join yields after every probe row.
+    assert!(counts.pending >= 8192, "{counts:?}");
+    Ok(())
+}
+
+/// A range join over many small probe batches whose rows hit nothing in the index does
+/// little work per batch and has no output; it must still yield between batches.
+#[tokio::test]
+async fn test_range_join_yields_between_probe_batches() -> Result<()> {
+    // Batches of 8 rows, so that the probe side reaches the join as 64 batches, and no
+    // probe-side shuffle, whose channel would return `Pending` between batches by itself.
+    let options = SpatialJoinOptions {
+        repartition_probe_side: false,
+        ..yield_at_every_check()
+    };
+    let ctx = setup_context(Some(options), 8)?;
+    ctx.register_table(
+        "L",
+        wkt_table(vec![1], &[circle_wkt(50.0, 50.0, 45.0, 64)])?,
+    )?;
+    // 512 points far from the circle: no probe row has a candidate, so no row is refined.
+    let far_points: Vec<String> = (0..512)
+        .map(|i| format!("POINT ({} 1000)", 1000 + i))
+        .collect();
+    ctx.register_table(
+        "R",
+        wkt_table_in_batches((0..512).collect(), &far_points, 8)?,
+    )?;
+    let stream = single_partition_stream(
+        &ctx,
+        "SELECT L.id, R.id FROM L JOIN R ON ST_Intersects(L.geometry, R.geometry)",
+    )
+    .await?;
+    let counts = count_pending_polls(stream).await?;
+    counts.assert_yields_are_deferred();
+    assert_eq!(counts.rows, 0);
+    assert!(counts.pending >= 64, "{counts:?}");
+    Ok(())
+}
+
+/// The check made once per index query also covers probe batches whose rows are never
+/// searched, such as empty geometries, and is the only check for indexes without a
+/// per-row loop: many such batches must still yield between batches.
+#[tokio::test]
+async fn test_range_join_yields_between_probe_batches_of_unsearched_rows() -> Result<()> {
+    let options = SpatialJoinOptions {
+        repartition_probe_side: false,
+        ..yield_at_every_check()
+    };
+    let ctx = setup_context(Some(options), 8)?;
+    ctx.register_table(
+        "L",
+        wkt_table(vec![1], &[circle_wkt(50.0, 50.0, 45.0, 64)])?,
+    )?;
+    // 512 empty points in batches of 8: an empty probe box is not searched.
+    let empty_points = vec!["POINT EMPTY".to_string(); 512];
+    ctx.register_table(
+        "R",
+        wkt_table_in_batches((0..512).collect(), &empty_points, 8)?,
+    )?;
+    let stream = single_partition_stream(
+        &ctx,
+        "SELECT L.id, R.id FROM L JOIN R ON ST_Intersects(L.geometry, R.geometry)",
+    )
+    .await?;
+    let counts = count_pending_polls(stream).await?;
+    counts.assert_yields_are_deferred();
+    assert_eq!(counts.rows, 0);
+    assert!(counts.pending >= 64, "{counts:?}");
+    Ok(())
+}
+
+/// Searching the index can take long even when it finds nothing: a probe box that
+/// crosses many index nodes without containing an entry. One probe batch of such rows
+/// must still yield while it is probed.
+#[tokio::test]
+async fn test_range_join_yields_while_searching_without_candidates() -> Result<()> {
+    let options = SpatialJoinOptions {
+        repartition_probe_side: false,
+        ..yield_at_every_check()
+    };
+    let ctx = setup_context(Some(options), 8192)?;
+    // A 64 x 64 grid of points, and lines that run between its rows: each line's box
+    // crosses the grid but contains no point.
+    let grid: Vec<String> = (0..4096)
+        .map(|i| format!("POINT ({} {})", i % 64, i / 64))
+        .collect();
+    ctx.register_table("L", wkt_table((0..4096).collect(), &grid)?)?;
+    let lines: Vec<String> = (0..1024)
+        .map(|i| format!("LINESTRING (0 {y}, 63 {y})", y = (i % 63) as f64 + 0.5))
+        .collect();
+    ctx.register_table("R", wkt_table((0..1024).collect(), &lines)?)?;
+    let stream = single_partition_stream(
+        &ctx,
+        "SELECT L.id, R.id FROM L JOIN R ON ST_Intersects(L.geometry, R.geometry)",
+    )
+    .await?;
+    let counts = count_pending_polls(stream).await?;
+    counts.assert_yields_are_deferred();
+    assert_eq!(counts.rows, 0);
+    // With the interval at 0, the join yields at every probe row, even though no search
+    // finds a candidate.
+    assert!(counts.pending >= 1024, "{counts:?}");
+    Ok(())
+}
+
+/// Emitting the unmatched rows of a large build side consumes no input, so the join must
+/// yield on its own between output batches.
+#[tokio::test]
+async fn test_unmatched_build_rows_yield() -> Result<()> {
+    let options = SpatialJoinOptions {
+        spatial_join_reordering: false,
+        ..Default::default()
+    };
+    // With a batch size of 8, the build side is collected in batches of 8 rows, and the
+    // unmatched build rows pass emits one batch per build batch: 1,024 batches.
+    let ctx = setup_context(Some(options), 8)?;
+    ctx.register_table("L", wkt_table((0..8192).collect(), &grid_points(8192))?)?;
+    ctx.register_table("R", wkt_table(vec![1], &["POINT (1000 1000)".to_string()])?)?;
+    let plan = single_partition_plan(
+        &ctx,
+        "SELECT L.id, R.id FROM L LEFT JOIN R ON ST_Intersects(L.geometry, R.geometry)",
+    )
+    .await?;
+
+    // L stays on the left, which is the build side, so its rows come from the unmatched
+    // build rows pass (a swapped plan would be a RIGHT join).
+    assert_eq!(
+        *collect_spatial_join_exec(&plan)?[0].join_type(),
+        JoinType::Left
+    );
+
+    let stream = datafusion_physical_plan::execute_stream(plan, ctx.task_ctx())?;
+    let counts = count_pending_polls(stream).await?;
+    counts.assert_yields_are_deferred();
+    assert_eq!(counts.rows, 8192);
+    assert!(
+        counts.pending_after_first_batch >= 1024 / 128 - 1,
+        "{counts:?}"
+    );
+    Ok(())
+}
+
+/// When every probe batch has output, such as an outer join that emits its unmatched probe
+/// rows, the join returns a batch after each probe batch, and the next one starts a new
+/// interval. A probe row that takes longer than the interval must be followed by a yield
+/// even when it is the last row of its batch.
+#[tokio::test]
+async fn test_outer_join_yields_after_the_last_probe_row_of_a_batch() -> Result<()> {
+    let options = SpatialJoinOptions {
+        repartition_probe_side: false,
+        spatial_join_reordering: false,
+        debug: SpatialJoinDebugOptions {
+            yield_interval_ms: Some(1),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let ctx = setup_context(Some(options), 1)?;
+    // 16 points, one per probe batch, inside 4,096 identical circles: each point has 4,096
+    // candidates and touches none of them, which takes about 40 ms in a debug build and
+    // 4 ms in a release build, well over the interval of 1 ms.
+    let circle = circle_wkt(50.0, 50.0, 45.0, 256);
+    ctx.register_table("L", wkt_table((0..4096).collect(), &vec![circle; 4096])?)?;
+    ctx.register_table(
+        "R",
+        wkt_table_in_batches((0..16).collect(), &grid_points(16), 1)?,
+    )?;
+    let plan = single_partition_plan(
+        &ctx,
+        "SELECT L.id, R.id FROM L RIGHT JOIN R ON ST_Touches(L.geometry, R.geometry)",
+    )
+    .await?;
+
+    // R stays on the right, which is the probe side, so each of its rows is emitted
+    // unmatched at the end of its probe batch.
+    assert_eq!(
+        *collect_spatial_join_exec(&plan)?[0].join_type(),
+        JoinType::Right
+    );
+
+    let stream = datafusion_physical_plan::execute_stream(plan, ctx.task_ctx())?;
+    let counts = count_pending_polls(stream).await?;
+    counts.assert_yields_are_deferred();
+    assert_eq!(counts.rows, 16);
+    assert!(counts.pending >= 16, "{counts:?}");
+    Ok(())
+}
+
+/// A range join whose join filter rejects most matches can go through a whole probe batch
+/// in many short index queries without output; it must yield between them.
+#[tokio::test]
+async fn test_range_join_with_selective_filter_yields_within_batches() -> Result<()> {
+    // Batches of 64 rows: each index query stops after 64 matches, before the filter.
+    let ctx = setup_context(Some(yield_at_every_check()), 64)?;
+    // 16 identical circles: every point matches all of them.
+    let circle = circle_wkt(50.0, 50.0, 45.0, 64);
+    ctx.register_table("L", wkt_table((0..16).collect(), &vec![circle; 16])?)?;
+    ctx.register_table("R", wkt_table((0..8192).collect(), &grid_points(8192))?)?;
+    let stream = single_partition_stream(
+        &ctx,
+        "SELECT L.id, R.id FROM L JOIN R ON ST_Intersects(L.geometry, R.geometry) AND L.id > R.id + 100000",
+    )
+    .await?;
+    let counts = count_pending_polls(stream).await?;
+    counts.assert_yields_are_deferred();
+    assert_eq!(counts.rows, 0);
+    // 131,072 matches in index queries of 64: 2,048 queries in 128 probe batches.
+    assert!(counts.pending >= 1024, "{counts:?}");
     Ok(())
 }

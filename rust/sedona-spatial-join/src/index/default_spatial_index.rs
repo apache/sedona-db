@@ -52,6 +52,7 @@ use crate::{
     operand_evaluator::distance_value_at,
     refine::IndexQueryResultRefiner,
     spatial_predicate::SpatialPredicate,
+    utils::yield_timer::{YieldTimer, yield_interval},
 };
 use arrow::array::BooleanBufferBuilder;
 use async_trait::async_trait;
@@ -554,11 +555,19 @@ impl SpatialIndex for DefaultSpatialIndex {
         let mut total_candidates_count = 0;
         let mut total_count = 0;
         let mut current_row_idx = range.start;
+        let mut yield_timer = YieldTimer::new(yield_interval(&self.inner.options));
         for row_idx in range {
             current_row_idx = row_idx;
             let probe_rect = &rects[row_idx];
             if probe_rect.is_empty() {
                 continue;
+            }
+
+            // Probing can take a long time with no output to pause at: a slow predicate
+            // that rarely matches, or index searches that cross many nodes and find
+            // nothing. Yield regularly so that a cancelled query stops.
+            if yield_timer.step() {
+                yield_timer.yield_now().await;
             }
 
             let mut candidates = if let Some(wraparound) = &self.inner.wraparound {
