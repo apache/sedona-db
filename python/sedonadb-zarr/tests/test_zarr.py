@@ -312,9 +312,7 @@ def test_full_array_materialization_assembles_multiple_chunks(zarr_group):
     con = sedonadb.connect()
     con.register(sedonadb_zarr.ZarrExtension())
     source = con.read(f"file://{zarr_group}", format="zarr")
-    table = source.select(
-        raster=source.raster.funcs.rs_ensureloaded()
-    ).to_arrow_table()
+    table = source.select(raster=source.raster.funcs.rs_ensureloaded()).to_arrow_table()
 
     assert table.num_rows == 1
     band = table["raster"][0].as_py().bands[0]
@@ -430,9 +428,7 @@ def test_rs_ensure_loaded_with_zarr(tmp_path, numpy_dtype):
     sd.register(sedonadb_zarr.ZarrExtension())
 
     # Read the Zarr group as loaded rasters
-    t = sd.read(
-        f"file://{tmp_path}", options={"tile": True}, format="zarr"
-    )
+    t = sd.read(f"file://{tmp_path}", options={"tile": True}, format="zarr")
     loaded_tab = t.select(raster=t.raster.funcs.rs_ensureloaded()).to_arrow_table()
 
     # Verify we get the expected number of chunk rows
@@ -479,9 +475,7 @@ def test_sharded_array_reads_one_row_per_inner_chunk(tmp_path):
 
     sd = sedonadb.connect()
     sd.register(sedonadb_zarr.ZarrExtension())
-    t = sd.read(
-        f"file://{tmp_path}", options={"tile": True}, format="zarr"
-    )
+    t = sd.read(f"file://{tmp_path}", options={"tile": True}, format="zarr")
     tab = t.select(raster=t.raster.funcs.rs_ensureloaded()).to_arrow_table()
     assert tab.num_rows == 6
 

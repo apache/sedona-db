@@ -131,14 +131,12 @@ class Zarr(ExternalFormatSpec):
             normalized = tile.lower()
             if normalized not in {"true", "false"}:
                 raise ValueError(
-                    f"Zarr: invalid value for 'tile': {tile!r} "
-                    "(expected true or false)"
+                    f"Zarr: invalid value for 'tile': {tile!r} (expected true or false)"
                 )
             tile = normalized == "true"
         elif not isinstance(tile, bool):
             raise ValueError(
-                f"Zarr: invalid value for 'tile': {tile!r} "
-                "(expected a boolean)"
+                f"Zarr: invalid value for 'tile': {tile!r} (expected a boolean)"
             )
         batch_size = args.batch_size if args.batch_size is not None else 8192
         return PyZarrChunkReader(uri, arrays, batch_size, tile)
