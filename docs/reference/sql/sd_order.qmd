@@ -19,23 +19,25 @@
 title: SD_Order
 description: Returns a value suitable for ordering or sorting.
 kernels:
-  - returns: any
-    args:
-    - name: value
-      type: any
+  - returns: uint64
+    args: [geometry]
+  - returns: uint64
+    args: [geography]
 ---
 
-Geometry and geography `ORDER BY` expressions automatically use `SD_Order`,
-including aggregate ordering, DataFrame sorting, Parquet `sort_by` columns,
-and window ordering with `ROWS` frames. Sort direction and null placement are
-preserved. Window `RANGE` frames require explicit `SD_Order(geom)` because
+`ORDER BY` expressions automatically use `SD_Order` when a registered overload
+accepts their type. This includes aggregate ordering, DataFrame sorting,
+Parquet `sort_by` columns, and window ordering with `ROWS` frames. Sort direction
+and null placement are preserved. Window `RANGE` frames require explicit
+`SD_Order(geom)` because
 DataFusion validates their ordering types before logical optimization.
 
 With S2 enabled, the ordering key is an S2 cell identifier computed from the
 first coordinate, transformed to longitude/latitude when the CRS is known.
-Without a spatial ordering kernel, sorting retains the underlying Arrow storage
-order. Raster sorting currently uses storage order; no raster-specific
-`SD_Order` kernel is registered.
+Types without a matching overload retain their underlying Arrow storage order
+when sorted; explicitly calling `SD_Order` for such a type is an error. Custom
+types can enable sorting by registering an `SD_Order` kernel that returns a
+native ordering key whose type has no `SD_Order` overload.
 
 ## Examples
 

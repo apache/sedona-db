@@ -15,13 +15,16 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! Use the registered spatial ordering kernel for geometry and geography sort keys.
+//! Use registered SD_Order overloads for sort keys.
+
+use std::sync::Arc;
 
 use datafusion_common::tree_node::{Transformed, TreeNode};
 use datafusion_common::{DFSchema, Result};
 use datafusion_expr::expr_rewriter::NamePreserver;
-use datafusion_expr::{Expr, ExprSchemable, LogicalPlan, SortExpr};
+use datafusion_expr::{Expr, ExprSchemable, LogicalPlan, ScalarUDF, SortExpr};
 use datafusion_optimizer::{ApplyOrder, OptimizerConfig, OptimizerRule};
+use sedona_expr::scalar_udf::SedonaScalarUDF;
 use sedona_schema::datatypes::SedonaType;
 
 #[derive(Default, Debug)]
@@ -45,9 +48,28 @@ impl OptimizerRule for SpatialOrderOptimizerRule {
         plan: LogicalPlan,
         config: &dyn OptimizerConfig,
     ) -> Result<Transformed<LogicalPlan>> {
+        if !matches!(
+            plan,
+            LogicalPlan::Sort(_) | LogicalPlan::Aggregate(_) | LogicalPlan::Window(_)
+        ) {
+            return Ok(Transformed::no(plan));
+        }
+        let Some(registry) = config.function_registry() else {
+            return Ok(Transformed::no(plan));
+        };
+        let Ok(order) = registry.udf("sd_order") else {
+            return Ok(Transformed::no(plan));
+        };
+        // Cache the session's UDF and its Sedona implementation once per rewrite,
+        // so all sort keys share overload resolution without repeated lookups.
+        let Some(order_impl) = order.inner().downcast_ref::<SedonaScalarUDF>() else {
+            return Ok(Transformed::no(plan));
+        };
+
         match plan {
             LogicalPlan::Sort(mut sort) => {
-                let changed = rewrite_sorts(&mut sort.expr, sort.input.schema(), config)?;
+                let changed =
+                    rewrite_sorts(&mut sort.expr, sort.input.schema(), &order, order_impl)?;
                 Ok(Transformed::new_transformed(
                     LogicalPlan::Sort(sort),
                     changed,
@@ -60,12 +82,18 @@ impl OptimizerRule for SpatialOrderOptimizerRule {
                     let name = names.save(&expr);
                     expr.transform_up(|mut expr| {
                         let changed = match &mut expr {
-                            Expr::AggregateFunction(function) => {
-                                rewrite_sorts(&mut function.params.order_by, &schema, config)?
-                            }
-                            Expr::WindowFunction(function) => {
-                                rewrite_sorts(&mut function.params.order_by, &schema, config)?
-                            }
+                            Expr::AggregateFunction(function) => rewrite_sorts(
+                                &mut function.params.order_by,
+                                &schema,
+                                &order,
+                                order_impl,
+                            )?,
+                            Expr::WindowFunction(function) => rewrite_sorts(
+                                &mut function.params.order_by,
+                                &schema,
+                                &order,
+                                order_impl,
+                            )?,
                             _ => false,
                         };
                         Ok(Transformed::new_transformed(expr, changed))
@@ -78,37 +106,25 @@ impl OptimizerRule for SpatialOrderOptimizerRule {
     }
 }
 
-fn is_geometry(expr: &Expr, schema: &DFSchema) -> Result<bool> {
-    // get_type() alone loses the extension metadata distinguishing WKB from binary.
-    let (_, field) = expr.to_field(schema)?;
-    Ok(matches!(
-        SedonaType::from_storage_field(&field)?,
-        SedonaType::Wkb(_, _) | SedonaType::WkbLarge(_, _) | SedonaType::WkbView(_, _)
-    ))
-}
-
 fn rewrite_sorts(
     sorts: &mut [SortExpr],
     schema: &DFSchema,
-    config: &dyn OptimizerConfig,
+    order: &Arc<ScalarUDF>,
+    order_impl: &SedonaScalarUDF,
 ) -> Result<bool> {
     let mut changed = false;
     for sort in sorts {
-        if !is_geometry(&sort.expr, schema)? {
-            continue;
-        }
-        let Some(registry) = config.function_registry() else {
-            continue;
+        // Use the field to retain extension metadata for custom types.
+        let (_, field) = sort.expr.to_field(schema)?;
+        let arg_type = SedonaType::from_storage_field(&field)?;
+        let scalar = match &sort.expr {
+            Expr::Literal(value, _) => Some(value),
+            _ => None,
         };
-        let order = registry.udf("sd_order")?.call(vec![sort.expr.clone()]);
-        // Without a spatial kernel (e.g. a build without S2), SD_Order is an
-        // identity function. Keep storage ordering in that case. This also
-        // prevents repeated wrapping, including after CSE hoists sort keys.
-        if is_geometry(&order, schema)? {
-            continue;
+        if order_impl.resolve_kernel(&[arg_type], &[scalar])?.is_some() {
+            sort.expr = order.call(vec![sort.expr.clone()]);
+            changed = true;
         }
-        sort.expr = order;
-        changed = true;
     }
     Ok(changed)
 }

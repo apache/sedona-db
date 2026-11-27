@@ -17,17 +17,19 @@
 
 use std::sync::Arc;
 
-use arrow_array::{Int32Array, RecordBatch};
+use arrow_array::{Int32Array, RecordBatch, UInt64Array};
 use arrow_schema::{DataType, Field, Schema};
 use datafusion_common::Result;
-use datafusion_expr::col;
+use datafusion_expr::{col, ColumnarValue};
 use rstest::rstest;
 use sedona::context::{SedonaContext, SedonaDataFrame, SedonaWriteOptions};
+use sedona_expr::scalar_udf::SimpleSedonaScalarKernel;
 use sedona_functions::sd_order_lnglat::OrderLngLat;
 use sedona_schema::datatypes::{
     SedonaType, WKB_GEOGRAPHY, WKB_GEOMETRY, WKB_LARGE_GEOGRAPHY, WKB_LARGE_GEOMETRY,
     WKB_VIEW_GEOGRAPHY, WKB_VIEW_GEOMETRY,
 };
+use sedona_schema::{extension_type::ExtensionType, matchers::ArgMatcher};
 use sedona_testing::create::create_array;
 
 async fn context(data_type: SedonaType, interactive: bool) -> Result<SedonaContext> {
@@ -250,7 +252,7 @@ async fn spatial_sort_writer() -> Result<()> {
 }
 
 #[tokio::test]
-async fn spatial_sort_identity_fallback() -> Result<()> {
+async fn spatial_sort_without_matching_kernel() -> Result<()> {
     let ctx = context(WKB_GEOMETRY, false).await?;
     ctx.ctx
         .register_udf(sedona_functions::sd_order::sd_order_udf().into());
@@ -273,22 +275,64 @@ async fn spatial_sort_identity_fallback() -> Result<()> {
 }
 
 #[tokio::test]
-async fn raster_sort_keeps_storage_order() -> Result<()> {
-    let ctx = context(WKB_GEOMETRY, false).await?;
-    let query = "SELECT id, RS_MakeEmptyRaster(1, 1, 1, id, 0, 1) AS rast FROM points";
-    let df = ctx
-        .ctx
-        .sql(&format!("SELECT id FROM ({query}) ORDER BY rast"))
-        .await?;
-    let plan = df.clone().into_optimized_plan()?;
-    assert!(!plan.display_indent().to_string().contains("sd_order"));
-    assert_eq!(
-        df.collect().await?,
-        ctx.ctx
-            .sql(&format!("SELECT id FROM ({query}) ORDER BY sd_order(rast)"))
-            .await?
-            .collect()
-            .await?
-    );
+async fn sort_custom_type_with_registered_overloads() -> Result<()> {
+    let mut ctx = SedonaContext::new();
+    let custom_type = SedonaType::UnrecognizedExtension(ExtensionType::new(
+        "test.custom_order",
+        DataType::Int32,
+        None,
+    ));
+    let values = Arc::new(Int32Array::from(vec![3, 1, 2]));
+    let batch = RecordBatch::try_new(
+        Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            custom_type.to_storage_field("custom", false)?,
+            Field::new("raw", DataType::Int32, false),
+        ])),
+        vec![
+            Arc::new(Int32Array::from(vec![0, 1, 2])),
+            values.clone(),
+            values,
+        ],
+    )?;
+    ctx.ctx.register_batch("custom_values", batch)?;
+    let sql = "SELECT id, custom FROM custom_values ORDER BY custom";
+    assert_eq!(ids(&ctx, sql).await?, vec![1, 2, 0]);
+
+    // Registration alone enables custom ordering. A later overload takes
+    // precedence, and each rewrite uses the current session's implementation.
+    for (reverse, expected) in [(true, vec![0, 2, 1]), (false, vec![1, 2, 0])] {
+        let kernel = SimpleSedonaScalarKernel::new_ref(
+            ArgMatcher::new(
+                vec![ArgMatcher::is_exact(custom_type.clone())],
+                SedonaType::Arrow(DataType::UInt64),
+            ),
+            Arc::new(move |_, args| {
+                let array = args[0].to_array(1)?;
+                let values = array.as_any().downcast_ref::<Int32Array>().unwrap();
+                let keys = UInt64Array::from_iter(
+                    values
+                        .iter()
+                        .map(|v| v.map(|v| if reverse { (10 - v) as u64 } else { v as u64 })),
+                );
+                Ok(ColumnarValue::Array(Arc::new(keys)))
+            }),
+        );
+        ctx.register_scalar_kernels([("sd_order", kernel)].into_iter())?;
+        let df = ctx.ctx.sql(sql).await?;
+        let schema = df.schema().clone();
+        let plan = df.into_optimized_plan()?;
+        assert!(plan
+            .display_indent()
+            .to_string()
+            .contains("sd_order(custom_values.custom)"));
+        assert_eq!(plan.schema().as_arrow(), schema.as_arrow());
+        assert_eq!(ctx.ctx.state().optimize(&plan)?, plan);
+        assert_eq!(ids(&ctx, sql).await?, expected);
+        assert_eq!(
+            ids(&ctx, "SELECT id FROM custom_values ORDER BY raw").await?,
+            vec![1, 2, 0]
+        );
+    }
     Ok(())
 }

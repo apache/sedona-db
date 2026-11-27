@@ -23,6 +23,7 @@
 import pandas as pd
 import pandas.testing as pdt
 import pytest
+import sedonadb
 from sedonadb.dataframe import DataFrame
 from sedonadb.expr import col, sort_expr
 
@@ -133,12 +134,15 @@ def test_sort_unknown_column_lists_valid_columns(con):
     assert "Valid fields" in msg or "valid fields" in msg
 
 
-@pytest.mark.parametrize("spatial_type", ["GEOMETRY", "GEOGRAPHY"])
+@pytest.mark.parametrize("constructor", ["ST_GeomFromText", "ST_GeogFromText"])
 @pytest.mark.parametrize("asc", [True, False])
 @pytest.mark.parametrize("nulls_first", [True, False])
-def test_sort_spatial(con, spatial_type, asc, nulls_first):
+def test_sort_spatial(con, constructor, asc, nulls_first):
+    if "s2geography" not in sedonadb.__features__:
+        pytest.skip("Spatial ordering requires the S2 kernel")
+
     query = f"""
-        SELECT id, CAST(ST_GeomFromText(wkt, 4326) AS {spatial_type}) AS geom
+        SELECT id, {constructor}(wkt, 4326) AS geom
         FROM (VALUES
             (1, 'POINT (30 10)'), (2, 'POINT (-100 40)'),
             (3, NULL), (4, 'POINT (10 -40)'), (5, 'POINT (30 10)'),

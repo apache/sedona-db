@@ -896,10 +896,13 @@ def test_st_accessor_with_multiple_non_geometry_columns_from_scan(con, tmp_path)
     assert result["_e"].to_pylist() == [False, False]  # Points are not empty
 
 
-@pytest.mark.parametrize("spatial_type", ["GEOMETRY", "GEOGRAPHY"])
-def test_write_sort_by_spatial_matches_sql(con, tmp_path, spatial_type):
+@pytest.mark.parametrize("constructor", ["ST_GeomFromText", "ST_GeogFromText"])
+def test_write_sort_by_spatial_matches_sql(con, tmp_path, constructor):
+    if "s2geography" not in sedonadb.__features__:
+        pytest.skip("Spatial ordering requires the S2 kernel")
+
     query = f"""
-        SELECT id, CAST(ST_GeomFromText(wkt, 4326) AS {spatial_type}) AS geom
+        SELECT id, {constructor}(wkt, 4326) AS geom
         FROM (VALUES
             (1, 'POINT (30 10)'), (2, 'POINT (-100 40)'),
             (3, NULL), (4, 'POINT (10 -40)'), (5, 'POINT (30 10)')
