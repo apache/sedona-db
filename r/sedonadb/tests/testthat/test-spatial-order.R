@@ -28,20 +28,26 @@ test_that("SQL and Parquet sort geometry and geography using sd_order", {
     for (options in c("ASC NULLS LAST", "DESC NULLS FIRST")) {
       expected <- sd_sql(sprintf(
         "SELECT id FROM (%s) ORDER BY sd_order(geom) %s, id",
-        query, options
-      )) |> sd_collect()
+        query,
+        options
+      )) |>
+        sd_collect()
       actual <- sd_sql(sprintf(
         "SELECT id FROM (%s) ORDER BY geom %s, id",
-        query, options
-      )) |> sd_collect()
+        query,
+        options
+      )) |>
+        sd_collect()
       expect_identical(actual, expected)
     }
 
     path <- withr::local_tempfile(fileext = ".parquet")
     sd_write_parquet(sd_sql(query), path, sort_by = c("geom", "id"))
     expected <- sd_sql(sprintf(
-      "SELECT id FROM (%s) ORDER BY sd_order(geom) NULLS LAST, id", query
-    )) |> sd_collect()
+      "SELECT id FROM (%s) ORDER BY sd_order(geom) NULLS LAST, id",
+      query
+    )) |>
+      sd_collect()
     actual <- sd_read_parquet(path) |> sd_collect()
     expect_identical(actual$id, expected$id)
   }
