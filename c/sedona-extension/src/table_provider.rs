@@ -27,14 +27,21 @@ use std::{
 use arrow_array::ffi::FFI_ArrowArray;
 use arrow_schema::{ffi::FFI_ArrowSchema, DataType, Schema, SchemaRef};
 use async_trait::async_trait;
-use datafusion::physical_planner::DefaultPhysicalPlanner;
 use datafusion_catalog::{Session, TableProvider};
-use datafusion_common::{exec_err, plan_err, DataFusionError, Result, Statistics, TableReference};
+use datafusion_common::{
+    config::ConfigOptions,
+    exec_err, internal_err, plan_err,
+    tree_node::{TreeNode, TreeNodeRecursion},
+    DataFusionError, Result, Statistics, TableReference,
+};
 use datafusion_execution::FunctionRegistry;
 use datafusion_expr::{
     dml::InsertOp, Expr, HigherOrderUDF, ScalarUDF, TableProviderFilterPushDown, TableType,
 };
-use datafusion_physical_plan::ExecutionPlan;
+use datafusion_physical_plan::{
+    execution_plan::InvariantLevel, operator_statistics::StatisticsRegistry, ExecutionPlan,
+};
+use datafusion_session::PhysicalOptimizerContext;
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use serde::{Deserialize, Serialize};
 
@@ -142,11 +149,7 @@ impl ExportedTableProvider {
                     .block_on(inner.insert_into(session.as_ref(), input, insert_op))?;
             // The returned plan becomes an opaque leaf in the consumer. Enforce
             // the writer's distribution and ordering requirements before export.
-            DefaultPhysicalPlanner::default().optimize_physical_plan(
-                plan,
-                session.as_ref(),
-                |_, _| {},
-            )
+            optimize_physical_plan(plan, session.as_ref())
         })
         .join()
         .map_err(|e| sedona_internal_datafusion_err!("Insert thread panicked {e:?}"))?
@@ -883,8 +886,7 @@ impl TableProvider for ImportedTableProvider {
         // DataFusion calls insert_into before physical optimization. The input
         // becomes opaque to both sessions' optimizers across FFI, so finish its
         // physical planning while the consumer can still inspect its children.
-        let input =
-            DefaultPhysicalPlanner::default().optimize_physical_plan(input, state, |_, _| {})?;
+        let input = optimize_physical_plan(input, state)?;
         let ffi_input: SedonaCExecutionPlan =
             ExportedExecutionPlan::new(input, state.task_ctx(), self.runtime.clone()).into();
         let ffi_input_ptrs = [&ffi_input as *const SedonaCExecutionPlan];
@@ -918,6 +920,79 @@ impl TableProvider for ImportedTableProvider {
 
         Ok(Arc::new(exec))
     }
+}
+
+struct SessionOptimizerContext<'a>(&'a dyn Session);
+
+impl PhysicalOptimizerContext for SessionOptimizerContext<'_> {
+    fn config_options(&self) -> &ConfigOptions {
+        self.0.config_options()
+    }
+
+    fn statistics_registry(&self) -> Option<&StatisticsRegistry> {
+        self.0.statistics_registry()
+    }
+}
+
+/// Finish physical planning for a subtree that will execute behind an opaque FFI handle.
+pub(crate) fn optimize_physical_plan(
+    mut plan: Arc<dyn ExecutionPlan>,
+    session: &dyn Session,
+) -> Result<Arc<dyn ExecutionPlan>> {
+    check_plan_invariants(&plan, InvariantLevel::Always)?;
+
+    let context = SessionOptimizerContext(session);
+    for rule in session.physical_optimizers() {
+        let previous_schema = plan.schema();
+        plan = rule
+            .optimize_with_context(plan, &context)
+            .map_err(|e| e.context(rule.name()))?;
+
+        if rule.schema_check() {
+            let schema = plan.schema();
+            if !schema_change_is_allowed(&previous_schema, &schema) {
+                return internal_err!(
+                    "Physical optimizer rule '{}' changed the plan schema from {previous_schema:?} to {schema:?}",
+                    rule.name()
+                );
+            }
+        }
+
+        #[cfg(debug_assertions)]
+        check_plan_invariants(&plan, InvariantLevel::Always).map_err(|e| e.context(rule.name()))?;
+    }
+
+    check_plan_invariants(&plan, InvariantLevel::Executable)?;
+    Ok(plan)
+}
+
+fn check_plan_invariants(plan: &Arc<dyn ExecutionPlan>, level: InvariantLevel) -> Result<()> {
+    plan.apply(|node| {
+        node.check_invariants(level).map_err(|e| {
+            e.context(format!(
+                "Invariant for ExecutionPlan node '{}' failed",
+                node.name()
+            ))
+        })?;
+        Ok(TreeNodeRecursion::Continue)
+    })?;
+    Ok(())
+}
+
+fn schema_change_is_allowed(before: &Schema, after: &Schema) -> bool {
+    // Physical expressions may narrow the nullability of a field.
+    before.metadata() == after.metadata()
+        && before.fields().len() == after.fields().len()
+        && before
+            .fields()
+            .iter()
+            .zip(after.fields())
+            .all(|(before, after)| {
+                before.name() == after.name()
+                    && before.data_type() == after.data_type()
+                    && before.metadata() == after.metadata()
+                    && (before.is_nullable() || !after.is_nullable())
+            })
 }
 
 /// Arguments for a scan operation, serialized as JSON across FFI.

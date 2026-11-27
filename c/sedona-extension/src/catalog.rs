@@ -23,7 +23,7 @@ use crate::{
     },
     runtime::RuntimeHandle,
     set_ffi_error,
-    table_provider::{ExportedTableProvider, ImportedTableProvider},
+    table_provider::{optimize_physical_plan, ExportedTableProvider, ImportedTableProvider},
     utils::{
         call_get_json_property_impl, cstr_from_ptr_or_empty, parse_json_c_args,
         write_json_property, write_utf8_property_schema, ERRNO_OK,
@@ -35,7 +35,9 @@ use async_trait::async_trait;
 use datafusion_catalog::{Session, TableProvider};
 use datafusion_common::{DataFusionError, Result};
 use datafusion_physical_plan::ExecutionPlan;
-use sedona_catalog::{CatalogObject, CreateObjectOptions, DropObjectOptions, SedonaCatalogList};
+use sedona_catalog::{
+    CatalogObject, CatalogObjectType, CreateObjectOptions, DropObjectOptions, SedonaCatalogList,
+};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     ffi::{c_char, c_int, CString},
@@ -83,6 +85,10 @@ impl Debug for ExportedCatalogProviderList {
 
 impl ExportedCatalogProviderList {
     /// Create an export. Returned tables and plans retain their producer context.
+    ///
+    /// For a managed table with a query input, this adapter runs the physical
+    /// optimizer on the writer before exporting it. The catalog should return
+    /// that writer before its physical optimizer pass.
     pub fn new(
         inner: Arc<dyn SedonaCatalogList>,
         session: Arc<dyn Session>,
@@ -233,12 +239,23 @@ unsafe extern "C" fn create_object(
             let raw = std::mem::take(&mut *input);
             Some(Arc::new(ImportedSedonaCExec::try_new(raw)?) as Arc<dyn ExecutionPlan>)
         };
-        exported.run(exported.inner.create_object(
-            exported.session.as_ref(),
-            &refs(&args.identifier),
-            &args.options,
-            input,
-        ))
+        let is_ctas = input.is_some()
+            && args.options.object_type == CatalogObjectType::Table
+            && !args.options.external;
+        exported.run(async {
+            let session = exported.session.as_ref();
+            let plan = exported
+                .inner
+                .create_object(session, &refs(&args.identifier), &args.options, input)
+                .await?;
+            if is_ctas {
+                // The source is already planned and opaque here. Enforce any
+                // requirements introduced by the writer before it too becomes opaque.
+                optimize_physical_plan(plan, session)
+            } else {
+                Ok(plan)
+            }
+        })
     })();
     write_plan(exported, result, out, err)
 }
@@ -495,10 +512,10 @@ mod tests {
     use datafusion_common::tree_node::TreeNodeRecursion;
     use datafusion_execution::TaskContext;
     use datafusion_physical_plan::{
-        empty::EmptyExec, placeholder_row::PlaceholderRowExec, DisplayAs, DisplayFormatType,
-        PhysicalExpr, PlanProperties, SendableRecordBatchStream,
+        empty::EmptyExec, limit::GlobalLimitExec, placeholder_row::PlaceholderRowExec, DisplayAs,
+        DisplayFormatType, PhysicalExpr, PlanProperties, SendableRecordBatchStream,
     };
-    use sedona_catalog::{CatalogObjectType, CreateMode};
+    use sedona_catalog::CreateMode;
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
         Mutex,
@@ -657,10 +674,14 @@ mod tests {
                 mutations.fetch_add(1, Ordering::SeqCst);
                 Ok(())
             };
-            Ok(Arc::new(match input {
-                Some(input) => MutationExec::new_with_inner(input, action),
-                None => MutationExec::new(action),
-            }))
+            match input {
+                Some(input) => {
+                    let mutation = Arc::new(MutationExec::new_with_inner(input, action));
+                    // Model a writer that consumes a single input partition.
+                    Ok(Arc::new(GlobalLimitExec::new(mutation, 0, Some(2))))
+                }
+                None => Ok(Arc::new(MutationExec::new(action))),
+            }
         }
         async fn drop_object(
             &self,
@@ -773,6 +794,41 @@ mod tests {
             .any(|call| call.contains("CreateOrIgnore") && call.contains("temporary: true")));
         assert!(calls.last().unwrap().contains("cascade: true, purge: true"));
         Ok(())
+    }
+
+    #[test]
+    fn ctas_optimizes_writer_before_export() -> Result<()> {
+        // Drive the producer runtime while the consumer polls the FFI stream.
+        let runtime = runtime();
+        let catalog = Arc::new(TestCatalog::default());
+        let exported = ExportedCatalogProviderList::new(
+            catalog.clone(),
+            Arc::new(SessionContext::new().state()),
+            runtime.clone(),
+        );
+        let imported = ImportedCatalogProviderList::try_new(exported.into(), runtime.clone())?;
+        runtime.block_on(async {
+            let state = SessionContext::new().state();
+            let input =
+                Arc::new(PlaceholderRowExec::new(Arc::new(Schema::empty())).with_partitions(2));
+            let plan = imported
+                .create_object(
+                    &state,
+                    &["table"],
+                    &CreateObjectOptions::default(),
+                    Some(input),
+                )
+                .await?;
+            assert_eq!(catalog.mutations.load(Ordering::SeqCst), 0);
+
+            let batches = datafusion_physical_plan::collect(plan, state.task_ctx()).await?;
+            assert_eq!(catalog.mutations.load(Ordering::SeqCst), 1);
+            assert_eq!(
+                batches.iter().map(|batch| batch.num_rows()).sum::<usize>(),
+                2
+            );
+            Ok(())
+        })
     }
 
     #[tokio::test]

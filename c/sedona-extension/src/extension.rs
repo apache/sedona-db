@@ -430,10 +430,6 @@ pub struct SedonaCExecutionPlan {
         ) -> c_int,
     >,
 
-    /// Clone or transform this plan.
-    ///
-    /// The `"clone"` property returns a separately owned handle that shares the
-    /// same underlying immutable execution plan.
     pub with_property: Option<
         unsafe extern "C" fn(
             self_: *const SedonaCExecutionPlan,
@@ -527,6 +523,8 @@ pub struct SedonaCCatalogProviderList {
     /// A NULL input means no plan. Otherwise the callback takes ownership by
     /// moving the plan and clearing its release callback. The output is required
     /// on success and performs the mutation only when executed.
+    /// For a managed table with a query input, the input and returned writer
+    /// must be ready to execute at their respective handoffs.
     pub create_object: Option<
         unsafe extern "C" fn(
             self_: *const Self,
@@ -618,10 +616,12 @@ pub struct SedonaCTableProvider {
     ///
     /// The args parameter contains `{"insert_op":"Append"}` (or `Overwrite` /
     /// `Replace`). The exec_plans field must contain exactly one plan providing
-    /// rows to insert. The input plan is borrowed for the duration of the callback.
+    /// rows to insert. The plan must be ready to execute when the callback is
+    /// invoked, with any required physical optimization already applied.
+    /// The input plan is borrowed for the duration of the callback.
     /// Implementations that retain it must use `with_property("clone")` and own
     /// the returned execution plan handle.
-    /// Returns an execution plan that performs the insert.
+    /// Returns a plan ready to execute the insert.
     pub insert: Option<
         unsafe extern "C" fn(
             self_: *const SedonaCTableProvider,

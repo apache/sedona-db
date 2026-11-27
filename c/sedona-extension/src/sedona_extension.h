@@ -573,10 +573,12 @@ struct SedonaCTableProvider {
   ///
   /// The args parameter contains {"insert_op":"Append"} (or "Overwrite" /
   /// "Replace"). The exec_plans field must contain exactly one plan providing
-  /// rows to insert. The input plan is borrowed for the duration of the callback.
+  /// rows to insert. The plan must be ready to execute when the callback is
+  /// invoked, with any required physical optimization already applied.
+  /// The input plan is borrowed for the duration of the callback.
   /// Implementations that retain it must use with_property(input, "clone", ...)
   /// and own the returned execution plan handle.
-  /// Returns an execution plan that performs the insert.
+  /// Returns a plan ready to execute the insert.
   int (*insert)(const struct SedonaCTableProvider* self,
                 struct SedonaCExecutionPlanArgs* args, struct SedonaCExecutionPlan* out,
                 struct SedonaCError* err);
@@ -644,6 +646,8 @@ struct SedonaCCatalogProviderList {
   /// (including existence/conflict checks) until execution. Return ENOTSUP if this
   /// catalog list cannot create the object: for a new top-level catalog (CREATE
   /// DATABASE), SedonaDB then offers it to the next registered catalog list.
+  /// For a managed table with a query input, the input and returned writer
+  /// must be ready to execute at their respective handoffs.
   int (*create_object)(const struct SedonaCCatalogProviderList* self, const char* args,
                        struct SedonaCExecutionPlan* input,
                        struct SedonaCExecutionPlan* out, struct SedonaCError* err);

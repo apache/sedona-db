@@ -35,7 +35,6 @@ protobuf = ["datafusion-proto", "prost"]
 arrow-array = { workspace = true, features = ["ffi"]}
 arrow-schema = { workspace = true, features = ["ffi"]}
 async-trait = { workspace = true }
-datafusion = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-catalog = { workspace = true }
 datafusion-execution = { workspace = true }
@@ -43,6 +42,7 @@ datafusion-expr = { workspace = true }
 datafusion-physical-expr = { workspace = true }
 datafusion-physical-plan = { workspace = true }
 datafusion-proto = { workspace = true, optional = true }
+datafusion-session = { workspace = true }
 prost = { workspace = true, optional = true }
 futures = { workspace = true }
 libc = "0.2.178"
