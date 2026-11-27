@@ -16,6 +16,7 @@
 // under the License.
 
 pub mod ensure_loaded;
+mod global_order;
 mod logical_plan_node;
 pub mod optimizer;
 pub mod probe_shuffle_exec;

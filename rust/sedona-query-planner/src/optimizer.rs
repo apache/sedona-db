@@ -17,6 +17,7 @@
 use std::sync::Arc;
 
 use crate::ensure_loaded::EnsureLoadedOptimizerRule;
+use crate::global_order::PreserveGlobalOrder;
 use crate::logical_plan_node::SpatialJoinPlanNode;
 use crate::push_down_leaf_projections::PushDownLeafProjections;
 use crate::reconcile_union_crs::ReconcileUnionCrs;
@@ -24,6 +25,7 @@ use crate::spatial_expr_utils::{
     KNNJoinQuerySide, collect_spatial_predicate_names, find_knn_query_side,
 };
 use datafusion::execution::session_state::SessionStateBuilder;
+use datafusion::physical_optimizer::optimizer::PhysicalOptimizer;
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::tree_node::{Transformed, TransformedResult};
 use datafusion_common::{NullEquality, Result, plan_err};
@@ -76,9 +78,12 @@ pub fn register_sedona_analyzer_rules(
         .with_analyzer_rule(Arc::new(ReconcileUnionCrs)))
 }
 
-/// Replace DataFusion 54.1's leaf projection pushdown rule with the version
-/// containing the `Unnest` barrier added by DataFusion PR #22620.
-/// Tracked by <https://github.com/apache/sedona-db/issues/1232>.
+/// Register compatibility fixes for DataFusion optimizer rules.
+///
+/// The leaf projection rule includes the `Unnest` barrier from DataFusion PR
+/// #22620, tracked by <https://github.com/apache/sedona-db/issues/1232>.
+/// The output requirement rule preserves global order above projections,
+/// tracked by <https://github.com/apache/sedona-db/issues/1532>.
 pub fn register_vendored_optimizer_rules(
     mut session_state_builder: SessionStateBuilder,
 ) -> Result<SessionStateBuilder> {
@@ -96,6 +101,25 @@ pub fn register_vendored_optimizer_rules(
         })?;
 
     optimizer.rules[rule_pos] = Arc::new(PushDownLeafProjections::new());
+
+    let physical_optimizer = session_state_builder
+        .physical_optimizers()
+        .get_or_insert_with(PhysicalOptimizer::new);
+    let rule_pos = physical_optimizer
+        .rules
+        .iter()
+        .position(|rule| {
+            matches!(
+                rule.name(),
+                "OutputRequirements" | "sedona.preserve_global_order"
+            )
+        })
+        .ok_or_else(|| {
+            sedona_internal_datafusion_err!(
+                "OutputRequirements rule not found in default physical optimizer rules"
+            )
+        })?;
+    physical_optimizer.rules[rule_pos] = Arc::new(PreserveGlobalOrder);
     Ok(session_state_builder)
 }
 
