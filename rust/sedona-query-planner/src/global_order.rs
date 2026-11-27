@@ -25,6 +25,7 @@ use datafusion_common::Result;
 use datafusion_common::config::ConfigOptions;
 use datafusion_physical_expr::{Distribution, LexOrdering, OrderingRequirements};
 use datafusion_physical_plan::ExecutionPlan;
+use datafusion_physical_plan::limit::{GlobalLimitExec, LocalLimitExec};
 use datafusion_physical_plan::projection::{ProjectionExec, update_ordering};
 use datafusion_physical_plan::sorts::sort::SortExec;
 use datafusion_physical_plan::sorts::sort_preserving_merge::SortPreservingMergeExec;
@@ -48,6 +49,10 @@ impl PhysicalOptimizerRule for PreserveGlobalOrder {
         if plan.downcast_ref::<OutputRequirementExec>().is_none()
             && plan.downcast_ref::<SortExec>().is_none()
             && plan.downcast_ref::<SortPreservingMergeExec>().is_none()
+            // Leave requirements below limits so their skip/fetch is not
+            // applied again when enforcing the promoted ordering.
+            && plan.downcast_ref::<GlobalLimitExec>().is_none()
+            && plan.downcast_ref::<LocalLimitExec>().is_none()
             && let Some(ordering) = projected_global_order(&plan)?
         {
             return Ok(Arc::new(OutputRequirementExec::new(
@@ -184,14 +189,46 @@ mod tests {
     #[tokio::test]
     async fn sorted_projection_preserves_limit_and_offset() {
         let ctx = context();
-        let projected = numbers(&ctx)
-            .sort(vec![col("a").sort(false, false)])
-            .unwrap()
-            .limit(5, Some(10))
-            .unwrap()
-            .select(vec![col("a"), (col("a") + lit(1)).alias("b")])
+        for (skip, fetch) in [(5, 10), (9000, 200)] {
+            let projected = numbers(&ctx)
+                .sort(vec![col("a").sort(false, false)])
+                .unwrap()
+                .limit(skip, Some(fetch))
+                .unwrap()
+                .select(vec![col("a"), (col("a") + lit(1)).alias("b")])
+                .unwrap();
+            let expected = (0..10000).rev().skip(skip).take(fetch).collect();
+            assert_values(projected, &ctx, 0, expected).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn sorted_limit_preserves_offset_and_fetch() {
+        let ctx = context();
+        let sorted = numbers(&ctx)
+            .sort(vec![col("a").sort(true, false)])
             .unwrap();
-        assert_values(projected, &ctx, 0, (9985..9995).rev().collect()).await;
+        for project in [false, true] {
+            let input = if project {
+                sorted
+                    .clone()
+                    .select(vec![col("a"), (col("a") + lit(1)).alias("b")])
+                    .unwrap()
+            } else {
+                sorted.clone()
+            };
+            for (skip, fetch) in [
+                (5, Some(10)),
+                (9000, Some(2)),
+                (9000, None),
+                (10000, Some(2)),
+                (9000, Some(0)),
+            ] {
+                let limited = input.clone().limit(skip, fetch).unwrap();
+                let expected = (0..10000).skip(skip).take(fetch.unwrap_or(10000)).collect();
+                assert_values(limited, &ctx, 0, expected).await;
+            }
+        }
     }
 
     #[tokio::test]
