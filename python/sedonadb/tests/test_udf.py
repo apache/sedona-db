@@ -112,6 +112,43 @@ def test_udf_types(con):
     )
 
 
+def test_udf_float64_input_accepts_integer_and_decimal(con):
+    # A kernel declaring exactly float64 is handed integer and decimal arguments
+    # (what a Spark Connect client sends for the literals 1 and 1.5) widened to
+    # float64, since no kernel matches them as given
+    @udf.arrow_udf(pa.float64(), [pa.float64()])
+    def twice(x, *, num_rows):
+        x = pa.array(x.to_array())
+        assert x.type == pa.float64()
+        return pa.compute.multiply(x, 2.0)
+
+    con.register(twice)
+    assert con.sql(
+        """
+        SELECT
+            twice(1.5) AS float64,
+            twice(CAST(1.5 AS DECIMAL(10, 2))) AS decimal128,
+            twice(1) AS int64,
+            twice(CAST(1 AS TINYINT)) AS int8
+        """
+    ).to_arrow_table().to_pylist() == [
+        {"float64": 3.0, "decimal128": 3.0, "int64": 2.0, "int8": 2.0}
+    ]
+
+    # Non-numeric arguments are not coerced and still report the type as given
+    with pytest.raises(Exception, match=r"twice\(utf8\): No kernel matching arguments"):
+        con.sql("SELECT twice('a')").to_arrow_table()
+
+    # The widening is an explicit cast in the plan: a column argument keeps it,
+    # and a literal argument is cast once when the plan is simplified
+    plan = con.sql("EXPLAIN SELECT twice(x) FROM (VALUES (1), (2)) AS t(x)").to_pandas()
+    plan_text = "\n".join(plan.iloc[:, 1].astype(str).tolist())
+    assert "twice(CAST(t.x AS Float64))" in plan_text, plan_text
+    plan = con.sql("EXPLAIN SELECT twice(CAST(1.5 AS DECIMAL(10, 2)))").to_pandas()
+    plan_text = "\n".join(plan.iloc[:, 1].astype(str).tolist())
+    assert "CAST" not in plan_text, plan_text
+
+
 def test_udf_any_input(con):
     udf_impl = udf.arrow_udf(pa.binary())(some_udf)
     assert udf_impl._name == "some_udf"

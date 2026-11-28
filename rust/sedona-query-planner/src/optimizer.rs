@@ -23,6 +23,7 @@ use crate::reconcile_union_crs::ReconcileUnionCrs;
 use crate::spatial_expr_utils::{
     KNNJoinQuerySide, collect_spatial_predicate_names, find_knn_query_side,
 };
+use crate::widen_numeric_args::WidenNumericArgs;
 use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::tree_node::{Transformed, TransformedResult};
@@ -67,13 +68,16 @@ fn reject_ordered_aggregate(expr: Expr) -> Result<Transformed<Expr>> {
     Ok(Transformed::no(expr))
 }
 
-/// Register Sedona-specific semantic validation rules.
+/// Register Sedona-specific analyzer rules: semantic validation, Union CRS
+/// reconciliation and the numeric argument widening described in
+/// [`crate::widen_numeric_args`].
 pub fn register_sedona_analyzer_rules(
     session_state_builder: SessionStateBuilder,
 ) -> Result<SessionStateBuilder> {
     Ok(session_state_builder
         .with_analyzer_rule(Arc::new(RejectOrderedAggregates))
-        .with_analyzer_rule(Arc::new(ReconcileUnionCrs)))
+        .with_analyzer_rule(Arc::new(ReconcileUnionCrs))
+        .with_analyzer_rule(Arc::new(WidenNumericArgs)))
 }
 
 /// Replace DataFusion 54.1's leaf projection pushdown rule with the version
