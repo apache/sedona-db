@@ -457,6 +457,16 @@ class(`InternalContext`) <- c(
   }
 }
 
+`InternalDataFrame_unnest` <- function(self) {
+  function(`columns`) {
+    .savvy_wrap_InternalDataFrame(.Call(
+      savvy_InternalDataFrame_unnest__impl,
+      `self`,
+      `columns`
+    ))
+  }
+}
+
 `InternalDataFrame_with_params` <- function(self) {
   function(`params_sexp`) {
     .savvy_wrap_InternalDataFrame(.Call(
@@ -489,6 +499,7 @@ class(`InternalContext`) <- c(
   e$`to_parquet` <- `InternalDataFrame_to_parquet`(ptr)
   e$`to_provider` <- `InternalDataFrame_to_provider`(ptr)
   e$`to_view` <- `InternalDataFrame_to_view`(ptr)
+  e$`unnest` <- `InternalDataFrame_unnest`(ptr)
   e$`with_params` <- `InternalDataFrame_with_params`(ptr)
 
   class(e) <- c(
