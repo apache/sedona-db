@@ -264,16 +264,31 @@ impl SedonaScalarUDF {
         }
     }
 
+    /// Resolve an overload using the same precedence and scalar arguments as
+    /// invocation. Returns `None` when no kernel applies; errors from matching
+    /// kernels are propagated so callers can distinguish invalid arguments
+    /// from an unsupported type.
+    pub fn resolve_kernel(
+        &self,
+        args: &[SedonaType],
+        scalars: &[Option<&ScalarValue>],
+    ) -> Result<Option<(&dyn SedonaScalarKernel, SedonaType)>> {
+        // Resolve kernels in reverse so that more recently added ones are resolved first
+        for kernel in self.kernels.iter().rev() {
+            if let Some(return_type) = kernel.return_type_from_args_and_scalars(args, scalars)? {
+                return Ok(Some((kernel.as_ref(), return_type)));
+            }
+        }
+        Ok(None)
+    }
+
     fn return_type_impl(
         &self,
         args: &[SedonaType],
         scalars: &[Option<&ScalarValue>],
     ) -> Result<(&dyn SedonaScalarKernel, SedonaType)> {
-        // Resolve kernels in reverse so that more recently added ones are resolved first
-        for kernel in self.kernels.iter().rev() {
-            if let Some(return_type) = kernel.return_type_from_args_and_scalars(args, scalars)? {
-                return Ok((kernel.as_ref(), return_type));
-            }
+        if let Some(resolved) = self.resolve_kernel(args, scalars)? {
+            return Ok(resolved);
         }
 
         let args_display = args
@@ -396,6 +411,7 @@ mod tests {
         let udf = SedonaScalarUDF::new("empty", vec![], Volatility::Immutable);
         assert_eq!(udf.name(), "empty");
         assert_eq!(udf.coerce_types(&[])?, vec![]);
+        assert!(udf.resolve_kernel(&[], &[])?.is_none());
 
         let tester = ScalarUdfTester::new(udf.into(), vec![]);
 
@@ -469,6 +485,16 @@ mod tests {
             vec![SedonaType::Arrow(DataType::Boolean)],
         );
         tester.assert_return_type(DataType::Utf8);
+        let (_, resolved_type) = udf
+            .resolve_kernel(&[SedonaType::Arrow(DataType::Boolean)], &[None])
+            .unwrap()
+            .unwrap();
+        assert_eq!(resolved_type, SedonaType::Arrow(DataType::Utf8));
+        assert!(
+            udf.resolve_kernel(&[SedonaType::Arrow(DataType::Int32)], &[None])
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -524,7 +550,23 @@ mod tests {
 
     #[test]
     fn return_type_from_scalar_arg() {
-        let udf: ScalarUDF = SedonaScalarUDF::from_impl("simple_cast", SimpleCast {}).into();
+        let udf = SedonaScalarUDF::from_impl("simple_cast", SimpleCast {});
+        let arg_types = [
+            SedonaType::Arrow(DataType::Int32),
+            SedonaType::Arrow(DataType::Utf8),
+        ];
+        let target = ScalarValue::Utf8(Some("float32".to_string()));
+        let (_, resolved_type) = udf
+            .resolve_kernel(&arg_types, &[None, Some(&target)])
+            .unwrap()
+            .unwrap();
+        assert_eq!(resolved_type, SedonaType::Arrow(DataType::Float32));
+        let invalid_target = ScalarValue::Utf8(Some("invalid".to_string()));
+        assert!(
+            udf.resolve_kernel(&arg_types, &[None, Some(&invalid_target)])
+                .is_err()
+        );
+        let udf: ScalarUDF = udf.into();
         let call = udf.call(vec![lit(10), lit("float32")]);
         let schema = DFSchema::empty();
         let call_field = call.to_field(&schema).unwrap();

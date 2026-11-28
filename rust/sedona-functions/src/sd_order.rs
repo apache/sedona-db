@@ -15,58 +15,24 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use datafusion_common::Result;
-use datafusion_expr::{ColumnarValue, Volatility};
-use sedona_expr::scalar_udf::{SedonaScalarKernel, SedonaScalarUDF};
-use sedona_schema::datatypes::SedonaType;
-use std::{fmt::Debug, sync::Arc};
+use datafusion_expr::Volatility;
+use sedona_expr::scalar_udf::SedonaScalarUDF;
 
 /// SD_Order() scalar UDF implementation
 ///
-/// This function is invoked to obtain a proxy array whose order may be used
-/// to sort based on the value. The default implementation returns the value
-/// and a utility is provided to order geometry and/or geographies based on
-/// the first coordinate. More sophisticated sorting (e.g., XZ2) may be added
-/// in the future.
+/// Registered kernels produce native ordering keys for supported input types.
+/// The logical optimizer inserts this call only when an overload matches.
+/// Geometry/geography ordering is registered when S2 is enabled; other types
+/// can opt in by registering their own kernels.
 pub fn sd_order_udf() -> SedonaScalarUDF {
-    SedonaScalarUDF::new(
-        "sd_order",
-        vec![Arc::new(SDOrderDefault {})],
-        Volatility::Immutable,
-    )
-}
-
-/// Default implementation that returns its input (i.e., by default, just
-/// do whatever DataFusion would have done with the value)
-#[derive(Debug)]
-struct SDOrderDefault {}
-
-impl SedonaScalarKernel for SDOrderDefault {
-    fn return_type(&self, args: &[SedonaType]) -> Result<Option<SedonaType>> {
-        if args.len() != 1 {
-            return Ok(None);
-        }
-
-        Ok(Some(args[0].clone()))
-    }
-
-    fn invoke_batch(
-        &self,
-        _arg_types: &[SedonaType],
-        args: &[ColumnarValue],
-    ) -> Result<ColumnarValue> {
-        Ok(args[0].clone())
-    }
+    SedonaScalarUDF::new("sd_order", vec![], Volatility::Immutable)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::{ArrayRef, create_array};
     use arrow_schema::DataType;
-    use datafusion_common::ScalarValue;
     use datafusion_expr::ScalarUDF;
-    use rstest::rstest;
     use sedona_schema::datatypes::SedonaType;
     use sedona_testing::testers::ScalarUdfTester;
 
@@ -76,28 +42,15 @@ mod tests {
         assert_eq!(udf.name(), "sd_order");
     }
 
-    #[rstest]
-    fn order_not_geometry(
-        #[values(
-            SedonaType::Arrow(DataType::Utf8),
-            SedonaType::Arrow(DataType::LargeUtf8)
-        )]
-        sedona_type: SedonaType,
-    ) {
-        let udf = sd_order_udf();
-        let tester = ScalarUdfTester::new(udf.clone().into(), vec![sedona_type.clone()]);
-        tester.assert_return_type(sedona_type.clone());
-
-        tester.assert_scalar_result_equals("foofy", "foofy");
-        tester.assert_scalar_result_equals(ScalarValue::Null, ScalarValue::Null);
-
-        let array: ArrayRef = create_array!(Utf8, [Some("foofy"), None, Some("other foofy")]);
-        let array_casted = ColumnarValue::Array(array)
-            .cast_to(sedona_type.storage_type(), None)
-            .unwrap()
-            .to_array(3)
-            .unwrap();
-        let result = tester.invoke_array(array_casted.clone()).unwrap();
-        assert_eq!(&array_casted, &result);
+    #[test]
+    fn no_identity_fallback() {
+        let tester = ScalarUdfTester::new(
+            sd_order_udf().into(),
+            vec![SedonaType::Arrow(DataType::Utf8)],
+        );
+        assert_eq!(
+            tester.return_type().unwrap_err().message(),
+            "sd_order(utf8): No kernel matching arguments"
+        );
     }
 }
