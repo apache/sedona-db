@@ -45,7 +45,10 @@ use sedona_raster::array::RasterRefImpl;
 use sedona_raster::builder::RasterBuilder;
 use sedona_raster::error::RasterResultExt;
 use sedona_raster::geo_transform::{GeoTransform, GeoTransformEx};
-use sedona_raster::traits::{RasterRef, is_spatial_dim_pair, nodata_f64_to_bytes};
+use sedona_raster::traits::{
+    BandOverrides, NdBuffer, Override, RasterRef, is_spatial_dim_pair, nodata_f64_to_bytes,
+};
+use sedona_raster::view_entries::ViewEntries;
 use sedona_raster_functions::RasterExecutor;
 use sedona_raster_functions::rs_ensure_loaded::NEEDS_PIXELS_METADATA_KEY;
 
@@ -68,6 +71,7 @@ use sedona_schema::matchers::{ArgMatcher, TypeMatcher};
 pub fn rs_tile_udf() -> SedonaScalarUDF {
     let kernel = |band_arg: BandArg, arg_count: usize| {
         Arc::new(RsTile {
+            lazy: false,
             band_arg,
             arg_count,
         })
@@ -86,10 +90,28 @@ pub fn rs_tile_udf() -> SedonaScalarUDF {
         ],
         Volatility::Immutable,
     )
-    // Reads band pixels, so the planner materializes OutDb rasters via
-    // RS_EnsureLoaded before this kernel runs. The output is a list of in-db
-    // tiles (not a top-level raster), so RETURNS_BYTES does not apply.
+    // RS_Tile copies pixels; RS_LazyTile is the metadata-only alternative.
     .with_metadata(NEEDS_PIXELS_METADATA_KEY, "true")
+}
+
+/// Split a raster into unpadded tiles, preserving OutDb bands as lazy views.
+pub fn rs_lazy_tile_udf() -> SedonaScalarUDF {
+    SedonaScalarUDF::new(
+        "rs_lazytile",
+        vec![
+            Arc::new(RsTile {
+                lazy: true,
+                band_arg: BandArg::All,
+                arg_count: 3,
+            }),
+            Arc::new(RsTile {
+                lazy: true,
+                band_arg: BandArg::Array,
+                arg_count: 4,
+            }),
+        ],
+        Volatility::Immutable,
+    )
 }
 
 /// Which band-selector argument a signature carries after the raster.
@@ -116,6 +138,7 @@ struct ArgLayout {
 /// The optional arguments for one tiling call, resolved from the positional
 /// arguments for a single row.
 struct TileParams<'a> {
+    lazy: bool,
     /// 1-based band indices to include in each tile, in the given order.
     /// `None` includes every band.
     bands: Option<&'a [i64]>,
@@ -132,6 +155,7 @@ struct TileParams<'a> {
 /// Kernel implementation for RS_Tile.
 #[derive(Debug)]
 struct RsTile {
+    lazy: bool,
     /// The band-selector shape this kernel matches.
     band_arg: BandArg,
     /// Number of arguments in the matched signature.
@@ -184,6 +208,52 @@ impl SedonaScalarKernel for RsTile {
         _return_type: &SedonaType,
         _num_rows: usize,
         _config_options: Option<&ConfigOptions>,
+    ) -> Result<ColumnarValue> {
+        self.invoke_tiles(arg_types, args, None)
+    }
+}
+
+/// A bounded run of tiles from one input row. The scalar kernel uses the same
+/// implementation without a cursor; streaming execution resumes at `next`.
+#[derive(Debug)]
+pub(crate) struct TileCursor {
+    pub next: usize,
+    pub total: usize,
+    pub max_tiles: usize,
+    pub max_bytes: u64,
+}
+
+pub(crate) fn tile_batch(
+    arg_types: &[SedonaType],
+    args: &[ColumnarValue],
+    cursor: &mut TileCursor,
+) -> Result<ColumnarValue> {
+    let band_arg = if matches!(
+        arg_types[1].storage_type(),
+        DataType::List(_)
+            | DataType::LargeList(_)
+            | DataType::ListView(_)
+            | DataType::LargeListView(_)
+            | DataType::FixedSizeList(_, _)
+    ) {
+        BandArg::Array
+    } else {
+        BandArg::All
+    };
+    RsTile {
+        lazy: true,
+        band_arg,
+        arg_count: args.len(),
+    }
+    .invoke_tiles(arg_types, args, Some(cursor))
+}
+
+impl RsTile {
+    fn invoke_tiles(
+        &self,
+        arg_types: &[SedonaType],
+        args: &[ColumnarValue],
+        mut cursor: Option<&mut TileCursor>,
     ) -> Result<ColumnarValue> {
         let num_iterations = RasterExecutor::num_iterations_over(args);
         let layout = self.layout();
@@ -299,6 +369,7 @@ impl SedonaScalarKernel for RsTile {
             };
 
             let params = TileParams {
+                lazy: self.lazy,
                 bands,
                 pad_with_nodata,
                 nodata: (!nodata_array.is_null(i)).then(|| nodata_array.value(i)),
@@ -306,12 +377,12 @@ impl SedonaScalarKernel for RsTile {
 
             let num_tiles = explode_raster_tiles(
                 raster,
-                tile_width,
-                tile_height,
+                (tile_width, tile_height),
                 &params,
                 &mut rast_builder,
                 &mut x_builder,
                 &mut y_builder,
+                cursor.as_deref_mut(),
             )?;
 
             valid_list_items.append_non_null();
@@ -375,7 +446,8 @@ fn tile_list_type() -> Result<DataType> {
 
 /// Split one raster into a grid of tiles, appending each tile's grid position to
 /// `x_builder`/`y_builder` and its raster to `rast_builder`. Returns the number
-/// of tiles produced (`num_tile_x * num_tile_y`).
+/// of tiles appended. A cursor restricts the work to the next bounded run;
+/// without one, the whole grid is appended.
 ///
 /// Tiles are emitted row-major, matching Spark: `num_tile_x =
 /// ceil(width / tile_width)`, `num_tile_y = ceil(height / tile_height)`, and the
@@ -383,12 +455,12 @@ fn tile_list_type() -> Result<DataType> {
 /// `[x * tile_width, ..)` x `[y * tile_height, ..)`.
 fn explode_raster_tiles(
     raster: &RasterRefImpl<'_>,
-    tile_width: i64,
-    tile_height: i64,
+    (tile_width, tile_height): (i64, i64),
     params: &TileParams<'_>,
     rast_builder: &mut RasterBuilder,
     x_builder: &mut Int32Builder,
     y_builder: &mut Int32Builder,
+    cursor: Option<&mut TileCursor>,
 ) -> Result<usize> {
     if tile_width < 1 || tile_height < 1 {
         return exec_err!(
@@ -426,24 +498,65 @@ fn explode_raster_tiles(
 
     let band_indices = resolve_band_indices(params.bands, raster.num_bands())?;
 
-    for tile_y in 0..num_tile_y {
-        for tile_x in 0..num_tile_x {
-            let window = TileWindow::new(
-                tile_x,
-                tile_y,
-                tile_w,
-                tile_h,
-                width,
-                height,
-                params.pad_with_nodata,
+    let (start, end) = if let Some(cursor) = cursor {
+        cursor.total = num_tiles;
+        // Bound the copied pixels as well as the number of list items. Use the
+        // largest tile's size (including padding and all selected N-D planes).
+        // A tile larger than the budget still makes progress on its own.
+        let mut tile_bytes = 0u64;
+        for &idx in &band_indices {
+            let band = raster.band(idx - 1).context("RS_Tile")?;
+            let shape = band.shape();
+            let planes = shape[..shape.len().saturating_sub(2)]
+                .iter()
+                .fold(1u64, |n, &d| n.saturating_mul(d as u64));
+            let w = if params.pad_with_nodata {
+                tile_w
+            } else {
+                tile_w.min(width)
+            };
+            let h = if params.pad_with_nodata {
+                tile_h
+            } else {
+                tile_h.min(height)
+            };
+            tile_bytes = tile_bytes.saturating_add(
+                planes
+                    .saturating_mul(w as u64)
+                    .saturating_mul(h as u64)
+                    .saturating_mul(band.data_type().byte_size() as u64),
             );
-            append_tile(raster, &band_indices, &window, params, rast_builder)?;
-            x_builder.append_value(tile_x as i32);
-            y_builder.append_value(tile_y as i32);
         }
+        let by_bytes = usize::try_from(cursor.max_bytes / tile_bytes.max(1))
+            .unwrap_or(usize::MAX)
+            .max(1);
+        let count = cursor.max_tiles.max(1).min(by_bytes);
+        let start = cursor.next;
+        let end = start.saturating_add(count).min(num_tiles);
+        cursor.next = end;
+        (start, end)
+    } else {
+        (0, num_tiles)
+    };
+
+    for index in start..end {
+        let tile_y = index / num_tile_x;
+        let tile_x = index % num_tile_x;
+        let window = TileWindow::new(
+            tile_x,
+            tile_y,
+            tile_w,
+            tile_h,
+            width,
+            height,
+            params.pad_with_nodata,
+        );
+        append_tile(raster, &band_indices, &window, params, rast_builder)?;
+        x_builder.append_value(tile_x as i32);
+        y_builder.append_value(tile_y as i32);
     }
 
-    Ok(num_tiles)
+    Ok(end - start)
 }
 
 /// The pixel window one tile copies from the source, plus the tile's output
@@ -569,7 +682,7 @@ fn append_tile(
     Ok(())
 }
 
-/// Copy one band's tile window and append it to `rast_builder`.
+/// Append an OutDb window without reading pixels, or copy an InDb/padded tile.
 fn append_tile_band(
     raster: &RasterRefImpl<'_>,
     band_idx: usize,
@@ -610,6 +723,29 @@ fn append_tile_band(
             "RS_Tile: band {band_idx} spatial extent {plane_w}x{plane_h} does not match the raster {width}x{height}"
         );
     }
+    if params.lazy && !band.is_indb() && !window.needs_padding() {
+        // Preserve source coordinates and location. Composing in the visible
+        // coordinate system is essential when retiling an existing tile/view.
+        let mut crop = ViewEntries::identity_for_shape(&shape).as_slice().to_vec();
+        crop[ndim - 2].start = window.y0 as i64;
+        crop[ndim - 2].steps = window.rect_h as i64;
+        crop[ndim - 1].start = window.x0 as i64;
+        crop[ndim - 1].steps = window.rect_w as i64;
+        let view = band
+            .view()
+            .compose(&crop)
+            .context("RS_Tile: invalid tile view")?;
+        band.copy_into(
+            rast_builder,
+            BandOverrides {
+                view: Override::Set(&view),
+                ..Default::default()
+            },
+        )
+        .context("RS_Tile: failed to append OutDb tile")?;
+        return Ok(());
+    }
+
     let n_planes: usize = shape[..ndim - 2].iter().map(|&d| d as usize).product();
 
     // Borrow the source band bytes (read-only; the copy below writes only into
@@ -618,10 +754,14 @@ fn append_tile_band(
         .nd_buffer()
         .with_context(|| format!("RS_Tile: failed to read band {band_idx}"))?;
     let source = nd_buffer
-        .as_contiguous()
-        .with_context(|| format!("RS_Tile: band {band_idx} is not contiguous"))?;
+        .is_contiguous()
+        .then(|| nd_buffer.as_contiguous())
+        .transpose()
+        .context("RS_Tile: invalid source buffer")?;
     let in_plane_bytes = width * height * byte_size;
-    if source.len() != n_planes * in_plane_bytes {
+    if let Some(source) = source
+        && source.len() != n_planes * in_plane_bytes
+    {
         return exec_err!(
             "RS_Tile: band {band_idx} byte length {} does not match {n_planes} planes of {width}x{height}",
             source.len()
@@ -672,17 +812,62 @@ fn append_tile_band(
             nodata: tile_nodata.as_deref(),
         },
         |plane, out| {
-            let src_plane = &source[plane * in_plane_bytes..(plane + 1) * in_plane_bytes];
-            copy_tile_window(
-                src_plane,
-                width,
-                window,
-                byte_size,
-                pad_fill.as_deref(),
-                out,
-            )
+            if let Some(source) = source {
+                let src_plane = &source[plane * in_plane_bytes..(plane + 1) * in_plane_bytes];
+                copy_tile_window(
+                    src_plane,
+                    width,
+                    window,
+                    byte_size,
+                    pad_fill.as_deref(),
+                    out,
+                )
+            } else {
+                copy_strided_tile_window(&nd_buffer, plane, window, pad_fill.as_deref(), out)
+            }
         },
     )
+}
+
+/// A loaded OutDb crop may still share the full source buffer (e.g. a cache
+/// hit). Copy directly from its strides rather than compacting the full input.
+fn copy_strided_tile_window(
+    source: &NdBuffer<'_>,
+    mut plane: usize,
+    window: &TileWindow,
+    pad_fill: Option<&[u8]>,
+    out: &mut Vec<u8>,
+) -> Result<()> {
+    let ndim = source.shape.len();
+    let byte_size = source.data_type.byte_size();
+    let mut base = i128::from(source.offset);
+    for axis in (0..ndim - 2).rev() {
+        let size = source.shape[axis] as usize;
+        base += (plane % size) as i128 * i128::from(source.strides[axis]);
+        plane /= size;
+    }
+    for y in 0..window.out_h {
+        for x in 0..window.out_w {
+            if y >= window.rect_h || x >= window.rect_w {
+                let fill = pad_fill
+                    .ok_or_else(|| exec_datafusion_err!("RS_Tile: missing padding fill"))?;
+                out.extend_from_slice(fill);
+                continue;
+            }
+            let offset = base
+                + (window.y0 + y) as i128 * i128::from(source.strides[ndim - 2])
+                + (window.x0 + x) as i128 * i128::from(source.strides[ndim - 1]);
+            let bytes = usize::try_from(offset)
+                .ok()
+                .and_then(|start| start.checked_add(byte_size).map(|end| (start, end)))
+                .and_then(|(start, end)| source.buffer.get(start..end))
+                .ok_or_else(|| {
+                    exec_datafusion_err!("RS_Tile: source pixel is outside the buffer")
+                })?;
+            out.extend_from_slice(bytes);
+        }
+    }
+    Ok(())
 }
 
 /// Copy one source plane's tile window into `out`, padding out-of-bounds pixels
@@ -785,6 +970,7 @@ mod tests {
     /// The optional tiling parameters for the core-tiling helper tests.
     fn params(bands: Option<&[i64]>, pad_with_nodata: bool, nodata: Option<f64>) -> TileParams<'_> {
         TileParams {
+            lazy: true,
             bands,
             pad_with_nodata,
             nodata,
@@ -861,12 +1047,12 @@ mod tests {
         let mut rast_builder = RasterBuilder::new(4);
         let num_tiles = explode_raster_tiles(
             &raster,
-            tile_width,
-            tile_height,
+            (tile_width, tile_height),
             &tile_params,
             &mut rast_builder,
             &mut x_builder,
             &mut y_builder,
+            None,
         )
         .unwrap();
 
@@ -877,9 +1063,83 @@ mod tests {
         (positions, tiles)
     }
 
+    #[tokio::test]
+    async fn outdb_tiles_read_only_their_gdal_windows() {
+        use crate::gdal_common::with_gdal;
+        use sedona_gdal::raster::types::Buffer as GdalBuffer;
+        use sedona_raster::raster_loader::{AsyncRasterLoader, RasterLoadRequest};
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("tiles.tif");
+        let path = path.to_str().unwrap();
+        with_gdal(|gdal| {
+            let driver = gdal.get_driver_by_name("GTiff").unwrap();
+            let dataset = driver.create_with_band_type::<u8>(path, 5, 3, 1).unwrap();
+            dataset
+                .rasterband(1)
+                .unwrap()
+                .write(
+                    (0, 0),
+                    (5, 3),
+                    &mut GdalBuffer::new((5, 3), (1..=15u8).collect()),
+                )
+                .unwrap();
+            Ok(())
+        })
+        .unwrap();
+        let source = source_5x3().outdb(&format!("{path}#band=1"), Some("gdal"));
+        let (_, tiles) = explode(&source, 2, 2, params(None, false, None));
+        let rasters = RasterStructArray::try_new(as_struct_array(&tiles).unwrap()).unwrap();
+        let expected: &[&[u8]] = &[
+            &[1, 2, 6, 7],
+            &[3, 4, 8, 9],
+            &[5, 10],
+            &[11, 12],
+            &[13, 14],
+            &[15],
+        ];
+        for (i, expected) in expected.iter().enumerate() {
+            let tile = rasters.get(i).unwrap();
+            let band = tile.band(0).unwrap();
+            assert!(!band.is_indb());
+            let dims = band.dim_names();
+            let request = RasterLoadRequest {
+                uri: band.outdb_uri().unwrap(),
+                dim_names: &dims,
+                source_shape: band.raw_source_shape(),
+                view: band.view(),
+                data_type: band.data_type(),
+            };
+            let loaded = crate::GdalLoader::new().load(&[&request]).await.unwrap();
+            assert_eq!(loaded[0].bytes.as_slice(), *expected);
+            assert_eq!(loaded[0].source_shape, band.shape());
+            assert!(loaded[0].view.is_identity(band.shape()));
+        }
+    }
+
+    #[test]
+    fn mixed_storage_preserves_outdb_views_and_copies_indb_pixels() {
+        let source = source_5x3()
+            .outdb("missing://raster#band=1", Some("test"))
+            .band_values(&(1..=15u8).collect::<Vec<_>>());
+        let (_, tiles) = explode(&source, 2, 2, params(Some(&[2, 1]), false, None));
+        let rasters = RasterStructArray::try_new(as_struct_array(&tiles).unwrap()).unwrap();
+        let tile = rasters.get(1).unwrap();
+        let first = tile.band(0).unwrap();
+        assert!(first.is_indb());
+        assert_eq!(
+            first.nd_buffer().unwrap().as_contiguous().unwrap(),
+            &[3, 4, 8, 9]
+        );
+        let second = tile.band(1).unwrap();
+        assert!(!second.is_indb());
+        assert_eq!(second.outdb_uri(), Some("missing://raster#band=1"));
+        assert_eq!(second.view().as_slice()[1].start, 2);
+    }
+
     #[test]
     fn return_type_is_list_of_tile_structs() {
         let kernel = RsTile {
+            lazy: false,
             band_arg: BandArg::All,
             arg_count: 3,
         };
@@ -1123,6 +1383,7 @@ mod tests {
         // one NULL) with scalar tile sizes. The output is a List row per input:
         // 6 tiles for row 0, a NULL list for row 1.
         let kernel = RsTile {
+            lazy: false,
             band_arg: BandArg::All,
             arg_count: 3,
         };
@@ -1203,6 +1464,7 @@ mod tests {
         ))));
         let matches = |band_arg: BandArg, arg_count: usize, args: &[SedonaType]| {
             RsTile {
+                lazy: false,
                 band_arg,
                 arg_count,
             }
@@ -1386,6 +1648,7 @@ mod tests {
         // propagates to a NULL list row rather than erroring on the cast or the
         // offset lookup.
         let kernel = RsTile {
+            lazy: false,
             band_arg: BandArg::Array,
             arg_count: 4,
         };
@@ -1434,12 +1697,12 @@ mod tests {
         let raster = rasters.get(0).unwrap();
         explode_raster_tiles(
             &raster,
-            tile_width,
-            tile_height,
+            (tile_width, tile_height),
             &tile_params,
             &mut RasterBuilder::new(1),
             &mut Int32Builder::new(),
             &mut Int32Builder::new(),
+            None,
         )
         .unwrap_err()
         .to_string()

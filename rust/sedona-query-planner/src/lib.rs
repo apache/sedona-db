@@ -26,6 +26,7 @@ pub mod push_down_leaf_projections;
 pub mod query_planner;
 pub mod raster_materialization;
 pub mod raster_source_spread;
+pub mod raster_tile;
 mod spatial_expr_utils;
 pub mod spatial_join_physical_planner;
 pub mod spatial_predicate;

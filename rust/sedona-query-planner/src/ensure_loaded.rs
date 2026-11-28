@@ -185,7 +185,6 @@ fn rewrite_expr_node(
     if !needs_bytes {
         return Ok(Transformed::no(expr));
     }
-
     // Structurally impossible: we matched `expr` as `Expr::ScalarFunction`
     // a few lines up. Surface it as an internal error rather than a panic
     // so a future refactor that breaks the invariant fails the query

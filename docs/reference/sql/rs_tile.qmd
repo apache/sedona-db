@@ -87,10 +87,9 @@ tile size with a nodata fill. When the band(s) have no nodata value,
 `no_data_value` supplies one.
 
 ::: callout-note
-`RS_Tile` **copies the raster**: every tile carries its own pixels, so the
-returned list materializes a full copy of the raster spread across the tiles and
-held in memory as one list value. A small tile size produces many tiles (a
-`1 x 1` tile size yields one tile per pixel).
+`RS_Tile` loads OutDb input and copies tile pixels. For lazy OutDb windows
+and streaming `UNNEST` execution, use [RS_LazyTile](rs_lazytile.qmd), which
+does not support padding.
 :::
 
 ## Examples
