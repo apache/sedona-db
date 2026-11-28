@@ -363,10 +363,8 @@ struct GdalRasterFileOpener {
 
 impl FileOpener for GdalRasterFileOpener {
     fn open(&self, file: PartitionedFile) -> Result<FileOpenFuture> {
-        let path = gdal_path_from_object_store_location(
-            &self.base_url,
-            file.object_meta.location.as_ref(),
-        )?;
+        let path =
+            gdal_path_from_object_store_location(&self.base_url, &file.object_meta.location)?;
         let tile = self.tile;
         let budget = self.budget.clone();
         let batch_size = self.batch_size;
@@ -431,8 +429,89 @@ mod tests {
         datasource::physical_plan::FileScanConfigBuilder,
         execution::{context::SessionConfig, object_store::ObjectStoreUrl},
     };
+    use object_store::path::Path as ObjectStorePath;
+    use sedona_gdal::raster::types::Buffer as GdalBuffer;
     use sedona_raster::raster_loader::{RasterLoaderConfig, RasterLoaderRegistry};
     use std::sync::RwLock;
+    use tempfile::TempDir;
+
+    fn write_test_geotiff(path: &std::path::Path) {
+        let path = path.to_string_lossy();
+        with_gdal(|gdal| {
+            let driver = gdal.get_driver_by_name("GTiff").unwrap();
+            let dataset = driver.create_with_band_type::<u8>(&path, 3, 2, 1).unwrap();
+            dataset
+                .set_geo_transform(&[0.0, 1.0, 0.0, 2.0, 0.0, -1.0])
+                .unwrap();
+            let band = dataset.rasterband(1).unwrap();
+            let mut buffer = GdalBuffer::new((3, 2), (0..6u8).collect::<Vec<_>>());
+            band.write((0, 0), (3, 2), &mut buffer).unwrap();
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn opens_local_raster_inside_directory_with_spaces() {
+        let temp_dir = TempDir::new().unwrap();
+        let raster_dir = temp_dir.path().join("folder with spaces");
+        std::fs::create_dir(&raster_dir).unwrap();
+        let raster_path = raster_dir.join("test raster.tiff");
+        write_test_geotiff(&raster_path);
+
+        let mut file = PartitionedFile::new("", std::fs::metadata(&raster_path).unwrap().len());
+        file.object_meta.location = ObjectStorePath::from_filesystem_path(&raster_path).unwrap();
+        let opener = GdalRasterFileOpener {
+            base_url: "file://".to_string(),
+            tile: false,
+            budget: RasterIoBudget::new(1),
+            batch_size: 1024,
+            file_projection: vec![0],
+        };
+
+        let mut stream = opener.open(file).unwrap().await.unwrap();
+        assert_eq!(stream.next().await.unwrap().unwrap().num_rows(), 1);
+    }
+
+    async fn assert_http_raster_opens(object_path: &str) {
+        use axum::Router;
+        use tower_http::services::ServeDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let raster_path = temp_dir.path().join(object_path);
+        std::fs::create_dir_all(raster_path.parent().unwrap()).unwrap();
+        write_test_geotiff(&raster_path);
+
+        let app = Router::new().fallback_service(ServeDir::new(temp_dir.path()));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://{}/", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let mut file = PartitionedFile::new("", std::fs::metadata(&raster_path).unwrap().len());
+        file.object_meta.location = ObjectStorePath::parse(object_path).unwrap();
+        let opener = GdalRasterFileOpener {
+            base_url,
+            tile: false,
+            budget: RasterIoBudget::new(1),
+            batch_size: 1024,
+            file_projection: vec![0],
+        };
+
+        let mut stream = opener.open(file).unwrap().await.unwrap();
+        assert_eq!(stream.next().await.unwrap().unwrap().num_rows(), 1);
+        server.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn opens_http_raster_with_spaces_and_url_delimiters() {
+        assert_http_raster_opens("folder with spaces/a#100%.tiff").await;
+    }
+
+    #[cfg(not(windows))]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn opens_http_raster_with_backslash_in_path_segment() {
+        assert_http_raster_opens("folder/a\\b.tiff").await;
+    }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn dropping_queued_header_opens_sends_no_http_requests() {
@@ -606,22 +685,51 @@ mod tests {
     }
 
     #[test]
-    fn object_store_paths_escape_remote_url_delimiters() {
+    fn object_store_http_paths_encode_each_decoded_segment() {
+        let location = ObjectStorePath::parse("folder with spaces/a#b?%\\c.tif").unwrap();
         assert_eq!(
-            gdal_path_from_object_store_location("http://host/", "a#b?.tif").unwrap(),
-            "http://host/a%23b%3F.tif"
+            gdal_path_from_object_store_location("http://host/base/", &location).unwrap(),
+            "http://host/base/folder%20with%20spaces/a%23b%3F%25%5Cc.tif"
         );
+
+        // `%20` is part of this object's literal key, not an already-escaped space.
+        let location = ObjectStorePath::parse("a%20b.tif").unwrap();
         assert_eq!(
-            gdal_path_from_object_store_location("s3://bucket", "dir/a b%.tif").unwrap(),
-            "s3://bucket/dir/a%20b%25.tif"
+            gdal_path_from_object_store_location("https://host", &location).unwrap(),
+            "https://host/a%2520b.tif"
         );
     }
 
     #[test]
-    fn object_store_paths_preserve_local_filesystem_handling() {
+    fn cloud_object_store_paths_preserve_literal_keys_for_vsi_drivers() {
+        let location = ObjectStorePath::parse("folder with spaces/a%20b#c\\d.tif").unwrap();
+        for (base_url, expected) in [
+            (
+                "s3://bucket",
+                "s3://bucket/folder with spaces/a%20b#c\\d.tif",
+            ),
+            (
+                "gs://bucket",
+                "gs://bucket/folder with spaces/a%20b#c\\d.tif",
+            ),
+            (
+                "az://container",
+                "az://container/folder with spaces/a%20b#c\\d.tif",
+            ),
+        ] {
+            assert_eq!(
+                gdal_path_from_object_store_location(base_url, &location).unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn object_store_paths_preserve_local_filesystem_spelling() {
+        let location = ObjectStorePath::parse("tmp/folder with spaces/a#b%.tif").unwrap();
         assert_eq!(
-            gdal_path_from_object_store_location("file://", "/tmp/a#b.tif").unwrap(),
-            "file:///tmp/a#b.tif"
+            gdal_path_from_object_store_location("file://", &location).unwrap(),
+            "file://tmp/folder with spaces/a#b%.tif"
         );
     }
 }
