@@ -449,7 +449,10 @@ struct SedonaCExecutionPlanArgs {
   const uint8_t* args;
   size_t args_len;
 
-  /// \brief Optional array of execution plans
+  /// \brief Optional array of borrowed execution plans
+  ///
+  /// These plans are valid only for the duration of the callback invocation.
+  /// Call with_property(plan, "clone", ...) to retain a plan beyond the callback.
   const struct SedonaCExecutionPlan** exec_plans;
   size_t num_exec_plans;
 
@@ -494,7 +497,8 @@ struct SedonaCExecutionPlan {
 
   /// \brief Clone this plan based on information about a property
   ///
-  /// This can used to implement operations that require modifying a plan.
+  /// The "clone" property returns a separately owned execution plan handle that
+  /// shares the underlying immutable plan. Unknown properties return ENOTSUP.
   int (*with_property)(const struct SedonaCExecutionPlan* self, const char* property,
                        struct SedonaCExecutionPlanArgs* args,
                        struct SedonaCExecutionPlan* out, struct SedonaCError* err);
@@ -567,9 +571,14 @@ struct SedonaCTableProvider {
 
   /// \brief Perform an insert operation
   ///
-  /// The args parameter contains JSON-serialized insert arguments.
-  /// The exec_plans field should contain the plan providing rows to insert.
-  /// Returns an execution plan that performs the insert.
+  /// The args parameter contains {"insert_op":"Append"} (or "Overwrite" /
+  /// "Replace"). The exec_plans field must contain exactly one plan providing
+  /// rows to insert. The plan must be ready to execute when the callback is
+  /// invoked, with any required physical optimization already applied.
+  /// The input plan is borrowed for the duration of the callback.
+  /// Implementations that retain it must use with_property(input, "clone", ...)
+  /// and own the returned execution plan handle.
+  /// Returns a plan ready to execute the insert.
   int (*insert)(const struct SedonaCTableProvider* self,
                 struct SedonaCExecutionPlanArgs* args, struct SedonaCExecutionPlan* out,
                 struct SedonaCError* err);
@@ -637,6 +646,8 @@ struct SedonaCCatalogProviderList {
   /// (including existence/conflict checks) until execution. Return ENOTSUP if this
   /// catalog list cannot create the object: for a new top-level catalog (CREATE
   /// DATABASE), SedonaDB then offers it to the next registered catalog list.
+  /// For a managed table with a query input, the input and returned writer
+  /// must be ready to execute at their respective handoffs.
   int (*create_object)(const struct SedonaCCatalogProviderList* self, const char* args,
                        struct SedonaCExecutionPlan* input,
                        struct SedonaCExecutionPlan* out, struct SedonaCError* err);

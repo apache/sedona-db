@@ -76,9 +76,10 @@ pub fn import_table_provider_from_any<'py>(
     obj: &Bound<PyAny>,
     requested_schema: Option<&Bound<PyAny>>,
     use_async_execution: bool,
+    runtime: Arc<RuntimeHandle>,
 ) -> Result<(Arc<dyn TableProvider>, Option<TableReference>), PySedonaError> {
     if obj.hasattr("__sedonadb_table_provider__")? {
-        import_sedona_ffi_table_provider(obj, use_async_execution)
+        import_sedona_ffi_table_provider(obj, use_async_execution, runtime)
     } else if obj.hasattr("__arrow_c_stream__")? {
         let reader = import_arrow_array_stream(py, obj, requested_schema)?;
         Ok((Arc::new(RecordBatchReaderProvider::new(reader)), None))
@@ -92,6 +93,7 @@ pub fn import_table_provider_from_any<'py>(
 pub fn import_sedona_ffi_table_provider(
     obj: &Bound<PyAny>,
     use_async_execution: bool,
+    runtime: Arc<RuntimeHandle>,
 ) -> Result<(Arc<dyn TableProvider>, Option<TableReference>), PySedonaError> {
     let capsule = obj.getattr("__sedonadb_table_provider__")?.call0()?;
     let contents =
@@ -106,8 +108,8 @@ pub fn import_sedona_ffi_table_provider(
         provider
     };
     // try_new validates the release callback
-    let provider =
-        ImportedTableProvider::try_new(ffi_provider)?.with_async_execution(use_async_execution);
+    let provider = ImportedTableProvider::try_new(ffi_provider, runtime)?
+        .with_async_execution(use_async_execution);
 
     // Add a Python-aware cancel checker that checks for Ctrl+C signals
     // Use a 2 second interval to match the StreamingRecordBatchReader behavior

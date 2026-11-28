@@ -54,6 +54,7 @@ use crate::utils::{
 ///
 /// Holds an `Arc<RuntimeHandle>` to ensure the runtime stays alive for the
 /// lifetime of the exported plan.
+#[derive(Clone)]
 pub struct ExportedExecutionPlan {
     plan: Arc<dyn ExecutionPlan>,
     task_context: Arc<TaskContext>,
@@ -150,7 +151,7 @@ impl From<ExportedExecutionPlan> for SedonaCExecutionPlan {
             get_schema: Some(c_exec_plan_get_schema),
             get_property_schema: Some(c_exec_plan_get_property_schema),
             get_property: Some(c_exec_plan_get_property),
-            with_property: None,
+            with_property: Some(c_exec_plan_with_property),
             execute: Some(c_exec_plan_execute),
             execute_async: Some(c_exec_plan_execute_async),
             reserved: null_mut(),
@@ -158,6 +159,29 @@ impl From<ExportedExecutionPlan> for SedonaCExecutionPlan {
             private_data: Box::into_raw(boxed) as *mut c_void,
         }
     }
+}
+
+unsafe extern "C" fn c_exec_plan_with_property(
+    self_: *const SedonaCExecutionPlan,
+    property: *const std::ffi::c_char,
+    _args: *mut SedonaCExecutionPlanArgs,
+    out: *mut SedonaCExecutionPlan,
+    err: *mut SedonaCError,
+) -> c_int {
+    let property_name = cstr_from_ptr_or_empty(property);
+    if property_name.as_ref() != "clone" {
+        set_ffi_error!(err, "Unknown property: {}", property_name);
+        return libc::ENOTSUP;
+    }
+
+    debug_assert!(!self_.is_null(), "self pointer is null");
+    debug_assert!(!out.is_null(), "out pointer is null");
+    let self_ref = &*self_;
+    debug_assert!(!self_ref.private_data.is_null(), "private_data is null");
+    let plan = &*(self_ref.private_data as *const ExportedExecutionPlan);
+
+    std::ptr::write(out, plan.clone().into());
+    ERRNO_OK
 }
 
 unsafe extern "C" fn c_exec_plan_get_schema(
@@ -440,6 +464,26 @@ impl ImportedSedonaCExec {
             check_interval: None,
             use_async: false,
         })
+    }
+
+    /// Clone a borrowed FFI execution plan into an independently owned wrapper.
+    pub fn try_clone_from(inner: &SedonaCExecutionPlan) -> Result<Self> {
+        let Some(with_property) = inner.with_property else {
+            return sedona_internal_err!(
+                "SedonaCExecutionPlan does not support with_property(\"clone\")"
+            );
+        };
+
+        let mut args = SedonaCExecutionPlanArgs::default();
+        let mut cloned = SedonaCExecutionPlan::default();
+        let mut err = SedonaCError::default();
+        let code =
+            unsafe { with_property(inner, c"clone".as_ptr(), &mut args, &mut cloned, &mut err) };
+        if code != ERRNO_OK {
+            return sedona_internal_err!("Failed to clone SedonaCExecutionPlan: {}", err);
+        }
+
+        Self::try_new(cloned)
     }
 
     /// Set a cancellation checker for this execution plan.
@@ -880,6 +924,7 @@ mod tests {
         let raw = &imported.inner;
         let mut schema = FFI_ArrowSchema::empty();
         let mut array = arrow_array::ffi::FFI_ArrowArray::empty();
+        let mut plan = SedonaCExecutionPlan::default();
         let mut err = SedonaCError::default();
         unsafe {
             assert_eq!(
@@ -896,7 +941,51 @@ mod tests {
                 ),
                 libc::ENOTSUP
             );
+            assert_eq!(
+                raw.with_property.unwrap()(
+                    raw,
+                    c"unknown".as_ptr(),
+                    std::ptr::null_mut(),
+                    &mut plan,
+                    &mut err
+                ),
+                libc::ENOTSUP
+            );
         }
+    }
+
+    #[test]
+    fn clone_property_returns_independently_owned_plan() {
+        let dummy = Arc::new(DummyExec::new());
+        let runtime = test_runtime();
+        let task_ctx = Arc::new(TaskContext::default());
+        let original: SedonaCExecutionPlan =
+            ExportedExecutionPlan::new(dummy, task_ctx.clone(), runtime.clone()).into();
+
+        let cloned = ImportedSedonaCExec::try_clone_from(&original).unwrap();
+        drop(original);
+
+        let batches = runtime
+            .block_on(datafusion_physical_plan::collect(
+                Arc::new(cloned),
+                task_ctx,
+            ))
+            .unwrap();
+        let mut ids = batches
+            .iter()
+            .flat_map(|batch| {
+                batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<Int32Array>()
+                    .unwrap()
+                    .values()
+                    .iter()
+                    .copied()
+            })
+            .collect::<Vec<_>>();
+        ids.sort_unstable();
+        assert_eq!(ids, vec![1, 2, 3, 11, 12, 13, 21, 22, 23]);
     }
 
     #[test]

@@ -385,7 +385,10 @@ pub struct SedonaCExecutionPlanArgs {
     /// JSON-serialized arguments
     pub args: *const u8,
     pub args_len: usize,
-    /// Optional array of execution plans
+    /// Optional array of borrowed execution plans.
+    ///
+    /// These plans are valid only for the duration of the callback invocation.
+    /// Call `with_property("clone")` to retain a plan beyond the callback.
     pub exec_plans: *const *const SedonaCExecutionPlan,
     pub num_exec_plans: usize,
     /// Optional array of expression views
@@ -520,6 +523,8 @@ pub struct SedonaCCatalogProviderList {
     /// A NULL input means no plan. Otherwise the callback takes ownership by
     /// moving the plan and clearing its release callback. The output is required
     /// on success and performs the mutation only when executed.
+    /// For a managed table with a query input, the input and returned writer
+    /// must be ready to execute at their respective handoffs.
     pub create_object: Option<
         unsafe extern "C" fn(
             self_: *const Self,
@@ -609,9 +614,14 @@ pub struct SedonaCTableProvider {
 
     /// Perform an insert operation
     ///
-    /// The args parameter contains JSON-serialized insert arguments.
-    /// The exec_plans field should contain the plan providing rows to insert.
-    /// Returns an execution plan that performs the insert.
+    /// The args parameter contains `{"insert_op":"Append"}` (or `Overwrite` /
+    /// `Replace`). The exec_plans field must contain exactly one plan providing
+    /// rows to insert. The plan must be ready to execute when the callback is
+    /// invoked, with any required physical optimization already applied.
+    /// The input plan is borrowed for the duration of the callback.
+    /// Implementations that retain it must use `with_property("clone")` and own
+    /// the returned execution plan handle.
+    /// Returns a plan ready to execute the insert.
     pub insert: Option<
         unsafe extern "C" fn(
             self_: *const SedonaCTableProvider,

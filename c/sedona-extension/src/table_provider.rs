@@ -28,10 +28,20 @@ use arrow_array::ffi::FFI_ArrowArray;
 use arrow_schema::{ffi::FFI_ArrowSchema, DataType, Schema, SchemaRef};
 use async_trait::async_trait;
 use datafusion_catalog::{Session, TableProvider};
-use datafusion_common::{exec_err, plan_err, Result, Statistics, TableReference};
+use datafusion_common::{
+    config::ConfigOptions,
+    exec_err, internal_err, plan_err,
+    tree_node::{TreeNode, TreeNodeRecursion},
+    DataFusionError, Result, Statistics, TableReference,
+};
 use datafusion_execution::FunctionRegistry;
-use datafusion_expr::{Expr, HigherOrderUDF, ScalarUDF, TableProviderFilterPushDown, TableType};
-use datafusion_physical_plan::ExecutionPlan;
+use datafusion_expr::{
+    dml::InsertOp, Expr, HigherOrderUDF, ScalarUDF, TableProviderFilterPushDown, TableType,
+};
+use datafusion_physical_plan::{
+    execution_plan::InvariantLevel, operator_statistics::StatisticsRegistry, ExecutionPlan,
+};
+use datafusion_session::PhysicalOptimizerContext;
 use sedona_common::{sedona_internal_datafusion_err, sedona_internal_err};
 use serde::{Deserialize, Serialize};
 
@@ -75,7 +85,9 @@ impl ExportedTableProvider {
     /// Create a new ExportedTableProvider from a TableProvider.
     ///
     /// The session is used during scan operations and must support physical planning
-    /// if the inner TableProvider requires it (e.g., for Views).
+    /// if the inner TableProvider requires it (e.g., for Views). Inserts also
+    /// require the session's physical optimizer rules to enforce the writer's
+    /// distribution and ordering requirements before returning it across FFI.
     ///
     /// Takes an `Arc<RuntimeHandle>` to ensure the runtime stays alive for the
     /// lifetime of the provider, preventing "Worker thread terminated" errors.
@@ -119,6 +131,28 @@ impl ExportedTableProvider {
         })
         .join()
         .map_err(|e| sedona_internal_datafusion_err!("Scan thread panicked {e:?}"))?
+    }
+
+    fn insert_into(
+        &self,
+        input: Arc<dyn ExecutionPlan>,
+        insert_op: InsertOp,
+    ) -> Result<Arc<dyn ExecutionPlan>> {
+        let inner = self.inner.clone();
+        let session = self.session.clone();
+        let runtime = self.runtime.clone();
+
+        std::thread::spawn(move || {
+            let plan =
+                runtime
+                    .handle()
+                    .block_on(inner.insert_into(session.as_ref(), input, insert_op))?;
+            // The returned plan becomes an opaque leaf in the consumer. Enforce
+            // the writer's distribution and ordering requirements before export.
+            optimize_physical_plan(plan, session.as_ref())
+        })
+        .join()
+        .map_err(|e| sedona_internal_datafusion_err!("Insert thread panicked {e:?}"))?
     }
 
     fn get_property(&self, property: &str) -> Result<String> {
@@ -165,7 +199,7 @@ impl From<ExportedTableProvider> for SedonaCTableProvider {
             get_property_schema: Some(c_table_provider_get_property_schema),
             get_property: Some(c_table_provider_get_property),
             scan: Some(c_table_provider_scan),
-            insert: None,
+            insert: Some(c_table_provider_insert),
             update: None,
             delete_rows: None,
             reserved: null_mut(),
@@ -431,6 +465,76 @@ unsafe extern "C" fn c_table_provider_scan(
     }
 }
 
+unsafe extern "C" fn c_table_provider_insert(
+    self_: *const SedonaCTableProvider,
+    args: *mut SedonaCExecutionPlanArgs,
+    out: *mut SedonaCExecutionPlan,
+    err: *mut SedonaCError,
+) -> c_int {
+    debug_assert!(!self_.is_null(), "self pointer is null");
+    debug_assert!(!args.is_null(), "args pointer is null");
+    debug_assert!(!out.is_null(), "out pointer is null");
+    let self_ref = &*self_;
+    let args_ref = &mut *args;
+    debug_assert!(!self_ref.private_data.is_null(), "private_data is null");
+    let provider = &*(self_ref.private_data as *const ExportedTableProvider);
+
+    let result = (|| {
+        if args_ref.exec_plans.is_null() || args_ref.num_exec_plans != 1 {
+            return exec_err!("Insert requires exactly one input execution plan");
+        }
+        let input_ptr = *args_ref.exec_plans;
+        if input_ptr.is_null() {
+            return exec_err!("Insert input execution plan is null");
+        }
+
+        // The input is borrowed for this callback. Clone its FFI handle before
+        // retaining it in the returned mutation plan.
+        let input =
+            Arc::new(ImportedSedonaCExec::try_clone_from(&*input_ptr)?) as Arc<dyn ExecutionPlan>;
+
+        let args_slice = if args_ref.args.is_null() || args_ref.args_len == 0 {
+            &[]
+        } else {
+            std::slice::from_raw_parts(args_ref.args, args_ref.args_len)
+        };
+        let insert_args: InsertArgs = serde_json::from_slice(args_slice).map_err(|e| {
+            DataFusionError::External(format!("Failed to parse insert args: {e}").into())
+        })?;
+
+        provider.insert_into(input, insert_args.insert_op.into())
+    })();
+
+    write_table_plan(provider, result, out, err)
+}
+
+unsafe fn write_table_plan(
+    provider: &ExportedTableProvider,
+    result: Result<Arc<dyn ExecutionPlan>>,
+    out: *mut SedonaCExecutionPlan,
+    err: *mut SedonaCError,
+) -> c_int {
+    match result {
+        Ok(plan) => {
+            let exported = ExportedExecutionPlan::new(
+                plan,
+                provider.session.task_ctx(),
+                provider.runtime.clone(),
+            );
+            std::ptr::write(out, exported.into());
+            ERRNO_OK
+        }
+        Err(error) => {
+            set_ffi_error!(err, "{}", error);
+            if matches!(error.find_root(), DataFusionError::NotImplemented(_)) {
+                libc::ENOTSUP
+            } else {
+                libc::EINVAL
+            }
+        }
+    }
+}
+
 unsafe extern "C" fn c_table_provider_release(self_: *mut SedonaCTableProvider) {
     debug_assert!(!self_.is_null(), "self pointer is null");
     let self_ref = &mut *self_;
@@ -450,6 +554,8 @@ pub struct ImportedTableProvider {
     schema: SchemaRef,
     table_type: TableType,
     table_reference: Option<TableReference>,
+    /// Runtime used to execute plans exported back to the provider for inserts.
+    runtime: Arc<RuntimeHandle>,
     /// Stored as Arc so it can be cloned for each scan execution.
     cancel_checker: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     /// Interval for periodic cancellation checking during stream consumption.
@@ -465,7 +571,7 @@ impl Debug for ImportedTableProvider {
 
 impl ImportedTableProvider {
     /// Create a new ImportedTableProvider from a SedonaCTableProvider.
-    pub fn try_new(inner: SedonaCTableProvider) -> Result<Self> {
+    pub fn try_new(inner: SedonaCTableProvider, runtime: Arc<RuntimeHandle>) -> Result<Self> {
         // Refuse to import a structure without a valid release callback
         if inner.release.is_none() {
             return sedona_internal_err!("SedonaCTableProvider does not have a release callback");
@@ -493,6 +599,7 @@ impl ImportedTableProvider {
             schema,
             table_type,
             table_reference,
+            runtime,
             cancel_checker: None,
             check_interval: None,
             use_async_execution: false,
@@ -756,6 +863,136 @@ impl TableProvider for ImportedTableProvider {
 
         Ok(Arc::new(exec))
     }
+
+    async fn insert_into(
+        &self,
+        state: &dyn Session,
+        input: Arc<dyn ExecutionPlan>,
+        insert_op: InsertOp,
+    ) -> Result<Arc<dyn ExecutionPlan>> {
+        let Some(insert) = self.inner.insert else {
+            return datafusion_common::not_impl_err!(
+                "SedonaCTableProvider does not support insert_into"
+            );
+        };
+
+        let insert_args = InsertArgs {
+            insert_op: insert_op.into(),
+        };
+        let args_bytes = serde_json::to_vec(&insert_args).map_err(|e| {
+            sedona_internal_datafusion_err!("Failed to serialize insert args: {}", e)
+        })?;
+
+        // DataFusion calls insert_into before physical optimization. The input
+        // becomes opaque to both sessions' optimizers across FFI, so finish its
+        // physical planning while the consumer can still inspect its children.
+        let input = optimize_physical_plan(input, state)?;
+        let ffi_input: SedonaCExecutionPlan =
+            ExportedExecutionPlan::new(input, state.task_ctx(), self.runtime.clone()).into();
+        let ffi_input_ptrs = [&ffi_input as *const SedonaCExecutionPlan];
+        let mut ffi_args = SedonaCExecutionPlanArgs {
+            args: args_bytes.as_ptr(),
+            args_len: args_bytes.len(),
+            exec_plans: ffi_input_ptrs.as_ptr(),
+            num_exec_plans: ffi_input_ptrs.len(),
+            exprs: std::ptr::null(),
+            num_exprs: 0,
+            reserved: null_mut(),
+        };
+        let mut ffi_plan = SedonaCExecutionPlan::default();
+        let mut err = SedonaCError::default();
+        let code = unsafe { insert(&self.inner, &mut ffi_args, &mut ffi_plan, &mut err) };
+        if code == libc::ENOTSUP {
+            return datafusion_common::not_impl_err!("Failed to insert into table: {}", err);
+        } else if code != ERRNO_OK {
+            return exec_err!("Failed to insert into table: {}", err);
+        }
+
+        let mut exec =
+            ImportedSedonaCExec::try_new(ffi_plan)?.with_async_execution(self.use_async_execution);
+        if let Some(ref checker) = self.cancel_checker {
+            let checker = checker.clone();
+            exec = exec.with_cancel_checker(move || checker());
+        }
+        if let Some(interval) = self.check_interval {
+            exec = exec.with_check_interval(interval);
+        }
+
+        Ok(Arc::new(exec))
+    }
+}
+
+struct SessionOptimizerContext<'a>(&'a dyn Session);
+
+impl PhysicalOptimizerContext for SessionOptimizerContext<'_> {
+    fn config_options(&self) -> &ConfigOptions {
+        self.0.config_options()
+    }
+
+    fn statistics_registry(&self) -> Option<&StatisticsRegistry> {
+        self.0.statistics_registry()
+    }
+}
+
+/// Finish physical planning for a subtree that will execute behind an opaque FFI handle.
+pub(crate) fn optimize_physical_plan(
+    mut plan: Arc<dyn ExecutionPlan>,
+    session: &dyn Session,
+) -> Result<Arc<dyn ExecutionPlan>> {
+    check_plan_invariants(&plan, InvariantLevel::Always)?;
+
+    let context = SessionOptimizerContext(session);
+    for rule in session.physical_optimizers() {
+        let previous_schema = plan.schema();
+        plan = rule
+            .optimize_with_context(plan, &context)
+            .map_err(|e| e.context(rule.name()))?;
+
+        if rule.schema_check() {
+            let schema = plan.schema();
+            if !schema_change_is_allowed(&previous_schema, &schema) {
+                return internal_err!(
+                    "Physical optimizer rule '{}' changed the plan schema from {previous_schema:?} to {schema:?}",
+                    rule.name()
+                );
+            }
+        }
+
+        #[cfg(debug_assertions)]
+        check_plan_invariants(&plan, InvariantLevel::Always).map_err(|e| e.context(rule.name()))?;
+    }
+
+    check_plan_invariants(&plan, InvariantLevel::Executable)?;
+    Ok(plan)
+}
+
+fn check_plan_invariants(plan: &Arc<dyn ExecutionPlan>, level: InvariantLevel) -> Result<()> {
+    plan.apply(|node| {
+        node.check_invariants(level).map_err(|e| {
+            e.context(format!(
+                "Invariant for ExecutionPlan node '{}' failed",
+                node.name()
+            ))
+        })?;
+        Ok(TreeNodeRecursion::Continue)
+    })?;
+    Ok(())
+}
+
+fn schema_change_is_allowed(before: &Schema, after: &Schema) -> bool {
+    // Physical expressions may narrow the nullability of a field.
+    before.metadata() == after.metadata()
+        && before.fields().len() == after.fields().len()
+        && before
+            .fields()
+            .iter()
+            .zip(after.fields())
+            .all(|(before, after)| {
+                before.name() == after.name()
+                    && before.data_type() == after.data_type()
+                    && before.metadata() == after.metadata()
+                    && (before.is_nullable() || !after.is_nullable())
+            })
 }
 
 /// Arguments for a scan operation, serialized as JSON across FFI.
@@ -765,6 +1002,39 @@ struct ScanArgs {
     pub projection: Option<Vec<usize>>,
     /// Maximum number of rows to return, or None for unlimited.
     pub limit: Option<usize>,
+}
+
+/// Arguments for an insert operation, serialized as JSON across FFI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct InsertArgs {
+    insert_op: InsertOperation,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+enum InsertOperation {
+    Append,
+    Overwrite,
+    Replace,
+}
+
+impl From<InsertOp> for InsertOperation {
+    fn from(value: InsertOp) -> Self {
+        match value {
+            InsertOp::Append => Self::Append,
+            InsertOp::Overwrite => Self::Overwrite,
+            InsertOp::Replace => Self::Replace,
+        }
+    }
+}
+
+impl From<InsertOperation> for InsertOp {
+    fn from(value: InsertOperation) -> Self {
+        match value {
+            InsertOperation::Append => Self::Append,
+            InsertOperation::Overwrite => Self::Overwrite,
+            InsertOperation::Replace => Self::Replace,
+        }
+    }
 }
 
 /// [FunctionRegistry] implemented on a dyn [Session]
@@ -946,7 +1216,7 @@ mod tests {
             let ffi_provider: SedonaCTableProvider = exported.into();
 
             // Import the table provider
-            let imported = ImportedTableProvider::try_new(ffi_provider)?
+            let imported = ImportedTableProvider::try_new(ffi_provider, runtime.clone())?
                 .with_async_execution(use_async_execution);
 
             // Create a new context and register the imported table
@@ -997,6 +1267,65 @@ mod tests {
             true,
         )
         .unwrap();
+    }
+
+    #[test]
+    fn test_roundtrip_insert_into() {
+        let runtime = test_runtime();
+        runtime
+            .block_on(async {
+                let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, false)]));
+                let target_batch = RecordBatch::new_empty(schema.clone());
+                let target = Arc::new(datafusion::datasource::MemTable::try_new(
+                    schema.clone(),
+                    vec![vec![target_batch]],
+                )?);
+
+                let producer = SessionContext::new();
+                producer.register_table("target", target.clone())?;
+                let exported =
+                    ExportedTableProvider::new(target, Arc::new(producer.state()), runtime.clone());
+                let imported = ImportedTableProvider::try_new(exported.into(), runtime.clone())?;
+
+                let source_batch = RecordBatch::try_new(
+                    schema.clone(),
+                    vec![Arc::new(Int32Array::from(vec![7, 8, 9]))],
+                )?;
+                let source =
+                    datafusion::datasource::MemTable::try_new(schema, vec![vec![source_batch]])?;
+                let consumer = SessionContext::new();
+                consumer.register_table("source", Arc::new(source))?;
+                consumer.register_table("target", Arc::new(imported))?;
+
+                let insert = consumer
+                    .sql("INSERT INTO target SELECT id FROM source")
+                    .await?
+                    .create_physical_plan()
+                    .await?;
+
+                // Calling the insert callback builds a mutation plan but must
+                // not modify the table until that returned plan is polled.
+                let before = producer
+                    .sql("SELECT id FROM target")
+                    .await?
+                    .collect()
+                    .await?;
+                assert_eq!(before.iter().map(RecordBatch::num_rows).sum::<usize>(), 0);
+
+                datafusion_physical_plan::collect(insert, consumer.task_ctx()).await?;
+
+                let result = producer
+                    .sql("SELECT id FROM target ORDER BY id")
+                    .await?
+                    .collect()
+                    .await?;
+                assert_batches_eq!(
+                    &["+----+", "| id |", "+----+", "| 7  |", "| 8  |", "| 9  |", "+----+"],
+                    &result
+                );
+                Ok::<(), DataFusionError>(())
+            })
+            .unwrap();
     }
 
     #[test]
@@ -1054,7 +1383,7 @@ mod tests {
                 let ffi_provider: SedonaCTableProvider = exported.into();
 
                 // Import the table provider
-                let imported = ImportedTableProvider::try_new(ffi_provider)?;
+                let imported = ImportedTableProvider::try_new(ffi_provider, runtime.clone())?;
 
                 // Create a new context and register the imported table
                 let ctx2 = SessionContext::new();
@@ -1098,7 +1427,7 @@ mod tests {
                 let session = Arc::new(ctx.state());
                 let exported = ExportedTableProvider::new(table, session, runtime.clone());
                 let ffi_provider: SedonaCTableProvider = exported.into();
-                let imported = ImportedTableProvider::try_new(ffi_provider)?;
+                let imported = ImportedTableProvider::try_new(ffi_provider, runtime.clone())?;
 
                 // This represents a UDF that exists only in the importing/consumer
                 // session. It is decoded as a placeholder in the producer session.
@@ -1155,7 +1484,7 @@ mod tests {
         let session = Arc::new(ctx.state());
         let exported = ExportedTableProvider::new(provider, session, runtime.clone());
         let ffi_provider: SedonaCTableProvider = exported.into();
-        let imported = ImportedTableProvider::try_new(ffi_provider).unwrap();
+        let imported = ImportedTableProvider::try_new(ffi_provider, runtime.clone()).unwrap();
 
         let udf = ScalarUDF::new_from_impl(crate::expr::PlaceholderUDF::new("consumer_only_udf"));
         let filter = udf.call(vec![datafusion_expr::col("id")]);
@@ -1276,8 +1605,8 @@ mod tests {
         let session = Arc::new(ctx.state());
         let exported = ExportedTableProvider::new(dummy, session, runtime.clone());
         let ffi_provider: SedonaCTableProvider = exported.into();
-        let imported =
-            ImportedTableProvider::try_new(ffi_provider).expect("Failed to import table provider");
+        let imported = ImportedTableProvider::try_new(ffi_provider, runtime.clone())
+            .expect("Failed to import table provider");
         (imported, runtime)
     }
 
@@ -1341,7 +1670,7 @@ mod tests {
             let exported = ExportedTableProvider::new(dummy, session, runtime.clone())
                 .with_table_reference(table_reference.clone());
             let ffi_provider: SedonaCTableProvider = exported.into();
-            let imported = ImportedTableProvider::try_new(ffi_provider)
+            let imported = ImportedTableProvider::try_new(ffi_provider, runtime.clone())
                 .expect("Failed to import table provider");
 
             assert_eq!(imported.table_reference(), Some(&table_reference));

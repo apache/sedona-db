@@ -28,6 +28,7 @@ use datafusion_expr::{ScalarUDF, ScalarUDFImpl};
 use datafusion_ffi::udf::FFI_ScalarUDF;
 use savvy::{savvy_err, IntoExtPtrSexp};
 use sedona_extension::extension::SedonaCTableProvider;
+use sedona_extension::runtime::RuntimeHandle;
 use sedona_extension::table_provider::ImportedTableProvider;
 
 pub fn import_schema(mut xptr: savvy::Sexp) -> savvy::Result<Schema> {
@@ -63,6 +64,7 @@ pub fn import_array_stream(mut xptr: savvy::Sexp) -> savvy::Result<ArrowArrayStr
 
 pub fn import_table_provider(
     mut provider_xptr: savvy::Sexp,
+    runtime: Arc<RuntimeHandle>,
 ) -> savvy::Result<Arc<dyn TableProvider>> {
     let ffi_provider: &mut SedonaCTableProvider =
         import_xptr(&mut provider_xptr, "sedonadb_table_provider")?;
@@ -75,7 +77,7 @@ pub fn import_table_provider(
         provider
     };
     // try_new validates the release callback
-    let provider = ImportedTableProvider::try_new(ffi_provider)?;
+    let provider = ImportedTableProvider::try_new(ffi_provider, runtime)?;
     Ok(Arc::new(provider))
 }
 
