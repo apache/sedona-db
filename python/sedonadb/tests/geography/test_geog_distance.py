@@ -384,6 +384,16 @@ def test_st_dwithin(eng, geom1, geom2, distance, expected):
     )
 
 
+@pytest.mark.parametrize("distance, expected", [(111200, True), (111000, False)])
+def test_st_dwithin_decimal(distance, expected):
+    eng = SedonaDB.create_or_skip()
+    eng.assert_query_result(
+        f"SELECT ST_DWithin({geog_or_null('POINT (0 0)')}, "
+        f"{geog_or_null('POINT (0 1)')}, CAST({distance} AS DECIMAL(10, 2)))",
+        expected,
+    )
+
+
 @pytest.mark.parametrize("eng", [SedonaDB, BigQuery])
 @pytest.mark.parametrize(
     ("geom1", "geom2", "expected"),
