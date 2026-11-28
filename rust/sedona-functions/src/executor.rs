@@ -17,6 +17,7 @@
 use std::iter::zip;
 
 use arrow_array::{Array, ArrayRef};
+use arrow_buffer::NullBuffer;
 use arrow_schema::DataType;
 use datafusion_common::cast::{
     as_binary_array, as_binary_view_array, as_large_binary_array, as_struct_array,
@@ -349,31 +350,60 @@ impl GeometryFactory for PointXYGeometryFactory {
 pub type PointXYExecutor<'a, 'b> =
     GenericExecutor<'a, 'b, PointXYGeometryFactory, PointXYGeometryFactory>;
 
-pub(crate) fn visible_wkb_bytes(arg_type: &SedonaType, arg: &ColumnarValue) -> Result<usize> {
+fn scale_by_valid(total: usize, num_rows: usize, num_valid_rows: usize) -> usize {
+    if num_rows == 0 || num_valid_rows == num_rows {
+        total
+    } else {
+        ((total as u128) * (num_valid_rows as u128) / (num_rows as u128)) as usize
+    }
+}
+
+pub(crate) fn visible_wkb_bytes(
+    arg_type: &SedonaType,
+    arg: &ColumnarValue,
+    num_rows: usize,
+    mask: Vec<NullBuffer>,
+) -> Result<usize> {
+    debug_assert!(
+        mask.iter().all(|m| m.len() == num_rows),
+        "all masks must have length == num_rows"
+    );
+
+    let num_valid_rows = if mask.is_empty() {
+        num_rows
+    } else if mask.len() == 1 {
+        mask[0].len() - mask[0].null_count()
+    } else {
+        (0..num_rows)
+            .filter(|i| mask.iter().all(|m| m.is_valid(*i)))
+            .count()
+    };
+
     match arg {
         ColumnarValue::Array(array) => match arg_type {
             SedonaType::Wkb(_, _) => {
                 let binary = as_binary_array(array)?;
                 let offsets = binary.offsets();
-                Ok((offsets[offsets.len() - 1] - offsets[0]) as usize)
+                let total = (offsets[offsets.len() - 1] - offsets[0]) as usize;
+                Ok(scale_by_valid(total, num_rows, num_valid_rows))
             }
             SedonaType::WkbLarge(_, _) => {
                 let binary = as_large_binary_array(array)?;
                 let offsets = binary.offsets();
-                Ok((offsets[offsets.len() - 1] - offsets[0]) as usize)
+                let total = (offsets[offsets.len() - 1] - offsets[0]) as usize;
+                Ok(scale_by_valid(total, num_rows, num_valid_rows))
             }
             SedonaType::WkbView(_, _) => {
                 let binary = as_binary_view_array(array)?;
 
-                // The low 32 bits of each view contain its byte length.
-                // Null views may retain nonzero lengths, so skip them.
-                Ok(binary
+                let total: usize = binary
                     .views()
                     .iter()
                     .enumerate()
                     .filter(|(i, _)| binary.is_valid(*i))
                     .map(|(_, view)| *view as u32 as usize)
-                    .sum())
+                    .sum();
+                Ok(scale_by_valid(total, num_rows, num_valid_rows))
             }
             _ => {
                 let mut total = 0usize;
@@ -383,11 +413,12 @@ pub(crate) fn visible_wkb_bytes(arg_type: &SedonaType, arg: &ColumnarValue) -> R
                     }
                     Ok(())
                 })?;
-                Ok(total)
+                Ok(scale_by_valid(total, num_rows, num_valid_rows))
             }
         },
         ColumnarValue::Scalar(scalar) => {
-            Ok(scalar.scalar_as_wkb_bytes()?.map_or(0, |wkb| wkb.len()))
+            let size = scalar.scalar_as_wkb_bytes()?.map_or(0, |wkb| wkb.len());
+            Ok(size * num_valid_rows)
         }
     }
 }
@@ -778,29 +809,58 @@ mod tests {
         let array = |a: ArrayRef| ColumnarValue::Array(a);
 
         assert_eq!(
-            visible_wkb_bytes(&WKB_GEOMETRY, &array(Arc::new(binary.clone()))).unwrap(),
+            visible_wkb_bytes(&WKB_GEOMETRY, &array(Arc::new(binary.clone())), 4, vec![]).unwrap(),
             20
         );
         assert_eq!(
-            visible_wkb_bytes(&WKB_LARGE_GEOMETRY, &array(Arc::new(large.clone()))).unwrap(),
+            visible_wkb_bytes(
+                &WKB_LARGE_GEOMETRY,
+                &array(Arc::new(large.clone())),
+                4,
+                vec![]
+            )
+            .unwrap(),
             20
         );
         assert_eq!(
-            visible_wkb_bytes(&WKB_VIEW_GEOMETRY, &array(Arc::new(view.clone()))).unwrap(),
+            visible_wkb_bytes(
+                &WKB_VIEW_GEOMETRY,
+                &array(Arc::new(view.clone())),
+                4,
+                vec![]
+            )
+            .unwrap(),
             20
         );
 
-        // Slices keep only the visible rows: [None, 17 bytes]
         assert_eq!(
-            visible_wkb_bytes(&WKB_GEOMETRY, &array(Arc::new(binary.slice(1, 2)))).unwrap(),
+            visible_wkb_bytes(
+                &WKB_GEOMETRY,
+                &array(Arc::new(binary.slice(1, 2))),
+                2,
+                vec![]
+            )
+            .unwrap(),
             17
         );
         assert_eq!(
-            visible_wkb_bytes(&WKB_LARGE_GEOMETRY, &array(Arc::new(large.slice(1, 2)))).unwrap(),
+            visible_wkb_bytes(
+                &WKB_LARGE_GEOMETRY,
+                &array(Arc::new(large.slice(1, 2))),
+                2,
+                vec![]
+            )
+            .unwrap(),
             17
         );
         assert_eq!(
-            visible_wkb_bytes(&WKB_VIEW_GEOMETRY, &array(Arc::new(view.slice(1, 2)))).unwrap(),
+            visible_wkb_bytes(
+                &WKB_VIEW_GEOMETRY,
+                &array(Arc::new(view.slice(1, 2))),
+                2,
+                vec![]
+            )
+            .unwrap(),
             17
         );
 
@@ -808,7 +868,9 @@ mod tests {
         assert_eq!(
             visible_wkb_bytes(
                 &WKB_GEOMETRY,
-                &scalar(ScalarValue::Binary(Some(vec![1, 2, 3])))
+                &scalar(ScalarValue::Binary(Some(vec![1, 2, 3]))),
+                1,
+                vec![]
             )
             .unwrap(),
             3
@@ -816,7 +878,9 @@ mod tests {
         assert_eq!(
             visible_wkb_bytes(
                 &WKB_LARGE_GEOMETRY,
-                &scalar(ScalarValue::LargeBinary(Some(vec![1, 2, 3, 4])))
+                &scalar(ScalarValue::LargeBinary(Some(vec![1, 2, 3, 4]))),
+                1,
+                vec![]
             )
             .unwrap(),
             4
@@ -824,15 +888,63 @@ mod tests {
         assert_eq!(
             visible_wkb_bytes(
                 &WKB_VIEW_GEOMETRY,
-                &scalar(ScalarValue::BinaryView(Some(vec![1; 17])))
+                &scalar(ScalarValue::BinaryView(Some(vec![1; 17]))),
+                1,
+                vec![]
             )
             .unwrap(),
             17
         );
         assert_eq!(
-            visible_wkb_bytes(&WKB_GEOMETRY, &scalar(ScalarValue::Binary(None))).unwrap(),
+            visible_wkb_bytes(&WKB_GEOMETRY, &scalar(ScalarValue::Binary(None)), 1, vec![])
+                .unwrap(),
             0
         );
+    }
+
+    #[test]
+    fn visible_wkb_bytes_scales_by_mask() {
+        let binary = BinaryArray::from_iter(vec![
+            Some(POINT.as_slice()),
+            Some(POINT.as_slice()),
+            Some(POINT.as_slice()),
+            Some(POINT.as_slice()),
+        ]);
+        let mask = NullBuffer::from(vec![true, false, true, false]);
+        let result = visible_wkb_bytes(
+            &WKB_GEOMETRY,
+            &ColumnarValue::Array(Arc::new(binary)),
+            4,
+            vec![mask],
+        )
+        .unwrap();
+        assert_eq!(result, 42);
+    }
+
+    #[test]
+    fn visible_wkb_bytes_all_null_mask_is_zero() {
+        let binary = BinaryArray::from_iter(vec![
+            Some(POINT.as_slice()),
+            Some(POINT.as_slice()),
+            Some(POINT.as_slice()),
+        ]);
+        let mask = NullBuffer::from(vec![false, false, false]);
+        let result = visible_wkb_bytes(
+            &WKB_GEOMETRY,
+            &ColumnarValue::Array(Arc::new(binary)),
+            3,
+            vec![mask],
+        )
+        .unwrap();
+        assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn visible_wkb_bytes_scalar_with_null_mask_is_zero() {
+        let scalar = ColumnarValue::Scalar(ScalarValue::Binary(Some(POINT.to_vec())));
+        let mask = NullBuffer::from(vec![false, false, false, false]);
+        let result = visible_wkb_bytes(&WKB_GEOMETRY, &scalar, 4, vec![mask]).unwrap();
+        assert_eq!(result, 0);
     }
 
     #[rstest]

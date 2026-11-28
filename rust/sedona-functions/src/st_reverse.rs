@@ -82,7 +82,7 @@ impl SedonaScalarKernel for STReverse {
         let executor = WkbExecutor::new(arg_types, args);
         let mut builder = BinaryBuilder::with_capacity(
             executor.num_iterations(),
-            visible_wkb_bytes(&arg_types[0], &args[0])?,
+            visible_wkb_bytes(&arg_types[0], &args[0], executor.num_iterations(), vec![])?,
         );
 
         executor.execute_wkb_void(|maybe_wkb| {
