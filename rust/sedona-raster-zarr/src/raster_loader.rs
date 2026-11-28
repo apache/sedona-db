@@ -69,12 +69,16 @@ use object_store::ObjectStore;
 use sedona_common::sedona_internal_datafusion_err;
 use sedona_raster::raster_loader::{AsyncRasterLoader, RasterLoadRequest, RasterLoadResult};
 use sedona_raster::view_entries::ViewEntries;
-use tokio::sync::Semaphore;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use zarrs::array::{
     Array, ArrayBytes, ArrayShardedExt, ArraySubset, AsyncArrayShardedReadableExt,
     AsyncArrayShardedReadableExtCache, ChunkGrid, CodecOptions,
 };
-use zarrs::storage::AsyncReadableListableStorageTraits;
+use zarrs::storage::byte_range::{ByteRange, ByteRangeIterator};
+use zarrs::storage::{
+    AsyncMaybeBytesIterator, AsyncReadableStorage, AsyncReadableStorageTraits, MaybeBytes,
+    StorageError, StoreKey,
+};
 
 use crate::dtype::zarr_to_band_data_type;
 use crate::source_uri::{
@@ -131,14 +135,13 @@ pub const DEFAULT_ARRAY_HANDLE_TTL: Duration = Duration::from_secs(300);
 #[derive(Debug, Clone)]
 pub struct ZarrLoader {
     concurrency: usize,
-    /// The I/O budget: one permit per chunk read in flight, shared by every
-    /// concurrent `load` call on this loader and its clones.
-    permits: Arc<Semaphore>,
-    io: Arc<IoCounters>,
+    /// Shared by the storage backing every opened array, including cached
+    /// shard decoders, so codec fan-out cannot bypass the budget.
+    budget: Arc<IoBudget>,
     handles: Arc<HandleCache>,
 }
 
-/// In-flight chunk reads, for tests and benchmarks.
+/// In-flight storage reads, for tests and benchmarks.
 #[derive(Debug, Default)]
 struct IoCounters {
     in_flight: AtomicUsize,
@@ -156,6 +159,97 @@ impl IoCounters {
     }
 }
 
+/// Bound actual storage reads: zarrs' codec concurrency is only a target,
+/// and its nested chunk/shard scheduling can exceed that target.
+#[derive(Debug)]
+struct IoBudget {
+    permits: Arc<Semaphore>,
+    io: Arc<IoCounters>,
+}
+
+impl IoBudget {
+    fn new(concurrency: usize) -> Self {
+        Self {
+            permits: Arc::new(Semaphore::new(concurrency)),
+            io: Arc::new(IoCounters::default()),
+        }
+    }
+
+    async fn acquire(&self) -> Result<IoPermit, StorageError> {
+        let permit = self
+            .permits
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| StorageError::Other("Zarr loader: I/O budget closed".into()))?;
+        self.io.enter(1);
+        Ok(IoPermit {
+            _permit: permit,
+            io: self.io.clone(),
+        })
+    }
+}
+
+struct IoPermit {
+    _permit: OwnedSemaphorePermit,
+    io: Arc<IoCounters>,
+}
+
+impl Drop for IoPermit {
+    fn drop(&mut self) {
+        self.io.exit(1);
+    }
+}
+
+struct BudgetedStorage {
+    inner: AsyncReadableStorage,
+    budget: Arc<IoBudget>,
+}
+
+#[async_trait]
+impl AsyncReadableStorageTraits for BudgetedStorage {
+    async fn get(&self, key: &StoreKey) -> Result<MaybeBytes, StorageError> {
+        let _permit = self.budget.acquire().await?;
+        self.inner.get(key).await
+    }
+
+    async fn get_partial(
+        &self,
+        key: &StoreKey,
+        range: ByteRange,
+    ) -> Result<MaybeBytes, StorageError> {
+        let _permit = self.budget.acquire().await?;
+        self.inner.get_partial(key, range).await
+    }
+
+    async fn get_partial_many<'a>(
+        &'a self,
+        key: &StoreKey,
+        ranges: ByteRangeIterator<'a>,
+    ) -> Result<AsyncMaybeBytesIterator<'a>, StorageError> {
+        // Do not hand a batch of ranges to the underlying store under one
+        // permit: it may fetch those ranges concurrently. Each range goes
+        // through the same budget as single-range and whole-chunk reads.
+        let mut bytes = Vec::new();
+        for range in ranges {
+            let Some(value) = self.get_partial(key, range).await? else {
+                return Ok(None);
+            };
+            bytes.push(Ok(value));
+        }
+        Ok(Some(stream::iter(bytes).boxed()))
+    }
+
+    async fn size_key(&self, key: &StoreKey) -> Result<Option<u64>, StorageError> {
+        let _permit = self.budget.acquire().await?;
+        self.inner.size_key(key).await
+    }
+
+    fn supports_get_partial(&self) -> bool {
+        self.inner.supports_get_partial()
+    }
+}
+
 impl Default for ZarrLoader {
     fn default() -> Self {
         Self::new()
@@ -164,28 +258,36 @@ impl Default for ZarrLoader {
 
 impl ZarrLoader {
     pub fn new() -> Self {
+        let budget = Arc::new(IoBudget::new(DEFAULT_LOAD_CONCURRENCY));
         Self {
             concurrency: DEFAULT_LOAD_CONCURRENCY,
-            permits: Arc::new(Semaphore::new(DEFAULT_LOAD_CONCURRENCY)),
-            io: Arc::new(IoCounters::default()),
+            budget: budget.clone(),
             handles: Arc::new(HandleCache::new(
                 DEFAULT_ARRAY_HANDLE_CAPACITY,
                 DEFAULT_ARRAY_HANDLE_TTL,
+                budget,
             )),
         }
     }
 
     /// The I/O budget: chunk reads in flight at once, counted across every
     /// concurrent `load` call on this loader and its clones. Clamped to at
-    /// least 1. Starts a fresh budget, so configure before the loader is
-    /// shared.
+    /// least 1. Starts a fresh budget and handle cache, so configure before
+    /// the loader is shared.
     pub fn with_concurrency(mut self, concurrency: usize) -> Self {
         debug_assert!(
-            Arc::strong_count(&self.permits) == 1,
+            Arc::strong_count(&self.handles) == 1,
             "configure the I/O budget before sharing the loader"
         );
         self.concurrency = concurrency.max(1);
-        self.permits = Arc::new(Semaphore::new(self.concurrency));
+        self.budget = Arc::new(IoBudget::new(self.concurrency));
+        // Cached decoders retain their storage and budget. Reopen them when
+        // configuring a new budget, rather than leaving reads on the old one.
+        self.handles = Arc::new(HandleCache::new(
+            self.handles.capacity,
+            self.handles.ttl,
+            self.budget.clone(),
+        ));
         self
     }
 
@@ -195,10 +297,10 @@ impl ZarrLoader {
         self.concurrency
     }
 
-    /// The most chunk reads this loader has had in flight at once, over its
-    /// lifetime. For tests and benchmarks.
+    /// The most storage reads this loader has had in flight at once under
+    /// its current budget. Includes shard-index reads. For tests and benchmarks.
     pub fn peak_in_flight(&self) -> usize {
-        self.io.peak_in_flight.load(Ordering::SeqCst)
+        self.budget.io.peak_in_flight.load(Ordering::SeqCst)
     }
 
     /// Number of opened arrays kept across calls. Clamped to at least 1.
@@ -209,7 +311,11 @@ impl ZarrLoader {
             Arc::strong_count(&self.handles) == 1,
             "configure the handle cache before sharing the loader"
         );
-        self.handles = Arc::new(HandleCache::new(capacity, self.handles.ttl));
+        self.handles = Arc::new(HandleCache::new(
+            capacity,
+            self.handles.ttl,
+            self.budget.clone(),
+        ));
         self
     }
 
@@ -221,7 +327,11 @@ impl ZarrLoader {
             Arc::strong_count(&self.handles) == 1,
             "configure the handle cache before sharing the loader"
         );
-        self.handles = Arc::new(HandleCache::new(self.handles.capacity, ttl));
+        self.handles = Arc::new(HandleCache::new(
+            self.handles.capacity,
+            ttl,
+            self.budget.clone(),
+        ));
         self
     }
 
@@ -266,7 +376,7 @@ pub struct HandleStats {
 /// chunk caches that load each key once without a cache-wide lock. Remove
 /// the map when we move to the zarrs release that has them.
 struct OpenedArray {
-    array: Array<dyn AsyncReadableListableStorageTraits>,
+    array: Array<dyn AsyncReadableStorageTraits>,
     /// The inner-chunk grid, for finding the shard an inner chunk is in;
     /// `None` for an unsharded array.
     subchunk_grid: Option<ChunkGrid>,
@@ -274,7 +384,7 @@ struct OpenedArray {
 }
 
 impl OpenedArray {
-    fn new(array: Array<dyn AsyncReadableListableStorageTraits>) -> Self {
+    fn new(array: Array<dyn AsyncReadableStorageTraits>) -> Self {
         let subchunk_grid = array.is_sharded().then(|| array.subchunk_grid());
         Self {
             array,
@@ -395,6 +505,7 @@ impl Drop for GateRelease<'_> {
 /// handle in the cache, so an array is opened once however its rows are
 /// partitioned.
 struct HandleCache {
+    budget: Arc<IoBudget>,
     capacity: usize,
     ttl: Duration,
     stores: Mutex<HashMap<String, Arc<dyn ObjectStore>>>,
@@ -408,9 +519,10 @@ struct HandleCache {
 }
 
 impl HandleCache {
-    fn new(capacity: usize, ttl: Duration) -> Self {
+    fn new(capacity: usize, ttl: Duration, budget: Arc<IoBudget>) -> Self {
         let capacity = capacity.max(1);
         Self {
+            budget,
             capacity,
             ttl,
             stores: Mutex::new(HashMap::new()),
@@ -489,13 +601,19 @@ impl HandleCache {
     /// Open the array and cache its handle, counted as a miss.
     async fn open(&self, store_uri: &str, array_path: &str) -> Result<SharedArray, ArrowError> {
         let storage = open_storage_from_uri(store_uri, self.store(store_uri)?)?;
-        let array = Array::async_open(storage, array_path).await.map_err(|e| {
-            ArrowError::ExternalError(Box::new(sedona_internal_datafusion_err!(
-                "failed to open Zarr array {array_path} in {store_uri}: {e}"
-            )))
-        })?;
+        let array = Array::async_open(storage.clone(), array_path)
+            .await
+            .map_err(|e| {
+                ArrowError::ExternalError(Box::new(sedona_internal_datafusion_err!(
+                    "failed to open Zarr array {array_path} in {store_uri}: {e}"
+                )))
+            })?;
         self.array_misses.fetch_add(1, Ordering::Relaxed);
-        let array: SharedArray = Arc::new(OpenedArray::new(array));
+        let storage: AsyncReadableStorage = Arc::new(BudgetedStorage {
+            inner: storage,
+            budget: self.budget.clone(),
+        });
+        let array: SharedArray = Arc::new(OpenedArray::new(array.with_storage(storage)));
         lock(&self.arrays).put(
             (store_uri.to_string(), array_path.to_string()),
             ArrayHandle {
@@ -752,37 +870,18 @@ impl AsyncRasterLoader for ZarrLoader {
             });
         }
 
-        // Fetch each distinct region once, each read holding one permit of
-        // the shared I/O budget; `buffer_unordered` merely keeps one call
-        // from queueing more futures than the budget could ever run.
-        // Results complete out of order, so carry the chunk index and slot
-        // them back afterwards. `try_collect` stops at the first error and
-        // drops whatever is still in flight, releasing its permits.
-        // (A plain loop rather than `iter().map(|..| async move {..})`: the
-        // closure form trips rustc's "implementation of `FnOnce` is not
-        // general enough" check under async_trait's `Send` bound.)
+        // Fetch distinct regions concurrently. The storage adapter enforces
+        // the shared I/O budget even when zarrs fans a region out over chunks.
+        // Results complete out of order, so retain the index for scattering.
         let mut fetches = Vec::with_capacity(reads.len());
         for (read_idx, read) in reads.iter().enumerate() {
             let array: &OpenedArray = &arrays[read.array];
             let (store, array_path) = &plan.arrays[read.array];
             let store_uri = plan.stores[*store].as_str();
-            let permits = Arc::clone(&self.permits);
-            let io = Arc::clone(&self.io);
-            let permit_count = read_permit_count(array, &read.region, self.concurrency)?;
             fetches.push(async move {
-                let _permit = permits
-                    .acquire_many_owned(permit_count as u32)
+                retrieve_region(array, store_uri, array_path, &read.region, self.concurrency)
                     .await
-                    .map_err(|_| {
-                        ArrowError::ExternalError(Box::new(sedona_internal_datafusion_err!(
-                            "Zarr loader: I/O budget closed"
-                        )))
-                    })?;
-                io.enter(permit_count);
-                let result =
-                    retrieve_region(array, store_uri, array_path, &read.region, permit_count).await;
-                io.exit(permit_count);
-                result.map(|buffer| (read_idx, buffer))
+                    .map(|buffer| (read_idx, buffer))
             });
         }
         let fetched: Vec<(usize, Buffer)> = stream::iter(fetches)
@@ -877,42 +976,6 @@ fn subset_in_bounds(start: &[u64], shape: &[u64], array_shape: &[u64]) -> bool {
         })
 }
 
-/// Number of shared I/O permits a physical read may use. A whole-array
-/// subset can fan out over several inner chunks, so reserve the same number
-/// of permits passed to zarrs as its codec concurrency target. This keeps the
-/// loader-wide limit valid while allowing one full-array request to load its
-/// chunks concurrently.
-fn read_permit_count(
-    opened: &OpenedArray,
-    region: &ReadRegion,
-    concurrency: usize,
-) -> Result<usize, ArrowError> {
-    let chunks = match region {
-        ReadRegion::Chunk(_) => 1,
-        ReadRegion::ArraySubset { start, shape } => {
-            let subset =
-                ArraySubset::new_with_start_shape(start.clone(), shape.clone()).map_err(|e| {
-                    ArrowError::InvalidArgumentError(format!(
-                        "invalid Zarr subset start={start:?} shape={shape:?}: {e}"
-                    ))
-                })?;
-            opened
-                .array
-                .subchunk_grid()
-                .chunks_in_array_subset(&subset)
-                .map_err(|e| {
-                    ArrowError::InvalidArgumentError(format!(
-                        "failed to find Zarr chunks intersecting subset {subset}: {e}"
-                    ))
-                })?
-                .map(|chunks| chunks.num_elements_usize())
-                .unwrap_or(1)
-                .max(1)
-        }
-    };
-    Ok(chunks.min(concurrency).min(u32::MAX as usize).max(1))
-}
-
 async fn retrieve_region(
     opened: &OpenedArray,
     store_uri: &str,
@@ -937,8 +1000,8 @@ async fn retrieve_region(
 }
 
 /// Read a rectangular array subset, assembling all intersecting chunks in
-/// C-order. `concurrent_target` permits have already been reserved from the
-/// loader-wide chunk-I/O budget.
+/// C-order. The codec concurrency target encourages parallel reads; the
+/// storage adapter enforces the loader-wide I/O limit.
 async fn retrieve_array_subset(
     opened: &OpenedArray,
     store_uri: &str,
@@ -953,7 +1016,9 @@ async fn retrieve_array_subset(
         ))
     })?;
     let cache = opened.subset_cache(&subset)?;
-    let options = CodecOptions::default().with_concurrent_target(concurrent_target);
+    let options = CodecOptions::default()
+        .with_chunk_concurrent_minimum(1)
+        .with_concurrent_target(concurrent_target);
     let bytes = opened
         .array
         .async_retrieve_array_subset_sharded_opt::<ArrayBytes<'static>>(
@@ -1206,11 +1271,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn canceled_storage_reads_release_io_budget() {
+        use object_store::memory::InMemory;
+        use object_store::throttle::{ThrottleConfig, ThrottledStore};
+        use zarrs_object_store::AsyncObjectStore;
+
+        let budget = Arc::new(IoBudget::new(1));
+        let storage = BudgetedStorage {
+            inner: Arc::new(AsyncObjectStore::new(ThrottledStore::new(
+                InMemory::new(),
+                ThrottleConfig {
+                    wait_get_per_call: Duration::from_secs(60),
+                    ..Default::default()
+                },
+            ))),
+            budget: budget.clone(),
+        };
+        let key = StoreKey::new("pixels/c/0/0").unwrap();
+        let mut read = Box::pin(storage.get(&key));
+        assert!(futures::poll!(&mut read).is_pending());
+        assert_eq!(budget.permits.available_permits(), 0);
+        assert_eq!(budget.io.in_flight.load(Ordering::SeqCst), 1);
+        drop(read);
+        assert_eq!(budget.permits.available_permits(), 1);
+        assert_eq!(budget.io.in_flight.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
     async fn canceled_array_opens_release_gate_entries() {
         use object_store::memory::InMemory;
         use object_store::throttle::{ThrottleConfig, ThrottledStore};
 
-        let cache = HandleCache::new(1, Duration::from_secs(300));
+        let cache = HandleCache::new(1, Duration::from_secs(300), Arc::new(IoBudget::new(1)));
         let store = Arc::new(ThrottledStore::new(
             InMemory::new(),
             ThrottleConfig {
@@ -1529,6 +1621,7 @@ mod tests {
         assert_eq!(
             ZarrLoader::new()
                 .with_concurrency(3)
+                .budget
                 .permits
                 .available_permits(),
             3
