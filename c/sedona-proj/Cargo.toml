@@ -41,6 +41,6 @@ proj-sys = [ "dep:proj-sys" ]
 libloading = { workspace = true }
 serde_json = { workspace = true }
 geo-traits = { workspace = true }
-proj-sys = { version = "0.26.0", optional = true }
+proj-sys = { version = "0.28.0", optional = true }
 sedona-geometry = { workspace = true }
 thiserror = { workspace = true }
