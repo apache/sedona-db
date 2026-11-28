@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! Zarr URI helpers — store resolution and per-chunk OutDb anchors.
+//! Zarr URI helpers — store resolution and OutDb array/chunk anchors.
 //!
 //! Two URI shapes flow through the loader:
 //!
@@ -24,9 +24,9 @@
 //!    `s3://`, `http://`, `https://` (the `object_store` `aws`/`http`
 //!    features). Other schemes (e.g. `gs://`, `az://`) error as
 //!    unsupported until their backends are wired in.
-//! 2. **Chunk anchor URI** (written into a band's `outdb_uri`). Addresses
-//!    one chunk in one array within a group:
-//!    `<store-uri>#array=<array-path>&chunk=<i0>,<i1>,...`. The store URI
+//! 2. **Array anchor URI** (written into a band's `outdb_uri`). Addresses
+//!    either a whole array or one chunk within it:
+//!    `<store-uri>#array=<array-path>[&chunk=<i0>,<i1>,...]`. The store URI
 //!    is the original group URI verbatim (whatever scheme that uses);
 //!    array path and chunk indices both live in the fragment so the
 //!    store URI is unambiguous even when both contain `/` (e.g.
@@ -49,13 +49,19 @@ use url::Url;
 use zarrs::storage::AsyncReadableListableStorage;
 use zarrs_object_store::AsyncObjectStore;
 
-/// Parts of a chunk-anchor URI. The async raster byte loader parses
+/// Parts of a whole-array or chunk-anchor URI. The async raster byte loader parses
 /// `outdb_uri` values back into this struct.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ChunkAnchor {
+pub struct ZarrAnchor {
     pub store_uri: String,
     pub array_path: String,
-    pub chunk_indices: Vec<u64>,
+    pub chunk_indices: Option<Vec<u64>>,
+}
+
+/// Build a whole-array anchor URI from its parts.
+pub fn build_array_anchor(store_uri: &str, array_path: &str) -> String {
+    let array = array_path.trim_start_matches('/');
+    format!("{store_uri}#array={array}")
 }
 
 /// Build a chunk anchor URI from its parts.
@@ -71,18 +77,20 @@ pub fn build_chunk_anchor(store_uri: &str, array_path: &str, chunk_indices: &[u6
         .map(|i| i.to_string())
         .collect::<Vec<_>>()
         .join(",");
-    let array = array_path.trim_start_matches('/');
-    format!("{store_uri}#array={array}&chunk={indices}")
+    format!(
+        "{}&chunk={indices}",
+        build_array_anchor(store_uri, array_path)
+    )
 }
 
-/// Parse a chunk-anchor URI back into its parts.
+/// Parse a whole-array or chunk-anchor URI back into its parts.
 ///
-/// Strict: rejects URIs that don't carry both `array=` and `chunk=`
-/// fragment parameters with valid values.
-pub fn parse_chunk_anchor(uri: &str) -> Result<ChunkAnchor, ArrowError> {
+/// Strict: rejects URIs that don't carry `array=` or whose optional `chunk=`
+/// parameter is empty or malformed.
+pub fn parse_zarr_anchor(uri: &str) -> Result<ZarrAnchor, ArrowError> {
     let (store_uri, fragment) = uri.split_once('#').ok_or_else(|| {
         ArrowError::InvalidArgumentError(format!(
-            "chunk anchor URI missing `#array=...&chunk=...` fragment: {uri}"
+            "Zarr anchor URI missing `#array=...` fragment: {uri}"
         ))
     })?;
 
@@ -105,28 +113,27 @@ pub fn parse_chunk_anchor(uri: &str) -> Result<ChunkAnchor, ArrowError> {
             ))
         })?
         .to_string();
-    let indices_str = chunk_str.ok_or_else(|| {
-        ArrowError::InvalidArgumentError(format!(
-            "chunk anchor URI fragment missing `chunk=` parameter: {uri}"
-        ))
-    })?;
-    if indices_str.is_empty() {
-        return Err(ArrowError::InvalidArgumentError(format!(
-            "chunk anchor URI has empty index list: {uri}"
-        )));
-    }
-    let chunk_indices = indices_str
-        .split(',')
-        .map(|s| {
-            s.parse::<u64>().map_err(|_| {
-                ArrowError::InvalidArgumentError(format!(
-                    "chunk index `{s}` is not a non-negative integer in {uri}"
-                ))
-            })
+    let chunk_indices = chunk_str
+        .map(|indices_str| {
+            if indices_str.is_empty() {
+                return Err(ArrowError::InvalidArgumentError(format!(
+                    "chunk anchor URI has empty index list: {uri}"
+                )));
+            }
+            indices_str
+                .split(',')
+                .map(|s| {
+                    s.parse::<u64>().map_err(|_| {
+                        ArrowError::InvalidArgumentError(format!(
+                            "chunk index `{s}` is not a non-negative integer in {uri}"
+                        ))
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .transpose()?;
 
-    Ok(ChunkAnchor {
+    Ok(ZarrAnchor {
         store_uri: store_uri.to_string(),
         array_path,
         chunk_indices,
@@ -265,6 +272,14 @@ mod tests {
     }
 
     #[test]
+    fn build_full_array_anchor() {
+        assert_eq!(
+            build_array_anchor("file:///tmp/datacube.zarr", "/temperature"),
+            "file:///tmp/datacube.zarr#array=temperature"
+        );
+    }
+
+    #[test]
     fn build_anchor_strips_leading_slash_on_array_path() {
         let uri = build_chunk_anchor("file:///tmp/foo.zarr", "/array", &[0]);
         assert_eq!(uri, "file:///tmp/foo.zarr#array=array&chunk=0");
@@ -304,24 +319,32 @@ mod tests {
     #[test]
     fn parse_anchor_basic() {
         let anchor =
-            parse_chunk_anchor("file:///tmp/datacube.zarr#array=temperature&chunk=47,2,3").unwrap();
+            parse_zarr_anchor("file:///tmp/datacube.zarr#array=temperature&chunk=47,2,3").unwrap();
         assert_eq!(anchor.store_uri, "file:///tmp/datacube.zarr");
         assert_eq!(anchor.array_path, "temperature");
-        assert_eq!(anchor.chunk_indices, vec![47, 2, 3]);
+        assert_eq!(anchor.chunk_indices, Some(vec![47, 2, 3]));
+    }
+
+    #[test]
+    fn parse_full_array_anchor() {
+        let anchor = parse_zarr_anchor("file:///tmp/datacube.zarr#array=temperature").unwrap();
+        assert_eq!(anchor.store_uri, "file:///tmp/datacube.zarr");
+        assert_eq!(anchor.array_path, "temperature");
+        assert_eq!(anchor.chunk_indices, None);
     }
 
     #[test]
     fn parse_anchor_with_s3_store_and_nested_array() {
         let anchor =
-            parse_chunk_anchor("s3://bucket/foo.zarr/2024#array=subgroup/B01&chunk=0,0,0").unwrap();
+            parse_zarr_anchor("s3://bucket/foo.zarr/2024#array=subgroup/B01&chunk=0,0,0").unwrap();
         assert_eq!(anchor.store_uri, "s3://bucket/foo.zarr/2024");
         assert_eq!(anchor.array_path, "subgroup/B01");
-        assert_eq!(anchor.chunk_indices, vec![0, 0, 0]);
+        assert_eq!(anchor.chunk_indices, Some(vec![0, 0, 0]));
     }
 
     #[test]
     fn parse_anchor_rejects_missing_fragment() {
-        let err = parse_chunk_anchor("file:///foo.zarr")
+        let err = parse_zarr_anchor("file:///foo.zarr")
             .unwrap_err()
             .to_string();
         assert!(err.contains("fragment"), "{err}");
@@ -329,23 +352,15 @@ mod tests {
 
     #[test]
     fn parse_anchor_rejects_missing_array_param() {
-        let err = parse_chunk_anchor("file:///foo.zarr#chunk=0")
+        let err = parse_zarr_anchor("file:///foo.zarr#chunk=0")
             .unwrap_err()
             .to_string();
         assert!(err.contains("array="), "{err}");
     }
 
     #[test]
-    fn parse_anchor_rejects_missing_chunk_param() {
-        let err = parse_chunk_anchor("file:///foo.zarr#array=a")
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("chunk="), "{err}");
-    }
-
-    #[test]
     fn parse_anchor_rejects_empty_indices() {
-        let err = parse_chunk_anchor("file:///foo.zarr#array=a&chunk=")
+        let err = parse_zarr_anchor("file:///foo.zarr#array=a&chunk=")
             .unwrap_err()
             .to_string();
         assert!(err.contains("empty"), "{err}");
@@ -353,7 +368,7 @@ mod tests {
 
     #[test]
     fn parse_anchor_rejects_non_integer_index() {
-        let err = parse_chunk_anchor("file:///foo.zarr#array=a&chunk=0,abc,2")
+        let err = parse_zarr_anchor("file:///foo.zarr#array=a&chunk=0,abc,2")
             .unwrap_err()
             .to_string();
         assert!(err.contains("abc"), "{err}");
@@ -361,24 +376,24 @@ mod tests {
 
     #[test]
     fn parse_anchor_ignores_unknown_fragment_params() {
-        let anchor = parse_chunk_anchor("file:///foo.zarr#array=t&chunk=0,0&version=v3").unwrap();
+        let anchor = parse_zarr_anchor("file:///foo.zarr#array=t&chunk=0,0&version=v3").unwrap();
         assert_eq!(anchor.array_path, "t");
-        assert_eq!(anchor.chunk_indices, vec![0, 0]);
+        assert_eq!(anchor.chunk_indices, Some(vec![0, 0]));
     }
 
     #[test]
     fn anchor_roundtrip() {
-        let original = ChunkAnchor {
+        let original = ZarrAnchor {
             store_uri: "file:///tmp/foo.zarr".into(),
             array_path: "subgroup/B01".into(),
-            chunk_indices: vec![10, 20, 30],
+            chunk_indices: Some(vec![10, 20, 30]),
         };
         let uri = build_chunk_anchor(
             &original.store_uri,
             &original.array_path,
-            &original.chunk_indices,
+            original.chunk_indices.as_deref().unwrap(),
         );
-        let parsed = parse_chunk_anchor(&uri).unwrap();
+        let parsed = parse_zarr_anchor(&uri).unwrap();
         assert_eq!(parsed, original);
     }
 

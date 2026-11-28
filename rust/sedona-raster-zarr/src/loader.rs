@@ -17,16 +17,15 @@
 
 //! Zarr group → N-D raster streaming reader.
 //!
-//! [`ZarrChunkReader`] walks the group's chunk grid lazily and emits one
-//! raster row per chunk position, with one band per array in the group.
+//! [`ZarrChunkReader`] emits either one full-group raster row or walks the
+//! group's chunk grid lazily and emits one raster row per chunk position,
+//! with one band per array in the group.
 //! For an array stored with the `sharding_indexed` codec the grid is the
 //! inner-chunk grid, not the shard grid: a shard is only a container of
 //! inner chunks, and reading it whole would make the row size follow the
-//! shard size rather than the chunk shape the writer chose. Each row
-//! carries an `outdb_uri` chunk anchor
-//! (`zarr://<store-uri>/<array-path>#chunk=i0,i1,...`); the `data`
-//! column stays empty until the async resolver lands and dereferences
-//! the anchor to bytes on demand.
+//! shard size rather than the chunk shape the writer chose. Bands carry an
+//! `outdb_uri` array anchor with an optional `chunk=` fragment; the `data`
+//! column stays empty until the async resolver dereferences the anchor.
 
 use std::sync::Arc;
 
@@ -48,20 +47,20 @@ use zarrs::storage::{AsyncReadableListableStorage, AsyncReadableListableStorageT
 use crate::coords;
 use crate::dtype::zarr_to_band_data_type;
 use crate::geozarr::{GroupGeoMetadata, crs_from_cf_attributes, geotransform_from_cf_attributes};
-use crate::source_uri::build_chunk_anchor;
+use crate::source_uri::{build_array_anchor, build_chunk_anchor};
 
-/// Streaming reader over the chunk grid of a Zarr group.
+/// Streaming reader over a Zarr group, optionally tiled by its chunk grid.
 ///
 /// Each `next()` call emits one `RecordBatch` containing up to
-/// `batch_size` rows; one row per chunk position. The reader holds the
+/// `batch_size` rows in tiled mode, or the single full-group row. The reader holds the
 /// open group, parsed metadata, and the current chunk-grid position —
 /// metadata parsing happens once in [`ZarrChunkReader::try_new`] and
 /// the per-row work is just transform arithmetic + anchor URI
 /// formatting.
 ///
-/// Rows always emit OutDb-style: `data` is empty, `outdb_uri` carries
-/// a chunk anchor that the async raster byte loader (registered separately)
-/// resolves to bytes on demand.
+/// Rows always emit OutDb-style: `data` is empty, `outdb_uri` carries an
+/// array or chunk anchor that the separately registered async raster byte
+/// loader resolves on demand.
 pub struct ZarrChunkReader {
     schema: SchemaRef,
     group_uri: String,
@@ -76,6 +75,9 @@ pub struct ZarrChunkReader {
     chunk_spatial_shape: Vec<i64>,
     /// Current position in the chunk grid (row-major, C-order).
     chunk_indices: Vec<u64>,
+    /// Emit one row per inner chunk when true; one row for the full group
+    /// when false.
+    tile: bool,
     /// Whether the grid has been exhausted.
     exhausted: bool,
     batch_size: usize,
@@ -87,6 +89,7 @@ impl std::fmt::Debug for ZarrChunkReader {
             .field("group_uri", &self.group_uri)
             .field("num_arrays", &self.array_infos.len())
             .field("chunk_indices", &self.chunk_indices)
+            .field("tile", &self.tile)
             .field("exhausted", &self.exhausted)
             .field("batch_size", &self.batch_size)
             .finish()
@@ -116,6 +119,19 @@ impl ZarrChunkReader {
         group_uri: &str,
         arrays: Option<&[String]>,
         batch_size: usize,
+    ) -> Result<Self, ArrowError> {
+        Self::try_new_with_tile(storage, group_uri, arrays, batch_size, true).await
+    }
+
+    /// Open a Zarr group, optionally emitting one raster row per inner chunk.
+    /// `tile = false` emits one full-array raster row; `tile = true` preserves
+    /// the historical one-row-per-chunk behaviour.
+    pub async fn try_new_with_tile(
+        storage: AsyncReadableListableStorage,
+        group_uri: &str,
+        arrays: Option<&[String]>,
+        batch_size: usize,
+        tile: bool,
     ) -> Result<Self, ArrowError> {
         let batch_size = batch_size.max(1);
         let OpenedGroup {
@@ -148,6 +164,7 @@ impl ZarrChunkReader {
             spatial_dims_names,
             chunk_spatial_shape,
             chunk_indices,
+            tile,
             exhausted: false,
             batch_size,
         })
@@ -156,21 +173,30 @@ impl ZarrChunkReader {
     /// Append one raster row at the current `chunk_indices` to the
     /// in-progress builder. Does not advance the cursor.
     fn emit_one_row(&self, builder: &mut RasterBuilder) -> Result<(), ArrowError> {
-        let row_transform = compute_row_transform(
-            &self.group_transform,
-            &self.chunk_indices,
-            &self.array_infos[0].chunk_shape,
-            &self.spatial_dim_indices,
-        );
+        let row_transform = if self.tile {
+            compute_row_transform(
+                &self.group_transform,
+                &self.chunk_indices,
+                &self.array_infos[0].chunk_shape,
+                &self.spatial_dim_indices,
+            )
+        } else {
+            self.group_transform
+        };
+        let spatial_shape = if self.tile {
+            self.chunk_spatial_shape.clone()
+        } else {
+            raster_spatial_metadata(
+                &self.array_infos[0].dim_names,
+                &self.array_infos[0].shape,
+                &self.spatial_dim_indices,
+            )
+            .1
+        };
         let spatial_dims_ref: Vec<&str> =
             self.spatial_dims_names.iter().map(String::as_str).collect();
         let crs_str = self.geo.crs.as_deref();
-        builder.start_raster_nd(
-            &row_transform,
-            &spatial_dims_ref,
-            &self.chunk_spatial_shape,
-            crs_str,
-        )?;
+        builder.start_raster_nd(&row_transform, &spatial_dims_ref, &spatial_shape, crs_str)?;
 
         for info in &self.array_infos {
             let dim_names_ref: Vec<&str> = info.dim_names.iter().map(String::as_str).collect();
@@ -179,8 +205,16 @@ impl ZarrChunkReader {
             // provenance metadata. `data.is_empty()` is the InDb/OutDb
             // discriminator; this reader always emits empty `data` and
             // defers pixel-byte resolution to the raster byte loader.
-            let anchor = build_chunk_anchor(&self.group_uri, &info.path, &self.chunk_indices);
-            let source_shape: Vec<i64> = info.chunk_shape.iter().map(|&n| n as i64).collect();
+            let anchor = if self.tile {
+                build_chunk_anchor(&self.group_uri, &info.path, &self.chunk_indices)
+            } else {
+                build_array_anchor(&self.group_uri, &info.path)
+            };
+            let source_shape: Vec<i64> = if self.tile {
+                info.chunk_shape.iter().map(|&n| n as i64).collect()
+            } else {
+                info.shape.iter().map(|&n| n as i64).collect()
+            };
             builder.start_band(StartBandArgs {
                 name: Some(info.path.as_str()),
                 nodata: nodata_ref,
@@ -210,6 +244,10 @@ impl Iterator for ZarrChunkReader {
                 return Some(Err(e));
             }
             rows_emitted += 1;
+            if !self.tile {
+                self.exhausted = true;
+                break;
+            }
             if !advance_chunk_indices(
                 &mut self.chunk_indices,
                 &self.array_infos[0].chunk_grid_shape,
@@ -242,7 +280,7 @@ impl RecordBatchReader for ZarrChunkReader {
 /// chunk position. Caching this avoids re-reading Zarr metadata for each
 /// of the (potentially thousands of) chunk rows.
 struct ArrayInfo {
-    /// Array path within the store, used to build chunk anchor URIs and
+    /// Array path within the store, used to build array/chunk anchor URIs and
     /// surface in band names.
     path: String,
     /// SedonaDB BandDataType corresponding to this array's zarrs dtype.
@@ -1163,6 +1201,19 @@ mod tests {
             assert_eq!(reader.array_infos[0].chunk_shape, [2, 2], "{name}");
             let rows: usize = reader.map(|batch| batch.unwrap().num_rows()).sum();
             assert_eq!(rows, 4, "{name}");
+
+            let storage = open_storage_from_uri(&uri, object_store_for_uri(&uri).unwrap()).unwrap();
+            let reader = ZarrChunkReader::try_new_with_tile(
+                storage,
+                &uri,
+                Some(&[name.to_string()]),
+                8,
+                false,
+            )
+            .await
+            .unwrap();
+            let rows: usize = reader.map(|batch| batch.unwrap().num_rows()).sum();
+            assert_eq!(rows, 1, "full-array mode for {name}");
         }
     }
 

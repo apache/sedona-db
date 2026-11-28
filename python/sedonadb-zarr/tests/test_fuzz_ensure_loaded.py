@@ -245,7 +245,8 @@ def build_rows(tmp_path, rng):
         }
         names = [f"a{a}" for a in chosen]
         tab = sd.read(
-            f"file://{path}", format=sedonadb_zarr.Zarr({"arrays": names})
+            f"file://{path}",
+            format=sedonadb_zarr.Zarr({"arrays": names, "tile": True}),
         ).to_arrow_table()
         for i in range(tab.num_rows):
             raster = Raster(tab["raster"], i)

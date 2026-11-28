@@ -17,17 +17,14 @@
 
 //! Zarr-backed N-D raster loader for SedonaDB.
 //!
-//! [`ZarrChunkReader`] is a `RecordBatchReader` that walks a Zarr
-//! group's chunk grid lazily, emitting one raster row per chunk
-//! position with one band per array. A sharded array's grid is its
-//! inner-chunk grid, so its rows are inner chunks, never whole shards.
-//! Each row carries a chunk-anchor
-//! URI in `outdb_uri`; the `data` column stays empty. Metadata-only
-//! operations (`count(*)`, `RS_Envelope`, `RS_Width`, …) work directly
-//! against these rows; byte-consuming kernels need an async resolver
-//! that's not part of this crate.
+//! [`ZarrChunkReader`] is a `RecordBatchReader` that can represent a Zarr
+//! group as one full raster row or walk its chunk grid lazily, emitting one
+//! row per inner chunk. Each band carries either a whole-array anchor or a
+//! chunk anchor in `outdb_uri`; the `data` column stays empty. The async
+//! [`ZarrLoader`] resolves both forms and pushes ordinary rectangular views
+//! into Zarr subset reads, assembling all intersecting chunks when needed.
 //!
-//! Local filesystem stores only — `file://` URIs or bare paths.
+//! Supported stores are local files, S3, and HTTP(S).
 
 mod coords;
 mod dtype;
