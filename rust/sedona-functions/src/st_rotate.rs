@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 use arrow_array::builder::BinaryBuilder;
+use arrow_buffer::NullBuffer;
 use arrow_schema::DataType;
 use datafusion_common::{DataFusionError, error::Result};
 use datafusion_expr::{ColumnarValue, Volatility};
@@ -96,24 +97,9 @@ impl SedonaScalarKernel for STRotate {
         let executor = WkbExecutor::new(arg_types, args);
 
         let angle_array = args[1].to_array(executor.num_iterations())?;
-        let num_valid_angles = angle_array.len() - angle_array.null_count();
+        let mask: Vec<NullBuffer> = angle_array.nulls().cloned().into_iter().collect();
 
-        let geom_bytes = visible_wkb_bytes(&arg_types[0], &args[0])?;
-
-        let capacity = if num_valid_angles == 0 {
-            0
-        } else {
-            match &args[0] {
-                ColumnarValue::Scalar(_) => geom_bytes * num_valid_angles,
-                ColumnarValue::Array(_) => {
-                    if num_valid_angles == executor.num_iterations() {
-                        geom_bytes
-                    } else {
-                        (geom_bytes / executor.num_iterations().max(1)) * num_valid_angles
-                    }
-                }
-            }
-        };
+        let capacity = visible_wkb_bytes(&arg_types[0], &args[0], executor.num_iterations(), mask)?;
 
         let mut builder = BinaryBuilder::with_capacity(executor.num_iterations(), capacity);
 

@@ -305,7 +305,7 @@ fn rewrite_ewkb_as_iso(
 ) -> Result<ColumnarValue> {
     let executor = WkbBytesExecutor::new(arg_types, args);
     let n = executor.num_iterations();
-    let nbytes = visible_wkb_bytes(&arg_types[0], &args[0])?;
+    let nbytes = visible_wkb_bytes(&arg_types[0], &args[0], n, vec![])?;
     if matches!(return_type, SedonaType::WkbLarge(_, _)) {
         let mut builder = LargeBinaryBuilder::with_capacity(n, nbytes);
         append_iso_wkb(&executor, &mut builder)?;
