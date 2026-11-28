@@ -350,7 +350,7 @@ impl GeometryFactory for PointXYGeometryFactory {
 pub type PointXYExecutor<'a, 'b> =
     GenericExecutor<'a, 'b, PointXYGeometryFactory, PointXYGeometryFactory>;
 
-pub fn scale_by_valid(total: usize, num_rows: usize, num_valid_rows: usize) -> usize {
+fn scale_by_valid(total: usize, num_rows: usize, num_valid_rows: usize) -> usize {
     if num_rows == 0 || num_valid_rows == num_rows {
         total
     } else {
@@ -364,6 +364,11 @@ pub(crate) fn visible_wkb_bytes(
     num_rows: usize,
     mask: Vec<NullBuffer>,
 ) -> Result<usize> {
+    debug_assert!(
+        mask.iter().all(|m| m.len() == num_rows),
+        "all masks must have length == num_rows"
+    );
+
     let num_valid_rows = if mask.is_empty() {
         num_rows
     } else if mask.len() == 1 {
@@ -914,6 +919,32 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result, 42);
+    }
+
+    #[test]
+    fn visible_wkb_bytes_all_null_mask_is_zero() {
+        let binary = BinaryArray::from_iter(vec![
+            Some(POINT.as_slice()),
+            Some(POINT.as_slice()),
+            Some(POINT.as_slice()),
+        ]);
+        let mask = NullBuffer::from(vec![false, false, false]);
+        let result = visible_wkb_bytes(
+            &WKB_GEOMETRY,
+            &ColumnarValue::Array(Arc::new(binary)),
+            3,
+            vec![mask],
+        )
+        .unwrap();
+        assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn visible_wkb_bytes_scalar_with_null_mask_is_zero() {
+        let scalar = ColumnarValue::Scalar(ScalarValue::Binary(Some(POINT.to_vec())));
+        let mask = NullBuffer::from(vec![false, false, false, false]);
+        let result = visible_wkb_bytes(&WKB_GEOMETRY, &scalar, 4, vec![mask]).unwrap();
+        assert_eq!(result, 0);
     }
 
     #[rstest]
